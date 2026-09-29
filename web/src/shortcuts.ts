@@ -39,6 +39,7 @@ export type CommandId =
   | "close_tab"
   | "reopen_closed_tab"
   | "new_workspace"
+  | "start_agent"
   | "recent_panel"
   | "previous_recent_panel"
   | "recent_project"
@@ -130,6 +131,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "reopen_closed_tab", title: "Reopen closed tab", group: "Tabs", browser: { code: "KeyT", alt: true, shift: true }, electron: { code: "KeyT", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧T" },
   ...numberedEntries(NUMBERED_FAMILIES[0]!),
   { id: "new_workspace", title: "Add project", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true, shift: true }, moved: false },
+  { id: "start_agent", title: "Start agent", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true }, moved: false },
   { id: "recent_panel", title: "Next recent panel", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
   { id: "previous_recent_panel", title: "Previous recent panel", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
   { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: { code: "Tab", alt: true }, moved: false },

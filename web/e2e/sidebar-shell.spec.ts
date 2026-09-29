@@ -1,6 +1,6 @@
 // The sidebar's shell on an isolated pinned Herdr and hided (PRD sidebar-shell
-// B1-B7): the fixed Overview row above the Projects | Agents strip opens the
-// Overview and carries its fill only while that screen is in front; Projects
+// B1-B7): the fixed Home row above the Projects | Agents strip opens the
+// device's Overview and carries its fill only while that screen is in front; Projects
 // is the first tab and the default; Search at the strip's end opens the ⌘K
 // palette, and a browser tab offers no Add project before it; the
 // Search field row, the bottom new-workspace button and the All projects row
@@ -25,7 +25,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.waitForTimeout(400);
 }
 
-test("the Overview row, the Projects | Agents strip and its Search icon, with no Add project in a browser tab", async ({ page }) => {
+test("the Home row, the Projects | Agents strip and its Search icon, with no Add project in a browser tab", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -40,14 +40,17 @@ test("the Overview row, the Projects | Agents strip and its Search icon, with no
     const list = page.locator("[data-project-list]");
     await expect(list.locator("[data-checkout]").first()).toBeVisible({ timeout: 20_000 });
 
-    // B1, B2: the Overview row above the strip opens the Overview, titled so, and is marked.
-    const overview = page.locator("[data-overview-destination]");
-    await expect(overview).toContainText("Overview");
-    await expect(overview.locator("[data-overview-count]")).toHaveText(/^\d+ projects?$/);
+    // B1, B2: the Home row above the strip opens the device's Overview, titled with the device, and is marked.
+    // No Overview row is left above the list.
+    await expect(page.locator("[data-overview-destination]")).toHaveCount(0);
+    const overview = page.locator("[data-home-destination]");
+    await expect(overview).toContainText("Home");
+    await expect(overview.locator("[data-home-count]")).toHaveText(/^\d+ projects?$/);
     await overview.click();
     const main = page.locator("[data-main-screen]");
     await expect(main).toBeVisible();
-    await expect(main.locator("h1")).toHaveText("Overview");
+    await expect(main.locator("h1")).toContainText("Home");
+    await expect(main.locator("[data-main-device-name]")).toHaveText("This Mac");
     await expect(overview).toHaveAttribute("aria-current", "page");
     // The row is not part of the scrolling list, and it ends on the list rows' column.
     expect(await overview.evaluate((row) => row.closest("[data-project-list], [data-agent-list]") === null)).toBe(true);
@@ -66,11 +69,11 @@ test("the Overview row, the Projects | Agents strip and its Search icon, with no
       await screenshot(page, `sidebar-shell-overview-${theme}`);
     }
 
-    // B2: a Workspace in front takes the fill away; Enter on the row brings the Overview back.
+    // B2: a Workspace in front takes the fill away; Enter on the row brings the Home Overview back.
     await list.locator("[data-checkout]").first().click();
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(overview).not.toHaveAttribute("aria-current", "page");
-    await expect(page.locator("[data-go-main]")).toHaveText("Overview");
+    await expect(page.locator("[data-go-main]")).toHaveText("Home");
     await overview.focus();
     await page.keyboard.press("Enter");
     await expect(main).toBeVisible();
@@ -92,7 +95,7 @@ test("the Overview row, the Projects | Agents strip and its Search icon, with no
     const add = page.locator("[data-sidebar-new-workspace]");
     await expect(add).toHaveCount(0);
 
-    // B3, B5: the Agents tab swaps the list and leaves Search alone at the end; the Overview row stays.
+    // B3, B5: the Agents tab swaps the list and leaves Search alone at the end; the Home row stays.
     await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(sidebar).toHaveAttribute("data-sidebar", "agents");
     await expect(page.locator("[data-agent-list]")).toBeVisible();

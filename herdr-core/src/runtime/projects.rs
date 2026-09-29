@@ -1420,6 +1420,7 @@ impl Runtime {
                 path: row.path.clone(),
                 device_id: device_id.to_owned(),
                 pinned: true,
+                home: false,
             }
         };
         if let Some(row) =
@@ -2408,7 +2409,24 @@ impl Runtime {
                 }
             },
         };
+        let model = match agent_choice::chosen_model(
+            payload.agent_kind.as_deref(),
+            payload.model.as_deref(),
+        ) {
+            Ok(model) => model,
+            Err(message) => {
+                self.set_error("worktree.create_unknown_model", message, false);
+                return true;
+            }
+        };
         let prompt = payload.agent_kind.as_ref().and(payload.prompt.clone());
+        if let Some(message) = prompt
+            .as_deref()
+            .and_then(|prompt| live::prompt_argument(prompt).err())
+        {
+            self.set_error("worktree.create_invalid_prompt", message, false);
+            return true;
+        }
         let id = match self.begin_task_operation(
             "worktree_create",
             Some(payload.repository_root.clone()),
@@ -2422,7 +2440,12 @@ impl Runtime {
                 return true;
             }
         };
-        self.set_task_agent_prompt(id, prompt);
+        self.remember_agent_choice(payload.agent_kind.as_deref(), model.as_deref());
+        self.set_task_agent_launch(
+            id,
+            prompt,
+            agent_choice::agent_arguments(model.as_deref(), &[]),
+        );
         if let Some(operation) = self.snapshot.task_operation.as_mut() {
             operation.device_id = device.clone();
         }
@@ -2650,76 +2673,216 @@ impl Runtime {
     /// worktree sheet already reports through. The shell starts the provider
     /// in the pane the slot names, so `terminal` needs nothing more from it.
     pub(super) fn agent_start_in_checkout(&mut self, payload: AgentStartInCheckoutPayload) -> bool {
+        let request_id = payload.request_id.clone();
         let agent_kind = match payload.provider.as_str() {
             "terminal" => None,
             "claude" | "codex" => Some(payload.provider.clone()),
             other => {
-                self.set_error(
+                self.set_request_error(
                     "agent_start.unknown_provider",
                     format!("No agent provider named {other}"),
                     false,
+                    request_id.as_deref(),
                 );
                 return true;
             }
         };
-        let Some((workspace_id, checkout_id)) = self.local_checkout_ids(&payload.checkout_path)
-        else {
-            self.set_error(
-                "overview.unknown_checkout",
-                format!("Checkout is not listed: {}", payload.checkout_path),
+        let model =
+            match agent_choice::chosen_model(agent_kind.as_deref(), payload.model.as_deref()) {
+                Ok(model) => model,
+                Err(message) => {
+                    self.set_request_error(
+                        "agent_start.unknown_model",
+                        message,
+                        false,
+                        request_id.as_deref(),
+                    );
+                    return true;
+                }
+            };
+        let prompt = agent_kind.as_ref().and(payload.prompt.clone());
+        // A prompt the agent's command line cannot carry is refused before a
+        // tab or Home sync, so nothing is left behind.
+        if let Some(message) = prompt
+            .as_deref()
+            .and_then(|prompt| live::prompt_argument(prompt).err())
+        {
+            self.set_request_error(
+                "agent_start.invalid_prompt",
+                message,
                 false,
+                request_id.as_deref(),
             );
             return true;
+        }
+        let device = payload
+            .device_id
+            .clone()
+            .filter(|device| !device.is_empty())
+            .unwrap_or_else(|| workspace::LOCAL_DEVICE_ID.to_owned());
+        // A start names one place: a device's Home, or one of its checkouts.
+        let checkout_path = match (payload.home, payload.checkout_path.clone()) {
+            (true, None) => {
+                return self.start_in_home(&device, agent_kind, model, prompt, request_id);
+            }
+            (false, Some(path)) if !path.is_empty() => path,
+            _ => {
+                self.set_request_error(
+                    "agent_start.invalid_target",
+                    "A start names either Home or one checkout",
+                    false,
+                    request_id.as_deref(),
+                );
+                return true;
+            }
         };
-        let (workspace_path, next_tab_label) = {
-            let workspace = self
-                .snapshot
-                .navigator
-                .workspaces
-                .iter()
-                .find(|workspace| workspace.id == workspace_id)
-                .expect("local_checkout_ids named a listed workspace");
-            let checkout = workspace
-                .checkouts
-                .iter()
-                .find(|checkout| checkout.id == checkout_id)
-                .expect("local_checkout_ids named a listed checkout");
-            (workspace.path.clone(), checkout.next_tab_label.clone())
+        let local = device == workspace::LOCAL_DEVICE_ID;
+        let found = if local {
+            self.local_checkout_tab(&checkout_path)
+        } else {
+            self.device_checkout_tab(&device, &checkout_path)
         };
-        let host = self
-            .local_tab_host(&workspace_id, &checkout_id)
-            .expect("local_checkout_ids named a listed checkout");
-        let prompt = agent_kind.as_ref().and(payload.prompt.clone());
+        let (workspace_path, label, host) = match found {
+            Ok(found) => found,
+            Err((kind, message)) => {
+                self.set_request_error(kind, message, false, request_id.as_deref());
+                return true;
+            }
+        };
         let id = match self.begin_task_operation(
             "agent_start",
             Some(workspace_path),
             None,
             None,
-            agent_kind,
+            agent_kind.clone(),
         ) {
             Ok(id) => id,
             Err(message) => {
-                self.set_error("task_operation.busy", message, true);
+                self.set_request_error("task_operation.busy", message, true, request_id.as_deref());
                 return true;
             }
         };
-        self.set_task_agent_prompt(id, prompt);
+        if let Some(operation) = self.snapshot.task_operation.as_mut() {
+            operation.request_id = request_id;
+            operation.device_id = (!local).then(|| device.clone());
+        }
+        self.remember_agent_choice(agent_kind.as_deref(), model.as_deref());
+        self.set_task_agent_launch(
+            id,
+            prompt,
+            agent_choice::agent_arguments(model.as_deref(), &[]),
+        );
         let request = live::CheckoutTabRequest {
             id,
-            checkout_path: payload.checkout_path,
-            label: next_tab_label,
+            checkout_path,
+            label,
             host,
         };
-        let Some(context) = self.live.as_ref().cloned() else {
-            return self.ingest_task_operation_result(
-                id,
-                Err("start an agent: a live Herdr connection is required".into()),
-            );
+        let target = if local {
+            self.live
+                .as_ref()
+                .map(live::TabTarget::local)
+                .ok_or("start an agent: a live Herdr connection is required")
+        } else {
+            self.remote_controls
+                .get(&device)
+                .map(live::TabTarget::device)
+                .ok_or("start an agent: the device's Herdr connection is unavailable")
         };
-        if let Err(message) = live::spawn_checkout_tab_create(context, request) {
+        let target = match target {
+            Ok(target) => target,
+            Err(message) => return self.ingest_task_operation_result(id, Err(message.into())),
+        };
+        if let Err(message) = live::spawn_checkout_tab_create(target, request) {
             return self.ingest_task_operation_result(id, Err(message));
         }
         true
+    }
+
+    /// The project path, next tab label and tab host of a local checkout, or
+    /// the refusal a start reports for a path the navigator does not list.
+    fn local_checkout_tab(
+        &self,
+        checkout_path: &str,
+    ) -> Result<(String, String, TabHost), (&'static str, String)> {
+        let unknown = || {
+            (
+                "overview.unknown_checkout",
+                format!("Checkout is not listed: {checkout_path}"),
+            )
+        };
+        let (workspace_id, checkout_id) =
+            self.local_checkout_ids(checkout_path).ok_or_else(unknown)?;
+        let workspace = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .ok_or_else(unknown)?;
+        let checkout = workspace
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.id == checkout_id)
+            .ok_or_else(unknown)?;
+        let host = self
+            .local_tab_host(&workspace_id, &checkout_id)
+            .ok_or_else(unknown)?;
+        Ok((
+            workspace.path.clone(),
+            checkout.next_tab_label.clone(),
+            host,
+        ))
+    }
+
+    /// The same for a checkout on `device`, from that device's session: the
+    /// tab goes to the checkout's owner there, opened first when none is
+    /// (PRD home-device-rail D-22, checkout-workspace-binding D-07).
+    fn device_checkout_tab(
+        &self,
+        device: &str,
+        checkout_path: &str,
+    ) -> Result<(String, String, TabHost), (&'static str, String)> {
+        let session = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|remote| remote.target_id == device)
+            .and_then(|remote| remote.session.as_ref())
+            .ok_or_else(|| {
+                (
+                    "agent_start.device_unavailable",
+                    format!("{device} is not connected"),
+                )
+            })?;
+        let (project, checkout) = session
+            .workspaces
+            .iter()
+            .find_map(|project| {
+                project
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.path == checkout_path)
+                    .map(|checkout| (project, checkout))
+            })
+            .ok_or_else(|| {
+                (
+                    "overview.unknown_checkout",
+                    format!("Checkout is not listed on {device}: {checkout_path}"),
+                )
+            })?;
+        if checkout.owner_workspace_id.is_none() && checkout.unconfirmed {
+            return Err((
+                "remote.control.checkout_unconfirmed",
+                format!("{checkout_path} on {device} is not confirmed yet; no tab was opened"),
+            ));
+        }
+        Ok((
+            project.path.clone(),
+            checkout.next_tab_label.clone(),
+            tab_host(project, checkout, device),
+        ))
     }
 
     /// The workspace and checkout ids a local checkout path names, or `None`

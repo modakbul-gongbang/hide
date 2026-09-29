@@ -7,13 +7,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
 import { Note, Status } from "./components/settings-rows";
-import { AgentChoiceField, DEFAULT_SETTINGS, Field, submitOnCommandEnter, TextArea, type AgentChoice } from "./IssueDialogs";
+import { AgentField, Field, submitOnCommandEnter, TextArea } from "./IssueDialogs";
 import { delegatePrompt } from "./prDelegate";
 import type { PrFeedback, PrLink, PullRequest, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
@@ -217,10 +218,10 @@ export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions:
  * blocks the start. Started, the screen goes to the agent's pane.
  */
 export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions: Actions; workspace: Workspace; pr: PullRequest; onClose: () => void }) {
-  const settings = useShellStore((s) => s.rest?.ui_state?.issue_settings) ?? DEFAULT_SETTINGS;
   const branch = pr.head_branch ?? "";
   const checkout = workspace.checkouts.find((row) => row.exists && row.branch === branch) ?? null;
-  const [agent, setAgent] = useState<AgentChoice>(settings.default_agent === "codex" ? "codex" : "claude");
+  // A pull request is handed to an agent, never a bare terminal: the remembered kind, else Claude.
+  const [agent, setAgent] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const [prompt, setPrompt] = useState("");
   const promptEdited = useRef(false);
   const [readId, setReadId] = useState(() => requestId("pr-feedback", pr.number));
@@ -249,9 +250,9 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
     onClose();
   }, [started, onClose]);
   const submit = () => {
-    if (working || !branch || agent === "terminal") return;
+    if (working || !branch || agent.kind === "terminal") return;
     setRequest({ afterId: actions.taskIdNow(), at: Date.now(), newWorktree: checkout === null });
-    actions.delegatePullRequest(workspace.id, pr.number, agent, prompt);
+    actions.delegatePullRequest(workspace.id, pr.number, agent.kind, modelToSend(agent), prompt);
   };
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
@@ -270,7 +271,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
                 이 브랜치의 워크트리를 만들고 시작합니다
               </Note>
             ) : null}
-            <AgentChoiceField agent={agent} disabled={working} onChange={setAgent} agents={["claude", "codex"]} />
+            <AgentField agent={agent} actions={actions} disabled={working} onChange={setAgent} />
             <Field label="첫 지시" aside={<span className="text-muted-foreground">{read?.phase === "reading" || !read ? "실패한 검사 · 리뷰 코멘트 읽는 중…" : "실패한 검사 · 리뷰 코멘트에서 채움 · 고칠 수 있음"}</span>}>
               <TextArea
                 value={prompt}

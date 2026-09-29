@@ -182,6 +182,9 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     throw error;
   }
   const fixturePath = `${path.join(root, "bin")}:/usr/bin:/bin`;
+  // Workspaces created later inherit the server's PATH, not hided's PATH.
+  // Keep every pane on the same fake agent binary, including new workspaces.
+  env.PATH = fixturePath;
 
   const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
   const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });

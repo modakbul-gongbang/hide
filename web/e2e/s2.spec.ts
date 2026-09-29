@@ -104,7 +104,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
 
     // ⌥T is one create_tab; the new tab is active with the core's next label.
-    const nextLabel = (await page.getByRole("button", { name: /^New tab / }).getAttribute("aria-label"))!.replace("New tab ", "");
+    const nextLabel = (await page.locator("[data-new-agent-tab]").first().getAttribute("aria-label"))!.replace("New tab ", "");
     await page.keyboard.press("Alt+KeyT");
     await expect(page.locator("[role=tab]")).toHaveCount(4);
     // The label is Herdr's: the strip shows an automatic label only until
@@ -344,8 +344,9 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     // project (desktop app only) no longer is, so seven rows are moved;
     // Toggle Explorer (issue 170) is the 28th row, and the two numbered
     // families (Select tab 1-9, Select agent 1-9) fold into one row each,
-    // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3).
-    await expect(page.locator("[data-shortcut]")).toHaveCount(30);
+    // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
+    // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st.
+    await expect(page.locator("[data-shortcut]")).toHaveCount(31);
     await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(7);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");

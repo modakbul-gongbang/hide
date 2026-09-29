@@ -489,7 +489,8 @@ fn a_refused_issue_create_settles_its_slot_with_the_reason() {
     assert!(create.message.unwrap().contains("No worker"));
 }
 
-/// Issue settings change only the fields sent, and refuse an unknown agent.
+/// Issue settings change only the fields sent; the agent a start picks is
+/// no longer one of them (PRD home-device-rail D-18), so naming it is refused.
 #[test]
 fn issue_settings_change_only_what_was_sent() {
     let mut runtime = issue_runtime();
@@ -499,7 +500,6 @@ fn issue_settings_change_only_what_was_sent() {
     )));
     let settings = runtime.snapshot().ui_state.issue_settings.clone();
     assert!(!settings.ai_worktree_name);
-    assert_eq!(settings.default_agent, "claude");
     assert!(settings.closes_instruction);
     // With AI naming off a suggestion is not even asked for.
     assert!(!runtime.dispatch_json(&event(
@@ -509,12 +509,18 @@ fn issue_settings_change_only_what_was_sent() {
     assert!(runtime.snapshot().issue_work.name.is_none());
     assert!(runtime.dispatch_json(&event(
         "issue_settings_set",
-        serde_json::json!({"default_agent": "gemini"}),
+        serde_json::json!({"default_agent": "codex"}),
     )));
     assert_eq!(
-        runtime.snapshot().ui_state.issue_settings.default_agent,
-        "claude"
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|e| e.kind.as_str()),
+        Some("event.invalid_payload")
     );
+    assert_eq!(runtime.snapshot().ui_state.agent_start.kind, None);
 }
 
 /// A task's first prompt waits for its agent and is handed out with the
@@ -531,7 +537,11 @@ fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
             Some("claude".into()),
         )
         .unwrap();
-    runtime.set_task_agent_prompt(id, Some("  Issue #192를 해결해줘  ".into()));
+    runtime.set_task_agent_launch(
+        id,
+        Some("  Issue #192를 해결해줘  ".into()),
+        vec!["--model".into(), "opus".into()],
+    );
     assert!(runtime.ingest_task_operation_result(
         id,
         Ok(live::WorktreeTaskOutcome {
@@ -543,25 +553,23 @@ fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
         }),
     ));
     let pending = runtime.pending_task_agent_start(id).unwrap();
-    assert_eq!(pending.2.as_deref(), Some("Issue #192를 해결해줘"));
+    assert_eq!(pending.prompt.as_deref(), Some("Issue #192를 해결해줘"));
+    assert_eq!(pending.args, ["--model", "opus"]);
     assert!(
         runtime.ingest_task_agent_result(id, live::TaskAgentOutcome::Failed("no claude".into()))
     );
-    assert!(runtime.task_agent_prompt.is_some(), "kept for Retry");
+    assert!(runtime.task_agent_launch.is_some(), "kept for Retry");
     runtime
         .snapshot
         .task_operation
         .as_mut()
         .unwrap()
         .agent_phase = Some("starting".into());
-    assert!(runtime.ingest_task_agent_result(
-        id,
-        live::TaskAgentOutcome::StartedWithoutPrompt("agent_blocked".into())
-    ));
-    assert!(runtime.task_agent_prompt.is_none());
+    assert!(runtime.ingest_task_agent_result(id, live::TaskAgentOutcome::Started));
+    assert!(runtime.task_agent_launch.is_none());
     let operation = runtime.snapshot().task_operation.clone().unwrap();
     assert_eq!(operation.agent_phase.as_deref(), Some("started"));
-    assert_eq!(operation.agent_message.as_deref(), Some("agent_blocked"));
+    assert_eq!(operation.agent_message, None);
 }
 
 /// A runtime whose project reads Local issues and holds one, `L-1`.

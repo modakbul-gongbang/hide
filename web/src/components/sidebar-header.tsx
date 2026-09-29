@@ -1,73 +1,84 @@
-import { HouseIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { PlusIcon, SearchIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { cn } from "../lib/utils";
 import { SIDEBAR_MODES, type SidebarMode } from "../ui";
-import { FoldLane } from "./sidebar-agent-row";
 import { Button } from "./ui/button";
 import { Hint } from "./ui/tooltip";
 
 const MODE_LABEL: Record<SidebarMode, string> = { projects: "Projects", agents: "Agents" };
 
 /**
- * The top of the sidebar (PRD sidebar-shell D-02..D-07): the global
- * destinations, today one Overview row, fixed above the lists, then the
- * Projects | Agents tab strip with Search and, on Projects only, New
- * workspace at its right end. Drawn from what the caller reads out of the
- * stores, so a test renders it without them.
+ * The top of the sidebar (PRD home-device-rail D-13, D-14). With the device
+ * rail showing it is one line, the name of what is in front (`This Mac`,
+ * `mini Remote`, `Inbox 모든 기기`) with Add project and Search at its right
+ * end, and the rail's own selection decides the lists below. With no remote
+ * device there is no rail and no name: the Home row is the fixed destination
+ * above the Projects | Agents tab strip, which keeps Search and, on Projects
+ * only, Add project at its right end. Drawn from what the caller reads out of
+ * the stores, so a test renders it without them.
  */
 export function SidebarHeader({
+  rail,
+  title,
+  addProject,
   mode,
-  overviewSelected,
-  projectCount,
+  home,
   switchChord,
   searchChord,
   newWorkspaceChord,
-  onOverview,
   onMode,
   onSearch,
   onNewWorkspace,
 }: {
+  /** The device rail is showing: the line names what is in front and the tabs are gone. */
+  rail: boolean;
+  /** What is in front, and the smaller word after it; used with the rail. */
+  title: { name: string; note: string | null };
+  /** Add project is offered on this line (with the rail, not while the Inbox is in front). */
+  addProject: boolean;
   mode: SidebarMode;
-  /** The Overview screen is in front. */
-  overviewSelected: boolean;
-  /** Every project on every device, or null before the first snapshot. */
-  projectCount: number | null;
+  /** The Home row, fixed above the tab strip when there is no rail. */
+  home: ReactNode;
   /** The bound `toggle_sidebar_view` chord; it has none until the operator binds one. */
   switchChord: string | null;
   searchChord: string | null;
   newWorkspaceChord: string | null;
-  onOverview: () => void;
   onMode: (mode: SidebarMode) => void;
   onSearch: () => void;
   /** Add project; null where the host cannot pick a folder (a browser tab). */
   onNewWorkspace: (() => void) | null;
 }) {
+  const add = onNewWorkspace ? (
+    <Hint label="Add project" shortcut={newWorkspaceChord}>
+      <Button variant="ghost" size="icon-sm" data-sidebar-new-workspace="true" onClick={onNewWorkspace}>
+        <PlusIcon />
+      </Button>
+    </Hint>
+  ) : null;
+  const search = (
+    <Hint label="Search" shortcut={searchChord}>
+      <Button variant="ghost" size="icon-sm" data-sidebar-search="true" onClick={onSearch}>
+        <SearchIcon />
+      </Button>
+    </Hint>
+  );
+  if (rail) {
+    return (
+      <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-xs pl-md" data-sidebar-title="true">
+        <span className="flex min-w-0 flex-1 items-baseline gap-sm">
+          <span className="min-w-0 truncate text-subhead font-semibold text-foreground" data-sidebar-title-name="true">
+            {title.name}
+          </span>
+          {title.note ? <span className="shrink-0 text-caption text-muted-foreground">{title.note}</span> : null}
+        </span>
+        {addProject ? add : null}
+        {search}
+      </div>
+    );
+  }
   return (
     <>
       <ul className="shrink-0 border-b border-border p-xs" aria-label="Destinations" data-sidebar-destinations="true">
-        <li>
-          <button
-            type="button"
-            data-overview-destination="true"
-            aria-current={overviewSelected ? "page" : undefined}
-            className={cn(
-              "flex min-h-(--size-project-row) w-full items-center gap-sm rounded-sm pr-xs pl-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-              overviewSelected ? "bg-secondary" : "hover:bg-accent",
-            )}
-            onClick={onOverview}
-          >
-            <HouseIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-            <span className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">Overview</span>
-            <span className="flex shrink-0 items-center gap-xs">
-              {projectCount === null ? null : (
-                <span className="text-body text-muted-foreground" data-overview-count="true">
-                  {projectCount} {projectCount === 1 ? "project" : "projects"}
-                </span>
-              )}
-              <FoldLane />
-            </span>
-          </button>
-        </li>
+        {home}
       </ul>
       <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-xs pl-md text-caption" data-sidebar-strip="true">
         {SIDEBAR_MODES.map((candidate) => (
@@ -84,18 +95,8 @@ export function SidebarHeader({
           </ModeHint>
         ))}
         <span className="flex-1" />
-        {mode === "projects" && onNewWorkspace ? (
-          <Hint label="Add project" shortcut={newWorkspaceChord}>
-            <Button variant="ghost" size="icon-sm" data-sidebar-new-workspace="true" onClick={onNewWorkspace}>
-              <PlusIcon />
-            </Button>
-          </Hint>
-        ) : null}
-        <Hint label="Search" shortcut={searchChord}>
-          <Button variant="ghost" size="icon-sm" data-sidebar-search="true" onClick={onSearch}>
-            <SearchIcon />
-          </Button>
-        </Hint>
+        {mode === "projects" ? add : null}
+        {search}
       </div>
     </>
   );

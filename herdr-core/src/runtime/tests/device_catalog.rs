@@ -436,6 +436,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
             path: t.other.clone(),
             device_id: "local".to_owned(),
             pinned: false,
+            home: false,
         });
     runtime.ingest_remote_session(
         TARGET,
@@ -849,6 +850,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         path: format!("/repo/{id}"),
         device_id: device.to_owned(),
         pinned: true,
+        home: false,
     };
     runtime.snapshot.ui_state.workspace_registrations = vec![
         registration("workspace:here", "local"),
@@ -1662,6 +1664,7 @@ fn folds_saved_under_old_device_checkout_ids_carry_over() {
             path: t.other.clone(),
             device_id: TARGET.to_owned(),
             pinned: false,
+            home: false,
         });
     let split_hash = format!(
         "{:016x}",

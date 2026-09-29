@@ -525,6 +525,7 @@ impl SessionReplica {
                         ..CheckoutSnapshot::default()
                     }],
                     pinned: false,
+                    is_home: false,
                     inactive_checkouts: Default::default(),
                     removal: Default::default(),
                     disk: Default::default(),

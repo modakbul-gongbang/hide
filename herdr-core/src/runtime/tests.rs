@@ -24,6 +24,8 @@ mod documents;
 mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
 mod editor_reopen;
+#[path = "tests/home.rs"]
+mod home;
 #[path = "tests/issues.rs"]
 mod issues;
 #[path = "tests/lineage.rs"]
@@ -563,6 +565,7 @@ fn workspace(
         last_activity_unix_ms: None,
         checkouts,
         pinned: false,
+        is_home: false,
         inactive_checkouts: Default::default(),
         removal: Default::default(),
         disk: Default::default(),
@@ -697,6 +700,7 @@ fn tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
         pinned: false,
+        home: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id = workspace::checkout_id_for_path("workspace:order", Path::new(checkout_path));
@@ -1080,6 +1084,7 @@ fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
             path: path.to_string_lossy().into_owned(),
             device_id: "local".to_owned(),
             pinned: false,
+            home: false,
         })
         .collect();
     runtime.rebuild_catalog();
@@ -1138,6 +1143,7 @@ fn focus_local_checkout(runtime: &mut Runtime, root: &Path) {
         path: root.to_string_lossy().into_owned(),
         device_id: "local".to_owned(),
         pinned: false,
+        home: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id = workspace::checkout_id_for_path("workspace:0", root);

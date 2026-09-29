@@ -2,12 +2,13 @@
 // B30, B38): pairing, the refused and unpaired guidance, and the list; the
 // detail is `Detail.tsx`. Every value comes from the store the socket writes.
 
-import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, XIcon } from "lucide-react";
+import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
-import { closeDetail, openDetail, pairNow } from "./connection";
+import { closeDetail, openDetail, openStartSheet, pairNow } from "./connection";
 import { Detail } from "./Detail";
 import { AgentHead, Place } from "./parts";
+import { StartSheet } from "./StartSheet";
 import {
   GROUP_ORDER,
   GROUP_TITLE,
@@ -101,12 +102,23 @@ function ListScreen() {
       <header className="phone-safe-top px-lg">
         <div className="flex items-center justify-between pt-lg">
           <h1 className="text-display font-semibold text-foreground">hide</h1>
-          <span
-            role="img"
-            aria-label={connected ? "연결됨" : "연결 안 됨"}
-            data-phone-connected={connected ? "true" : "false"}
-            className={`size-(--size-status-mark) rounded-full ${connected ? "bg-success" : "bg-muted-foreground"}`}
-          />
+          <div className="flex items-center gap-md">
+            <span
+              role="img"
+              aria-label={connected ? "연결됨" : "연결 안 됨"}
+              data-phone-connected={connected ? "true" : "false"}
+              className={`size-(--size-status-mark) rounded-full ${connected ? "bg-success" : "bg-muted-foreground"}`}
+            />
+            <button
+              type="button"
+              aria-label="에이전트 시작"
+              data-phone-start="true"
+              className="-mr-sm flex size-(--size-touch-target) items-center justify-center rounded-lg text-foreground active:bg-accent"
+              onClick={openStartSheet}
+            >
+              <PlusIcon aria-hidden="true" className="size-(--size-icon-lg)" />
+            </button>
+          </div>
         </div>
         {macName ? (
           <p className="mt-xs flex items-center gap-xs text-subhead text-muted-foreground" data-phone-header={headerLine(macName, otherPhones)}>
@@ -149,6 +161,7 @@ function ListScreen() {
           );
         })}
       </div>
+      <StartSheet />
     </main>
   );
 }

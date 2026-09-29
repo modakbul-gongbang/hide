@@ -117,7 +117,8 @@ function validHost(host: string): boolean {
  * added), else the home folder.
  */
 export function defaultProjectParent(registrations: readonly WorkspaceRegistration[]): string {
-  const last = registrations.filter((row) => row.device_id === "local").at(-1);
+  // The Home (`~/hide`) is no project, so it is not where the next one is expected to live.
+  const last = registrations.filter((row) => row.device_id === "local" && !row.home).at(-1);
   if (!last) return "~";
   const path = trimFolder(last.path);
   const cut = path.lastIndexOf("/");

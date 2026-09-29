@@ -11,13 +11,15 @@ import {
   parseFragment,
   refusalOf,
   replyProblem,
+  sameKey,
   type AgentKey,
   type DetailView,
   type PhoneMessage,
   type QuickKey,
   type ServerFrame,
 } from "./protocol";
-import { applyFrame, patch, usePhone } from "./store";
+import { mayHaveStarted, selectionOf, startFailure, startProblem } from "./start";
+import { CLOSED_SHEET, applyFrame, patch, usePhone, type StartSheet } from "./store";
 import { forgetPush, syncPush } from "./push";
 
 const CREDENTIAL_KEY = "hide.phone.credential";
@@ -113,14 +115,22 @@ function connect(): void {
       attempt = 0;
       applyFrame(frame);
       reopenDetail();
+      reopenStartSheet();
       return;
     }
     if (frame.type === "input_result") {
       onInputResult(frame.ok, frame.reason);
       return;
     }
+    if (frame.type === "start_result") {
+      onStartResult(frame);
+      return;
+    }
     applyFrame(frame);
-    if (frame.type === "agents") openPending();
+    if (frame.type === "agents") {
+      openPending();
+      openStarted();
+    }
     // hided sends the push mode right after hello; the subscription follows it.
     if (frame.type === "meta") void syncPush();
   };
@@ -128,6 +138,7 @@ function connect(): void {
     if (socket === ws) socket = null;
     const state = usePhone.getState();
     if (state.pendingInput) patch({ pendingInput: null, inputError: inputFailure("offline") });
+    if (state.startSheet.pending) patch({ startSheet: { ...state.startSheet, pending: null, error: startFailure("offline") } });
     patch({ connected: false, unreachable: !refused || state.refusal === "mobile_off" });
     if (!refused || state.refusal === "mobile_off") scheduleRetry();
   };
@@ -262,6 +273,90 @@ function onInputResult(ok: boolean, reason: string | null): void {
   }
 }
 
+/** How long a started agent may take to appear in the list before its detail opens anyway. */
+const STARTED_WAIT_MS = 15000;
+
+/** A started agent's detail opens once the list has it, so it never opens as "gone". */
+function openStarted(): void {
+  const { startedAgent, groups } = usePhone.getState();
+  if (!startedAgent || !groups?.some((group) => group.agents.some((agent) => sameKey(agent, startedAgent)))) return;
+  patch({ startedAgent: null });
+  openDetail(startedAgent);
+}
+
+function reopenStartSheet(): void {
+  if (usePhone.getState().startSheet.open) send({ type: "start_sheet", open: true });
+}
+
+/** Opens the sheet; hided reads the model catalog while it is open and sends what it lists. */
+export function openStartSheet(): void {
+  const state = usePhone.getState();
+  patch({ startSheet: { ...state.startSheet, open: true, error: null } });
+  send({ type: "start_sheet", open: true });
+}
+
+/** Closes the sheet and keeps its text. */
+export function closeStartSheet(): void {
+  const state = usePhone.getState();
+  patch({ startSheet: { ...state.startSheet, open: false, error: null } });
+  send({ type: "start_sheet", open: false });
+}
+
+export function editStartSheet(next: Partial<Pick<StartSheet, "text" | "choice">>): void {
+  const state = usePhone.getState();
+  patch({ startSheet: { ...state.startSheet, ...next, error: null } });
+}
+
+/** A start whose outcome is unknown keeps its request id, so a resend of the same start lands once (B43). */
+let lastStart: { key: string; requestId: string } | null = null;
+
+/** Sends the sheet's start; the sheet keeps its text until hided says an agent started (B43, B44). */
+export function submitStart(): boolean {
+  const state = usePhone.getState();
+  const sheet = state.startSheet;
+  if (sheet.pending) return false;
+  const problem = startProblem(sheet.text);
+  const selection = selectionOf(state.startCatalog, sheet.choice);
+  if (problem || !selection.target) {
+    patch({ startSheet: { ...sheet, error: startFailure(problem ?? "unknown_target") } });
+    return false;
+  }
+  const key = JSON.stringify([sheet.text, selection.target.id, selection.kind, selection.model]);
+  const requestId = lastStart?.key === key ? lastStart.requestId : newRequestId();
+  lastStart = { key, requestId };
+  const sent = send({
+    type: "start_agent",
+    request_id: requestId,
+    text: sheet.text,
+    target: selection.target.id,
+    kind: selection.kind,
+    ...(selection.model ? { model: selection.model } : {}),
+  });
+  patch({ startSheet: { ...sheet, pending: sent ? requestId : null, error: sent ? null : startFailure("offline") } });
+  return sent;
+}
+
+function onStartResult(frame: Extract<ServerFrame, { type: "start_result" }>): void {
+  const sheet = usePhone.getState().startSheet;
+  // Only the answer to the start this sheet is waiting on.
+  if (!sheet.pending || frame.request_id !== sheet.pending) return;
+  if (!frame.ok || !frame.device_id || !frame.pane_id) {
+    if (!mayHaveStarted(frame.reason)) lastStart = null;
+    patch({ startSheet: { ...sheet, pending: null, error: startFailure(frame.reason) } });
+    return;
+  }
+  lastStart = null;
+  const key: AgentKey = { device_id: frame.device_id, pane_id: frame.pane_id };
+  patch({ startSheet: CLOSED_SHEET, startedAgent: key });
+  send({ type: "start_sheet", open: false });
+  openStarted();
+  window.setTimeout(() => {
+    if (!sameKey(usePhone.getState().startedAgent, key)) return;
+    patch({ startedAgent: null });
+    openDetail(key);
+  }, STARTED_WAIT_MS);
+}
+
 /** The user tapped 연결 on the pairing screen (B11). */
 export function pairNow(): void {
   const pair = usePhone.getState().pair;
@@ -275,6 +370,9 @@ export function pairNow(): void {
 export function start(): void {
   const fragment = parseFragment(window.location.hash);
   window.addEventListener("online", retryNow);
+  // A socket outlives a lost network until a ping goes unanswered; the phone
+  // knows sooner, so the list and an open start sheet say so at once (B44).
+  window.addEventListener("offline", () => socket?.close());
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") retryNow();
   });

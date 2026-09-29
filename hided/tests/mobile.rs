@@ -476,6 +476,10 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    // The serve command writes its config before Mobile admits the new Origin.
+    // The exposed frame confirms the daemon's admission state.
+    let mut shell = renderer(&running).await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
     // The phone's credential outlives the restart and the port change (B8).
     let (_socket, hello) = phone(second_port, &credential).await;
     assert_eq!(hello["type"], "hello");
@@ -827,5 +831,195 @@ async fn the_tailnet_reaches_only_the_phone_app_and_transport_trouble_stays_visi
     std::fs::remove_file(fake.state.join("fail-remove")).unwrap();
     event(&mut shell, "mobile_enable", json!({"enabled": false})).await;
     fake.wait_until_removed().await;
+    running.stop();
+}
+
+/// Turns Mobile on and pairs one phone; returns its socket after `hello`,
+/// its id and its credential.
+async fn paired_phone(
+    running: &hided::RunningDaemon,
+    shell: &mut Socket,
+) -> (Socket, String, String) {
+    event(shell, "mobile_enable", json!({"enabled": true})).await;
+    mobile_frame(shell, |frame| frame["exposure"] == "exposed").await;
+    event(shell, "mobile_new_code", json!({})).await;
+    let frame = mobile_frame(shell, |frame| frame["qr"].is_string()).await;
+    let (_pairing, answer) = pair(
+        running.port,
+        &format!("https://{DNS}"),
+        &pair_code(frame["qr"].as_str().unwrap()),
+    )
+    .await;
+    assert_eq!(answer["type"], "paired", "{answer}");
+    let phone_id = answer["phone_id"].as_str().unwrap().to_owned();
+    let credential = answer["credential"].as_str().unwrap().to_owned();
+    let (socket, hello) = phone(running.port, &credential).await;
+    assert_eq!(hello["type"], "hello");
+    (socket, phone_id, credential)
+}
+
+async fn send_phone(socket: &mut Socket, message: Value) {
+    socket
+        .send(Message::Text(message.to_string().into()))
+        .await
+        .unwrap();
+}
+
+/// Opens the start sheet and returns the catalog hided sends for it.
+async fn open_sheet(socket: &mut Socket) -> Value {
+    send_phone(socket, json!({"type": "start_sheet", "open": true})).await;
+    loop {
+        let frame = next_frame(socket).await.expect("a start catalog");
+        if frame["type"] == "start_catalog"
+            && frame["targets"].as_array().is_some_and(|t| !t.is_empty())
+        {
+            return frame;
+        }
+    }
+}
+
+async fn start_result(socket: &mut Socket, request_id: &str) -> Value {
+    loop {
+        let frame = next_frame(socket).await.expect("a start result");
+        if frame["type"] == "start_result" && frame["request_id"] == request_id {
+            return frame;
+        }
+    }
+}
+
+/// Every distinct answer the core's snapshot carries for `request_id` within `window`:
+/// its task slot and its last error, as the desktop shell would read them.
+async fn core_answers(shell: &mut Socket, request_id: &str, window: Duration) -> Vec<Value> {
+    let deadline = tokio::time::Instant::now() + window;
+    let mut seen: Vec<Value> = Vec::new();
+    while let Ok(Some(frame)) = tokio::time::timeout_at(deadline, next_frame(shell)).await {
+        for pointer in [
+            "/payload/rest/status/last_error",
+            "/payload/rest/task_operation",
+        ] {
+            if let Some(value) = frame.pointer(pointer)
+                && value["request_id"] == request_id
+                && !seen.contains(value)
+            {
+                seen.push(value.clone());
+            }
+        }
+    }
+    seen
+}
+
+#[tokio::test]
+async fn a_start_from_an_unadmitted_phone_is_refused_and_nothing_reaches_the_core() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut shell = renderer(&running).await;
+    let (mut socket, phone_id, credential) = paired_phone(&running, &mut shell).await;
+    let catalog = open_sheet(&mut socket).await;
+    assert_eq!(catalog["targets"][0]["id"], "home:local");
+    let start = |request_id: &str| json!({"type": "start_agent", "request_id": request_id, "text": "테스트 고쳐줘", "target": "home:local", "kind": "claude"});
+    // A connection with no credential never reaches the vocabulary (B45).
+    let (mut stranger, refused) = phone(running.port, &"0".repeat(64)).await;
+    assert_eq!(refused["type"], "refused");
+    let _ = stranger
+        .send(Message::Text(start("stranger-1").to_string().into()))
+        .await;
+    // A phone revoked after it connected is refused before anything is dispatched.
+    event(&mut shell, "mobile_revoke", json!({"phone_id": phone_id})).await;
+    mobile_frame(&mut shell, |frame| {
+        frame["phones"].as_array().is_some_and(Vec::is_empty)
+    })
+    .await;
+    let answer = running
+        .mobile
+        .start_agent(&phone_id, &start("revoked-1"))
+        .await;
+    assert_eq!(answer["ok"], false);
+    assert_eq!(answer["reason"], "revoked");
+    let (_again, answer) = phone(running.port, &credential).await;
+    assert_eq!(answer, json!({"type": "refused", "reason": "revoked"}));
+    for request_id in ["stranger-1", "revoked-1"] {
+        let answers = core_answers(&mut shell, request_id, Duration::from_millis(800)).await;
+        assert!(answers.is_empty(), "the core saw {request_id}: {answers:?}");
+    }
+    running.stop();
+}
+
+#[tokio::test]
+async fn a_repeated_start_request_id_starts_once_and_returns_the_first_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut shell = renderer(&running).await;
+    let (mut socket, _phone_id, _credential) = paired_phone(&running, &mut shell).await;
+    open_sheet(&mut socket).await;
+    let start = json!({"type": "start_agent", "request_id": "retry-1", "text": "테스트 고쳐줘", "target": "home:local", "kind": "claude"});
+    send_phone(&mut socket, start.clone()).await;
+    let first = start_result(&mut socket, "retry-1").await;
+    assert_ne!(first["reason"], "unknown_target", "{first}");
+    // The core answered the request id once; a network retry of the same id
+    // changes nothing and gets the same answer.
+    let before = core_answers(&mut shell, "retry-1", Duration::from_millis(500)).await;
+    assert!(!before.is_empty(), "the core never saw the start");
+    send_phone(&mut socket, start).await;
+    let second = start_result(&mut socket, "retry-1").await;
+    assert_eq!(second, first);
+    let after = core_answers(&mut shell, "retry-1", Duration::from_millis(800)).await;
+    assert!(
+        after.iter().all(|value| before.contains(value)),
+        "a second start reached the core: {after:?}"
+    );
+    running.stop();
+}
+
+#[tokio::test]
+async fn a_start_the_sheet_never_offered_is_refused_by_the_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut shell = renderer(&running).await;
+    let (mut socket, _phone_id, _credential) = paired_phone(&running, &mut shell).await;
+    open_sheet(&mut socket).await;
+    for (request_id, target, kind, reason) in [
+        ("bad-target", "/etc", "claude", "unknown_target"),
+        ("bad-kind", "home:local", "terminal", "unknown_kind"),
+    ] {
+        send_phone(
+            &mut socket,
+            json!({"type": "start_agent", "request_id": request_id, "text": "x", "target": target, "kind": kind}),
+        )
+        .await;
+        let answer = start_result(&mut socket, request_id).await;
+        assert_eq!(
+            (answer["ok"].clone(), answer["reason"].clone()),
+            (json!(false), json!(reason))
+        );
+        assert!(
+            core_answers(&mut shell, request_id, Duration::from_millis(300))
+                .await
+                .is_empty()
+        );
+    }
+    send_phone(
+        &mut socket,
+        json!({"type": "start_agent", "request_id": "not a valid id", "text": "x", "target": "home:local", "kind": "claude"}),
+    )
+    .await;
+    loop {
+        let frame = next_frame(&mut socket).await.expect("an answer");
+        if frame["type"] == "start_result" {
+            assert_eq!(frame["reason"], "invalid_request");
+            break;
+        }
+    }
     running.stop();
 }

@@ -21,61 +21,44 @@ import type { Actions } from "./actions";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { hostBridge, hostKind } from "./host";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
-import { availableEntries, currentEntry, expectSurface, observeEntries, observeProject, panelItem, placeLabel, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
-import { contextWorkspaces, remoteContext, remoteView } from "./remote";
+import { availableEntries, currentEntry, expectSurface, observeEntries, observeProject, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
+import { projectsOf, remoteContext, remoteView } from "./remote";
 import { hostRegistry, isNumberedCommand, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
-import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest } from "./snapshot";
+import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 import { workspaceViewOf } from "./workspace";
 import { drawnViews, installKeyboardOwner, keyboardOwner, noteCommandDelivered } from "./viewFocus";
 
 /**
- * Recent Panels: every surface this machine holds and every screen of the
- * page's own the operator has been on, most recent first, so index 0 is the
- * one in use and one chord lands on the one before it.
+ * Recent Panels: every surface the shell holds on every connected device and
+ * every screen of the page's own the operator has been on, most recent first,
+ * so index 0 is the one in use and one chord lands on the one before it
+ * (PRD home-device-rail D-16). A row on a device other than the one in front
+ * carries that device's chip.
  */
 export function panelCycle(rest: SnapshotRest | null): Cycle | null {
-  if (remoteContext(rest)) return deviceTabCycle(rest);
   const items = recentEntries()
     .map((entry) => panelItem(rest, entry))
     .filter((item): item is CycleItem => item !== null);
   return items.length > 1 ? { kind: "panels", items, index: 0 } : null;
 }
 
-/**
- * While a device is in front, its visible checkout's Herdr tabs, the one it
- * shows first: the web shell cannot bring a device's surface forward from
- * anywhere else yet, so Recent Panels there stays within that checkout.
- */
-function deviceTabCycle(rest: SnapshotRest | null): Cycle | null {
-  const view = remoteView(remoteContext(rest)?.session ?? null);
-  const checkout = view?.checkout;
-  if (!checkout) return null;
-  const workspace = contextWorkspaces(rest).find((row) => row.id === checkout.workspace_id);
-  const tabs = checkout.tabs.filter((tab) => tab.id);
-  const shown = view.tab?.id ?? checkout.active_tab_id;
-  const ordered = [...tabs.filter((tab) => tab.id === shown), ...tabs.filter((tab) => tab.id !== shown)];
-  const detail = `${workspace ? placeLabel(workspace, checkout) : checkout.label} · Terminal`;
-  const items: CycleItem[] = ordered.map((tab) => ({
-    key: tab.id!,
-    title: tab.label ?? tab.id!,
-    detail,
-    kind: "herdr",
-    agent: null,
-    target: { kind: "device_tab", tabId: tab.id! },
-  }));
-  return items.length > 1 ? { kind: "panels", items, index: 0 } : null;
+/** The projects of every connected device, this machine's first, none of them a device's Home. */
+function allProjects(rest: SnapshotRest | null): Workspace[] {
+  return [
+    ...projectsOf(rest?.navigator?.workspaces ?? []),
+    ...(rest?.status?.remote ?? []).filter((status) => status.state === "connected").flatMap((status) => projectsOf(status.session?.workspaces ?? [])),
+  ];
 }
 
-/** Recent Projects on the device in front, each row naming the surface it restores. */
+/** Recent Projects across every connected device, each row naming the surface it restores. */
 export function projectCycle(rest: SnapshotRest | null): Cycle | null {
-  const workspaces = contextWorkspaces(rest);
-  const local = remoteContext(rest) === null;
+  const workspaces = allProjects(rest);
   const order = recentProjectOrder(workspaces.map((workspace) => workspace.id));
   const items = order
     .map((id) => workspaces.find((workspace) => workspace.id === id))
-    .map((workspace) => (workspace ? projectItem(workspace, rest, local) : null))
+    .map((workspace) => (workspace ? projectItem(workspace, rest) : null))
     .filter((item): item is CycleItem => item !== null);
   return items.length > 1 ? { kind: "projects", items, index: 0 } : null;
 }
@@ -83,24 +66,20 @@ export function projectCycle(rest: SnapshotRest | null): Cycle | null {
 /**
  * Brings the recent order up to date with the session, and records what the
  * operator is using now when `moved` says the surface in use may have
- * changed. While another device is in front nothing of this machine's is in
- * use, so only the page's own screen can be a visit.
+ * changed: the Workspace surface or page screen on whichever device is in
+ * front.
  */
 export function observeRecent(rest: SnapshotRest | null, moved: boolean) {
-  const local = remoteContext(rest) === null;
-  observeEntries(rest, moved ? currentEntry(useUiStore.getState().screen, rest, local, keyboardOwner().kind === "view") : null);
-  if (local && moved) observeProject(rest?.navigator?.focused_workspace_id);
+  observeEntries(rest, moved ? currentEntry(useUiStore.getState().screen, rest, keyboardOwner().kind === "view") : null);
+  if (moved) observeProject(remoteContext(rest)?.session?.focused_workspace_id ?? rest?.navigator?.focused_workspace_id);
 }
 
 /** The held cycle once the session changed under it: see `reconcileCycle`. */
 export function reconcileHeldCycle(cycle: Cycle, rest: SnapshotRest | null): Cycle | null {
-  const deviceTabs = remoteView(remoteContext(rest)?.session ?? null)?.checkout?.tabs;
   const alive =
     cycle.kind === "projects"
-      ? new Set(contextWorkspaces(rest).map((workspace) => workspace.id))
-      : remoteContext(rest)
-        ? new Set((deviceTabs ?? []).map((tab) => tab.id ?? ""))
-        : new Set(availableEntries(rest, recentEntries()).map((entry) => entry.key));
+      ? new Set(allProjects(rest).map((workspace) => workspace.id))
+      : new Set(availableEntries(rest, recentEntries()).map((entry) => entry.key));
   const kept = reconcileCycle(cycle.items, cycle.index, (item) => alive.has(item.key));
   return kept && kept.items.length > 1 ? { ...cycle, ...kept } : null;
 }
@@ -146,11 +125,11 @@ export function commitCycle(cycle: Cycle, actions: Actions) {
     case "screen":
       // Expected like any commit, so an earlier commit still on its way cannot keep this from being the visit.
       expectSurface(chosen.key);
+      // The rail and the sidebar follow the device first; the page's screen shows at once.
+      actions.focusDevice(target.deviceId);
       return useUiStore.getState().setScreen(target.screen);
-    case "device_tab":
-      return actions.focusTab(target.tabId);
     case "checkout":
-      return actions.focusCheckout(target.workspaceId, target.checkoutId);
+      return actions.openWorkspace(target.deviceId, target.workspaceId, target.checkoutId);
   }
 }
 
@@ -188,6 +167,8 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.reopenClosed();
       case "new_workspace":
         return actions.openAddProject();
+      case "start_agent":
+        return actions.openStartPanel();
       case "recent_panel":
       case "previous_recent_panel":
       case "recent_project":

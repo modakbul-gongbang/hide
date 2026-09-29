@@ -56,6 +56,39 @@ impl WorktreeTarget {
     }
 }
 
+/// The Herdr a new tab and the agent started in it go to: this machine's or
+/// a device's. A tab needs no file helper, so a device whose helper is not
+/// ready can still take one (PRD home-device-rail D-22).
+#[derive(Clone)]
+pub struct TabTarget {
+    connector: Arc<dyn ApiConnector>,
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+    /// This machine: a provider missing from this PATH is refused before
+    /// Herdr is asked.
+    local: bool,
+}
+
+impl TabTarget {
+    pub(crate) fn local(context: &LiveContext) -> Self {
+        Self {
+            connector: Arc::clone(&context.api_connector),
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+            local: true,
+        }
+    }
+
+    pub(crate) fn device(context: &RemoteControlContext) -> Self {
+        Self {
+            connector: Arc::clone(&context.api_connector),
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+            local: false,
+        }
+    }
+}
+
 pub fn spawn_worktree_close(
     target: WorktreeTarget,
     id: u64,
@@ -818,12 +851,20 @@ pub struct CheckoutTabRequest {
     pub host: crate::checkout_owner::TabHost,
 }
 
+/// What the task's worker starts once the creation is settled: the pane, the
+/// agent kind, its first prompt and its CLI arguments.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingAgentStart {
+    pub pane_id: String,
+    pub kind: String,
+    pub prompt: Option<String>,
+    pub args: Vec<String>,
+}
+
 /// How starting the chosen agent in a task's created pane ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskAgentOutcome {
     Started,
-    /// The agent started, but the first prompt it was given was not sent.
-    StartedWithoutPrompt(String),
     /// Herdr refused, or the agent is not installed; nothing started.
     Failed(String),
     /// Herdr did not answer; the agent may be running. The pane says which.
@@ -851,13 +892,16 @@ fn start_task_agent(
         Ok(guard) => guard.pending_task_agent_start(id),
         Err(_) => return,
     };
-    let Some((pane_id, kind, prompt)) = pending else {
+    let Some(PendingAgentStart {
+        pane_id,
+        kind,
+        prompt,
+        args,
+    }) = pending
+    else {
         return;
     };
-    let mut outcome = launch_agent(connector, local, id, &pane_id, &kind);
-    if let (TaskAgentOutcome::Started, Some(prompt)) = (&outcome, prompt) {
-        outcome = send_first_prompt(connector, id, &pane_id, &prompt);
-    }
+    let outcome = launch_with_prompt(connector, local, id, &pane_id, &kind, args, prompt);
     if let Ok(mut guard) = runtime.lock() {
         guard.ingest_task_agent_result(id, outcome);
     } else {
@@ -866,34 +910,74 @@ fn start_task_agent(
     notifier.notify();
 }
 
-/// Hands a started agent its first prompt (the issue it was started from).
-/// The agent is running either way, so a refusal is reported on the started
-/// agent rather than as a failed start.
-fn send_first_prompt(
+/// Starts the agent with its first prompt (PRD home-device-rail D-26).
+///
+/// The prompt always goes as the CLI's own argument after `--`: Claude Code
+/// and Codex hold it through their startup questions (folder trust, sign-in)
+/// and send it once those are answered. Nothing is ever typed into the pane,
+/// because Herdr reports an agent on such a question as idle and ready, and a
+/// typed prompt would answer the question. A prompt that cannot be passed,
+/// or a start Herdr refuses, fails the start with the reason; the surface
+/// that sent it keeps the text.
+fn launch_with_prompt(
     connector: &dyn ApiConnector,
+    local: bool,
     id: u64,
     pane_id: &str,
-    prompt: &str,
+    kind: &str,
+    mut args: Vec<String>,
+    prompt: Option<String>,
 ) -> TaskAgentOutcome {
-    let params = match wire::agent_prompt_params(pane_id, prompt) {
-        Ok(params) => params,
-        Err(message) => return TaskAgentOutcome::StartedWithoutPrompt(message),
-    };
-    match request_with_correlation_id(
-        connector,
-        &format!("herdr-core:task:{id}:prompt"),
-        "agent.prompt",
-        params,
-        Duration::from_secs(15),
-    )
-    .map_err(|error| error.to_string())
-    .and_then(wire::prompted_agent)
-    {
-        Ok(()) => TaskAgentOutcome::Started,
-        Err(message) => TaskAgentOutcome::StartedWithoutPrompt(format!(
-            "The agent started, but its first prompt was not sent ({message}). Paste it into the pane."
-        )),
+    if let Some(prompt) = prompt {
+        match prompt_argument(&prompt) {
+            Ok(argument) => args.extend(["--".to_owned(), argument]),
+            Err(message) => return TaskAgentOutcome::Failed(message),
+        }
     }
+    launch_agent(connector, local, id, pane_id, kind, args).into()
+}
+
+/// The longest first prompt, in bytes once encoded, that a start carries.
+/// Herdr types the command into the pane's shell, and the slowest shell
+/// measured bounds it: through the pinned Herdr, macOS bash took 27 s to take
+/// a 76 KB command and did not finish 300 KB within 60 s, where zsh took 5 s;
+/// 64 KB stays well inside the 120 s start wait on either.
+const MAX_PROMPT_BYTES: usize = 64 * 1024;
+
+/// The first prompt as one argument Herdr can type into the pane's shell,
+/// which refuses a line break or a tab in an argument. Each line break becomes
+/// U+2028 (LINE SEPARATOR), which Herdr passes through and the model reads as
+/// a line break, and a tab four spaces; any other control character is refused
+/// rather than dropped, and so is a prompt over [`MAX_PROMPT_BYTES`]. Every
+/// start event checks its prompt with this before anything is created, so a
+/// refused prompt leaves no tab or worktree behind; the worker encodes it.
+pub(crate) fn prompt_argument(prompt: &str) -> Result<String, String> {
+    let mut argument = String::with_capacity(prompt.len());
+    let mut chars = prompt.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                chars.next_if_eq(&'\n');
+                argument.push('\u{2028}');
+            }
+            '\n' => argument.push('\u{2028}'),
+            '\t' => argument.push_str("    "),
+            c if c.is_control() => {
+                return Err(format!(
+                    "The first prompt has a control character (U+{:04X}) that cannot be passed to the agent; remove it and start again.",
+                    u32::from(c)
+                ));
+            }
+            c => argument.push(c),
+        }
+    }
+    if argument.len() > MAX_PROMPT_BYTES {
+        return Err(format!(
+            "The first prompt is longer than {} KB, more than the agent's command line can carry; shorten it and start again.",
+            MAX_PROMPT_BYTES / 1024
+        ));
+    }
+    Ok(argument)
 }
 
 pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), String> {
@@ -912,25 +996,48 @@ pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), St
         .map_err(|error| format!("agent start worker could not be started: {error}"))
 }
 
+/// How one `agent.start` ended; a refusal keeps Herdr's code so a caller can
+/// tell a refusal that typed nothing and can be asked differently.
+enum Launch {
+    Started,
+    Failed(String),
+    Refused { code: String, message: String },
+    Unknown(String),
+}
+
+impl From<Launch> for TaskAgentOutcome {
+    fn from(launch: Launch) -> Self {
+        match launch {
+            Launch::Started => TaskAgentOutcome::Started,
+            Launch::Failed(message) => TaskAgentOutcome::Failed(message),
+            Launch::Refused { code, message } => {
+                TaskAgentOutcome::Failed(format!("Agent could not start: {code}: {message}"))
+            }
+            Launch::Unknown(message) => TaskAgentOutcome::Unknown(message),
+        }
+    }
+}
+
 fn launch_agent(
     connector: &dyn ApiConnector,
     local: bool,
     id: u64,
     pane_id: &str,
     kind: &str,
-) -> TaskAgentOutcome {
+    args: Vec<String>,
+) -> Launch {
     // Herdr would type the command into the pane's shell and wait for an
     // agent that can never appear; say so before asking it. A device's PATH
     // is not this machine's, so there its Herdr answers for it.
     if local && hide_ai::resolve_binary(Path::new(kind)).is_none() {
-        return TaskAgentOutcome::Failed(format!(
+        return Launch::Failed(format!(
             "{kind} is not installed on the daemon's PATH. Install it, then retry."
         ));
     }
     let name = crate::fork::task_agent_name(kind, pane_id);
-    let params = match wire::agent_start_params(pane_id, &name, kind, Vec::new()) {
+    let params = match wire::agent_start_params(pane_id, &name, kind, args) {
         Ok(params) => params,
-        Err(message) => return TaskAgentOutcome::Failed(message),
+        Err(message) => return Launch::Failed(message),
     };
     match crate::agent_start::start_at_shell(
         connector,
@@ -940,47 +1047,132 @@ fn launch_agent(
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
     ) {
         Ok(value) => match wire::started_agent(value) {
-            Ok(_) => TaskAgentOutcome::Started,
-            Err(message) => TaskAgentOutcome::Unknown(format!(
+            Ok(_) => Launch::Started,
+            Err(message) => Launch::Unknown(format!(
                 "Herdr answered the agent start in an unexpected shape ({message}). Check the pane before retrying."
             )),
         },
-        Err(StartError::NotStarted(message)) => TaskAgentOutcome::Failed(message),
+        Err(StartError::NotStarted(message)) => Launch::Failed(message),
         Err(StartError::Herdr(ApiError::Remote { code, message })) => {
-            TaskAgentOutcome::Failed(format!("Agent could not start: {code}: {message}"))
+            Launch::Refused { code, message }
         }
-        Err(StartError::Herdr(error)) => TaskAgentOutcome::Unknown(format!(
+        Err(StartError::Herdr(error)) => Launch::Unknown(format!(
             "Herdr did not confirm the agent start ({error}). Check the pane before retrying."
         )),
     }
 }
 
 pub fn spawn_checkout_tab_create(
-    context: LiveContext,
+    target: TabTarget,
     request: CheckoutTabRequest,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-checkout-tab-create".into())
-        .spawn(move || {
-            let result = create_checkout_tab(context.api_connector.as_ref(), &request);
-            if let Some(runtime) = context.runtime.upgrade() {
-                if let Ok(mut guard) = runtime.lock() {
-                    guard.ingest_task_operation_result(request.id, result);
-                } else {
-                    return;
-                }
-                context.notifier.notify();
-            }
-            start_task_agent(
-                context.api_connector.as_ref(),
-                &context.runtime,
-                &context.notifier,
-                true,
-                request.id,
-            );
-        })
+        .spawn(move || open_tab_and_start_agent(&target, &request))
         .map(|_| ())
         .map_err(|error| format!("checkout tab worker could not be started: {error}"))
+}
+
+/// Opens the task's tab, publishes it, then starts the task's agent in it.
+fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
+    let result = create_checkout_tab(target.connector.as_ref(), request);
+    let Some(runtime) = target.runtime.upgrade() else {
+        return;
+    };
+    if let Ok(mut guard) = runtime.lock() {
+        guard.ingest_task_operation_result(request.id, result);
+    } else {
+        return;
+    }
+    drop(runtime);
+    target.notifier.notify();
+    start_task_agent(
+        target.connector.as_ref(),
+        &target.runtime,
+        &target.notifier,
+        target.local,
+        request.id,
+    );
+}
+
+/// How long the helper may take to bring a Home in step: a stat per
+/// project and a link each, at most [`hide_host::home::MAX_LINKS`].
+const HOME_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A Home start or a new tab in Home (PRD home-device-rail D-04): the
+/// device's registered projects its Home links, and the helper that makes
+/// them.
+pub struct HomeStartRequest {
+    pub id: u64,
+    pub device_id: String,
+    pub projects: Vec<String>,
+    pub host: Arc<dyn crate::host_access::HostChannel>,
+}
+
+/// Brings the device's Home in step with its projects, then opens a tab in
+/// it and starts the task's agent there. The disk work runs on the helper,
+/// off the runtime lock; the lock is taken only to publish each step.
+pub fn spawn_home_start(target: TabTarget, request: HomeStartRequest) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-home-start".into())
+        .spawn(move || {
+            let HomeStartRequest {
+                id,
+                device_id,
+                projects,
+                host,
+            } = request;
+            let synced = sync_home(host.as_ref(), &projects);
+            let Some(runtime) = target.runtime.upgrade() else {
+                return;
+            };
+            let tab = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_home_start_sync(id, &device_id, &projects, synced),
+                Err(_) => return,
+            };
+            drop(runtime);
+            target.notifier.notify();
+            if let Some(tab) = tab {
+                open_tab_and_start_agent(&target, &tab);
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("Home start worker could not be started: {error}"))
+}
+
+/// Brings a device's Home links in step after its registrations changed
+/// (D-06). Nothing reaches the screen: the answer is the diagnostic log's.
+pub fn spawn_home_link_sync(
+    runtime: Weak<Mutex<Runtime>>,
+    device_id: String,
+    projects: Vec<String>,
+    host: Arc<dyn crate::host_access::HostChannel>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-home-link-sync".into())
+        .spawn(move || {
+            let synced = sync_home(host.as_ref(), &projects);
+            if let Some(runtime) = runtime.upgrade()
+                && let Ok(mut guard) = runtime.lock()
+            {
+                guard.ingest_home_link_sync(&device_id, &projects, synced);
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("Home link sync worker could not be started: {error}"))
+}
+
+fn sync_home(
+    host: &dyn crate::host_access::HostChannel,
+    projects: &[String],
+) -> Result<hide_host::home::HomeSynced, crate::host_access::HostCallError> {
+    crate::host_access::call_as(
+        host,
+        hide_host::protocol::Call::HomeSync {
+            projects: projects.to_vec(),
+        },
+        HOME_SYNC_TIMEOUT,
+    )
 }
 
 fn create_checkout_tab(
@@ -1752,6 +1944,7 @@ mod tests {
             session_workspace_ids: vec!["w-purpose".to_owned()],
             last_activity_unix_ms: None,
             pinned: false,
+            is_home: false,
             checkouts: vec![crate::model::CheckoutSnapshot {
                 id: "checkout".to_owned(),
                 workspace_id: "project".to_owned(),
@@ -1968,6 +2161,7 @@ mod tests {
             session_workspace_ids: vec!["w-purpose".to_owned()],
             last_activity_unix_ms: None,
             pinned: false,
+            is_home: false,
             checkouts: vec![crate::model::CheckoutSnapshot {
                 id: "checkout".to_owned(),
                 workspace_id: "project".to_owned(),
@@ -2087,6 +2281,7 @@ mod tests {
             session_workspace_ids: vec!["w-outer".to_owned(), "w-authority".to_owned()],
             last_activity_unix_ms: None,
             pinned: false,
+            is_home: false,
             checkouts: vec![crate::model::CheckoutSnapshot {
                 id: "checkout".to_owned(),
                 workspace_id: "outer".to_owned(),
@@ -2147,6 +2342,7 @@ mod tests {
             session_workspace_ids: vec!["w-first".to_owned()],
             last_activity_unix_ms: None,
             pinned: false,
+            is_home: false,
             checkouts: vec![crate::model::CheckoutSnapshot {
                 id: "checkout".to_owned(),
                 workspace_id: "project".to_owned(),
@@ -2615,5 +2811,170 @@ mod tests {
         let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
         assert!(error.contains("main worktree is now on main"));
         assert!(error.contains("open the repository at /fixture/repo and check out feature"));
+    }
+
+    fn agent(status: &str) -> Value {
+        json!({
+            "pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1", "terminal_id": "term_1",
+            "agent": "claude", "agent_status": status, "state_change_seq": 1,
+            "focused": false, "interactive_ready": true, "revision": 0
+        })
+    }
+    fn shell_ready() -> Value {
+        json!({"result":{"type":"pane_process_info","process_info":{
+            "pane_id":"w1:p1","shell_pid":4100,"foreground_process_group_id":4100,
+            "foreground_processes":[{"pid":4100,"name":"zsh"}]
+        }}})
+    }
+    fn requests_of(server: &Server) -> Vec<Value> {
+        server.requests.lock().unwrap().clone()
+    }
+
+    fn methods_of(requests: &[Value]) -> Vec<&str> {
+        requests
+            .iter()
+            .map(|request| request["method"].as_str().unwrap())
+            .collect()
+    }
+
+    /// PRD home-device-rail D-18, D-26: the model and folders a start names
+    /// reach `agent.start` as the CLI's own arguments, and the first prompt
+    /// goes after `--` as the CLI's own, which holds it through its startup
+    /// questions; nothing is typed into the pane.
+    #[test]
+    fn a_first_prompt_travels_as_the_agents_own_argument() {
+        let server = server(vec![
+            shell_ready(),
+            json!({"result":{"type":"agent_started","argv":[],"agent":agent("working")}}),
+        ]);
+        let args: Vec<String> = ["--model", "opus", "--add-dir", "/work/my app"]
+            .map(String::from)
+            .into();
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            "w1:p1",
+            "claude",
+            args,
+            Some("fix the tests".into()),
+        );
+        assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
+        let requests = requests_of(&server);
+        assert_eq!(methods_of(&requests), ["pane.process_info", "agent.start"]);
+        assert_eq!(
+            requests[1]["params"]["args"],
+            json!([
+                "--model",
+                "opus",
+                "--add-dir",
+                "/work/my app",
+                "--",
+                "fix the tests"
+            ])
+        );
+    }
+
+    /// D-26, B31: a multi-line prompt still travels as the CLI's own
+    /// argument, its line breaks as U+2028 and its tabs as spaces; nothing is
+    /// typed into the pane, where a startup question would take it.
+    #[test]
+    fn a_multi_line_prompt_travels_as_one_argument_and_is_never_typed() {
+        let server = server(vec![
+            shell_ready(),
+            json!({"result":{"type":"agent_started","argv":[],"agent":agent("idle")}}),
+        ]);
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            "w1:p1",
+            "claude",
+            vec!["--model".into(), "opus".into()],
+            Some("1\nfix the tests\r\n\tthen push".into()),
+        );
+        assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
+        let requests = requests_of(&server);
+        assert_eq!(methods_of(&requests), ["pane.process_info", "agent.start"]);
+        assert_eq!(
+            requests[1]["params"]["args"],
+            json!([
+                "--model",
+                "opus",
+                "--",
+                "1\u{2028}fix the tests\u{2028}    then push"
+            ])
+        );
+    }
+
+    /// B31: a prompt with a character that cannot be passed fails the start
+    /// with the reason, and Herdr is not asked at all.
+    #[test]
+    fn a_prompt_with_another_control_character_fails_the_start_before_herdr() {
+        let server = server(vec![]);
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            "w1:p1",
+            "claude",
+            Vec::new(),
+            Some("fix\u{7}the bell".into()),
+        );
+        let TaskAgentOutcome::Failed(message) = outcome else {
+            panic!("expected a failed start, got {outcome:?}");
+        };
+        assert!(message.contains("U+0007"), "{message}");
+        assert!(requests_of(&server).is_empty());
+    }
+
+    /// A prompt over the cap fails the start before Herdr is asked, rather
+    /// than failing inside the pane's shell where no one reads it.
+    #[test]
+    fn a_prompt_over_the_cap_fails_the_start_before_herdr() {
+        let server = server(vec![]);
+        let at_cap = "가".repeat(MAX_PROMPT_BYTES / 3);
+        assert!(prompt_argument(&at_cap).is_ok());
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            "w1:p1",
+            "claude",
+            Vec::new(),
+            Some(format!("{at_cap}a\n")),
+        );
+        let TaskAgentOutcome::Failed(message) = outcome else {
+            panic!("expected a failed start, got {outcome:?}");
+        };
+        assert!(message.contains("64 KB"), "{message}");
+        assert!(requests_of(&server).is_empty());
+    }
+
+    /// B31: a start Herdr refuses is a failed start with Herdr's reason; the
+    /// agent is not started again without its prompt.
+    #[test]
+    fn a_refused_start_is_reported_and_not_retried_without_the_prompt() {
+        let server = server(vec![
+            shell_ready(),
+            json!({"error":{"code":"invalid_agent_argument","message":"agent arguments cannot be encoded safely for the target shell"}}),
+        ]);
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            "w1:p1",
+            "claude",
+            Vec::new(),
+            Some("fix the tests".into()),
+        );
+        let TaskAgentOutcome::Failed(message) = outcome else {
+            panic!("expected a failed start, got {outcome:?}");
+        };
+        assert!(message.contains("invalid_agent_argument"), "{message}");
+        assert_eq!(
+            methods_of(&requests_of(&server)),
+            ["pane.process_info", "agent.start"]
+        );
     }
 }

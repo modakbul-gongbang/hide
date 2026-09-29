@@ -11,6 +11,7 @@ import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentsLens, AgentsModeToggle, lensHandlers } from "./OverviewLenses";
 import { agentsTile, buildLanes, buildLineages, scopeAgents } from "./overviewLens";
 import { allProjectsStats, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
+import { frontDeviceId } from "./devices";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
@@ -19,9 +20,9 @@ import { toggledFold, useUiStore, type LensFold, type MainView } from "./ui";
 import { hostBridge, hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
-// The Overview of every project (PRD S6 D-02, B1-B4, B21; `screen.kind ===
-// "main"`, titled Overview by PRD sidebar-shell D-02), the scope the sidebar's
-// global Overview row opens. Its facts line totals what every Project can
+// The Overview of one device's projects (PRD S6 D-02, B1-B4, B21; `screen.kind
+// === "main"`, opened by the sidebar's Home row, PRD home-device-rail D-13): the
+// device in front, or the one the screen names, and its header says which. Its facts line totals what every Project can
 // give; its views are every Project's tasks on one board (every project has
 // an issue source, so every project's issues are there), every agent as one
 // inbox, and the registered Projects by device (PRD task-agents-views D-01,
@@ -53,9 +54,14 @@ export function MainScreen({ actions }: { actions: Actions }) {
   // The Tasks view's issue panel and filter, this screen's own page state (PRD overview-lenses-issues).
   const [panel, setPanel] = useState<string | null>(null);
   const [filter, setFilter] = useState<IssueFilter>(NO_FILTER);
-  const sections = useMemo(() => mainSections(rest, agents), [rest, agents]);
+  // The device this Overview is of: the one its screen names, else the one in front.
+  const named = useUiStore((s) => (s.screen?.kind === "main" ? s.screen.deviceId : undefined));
+  // A device removed since the screen named it leaves the one in front.
+  const deviceId = named !== undefined && rest?.navigator?.devices?.some((device) => device.id === named) ? named : frontDeviceId(rest);
+  const deviceName = rest?.navigator?.devices?.find((device) => device.id === deviceId)?.label ?? deviceId;
+  const sections = useMemo(() => mainSections(rest, agents, deviceId), [rest, agents, deviceId]);
   const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
-  const projects = useMemo(() => boardProjects(rest, agents), [rest, agents]);
+  const projects = useMemo(() => boardProjects(rest, agents, deviceId), [rest, agents, deviceId]);
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   const lanes = useMemo(() => buildLanes(projects, lensAgents, "all"), [projects, lensAgents]);
@@ -110,7 +116,12 @@ export function MainScreen({ actions }: { actions: Actions }) {
     <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", scrolls && "overflow-y-auto")} aria-label="Overview" data-main-screen="true" data-main-view={view}>
       <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
-          <h1 className="min-w-0 flex-1 truncate text-headline font-semibold text-foreground">Overview</h1>
+          <h1 className="flex min-w-0 flex-1 items-baseline gap-sm text-headline font-semibold text-foreground">
+            <span className="shrink-0">Home</span>
+            <span className="min-w-0 truncate text-body font-normal text-muted-foreground" data-main-device-name={deviceId}>
+              {deviceName}
+            </span>
+          </h1>
           {hostBridge() ? (
             <Button variant="ghost" onClick={() => actions.openAddProject()} data-main-add-project="true">
               <PlusIcon aria-hidden="true" />

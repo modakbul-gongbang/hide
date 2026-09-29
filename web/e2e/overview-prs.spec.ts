@@ -445,7 +445,8 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
       "PR #24 (dependabot/cargo/sha2)의 CI 실패와 변경 요청을 고쳐줘: Bump sha2 from 0.10.9 to 0.11.0\n\n실패한 검사:\n- verify https://github.com/acme/repo/actions/runs/7",
       { timeout: 20_000 },
     );
-    await expect(delegate.locator('[data-start-agent="terminal"]')).toHaveCount(0);
+    await expect(delegate.locator('[data-agent-kind="claude"], [data-agent-kind="codex"]')).toHaveCount(1);
+    await expect(delegate.locator('[data-agent-kind="terminal"]')).toHaveCount(0);
     await screenshot(page, "prs-delegate-light");
     await delegate.locator("[data-pr-delegate-submit]").click();
     await expect(delegate).toHaveCount(0, { timeout: 60_000 });

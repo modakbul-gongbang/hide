@@ -251,6 +251,21 @@ pub fn handle(call: Call) -> HostResult<Value> {
             };
             to_value(crate::register::check(&absolute(&path)?, Path::new(&home))?)
         }
+        Call::HomeSync { projects } => {
+            let home = std::env::var_os("HOME").ok_or_else(|| {
+                HostError::new(
+                    ErrorCode::Unsupported,
+                    "HOME is not set, so Hide's Home folder has no place to live",
+                )
+            })?;
+            if !Path::new(&home).is_absolute() {
+                return Err(HostError::new(
+                    ErrorCode::Unsupported,
+                    "HOME is not an absolute path, so Hide's Home folder has no place to live",
+                ));
+            }
+            to_value(crate::home::sync(Path::new(&home), &projects)?)
+        }
         Call::Kit {
             action,
             cli_dir,

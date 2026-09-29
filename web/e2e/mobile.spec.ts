@@ -5,14 +5,16 @@
 // and quick keys reach the pane's PTY; a loopback push endpoint decrypts
 // what hided sends and proves the three modes, the viewing rule and the Seen
 // clear; revoke, the phone limit, the seven-day revoke, the unreachable line
-// and the empty list follow; and no code, credential or key reaches the log.
+// and the empty list follow; the start sheet starts an agent in a checkout and
+// in Home and keeps its text while the phone is away; and no code, credential
+// or key reaches the log.
 //
 // Nothing here runs the operator's Tailscale: HIDE_TAILSCALE_BIN names a
 // script in the test's own directory, and the push endpoint is a local server
 // only a debug hided accepts.
 
 import { devices, expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -678,6 +680,92 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     await expect(phone.locator('[data-phone-guidance="revoked"]')).toHaveText("이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요.", { timeout: 30_000 });
     await openMobileSettings(page, daemon);
     await expect(page.getByText("연결된 폰 · 3 / 4")).toBeVisible({ timeout: 20_000 });
+  } finally {
+    for (const context of contexts) await context.close();
+    daemon?.stop();
+    herdr.stop();
+    tailscale.remove();
+  }
+});
+
+test("the phone's start sheet starts an agent in a checkout and in Home, and keeps its text while the phone is away", async ({ browser, page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr({ agents: false });
+  const tailscale = new FakeTailscale();
+  tailscale.install();
+  tailscale.ready();
+  let daemon: Daemon | null = null;
+  const contexts: BrowserContext[] = [];
+  try {
+    daemon = await startHided(herdr, "mobile-start", undefined, { HIDE_TAILSCALE_BIN: tailscale.bin });
+    await openMobileSettings(page, daemon);
+    await page.locator('[data-mobile-switch="true"]').click();
+    const phoneContextA = await phoneContext(browser);
+    contexts.push(phoneContextA);
+    const phone = await phoneContextA.newPage();
+    await phone.goto(await pairingUrl(page, daemon));
+    await phone.locator('[data-phone-pair="true"]').tap();
+    await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible({ timeout: 20_000 });
+
+    // B42: + opens the sheet; the target is This Mac's Home, the kind and model the remembered choice.
+    await phone.locator('[data-phone-start="true"]').tap();
+    const sheet = phone.locator('[data-phone-start-sheet="true"]');
+    await expect(sheet).toBeVisible();
+    const target = sheet.locator('[data-phone-start-target="true"]');
+    await expect(target).toHaveValue("home:local", { timeout: 20_000 });
+    await expect(target.locator("option:checked")).toHaveText("This Mac · Home");
+    await expect(sheet.locator('[data-phone-start-kind="true"]')).toHaveValue("claude");
+    await expect(sheet.locator('[data-phone-start-submit="true"]')).toBeDisabled();
+    // B46: the Korean text and a long checkout name stay inside the phone's width.
+    await sheet.locator('[data-phone-start-text="true"]').fill("첫 지시 확인용 문장입니다. 아주 긴 한국어 문장이 줄을 바꿔도 시트 밖으로 나가지 않아야 합니다.");
+    for (const control of ["target", "kind", "model"]) {
+      const box = await sheet.locator(`[data-phone-start-${control}="true"]`).boundingBox();
+      expect(box && box.x >= 0 && box.x + box.width <= 390).toBe(true);
+    }
+    await screenshot(phone, "mobile-phone-start-sheet");
+
+    // B43: a checkout target with the model the catalog lists; the phone lands on that agent's detail.
+    const checkout = target.locator("option", { hasText: "fixture" }).first();
+    await target.selectOption(await checkout.getAttribute("value") as string);
+    const model = sheet.locator('[data-phone-start-model="true"]');
+    await expect(model).toBeEnabled({ timeout: 20_000 });
+    await model.selectOption("opus");
+    await sheet.locator('[data-phone-start-submit="true"]').tap();
+    const detail = phone.locator("[data-phone-detail]");
+    await expect(detail).toBeVisible({ timeout: 45_000 });
+    const pane = ((await detail.getAttribute("data-phone-detail")) ?? "").split("|").slice(1).join("|");
+    expect(pane).not.toBe("");
+    await expect
+      .poll(
+        () => {
+          const info = spawnSync(herdr.bin, ["pane", "process-info", "--pane", pane], { env: herdr.env, encoding: "utf8", timeout: 10_000 }).stdout;
+          return info.includes("--model") && info.includes("opus");
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    await screenshot(phone, "mobile-phone-start-detail");
+
+    // B44: the text was spent by the start; the remembered model is now the sheet's; offline keeps a new draft.
+    await phone.locator('[data-phone-back="true"]').tap();
+    await phone.locator('[data-phone-start="true"]').tap();
+    await expect(sheet.locator('[data-phone-start-text="true"]')).toHaveValue("");
+    await expect(sheet.locator('[data-phone-start-model="true"]')).toHaveValue("opus", { timeout: 20_000 });
+    await sheet.locator('[data-phone-start-text="true"]').fill("Home에서 시작");
+    await phoneContextA.setOffline(true);
+    await expect(sheet.locator('[data-phone-start-unreachable="true"]')).toBeVisible({ timeout: 30_000 });
+    await expect(sheet.locator('[data-phone-start-submit="true"]')).toBeDisabled();
+    await expect(sheet.locator('[data-phone-start-text="true"]')).toHaveValue("Home에서 시작");
+    await screenshot(phone, "mobile-phone-start-offline");
+    await phoneContextA.setOffline(false);
+    await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible({ timeout: 30_000 });
+
+    // B42, B43: This Mac's Home is the default target; the start lands on its agent.
+    await expect(target).toHaveValue("home:local");
+    await sheet.locator('[data-phone-start-submit="true"]').tap();
+    await expect(detail).toBeVisible({ timeout: 45_000 });
+    await expect(detail).not.toHaveAttribute("data-phone-detail", new RegExp(`\\|${pane}$`));
+    await expect(sheet).toHaveCount(0);
   } finally {
     for (const context of contexts) await context.close();
     daemon?.stop();

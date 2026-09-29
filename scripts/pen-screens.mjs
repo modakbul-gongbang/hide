@@ -354,14 +354,6 @@ function screenViewTab(id, {title, active}) {
   return themedXref(id, 'view-tab', title, {fill: active ? '$--background' : '$--card'}, {'view-tab-title': {content: title}});
 }
 
-// DevicePicker.tsx renders each row as a DropdownMenuItem, not the standalone
-// device-row card System / Menu Item's own idiom already gives (glyph + a
-// stacked label/reason body); the trailing checkmark reuses the menu item's
-// shortcut slot (a plain text node) since the master has no icon slot there.
-function screenDevicePickerRow(id, {name, detail, selected}) {
-  return screenMenuItem(id, name, {glyph: 'server', reason: detail, shortcut: selected ? '✓' : undefined});
-}
-
 // The approved R1 remote-device treatment: the existing Badge shape, a server
 // glyph, and the real device display name. It is shared by folded lineage
 // summaries, the child list, and pane-header child chips.
@@ -436,10 +428,10 @@ function screenUsageChip(id, {provider, value}) {
 // screen's own content; every sheet that draws a whole screen (Main,
 // Workspace) includes it so a reader sees the whole thing, not just its
 // own feature in isolation. It is --size-sidebar-ideal wide, as sidebar.tsx
-// draws it, so its footer holds the device picker, the usage chips and the
-// Settings gear side by side. Its top is the global Overview row, marked while
-// `overview` is the screen beside it, over the Projects | Agents strip on
-// Agents, where Search alone ends the strip (PRD sidebar-shell D-02..D-04).
+// draws it, so its footer holds the one-device window's device button, the usage
+// chips and the Settings gear side by side. Its top is the device's Home row,
+// marked while `overview` is the screen beside it, over the Projects | Agents
+// strip (PRD home-device-rail D-09, D-10).
 function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
   return frame(`${id}-${suffix}`, 'Sidebar', {width: num(tokens, '--size-sidebar-ideal'), layout: 'vertical', gap: '$--spacing-md', fill: '$--sidebar', padding: '$--spacing-md', cornerRadius: '$--radius-md'}, [
     frame(`${id}-overview-${suffix}`, 'Overview', {
@@ -447,7 +439,7 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
       ...(overview ? {fill: '$--secondary'} : {}),
     }, [
       icon(`${id}-overviewi-${suffix}`, 'house', {size: num(tokens, '--size-checkout-icon'), fill: '$--subtle-foreground'}),
-      text(`${id}-overviewt-${suffix}`, 'Overview', {size: '$--text-subhead', weight: '600'}),
+      text(`${id}-overviewt-${suffix}`, 'Home', {size: '$--text-subhead', weight: '600'}),
       frame(`${id}-overviewgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
       text(`${id}-overviewn-${suffix}`, '12 projects', {fill: '$--muted-foreground'}),
     ]),
@@ -468,7 +460,7 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
       ...(agent.summaries ?? []).map((summary, summaryIndex) => screenLineageSummary(tokens, `${id}-agent${index}-summary${summaryIndex}-${suffix}`, summary)),
     ]),
     frame(`${id}-footer-${suffix}`, 'Footer', {width: 'fill_container', gap: '$--spacing-xs', alignItems: 'center'}, [
-      screenSelect(`${id}-device-${suffix}`, {content: 'This Mac', width: 84}),
+      themedXref(`${id}-device-${suffix}`, 'Nyvom', 'Devices', {width: 20, height: 20}, {ZIZFR: {icon: 'laptop', fill: '$--muted-foreground'}}),
       frame(`${id}-footergap-${suffix}`, 'Gap', {width: 'fill_container', height: 1}, []),
       screenUsageChip(`${id}-usage0-${suffix}`, {provider: 'claude', value: '62%'}),
       screenUsageChip(`${id}-usage1-${suffix}`, {provider: 'codex', value: '59%'}),
@@ -1570,14 +1562,23 @@ function buildWorkspace(tokens) {
 
   // The toolbar spans only the agent column: the path back, and the panel
   // toggle only while the panel is closed. No Explorer or History toggles.
-  function toolbar(key, count) {
-    return frame(`ws-topbar-${key}`, 'Toolbar', {width: 'fill_container', height: ROW, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], fill: '$--sidebar', ...rule}, [
-      frame(`ws-crumb-${key}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        text(`ws-c1-${key}`, 'Main', {fill: '$--muted-foreground'}),
-        text(`ws-c2-${key}`, '/', {fill: '$--muted-foreground'}),
-        text(`ws-c3-${key}`, 'demo', {fill: '$--muted-foreground'}),
-        text(`ws-c4-${key}`, '/', {fill: '$--muted-foreground'}),
-        text(`ws-c5-${key}`, 'demo', {weight: '600'}),
+  // A remote device in front puts its band, in the device color and with its
+  // name, ahead of the path (PRD home-device-rail D-15); This Mac has none.
+  function toolbar(key, count, remote = null) {
+    const crumbs = remote ? ['Home', 'hide', 'main'] : ['Main', 'demo', 'demo'];
+    return frame(`ws-topbar-${key}`, 'Toolbar', {width: 'fill_container', height: ROW, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm', 0, remote ? 0 : '$--spacing-sm'], fill: '$--sidebar', ...rule}, [
+      frame(`ws-crumbwrap-${key}`, 'Path', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
+        ...(remote ? [frame(`ws-devband-${key}`, 'Device band', {height: ROW, layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-md'], fill: '$--device-remote'}, [
+          icon(`ws-devbandi-${key}`, 'server', {size: 12, fill: '$--primary-foreground'}),
+          text(`ws-devbandt-${key}`, remote, {size: '$--text-caption', weight: '600', fill: '$--primary-foreground'}),
+        ])] : []),
+        frame(`ws-crumb-${key}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+          text(`ws-c1-${key}`, crumbs[0], {fill: '$--muted-foreground'}),
+          text(`ws-c2-${key}`, '/', {fill: '$--muted-foreground'}),
+          text(`ws-c3-${key}`, crumbs[1], {fill: '$--muted-foreground'}),
+          text(`ws-c4-${key}`, '/', {fill: '$--muted-foreground'}),
+          text(`ws-c5-${key}`, crumbs[2], {weight: '600'}),
+        ]),
       ]),
       ...(count ? [sidePanelToggle(`ws-paneltoggle-${key}`, count)] : []),
     ]);
@@ -1585,8 +1586,8 @@ function buildWorkspace(tokens) {
 
   // The agent column: the toolbar, the agents' tab strip, the pane, the terminal.
   // The panel never resizes it while it floats over it.
-  function agentArea(key, active = true) {
-    return frame(`ws-agentarea-${key}`, 'Agent area', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
+  function agentArea(key, active = true, remote = false) {
+    return frame(`ws-agentarea-${key}`, 'Agent area', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, fill: '$--background', clip: true, ...(remote ? {stroke: '$--device-remote', strokeWidth: 2, strokeAlignment: 'inner'} : {})}, [
       frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
         screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', active ? '탭 이름과 구성 개선' : '검증 결과 확인', active, 'claude'),
         screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
@@ -1599,15 +1600,15 @@ function buildWorkspace(tokens) {
     ]);
   }
 
-  function agentColumn(key, count, groups = false) {
+  function agentColumn(key, count, groups = false, remote = null) {
     const areas = groups
       ? frame(`ws-agentareas-${key}`, 'Two Agent areas', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [
         agentArea(`${key}-left`),
         frame(`ws-agentdivider-${key}`, 'Agent area divider', {width: '$--size-resize-handle', height: 'fill_container', fill: '$--border'}),
         agentArea(`${key}-right`, false),
       ])
-      : agentArea(key);
-    return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [toolbar(key, count), areas]);
+      : agentArea(key, true, Boolean(remote));
+    return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [toolbar(key, count, remote), areas]);
   }
 
   // Component / Side panel (issue 170, "Side panel hierarchy, revised"), from
@@ -1699,6 +1700,12 @@ function buildWorkspace(tokens) {
       : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2, groups)]);
     return frame(`ws-wrap-${key}`, groups ? 'Two Agent areas, independent tab bars and live terminals' : open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
   }
+  // A remote device in front: no sidebar beside it here, only the column with its band and pane frame.
+  function remoteWorkspace(key) {
+    return frame(`ws-wrap-${key}`, 'Remote device in front, band and pane frame', {layout: 'horizontal', alignItems: 'start'}, [
+      frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2, false, 'mini')]),
+    ]);
+  }
   function newTab(key, changed) {
     const choice = (name, glyph, shortcut = '') => frame(`ws-newtab-${name}-${key}`, name, {width: 'fill_container', height: num(tokens, '--size-control-lg'), layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-lg'], fill: '$--secondary', cornerRadius: '$--radius-sm'}, [
       icon(`ws-newtab-${name}-i-${key}`, glyph, {size: num(tokens, '--size-icon'), fill: '$--subtle-foreground'}),
@@ -1720,8 +1727,8 @@ function buildWorkspace(tokens) {
       ]),
     ]);
   }
-  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), workspace(`${suffix}g`, false, true), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false)];
-  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.', build, build);
+  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), workspace(`${suffix}g`, false, true), remoteWorkspace(`${suffix}r`), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false)];
+  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping. Below them a remote device in front (PRD home-device-rail D-15): the toolbar starts with a band in the device color (--device-remote) carrying the server glyph and the device name ahead of the path, and the agent pane is framed in the same color; This Mac in front has neither.', build, build);
 }
 
 // -- Screen / Project Sessions --------------------------------------------------
@@ -2079,7 +2086,105 @@ function buildDialogs(tokens) {
 
 // -- Screen / Menus and Overlays --------------------------------------------------
 
-function buildMenus() {
+function buildMenus(tokens) {
+  const FG = '$--foreground', SUBTLE = '$--subtle-foreground', MUTED = '$--muted-foreground';
+  const XS = num(tokens, '--spacing-xs'), SM = num(tokens, '--spacing-sm'), MD = num(tokens, '--spacing-md');
+  const at = (node, x, y) => ({...node, x: Math.round(x), y: Math.round(y)});
+  const spacer = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
+
+  // The ⌘N start panel (StartPanel), placed as the ⌘K palette is: the same width,
+  // --size-settings-sheet-window-inset from the window top, --popover with a
+  // hairline and a shadow. On --popover a --border hairline vanishes in Dark, so
+  // its rule, the three dropdowns and the menus stand on --secondary.
+  const ASK_W = num(tokens, '--size-search-sheet-w');
+  const ASK_TOP = 16;
+  const FIELD_H = 88, BAR_H = 40, DD_Y = 7, DD_H = 26;
+  const SHADOW = {type: 'shadow', shadowType: 'outer', offset: {x: 0, y: 12}, blur: 32, spread: 0, color: '#00000073'};
+  const DD = {target: {x: MD, w: 164}, kind: {x: MD + 164 + SM, w: 112}, model: {x: MD + 164 + SM + 112 + SM, w: 132}};
+  const PROMPT = '블로그 초안을 두 가지 톤으로 다시 써서 비교해줘';
+  const providerArt = (id, provider, size = 14) => frame(id, `${provider} mark`, {width: size, height: size, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}}, []);
+  function dropdown(id, {lead, label, width, open = false}) {
+    return frame(id, label, {width, height: DD_H, layout: 'horizontal', gap: 6, alignItems: 'center', padding: [0, SM], cornerRadius: '$--radius-sm', fill: '$--secondary', ...(open ? {stroke: MUTED, strokeWidth: 1, strokeAlignment: 'inner'} : {})}, [
+      lead, text(`${id}-t`, label, {size: '$--text-caption'}), spacer(`${id}-sp`), icon(`${id}-c`, open ? 'chevron-up' : 'chevron-down', {size: 12, fill: MUTED}),
+    ]);
+  }
+  function startPanel(p, {open = null} = {}) {
+    return frame(`${p}-ask`, '⌘N', {width: ASK_W, layout: 'vertical', fill: '$--popover', cornerRadius: '$--radius-lg', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', clip: true, effect: SHADOW}, [
+      frame(`${p}-field`, 'Prompt', {width: ASK_W, height: FIELD_H, padding: [MD, num(tokens, '--spacing-lg')], layout: 'vertical'}, [
+        text(`${p}-q`, PROMPT, {size: '$--text-subhead'}),
+      ]),
+      frame(`${p}-bar`, 'Bar', {width: ASK_W, height: BAR_H, layout: 'none', fill: '$--popover'}, [
+        at(frame(`${p}-barrule`, 'Rule', {width: ASK_W, height: 1, fill: '$--secondary'}, []), 0, 0),
+        at(dropdown(`${p}-dt`, {lead: icon(`${p}-dtg`, 'folder-git-2', {size: 12, fill: SUBTLE}), label: 'herdr-ide · main', width: DD.target.w, open: open === 'target'}), DD.target.x, DD_Y),
+        at(dropdown(`${p}-dk`, {lead: providerArt(`${p}-dkg`, 'claude'), label: 'Claude', width: DD.kind.w, open: open === 'kind'}), DD.kind.x, DD_Y),
+        at(dropdown(`${p}-dm`, {lead: icon(`${p}-dmg`, 'cpu', {size: 12, fill: SUBTLE}), label: 'opus', width: DD.model.w, open: open === 'model'}), DD.model.x, DD_Y),
+        at(themedXref(`${p}-kbd`, 'kbd-m', '⏎', {}, {'kbd-t': {content: '⏎'}}), ASK_W - MD - 56 - SM - 22, 10),
+        at(screenButton(`${p}-go`, '시작', {height: DD_H, width: 56}), ASK_W - MD - 56, DD_Y),
+      ]),
+    ]);
+  }
+  // A menu row: the lead, the label and the check on the row's right edge; a
+  // device that is not connected keeps its rows, dimmed, with 연결 안 됨 under.
+  function menuRow(id, {lead, label, checked = false, highlighted = false, detail, width}) {
+    return frame(id, label, {width, height: detail ? 40 : 28, layout: 'horizontal', gap: SM, alignItems: 'center', padding: [0, SM], cornerRadius: '$--radius-xs', ...(highlighted ? {fill: '$--accent'} : {})}, [
+      lead,
+      detail
+        ? frame(`${id}-b`, 'Body', {layout: 'vertical', gap: 0}, [text(`${id}-t`, label, {size: '$--text-body', fill: MUTED}), text(`${id}-d`, detail, {size: '$--text-caption', fill: MUTED})])
+        : text(`${id}-t`, label, {size: '$--text-body'}),
+      spacer(`${id}-sp`),
+      ...(checked ? [icon(`${id}-ck`, 'check', {size: 14, fill: FG})] : []),
+    ]);
+  }
+  const menuSep = (id, width) => frame(id, 'Separator', {width, height: 9, layout: 'vertical', justifyContent: 'center'}, [frame(`${id}-l`, 'Line', {width, height: 1, fill: '$--secondary'}, [])]);
+  const menuBox = (id, width, rows) => frame(id, 'Menu', {width, layout: 'vertical', padding: XS, fill: '$--popover', cornerRadius: '$--radius-sm', stroke: '$--secondary', strokeWidth: 1, strokeAlignment: 'inner', effect: SHADOW}, rows);
+  const lead = (id, glyph) => frame(id, 'Lead', {width: 16, height: 16, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [icon(`${id}-i`, glyph, {size: 14, fill: MUTED})]);
+  const MENU_W = 236, ROW_W = MENU_W - 2 * XS;
+  // The target follows what is in front (here herdr-ide main); Home stays on top
+  // so going back to it is one pick, then this device's checkouts, then every
+  // other device's Home and checkouts.
+  const targetMenu = p => menuBox(`${p}-mt`, MENU_W, [
+    menuRow(`${p}-mt0`, {lead: lead(`${p}-mt0g`, 'house'), label: 'Home', width: ROW_W}),
+    menuSep(`${p}-mts0`, ROW_W),
+    menuRow(`${p}-mt1`, {lead: lead(`${p}-mt1g`, 'folder-git-2'), label: 'herdr-ide · main', checked: true, highlighted: true, width: ROW_W}),
+    menuRow(`${p}-mt2`, {lead: lead(`${p}-mt2g`, 'folder-git-2'), label: 'oh-my-principle · main', width: ROW_W}),
+    menuRow(`${p}-mt3`, {lead: lead(`${p}-mt3g`, 'folder-git-2'), label: 'sasu · main', width: ROW_W}),
+    menuRow(`${p}-mt4`, {lead: lead(`${p}-mt4g`, 'folder-git-2'), label: 'hoyeon · main', width: ROW_W}),
+    menuSep(`${p}-mts`, ROW_W),
+    menuRow(`${p}-mt5`, {lead: lead(`${p}-mt5g`, 'server'), label: 'mini · Home', width: ROW_W}),
+    menuRow(`${p}-mt6`, {lead: lead(`${p}-mt6g`, 'server'), label: 'build-box · Home', detail: '연결 안 됨', width: ROW_W}),
+  ]);
+  const kindMenu = p => menuBox(`${p}-mk`, 180, [
+    menuRow(`${p}-mk0`, {lead: providerArt(`${p}-mk0g`, 'claude', 16), label: 'Claude', checked: true, highlighted: true, width: 172}),
+    menuRow(`${p}-mk1`, {lead: providerArt(`${p}-mk1g`, 'codex', 16), label: 'Codex', width: 172}),
+  ]);
+  const CLAUDE_MODELS = ['haiku', 'sonnet', 'opus', 'fable'];
+  const CODEX_MODELS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'];
+  const modelMenu = (p, models, pick, w = 180) => menuBox(`${p}-mm`, w, models.map((m, i) => menuRow(`${p}-mm${i}`, {lead: lead(`${p}-mm${i}g`, 'cpu'), label: m, checked: m === pick, highlighted: m === pick, width: w - 2 * XS})));
+  function startCut(p, {open, menu}) {
+    const menuX = DD[open].x;
+    const menuH = {target: 8 + 28 * 5 + 9 * 2 + 28 + 40, kind: 8 + 2 * 28, model: 8 + 4 * 28}[open];
+    return frame(`${p}-cut`, 'Cut', {layout: 'none', width: ASK_W + 48, height: 24 + FIELD_H + BAR_H + 4 + menuH + 24, fill: '$--background', cornerRadius: '$--radius-md', clip: true}, [
+      at(startPanel(p, {open}), 24, ASK_TOP),
+      at(menu, 24 + menuX, ASK_TOP + FIELD_H + DD_Y + DD_H + 4),
+    ]);
+  }
+  const captioned = (id, label, node) => frame(id, label, {layout: 'vertical', gap: '$--spacing-sm', alignItems: 'start'}, [text(`${id}-l`, label, {size: '$--text-caption', weight: '600', fill: MUTED}), node]);
+  // The panel at rest with the three dropdowns closed, then each dropdown open.
+  function startPanels(suffix) {
+    const p = key => `mn-ask-${key}-${suffix}`;
+    return frame(`mn-ask-${suffix}`, '⌘N start panel', {layout: 'vertical', gap: '$--spacing-lg'}, [
+      captioned(p('rest'), '⌘N · 창 위에 뜬 판, 글을 적은 상태, 드롭다운 셋 닫힘', frame(p('restbox'), 'Rest', {layout: 'vertical', padding: 24, fill: '$--background', cornerRadius: '$--radius-md'}, [startPanel(p('r'))])),
+      frame(p('row1'), 'Kind and model menus', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
+        captioned(p('k'), '종류 메뉴', startCut(p('kc'), {open: 'kind', menu: kindMenu(p('kc'))})),
+        captioned(p('m'), '모델 메뉴 · Claude', startCut(p('mc'), {open: 'model', menu: modelMenu(p('mc'), CLAUDE_MODELS, 'opus')})),
+      ]),
+      frame(p('row2'), 'Target and Codex menus', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
+        captioned(p('t'), '대상 메뉴', startCut(p('tc'), {open: 'target', menu: targetMenu(p('tc'))})),
+        captioned(p('x'), 'Codex를 고르면 모델 목록이 바뀐다', frame(p('xw'), 'Codex models', {layout: 'vertical', padding: 16, fill: '$--background', cornerRadius: '$--radius-md'}, [modelMenu(p('xm'), CODEX_MODELS, 'gpt-6-astra', 200)])),
+      ]),
+    ]);
+  }
+
   function build(suffix) {
     // workspaceManage.ts projectMenu() in a browser tab, which has no Finder
     // (PRD sidebar-context-menus D-02, D-07); Remove project carries no
@@ -2105,10 +2210,11 @@ function buildMenus() {
       screenMenuSeparator(`mn-ctxsep-${suffix}`),
       screenMenuItem(`mn-ctx2-${suffix}`, 'Move to Trash', {state: 'destructive'}),
     ]);
-    const devicePicker = frame(`mn-dev-${suffix}`, 'Device picker', {width: 260, layout: 'vertical', padding: '$--spacing-xxs', gap: 0, cornerRadius: '$--radius-sm', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
-      text(`mn-devhdr-${suffix}`, 'Devices', {size: '$--text-micro', fill: '$--muted-foreground', weight: '600'}),
-      screenDevicePickerRow(`mn-dev0-${suffix}`, {name: 'This Mac', detail: 'Local · 2 agents', selected: true}),
-      screenDevicePickerRow(`mn-dev1-${suffix}`, {name: 'Mac mini', detail: 'Remote · Connected · 7 agents'}),
+    // The one-device window's footer button: the device it is, and the way to add another.
+    const deviceMenu = screenMenuContent(`mn-dev-${suffix}`, 200, [
+      screenMenuItem(`mn-dev0-${suffix}`, 'This Mac · 이 기기', {glyph: 'laptop', shortcut: '✓'}),
+      screenMenuSeparator(`mn-devsep-${suffix}`),
+      screenMenuItem(`mn-dev1-${suffix}`, '기기 추가…', {glyph: 'plus', state: 'highlighted'}),
     ]);
     // ExplorerTree.tsx renders this as inline warning-colored text directly
     // under the Explorer root row, not a filled banner with an icon.
@@ -2120,11 +2226,12 @@ function buildMenus() {
       text(`mn-noticet-${suffix}`, 'Git status unavailable: ~/projects/sasu/demo is not inside a Git repository', {fill: '$--warning', size: '$--text-caption', width: 360}),
     ]);
     return [frame(`mn-wrap-${suffix}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-lg'}, [
-      frame(`mn-row-a-${suffix}`, 'Row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [rowMenu, explorerCtx, devicePicker]),
+      frame(`mn-row-a-${suffix}`, 'Row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [rowMenu, explorerCtx, deviceMenu]),
       notice,
+      startPanels(suffix),
     ])];
   }
-  return screenSheet('screen-menus', 'Screen / Menus and Overlays', 'entry-menu.tsx EntryContextMenu, DevicePicker.tsx, and the Explorer git-status notice: overlays shown anchored in their real screen context rather than the abstract System gallery.', build, build);
+  return screenSheet('screen-menus', 'Screen / Menus and Overlays', 'entry-menu.tsx EntryContextMenu, the sidebar footer’s device button menu (This Mac, 기기 추가…), the Explorer git-status notice and the ⌘N start panel (PRD home-device-rail D-18..D-20): overlays shown anchored in their real screen context rather than the abstract System gallery. The panel floats over the window like ⌘K with one line to write and three dropdowns, target, agent kind and model, and 시작 with ⏎. The target defaults to what is in front and its menu lists Home first, then the front device’s checkouts, then every other device’s Home, an unreachable one dimmed with 연결 안 됨; the kind menu is Claude and Codex, and the model menu follows the kind (Claude: haiku, sonnet, opus, fable; Codex: the list the CLI reports). The kind and each kind’s model are remembered; the target is not.', build, build);
 }
 
 // -- Screen / Projects Sidebar -------------------------------------------------
@@ -2183,14 +2290,15 @@ function buildProjectsSidebar(tokens) {
     });
   }
 
-  // sidebar-header.tsx's Overview row, the one global destination above the
-  // strip: the project row's columns with the fold slot empty, the house glyph,
-  // and the project count where a badge stands.
-  function overviewDestination(id, {count, selected = false}) {
-    return themedXref(id, 'qdhY0', 'Overview', {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--secondary'} : {})}, {
-      wgtfo: {opacity: 0},
+  // The device's Home row (sidebar-header.tsx), in the place the Overview row held:
+  // the project row's columns, the house glyph, the project count where a badge
+  // stands, and under the pointer + in the fold slot (a new tab in Home).
+  function homeRow(id, {count, selected = false, hover = false}) {
+    return themedXref(id, 'qdhY0', 'Home', {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--secondary'} : hover ? {fill: '$--accent'} : {})}, {
+      wgtfo: {opacity: hover ? 1 : 0},
+      iBYjj: {icon: 'plus', fill: '$--foreground'},
       mIzlX: {icon: 'house'},
-      JkPyX: {content: 'Overview'},
+      JkPyX: {content: 'Home'},
       nZkan: {enabled: true, content: count},
       'project-status': {enabled: false},
     });
@@ -2275,61 +2383,254 @@ function buildProjectsSidebar(tokens) {
     });
   }
 
+  // -- the device rail and the header line (PRD home-device-rail D-09..D-14) --
+  const railWidth = num(tokens, '--size-rail');
+  const WIN_H = 720;
+  const TILE = 32, TILE_STEP = 58, RAIL_TOP = 12;
+  const FG = '$--foreground', SUBTLE = '$--subtle-foreground', MUTED = '$--muted-foreground';
+  const at = (node, x, y) => ({...node, x: Math.round(x), y: Math.round(y)});
+  const spacer = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
+  const DEVICES = {
+    mac: {glyph: 'laptop', label: 'This Mac'},
+    mini: {glyph: 'server', label: 'mini'},
+    build: {glyph: 'server', label: 'build-box'},
+    inbox: {glyph: 'inbox', label: 'Inbox'},
+    add: {glyph: 'plus', label: '기기 추가'},
+  };
+
+  // A tile is the device's glyph on a rounded square with its name under it; the
+  // selected one wears the pill at the rail's edge, the number is the device's
+  // Needs You count and an unreachable device is dimmed with a x and no number.
+  function railTile(id, key, {selected = false, off = false, badge} = {}) {
+    const d = DEVICES[key];
+    return frame(id, d.label, {layout: 'none', width: railWidth, height: TILE_STEP - 8}, [
+      ...(selected ? [at(frame(`${id}-pill`, 'Selected', {width: 4, height: 20, cornerRadius: 2, fill: FG}, []), 0, 6)] : []),
+      at(frame(`${id}-t`, 'Tile', {
+        width: TILE, height: TILE, cornerRadius: '$--radius-md', layout: 'horizontal', justifyContent: 'center', alignItems: 'center',
+        fill: selected ? '$--secondary' : '$--card', stroke: selected ? FG : '$--border', strokeWidth: 1, strokeAlignment: 'inner', ...(off ? {opacity: 0.45} : {}),
+      }, [icon(`${id}-g`, d.glyph, {size: 16, fill: selected ? FG : SUBTLE})]), 10, 0),
+      ...(badge ? [at(frame(`${id}-b`, 'Needs You', {width: 16, height: 16, cornerRadius: 8, fill: '$--warning', layout: 'horizontal', justifyContent: 'center', alignItems: 'center', stroke: '$--background', strokeWidth: 2, strokeAlignment: 'outer'}, [
+        text(`${id}-bt`, String(badge), {size: '$--text-micro', weight: '600', fill: '$--primary-foreground'}),
+      ]), 33, -5)] : []),
+      ...(off ? [at(frame(`${id}-x`, 'Not connected', {width: 14, height: 14, cornerRadius: 7, fill: '$--background', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
+        text(`${id}-xt`, '×', {size: '$--text-micro', fill: MUTED}),
+      ]), 34, 22)] : []),
+      at(text(`${id}-l`, d.label, {size: '$--text-micro', fill: selected ? FG : MUTED, width: railWidth, align: 'center'}), 0, TILE + 3),
+    ]);
+  }
+
+  // Inbox first, a separator, This Mac and the registered devices in order, and
+  // + at the bottom; the sidebar beside it follows the selected tile.
+  function deviceRail(p, selected, {miniOff = false} = {}) {
+    const tiles = [
+      ['inbox', {selected: selected === 'inbox', badge: miniOff ? 2 : 3}],
+      ['sep'],
+      ['mac', {selected: selected === 'mac', badge: 2}],
+      ['mini', {selected: selected === 'mini', badge: miniOff ? undefined : 1, off: miniOff}],
+      ['build', {selected: selected === 'build', off: true}],
+    ];
+    return frame(`${p}-rail`, 'Device rail', {width: railWidth, height: WIN_H, layout: 'vertical', gap: 8, padding: [RAIL_TOP, 0, 4, 0], fill: '$--background', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
+      ...tiles.map(([key, options], i) => key === 'sep'
+        ? frame(`${p}-rsep${i}`, 'Separator', {width: railWidth, height: 1, layout: 'horizontal', justifyContent: 'center'}, [frame(`${p}-rsepl${i}`, 'Rule', {width: 24, height: 1, fill: MUTED}, [])])
+        : railTile(`${p}-rt${i}`, key, options)),
+      frame(`${p}-rgrow`, 'Grow', {width: railWidth, height: 'fill_container'}, []),
+      railTile(`${p}-radd`, 'add'),
+    ]);
+  }
+
+  // The header line beside the traffic lights names the device in front, with Add
+  // project and Search at its end; with no rail it stays empty.
+  function headerLine(p, {name, tag, icons = []}) {
+    return frame(`${p}-band`, 'Header line', {width, height: num(tokens, '--size-tab-strip'), layout: 'horizontal', gap: sm, alignItems: 'center', padding: [0, xs, 0, '$--spacing-md']}, name ? [
+      text(`${p}-bn`, name, {size: '$--text-subhead', weight: '600'}),
+      ...(tag ? [text(`${p}-bt`, tag, {size: '$--text-caption', fill: MUTED})] : []),
+      spacer(`${p}-bsp`),
+      ...icons.map(g => screenIconButton(`${p}-b${g}`, g)),
+    ] : []);
+  }
+
+  const ruleLine = id => frame(id, 'Rule', {width, height: 1, fill: '$--border'}, []);
+
+  // Projects | Agents, kept only by the one-device window (no rail).
+  function tabStrip(p) {
+    return frame(`${p}-strip`, 'Tabs', {width, height: num(tokens, '--size-tab-strip'), padding: [0, xs, 0, '$--spacing-md'], gap: sm, alignItems: 'center'}, [
+      text(`${p}-tp`, 'Projects', {size: '$--text-caption'}),
+      text(`${p}-ta`, 'Agents', {size: '$--text-caption', fill: MUTED}),
+      spacer(`${p}-tsp`),
+      screenIconButton(`${p}-tnew`, 'plus'),
+      screenIconButton(`${p}-tsearch`, 'search'),
+    ]);
+  }
+
+  // Usage chips and the Settings gear; with no rail the left end keeps one device
+  // button where the device picker sat, the way to add a device.
+  function footer(p, {deviceButton = false} = {}) {
+    return frame(`${p}-ftr`, 'Footer', {width, layout: 'vertical'}, [
+      ruleLine(`${p}-fr`),
+      frame(`${p}-fb`, 'Footer row', {width, layout: 'horizontal', padding: [sm, '$--spacing-md'], gap: xs, alignItems: 'center'}, [
+        ...(deviceButton ? [themedXref(`${p}-dev`, 'Nyvom', 'Devices', {width: 20, height: 20}, {ZIZFR: {icon: 'laptop', fill: MUTED}})] : []),
+        screenUsageChip(`${p}-u0`, {provider: 'claude', value: '62%'}),
+        screenUsageChip(`${p}-u1`, {provider: 'codex', value: '59%'}),
+        spacer(`${p}-fsp`),
+        screenIconButton(`${p}-gear`, 'settings', {size: 20}),
+      ]),
+    ]);
+  }
+
+  // Agent rows the device sidebars share: title, mark, and the context line the
+  // Needs You and Inbox lists carry; a remote row wears the device chip.
+  const AGENTS = {
+    deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '변경 내용을 확인해 주세요', place: 'herdr-ide › main', bright: true},
+    blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '톤을 이대로 갈까요?', place: 'Home', bright: true},
+    research: {title: '두 프로젝트 비교 조사', status: 'seen', provider: 'codex', age: '14m', place: 'Home'},
+    ci: {title: 'CI 러너 샤드 정리', status: 'done', age: '6m', place: 'herdr-ide › ci-shards', bright: true},
+    readable: {title: '사이드바 가독성 개선', status: 'working', age: '1m', place: 'herdr-ide › main'},
+    principle: {title: '원칙 문서 정리', status: 'working', provider: 'codex', age: '3m', place: 'oh-my-principle › main'},
+    sasu: {title: '판정 로그 확인', status: 'seen', age: '1h', place: 'sasu › main'},
+    batch: {title: '배치 감시', status: 'asking', provider: 'codex', age: '5m', line: 'PR #252 머지할까요?', place: 'Home', bright: true},
+    build: {title: '릴리스 빌드 확인', status: 'working', provider: 'codex', age: '1m', place: 'hide › main'},
+  };
+  const needsYou = (p, list) => [
+    section(`${p}-sn`, `Needs You · ${list.length}`),
+    ...list.map(([key, extra], i) => agentRow(`${p}-n${i}`, {...AGENTS[key], inset: sm, ...extra})),
+  ];
+
+  // The Home row with the agents that belong to no project under it.
+  function homeBlock(p, {count, agents, selected = false}) {
+    return frame(`${p}-home`, 'Home', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, [
+      homeRow(`${p}-hr`, {count, selected}),
+      ...agents.map((key, i) => agentRow(`${p}-ha${i}`, {...AGENTS[key], place: undefined, line: undefined, inset: 30})),
+    ]);
+  }
+
+  // One device's sidebar: the header line, its Needs You group, its Home, then Projects; a fixed
+  // `height` is the window's, and the list takes what is left.
+  function deviceSidebar(key, s, {name, tag, icons = ['plus', 'search'], needs, home, tab = false, rows = [], body, deviceButton = false, height}) {
+    const p = `psb-${key}`;
+    const id = `${p}-${s}`;
+    return frame(`${p}-${s}`, 'Sidebar', {width, ...(height ? {height} : {}), layout: 'vertical', fill: '$--sidebar', clip: true}, [
+      headerLine(id, {name, tag, icons}),
+      ...(needs ? [frame(`${id}-needs`, 'Needs You', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, needs)] : []),
+      ...(home ? [homeBlock(id, home)] : []),
+      ...(tab ? [ruleLine(`${id}-r0`), tabStrip(id), ruleLine(`${id}-r1`)] : [ruleLine(`${id}-r0`)]),
+      frame(`${id}-list`, 'Projects list', {width, ...(height ? {height: 'fill_container'} : {}), layout: 'vertical', padding: [0, xs], clip: Boolean(height)}, rows),
+      ...(body ? [body] : []),
+      footer(id, {deviceButton}),
+    ]);
+  }
+
   function build(s) {
-    // The global destinations, fixed above the strip (D-02, D-06); the count is
-    // what the rows below can produce: one pinned, herdr-ide and sasu, and
-    // three folded inactive projects.
-    const destinations = frame(`psb-dest-${s}`, 'Destinations', {width, layout: 'vertical', padding: xs}, [
-      overviewDestination(`psb-all-${s}`, {count: '6 projects'}),
-    ]);
-    // Projects | Agents, then New workspace (Projects only) and Search at the end (D-03, D-04).
-    const strip = frame(`psb-hdr-${s}`, 'Tabs', {width, height: num(tokens, '--size-tab-strip'), padding: [0, xs, 0, '$--spacing-md'], gap: '$--spacing-sm', alignItems: 'center'}, [
-      text(`psb-projects-${s}`, 'Projects', {size: '$--text-caption'}),
-      text(`psb-agents-${s}`, 'Agents', {size: '$--text-caption', fill: '$--muted-foreground'}),
-      frame(`psb-hgap-${s}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      screenIconButton(`psb-new-${s}`, 'plus'),
-      screenIconButton(`psb-search-${s}`, 'search'),
-    ]);
-    const rule = (key) => frame(`psb-${key}-${s}`, 'Rule', {width, height: 1, fill: '$--border'}, []);
-    const header = frame(`psb-top-${s}`, 'Top', {width, layout: 'vertical'}, [destinations, rule('rule0'), strip, rule('rule1')]);
-    const list = frame(`psb-list-${s}`, 'Projects list', {width, layout: 'vertical', padding: [0, xs]}, [
-      section(`psb-sec-pin-${s}`, 'Pinned · 1'),
-      folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
-      section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5'),
-      projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
-      checkoutRow(`psb-overview-${s}`, {name: 'Overview', kind: 'overview', selected: true}),
-      group(`psb-g-main-${s}`, [
-        checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, purpose: '사이드바 가독성 개선', expanded: true}),
-        // An unfolded parent: its chevron waits in the slot, its children follow.
-        agentRow(`psb-a1-${s}`, {title: '사이드바 가독성 개선', status: 'working', age: '1m', fold: 'unfolded'}),
-        agentRow(`psb-a1c1-${s}`, {title: '컴포넌트 구…', status: 'working', provider: 'codex', age: '42s', depth: 1, branch: 'feat/ui'}),
-        agentRow(`psb-a1c2-${s}`, {title: '한글 가독성 확인', status: 'seen', age: '38s', depth: 1}),
-        // A folded parent waiting on its children: ring in Working, the badge, the chevron shown.
-        foldedAgent(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1', fold: 'folded'}, [
-          {status: 'working', branch: 'agent-sleep', pr: '#183'},
-          {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
+    const id = key => `psb-${key}-${s}`;
+    const mark = {question: 1, working: 2, done: 1};
+    // The rest state the review target names: This Mac in front, its Needs You
+    // group over Projects, the Overview child of herdr-ide selected.
+    const rest = deviceSidebar('sidebar', s, {
+      name: 'This Mac', needs: needsYou(`psb-nu-${s}`, [['deploy'], ['blog']]), home: {count: '6 projects', agents: ['blog', 'research']},
+      rows: [
+        section(`psb-sec-pin-${s}`, 'Pinned · 1'),
+        folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
+        section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5'),
+        projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+        checkoutRow(`psb-overview-${s}`, {name: 'Overview', kind: 'overview', selected: true}),
+        group(`psb-g-main-${s}`, [
+          checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, purpose: '사이드바 가독성 개선', expanded: true}),
+          // An unfolded parent: its chevron waits in the slot, its children follow.
+          agentRow(`psb-a1-${s}`, {title: '사이드바 가독성 개선', status: 'working', age: '1m', fold: 'unfolded'}),
+          agentRow(`psb-a1c1-${s}`, {title: '컴포넌트 구…', status: 'working', provider: 'codex', age: '42s', depth: 1, branch: 'feat/ui'}),
+          agentRow(`psb-a1c2-${s}`, {title: '한글 가독성 확인', status: 'seen', age: '38s', depth: 1}),
+          // A folded parent waiting on its children: ring in Working, the badge, the chevron shown.
+          foldedAgent(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1', fold: 'folded'}, [
+            {status: 'working', branch: 'agent-sleep', pr: '#183'},
+            {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
+          ]),
+          agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
         ]),
-        agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
-      ]),
-      checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
-      checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),
-      checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…'}),
-      checkoutRow(`psb-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
-      checkoutRow(`psb-c6-${s}`, {name: 'fix/registered-projects-only', age: '1d'}),
-      checkoutRow(`psb-c7-${s}`, {name: 'legacy-shell', kind: 'missing'}),
-      fold(`psb-f-herdr-${s}`, 'Inactive 14', 'checkout'),
-      projectRow(`psb-p-sasu-${s}`, {name: 'sasu', marks: {working: 1, done: 1, idle: 1}, expanded: false}),
-      fold(`psb-f-proj-${s}`, 'Inactive projects 3', 'project'),
+        checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
+        checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),
+        checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…'}),
+        checkoutRow(`psb-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
+        checkoutRow(`psb-c6-${s}`, {name: 'fix/registered-projects-only', age: '1d'}),
+        checkoutRow(`psb-c7-${s}`, {name: 'legacy-shell', kind: 'missing'}),
+        fold(`psb-f-herdr-${s}`, 'Inactive 14', 'checkout'),
+        projectRow(`psb-p-sasu-${s}`, {name: 'sasu', marks: {working: 1, done: 1, idle: 1}, expanded: false}),
+        fold(`psb-f-proj-${s}`, 'Inactive projects 3', 'project'),
+      ],
+    });
+
+    // The Home row at rest and under the pointer, where + starts a tab in Home.
+    const homeCut = (key, hover) => frame(id(key), hover ? 'Home row under the pointer' : 'Home row', {width, layout: 'vertical', padding: xs, fill: '$--sidebar', cornerRadius: '$--radius-sm'}, [
+      homeRow(`${id(key)}-row`, {count: '6 projects', hover}),
+      agentRow(`${id(key)}-a0`, {...AGENTS.blog, place: undefined, line: undefined, inset: 30}),
     ]);
-    const footer = frame(`psb-ftr-${s}`, 'Footer', {width, layout: 'vertical'}, [
-      frame(`psb-rule2-${s}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
-      frame(`psb-dev-${s}`, 'Device picker', {width, padding: ['$--spacing-sm', '$--spacing-md'], gap: '$--spacing-xs', alignItems: 'center'}, [
-        icon(`psb-devi-${s}`, 'laptop', {size: 12, fill: '$--subtle-foreground'}),
-        text(`psb-devt-${s}`, 'This Mac', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        icon(`psb-devc-${s}`, 'chevrons-up-down', {size: 12, fill: '$--muted-foreground'}),
-      ]),
+
+    // Inbox: every device's agents by state, the device chip on a remote row only.
+    const inbox = deviceSidebar('inbox', s, {
+      name: 'Inbox', tag: '모든 기기', icons: ['search'], height: WIN_H,
+      rows: [
+        section(`psb-in-s0-${s}`, 'Needs You · 3'),
+        agentRow(`psb-in-a0-${s}`, {...AGENTS.deploy, inset: sm}), agentRow(`psb-in-a1-${s}`, {...AGENTS.blog, inset: sm}), agentRow(`psb-in-a2-${s}`, {...AGENTS.batch, inset: sm, device: 'mini'}),
+        section(`psb-in-s1-${s}`, 'Done · 1'), agentRow(`psb-in-a3-${s}`, {...AGENTS.ci, inset: sm}),
+        section(`psb-in-s2-${s}`, 'Working · 3'),
+        agentRow(`psb-in-a4-${s}`, {...AGENTS.readable, inset: sm, selected: true}), agentRow(`psb-in-a5-${s}`, {...AGENTS.build, inset: sm, device: 'mini'}), agentRow(`psb-in-a6-${s}`, {...AGENTS.principle, inset: sm}),
+        section(`psb-in-s3-${s}`, 'Seen · 2'), agentRow(`psb-in-a7-${s}`, {...AGENTS.research, inset: sm}), agentRow(`psb-in-a8-${s}`, {...AGENTS.sasu, inset: sm}),
+      ],
+    });
+
+    // A remote device in front: its own Home and Projects, tagged Remote.
+    const remote = deviceSidebar('remote', s, {
+      name: 'mini', tag: 'Remote', height: WIN_H, needs: needsYou(`psb-rm-${s}`, [['batch', {place: 'Home'}]]), home: {count: '2 projects', agents: ['batch']},
+      rows: [
+        section(`psb-rm-sp-${s}`, 'Projects · Recent activity · 2'),
+        projectRow(`psb-rm-p0-${s}`, {name: 'hide', marks: {working: 1}, expanded: true}),
+        checkoutRow(`psb-rm-p0o-${s}`, {name: 'Overview', kind: 'overview'}),
+        checkoutRow(`psb-rm-p0m-${s}`, {name: 'main', kind: 'primary', age: '1m', purpose: '릴리스 빌드 확인', marks: {working: 1}, selected: true}),
+        checkoutRow(`psb-rm-p0w-${s}`, {name: 'quick/246-frontmost', kind: 'open', age: '3h', purpose: '#246 frontmost 창 고정'}),
+        projectRow(`psb-rm-p1-${s}`, {name: 'sasu'}),
+      ],
+    });
+
+    // A device that is not connected: its name, the state, one action; the last tree is not drawn.
+    const offBody = frame(`psb-off-body-${s}`, 'Not connected', {width, height: 'fill_container', layout: 'vertical', gap: sm, alignItems: 'center', padding: [120, '$--spacing-md', 0, '$--spacing-md']}, [
+      icon(`psb-off-g-${s}`, 'server', {size: 20, fill: MUTED}),
+      text(`psb-off-n-${s}`, 'mini', {size: '$--text-subhead', weight: '600'}),
+      text(`psb-off-s-${s}`, '연결 안 됨', {size: '$--text-caption', fill: MUTED}),
+      screenButton(`psb-off-b-${s}`, '다시 연결', {variant: 'secondary', height: num(tokens, '--size-control-sm'), icon: 'refresh-cw'}),
     ]);
-    return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer]), hoverState(s), menuStates(s)];
+    const off = frame(`psb-off-${s}`, 'Sidebar', {width, height: WIN_H, layout: 'vertical', fill: '$--sidebar', clip: true}, [
+      headerLine(`psb-off-${s}`, {name: 'mini', tag: 'Remote'}), ruleLine(`psb-off-r0-${s}`), offBody, footer(`psb-off-${s}`),
+    ]);
+
+    // One device, no rail: the Home row over today's Projects | Agents tabs and the footer's device button.
+    const one = deviceSidebar('one', s, {
+      height: WIN_H, tab: true, deviceButton: true, home: {count: '4 projects', agents: ['blog', 'research']},
+      rows: [
+        section(`psb-one-sp-${s}`, 'Projects · Recent activity · 4'),
+        projectRow(`psb-one-p0-${s}`, {name: 'herdr-ide', marks: mark, expanded: true}),
+        checkoutRow(`psb-one-p0o-${s}`, {name: 'Overview', kind: 'overview'}),
+        checkoutRow(`psb-one-p0m-${s}`, {name: 'main', kind: 'primary', age: 'now', purpose: '사이드바 가독성 개선', marks: {question: 1, working: 1}, selected: true}),
+        checkoutRow(`psb-one-p0w-${s}`, {name: 'feat/home-device-rail', kind: 'open', age: '12m', purpose: 'Home · 기기 레일', marks: {working: 1}}),
+        projectRow(`psb-one-p1-${s}`, {name: 'oh-my-principle', marks: {working: 1}}),
+        projectRow(`psb-one-p2-${s}`, {name: 'sasu', marks: {idle: 1}}),
+      ],
+    });
+
+    const labeled = (key, label, children) => frame(id(`cap-${key}`), label, {layout: 'vertical', gap: '$--spacing-sm', alignItems: 'start'}, [
+      text(`${id(`cap-${key}`)}-l`, label, {size: '$--text-caption', weight: '600', fill: MUTED}), ...children,
+    ]);
+    const paired = (key, selected, sidebar, options) => frame(id(`pair-${key}`), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id(key), selected, options), sidebar]);
+    return [frame(id('wrap'), 'Wrap', {layout: 'vertical', gap: '$--spacing-xl'}, [
+      frame(id('row-rest'), 'This Mac in front', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
+        labeled('rest', 'This Mac in front · rail, Home, Needs You, Projects', [frame(id('pair-rest'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('rest'), 'mac'), rest])]),
+        labeled('home', 'Home row · rest and under the pointer', [homeCut('home0', false), homeCut('home1', true)]),
+        hoverState(s), menuStates(s),
+      ]),
+      frame(id('row-states'), 'Rail states', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [
+        labeled('inbox', 'Inbox · every device, the chip on a remote row', [paired('inbox', 'inbox', inbox)]),
+        labeled('remote', 'mini in front', [paired('remote', 'mini', remote)]),
+        labeled('off', 'mini not connected · dimmed tile, no number', [paired('off', 'mini', off, {miniOff: true})]),
+        labeled('one', 'One device · no rail, the device button in the footer', [one]),
+      ]),
+    ])];
   }
 
   // A row's right-click menu, one per row kind (PRD sidebar-context-menus
@@ -2425,7 +2726,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts: the Projects tab, the scope picker. Above it, fixed, the global destinations: one Overview row with the house glyph and the project count, which opens the every-project Overview and carries the selected fill only while that screen is in front; under it the Projects | Agents tab strip, Projects first, ending in New workspace (Projects only) and Search, the icon that opens ⌘K. The list starts at the first project; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts (PRD home-device-rail D-09..D-14): the sidebar follows a device rail. With a remote device registered the rail stands left of it: Inbox first, a separator, This Mac and each registered device as a tile with its name, the tile’s number the device’s Needs You count (Inbox: the connected devices’ sum), the selected tile with the pill at the rail’s edge, an unreachable device dimmed with a x and no number, and + at the bottom to add a device. A device tile’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the device’s Needs You group first (it has no Done group), then its Home row in the place the Overview row held (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects; it has no Projects | Agents strip. The rest frame is This Mac in front with the Overview child of herdr-ide selected. The Inbox tile draws every device’s agents as Needs You, Done, Working and Seen with the device chip on a remote row only; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device and no rail the window keeps the Home row over the Projects | Agents strip, and the footer’s left end holds a laptop button that opens the way to add a device. In the list, pinned and activity-ordered projects, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------
@@ -2528,6 +2829,10 @@ function buildMobile(tokens) {
   }
 
   // -- phone: list --
+  // The list's + opens the start sheet (PRD home-device-rail B42).
+  function startButton(id) {
+    return frame(id, 'New agent', {width: 32, height: 32, cornerRadius: PILL, fill: '$--secondary', alignItems: 'center', justifyContent: 'center'}, [icon(`${id}-i`, 'plus', {size: 18, fill: FG})]);
+  }
   const INSET = 16 + XS + 14 + XS;
   function sectionLabel(id, label, count) {
     return frame(id, label, {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: PHONE_W, height: 32, padding: [SP.md, SP.lg, 2, SP.lg]}, [
@@ -2593,7 +2898,7 @@ function buildMobile(tokens) {
     ])] : [];
     const emptyLine = empty ? [frame(`${id}-em`, 'Empty', {width: PHONE_W, padding: [SP.xl, SP.lg]}, [text(`${id}-et`, '실행 중인 에이전트가 없어요', {size: '$--text-title', fill: MUTED})])] : [];
     return [
-      header(`${id}-h`, {title: 'hide', sub: `${MACHINE} · 폰 1대 더 연결됨`, connected: !unreachable}),
+      header(`${id}-h`, {title: 'hide', sub: `${MACHINE} · 폰 1대 더 연결됨`, connected: !unreachable, trailing: startButton(`${id}-new`)}),
       ...banner,
       frame(`${id}-list`, 'List', {layout: 'vertical', width: PHONE_W, opacity: unreachable ? 0.45 : 1}, [...groups, ...emptyLine]),
     ];
@@ -2682,6 +2987,38 @@ function buildMobile(tokens) {
         text(`${id}-n`, '코드는 5분 안에 만료돼요. 만료되면 맥에서 QR을 다시 여세요.', {size: '$--text-body', fill: MUTED, width: CONTENT_W - 32, align: 'center'}),
       ]),
     ];
+  }
+
+  // -- phone: start sheet --
+  // The bottom sheet over the dimmed list: what to do, then target, kind and model
+  // as one field each (kind and model start on the desktop's remembered values,
+  // the target on This Mac · Home), and 시작.
+  function startField(id, label, value, leadNode) {
+    return frame(id, label, {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: CONTENT_W, height: 44, padding: [0, SP.md], fill: '$--secondary', cornerRadius: 12}, [
+      text(`${id}-l`, label, {size: '$--text-body', fill: MUTED, width: 40}),
+      ...(leadNode ? [leadNode] : []),
+      text(`${id}-v`, value, {size: 15, fill: FG}),
+      spacer(`${id}-s`),
+      icon(`${id}-c`, 'chevron-down', {size: 16, fill: MUTED}),
+    ]);
+  }
+  function startBody(id) {
+    const bodyH = PHONE_H - STATUS_H - HOME_H;
+    const sheetH = 380;
+    const sheet = frame(`${id}-sheet`, 'Start sheet', {layout: 'vertical', gap: SP.md, width: PHONE_W, height: sheetH, padding: [SP.sm, SP.lg, SP.lg, SP.lg], fill: '$--popover', cornerRadius: [24, 24, 0, 0], stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+      frame(`${id}-grab`, 'Grab', {width: CONTENT_W, height: 12, alignItems: 'center', justifyContent: 'center'}, [frame(`${id}-grabb`, 'Bar', {width: 36, height: 4, cornerRadius: PILL, fill: MUTED, opacity: 0.6}, [])]),
+      frame(`${id}-box`, 'Text box', {layout: 'vertical', width: CONTENT_W, height: 96, padding: SP.md, fill: '$--secondary', cornerRadius: 12}, [
+        text(`${id}-q`, '블로그 초안을 두 가지 톤으로 다시 써서 비교해줘', {size: 15, fill: FG, width: CONTENT_W - 2 * MD}),
+      ]),
+      startField(`${id}-target`, '대상', 'This Mac · Home', icon(`${id}-tg`, 'house', {size: 14, fill: MUTED})),
+      startField(`${id}-kind`, '종류', 'Claude', provider(`${id}-kg`, 'claude', 16)),
+      startField(`${id}-model`, '모델', 'opus', icon(`${id}-mg`, 'cpu', {size: 14, fill: MUTED})),
+      button(`${id}-go`, '시작', {primary: true, width: CONTENT_W, height: 48, size: 16}),
+    ]);
+    return [frame(`${id}-stack`, 'List under the sheet', {layout: 'none', width: PHONE_W, height: bodyH, clip: true}, [
+      {...frame(`${id}-dim`, 'Dimmed list', {layout: 'vertical', width: PHONE_W, height: bodyH, opacity: 0.4}, listBody(`${id}-l`)), x: 0, y: 0},
+      {...sheet, x: 0, y: bodyH - sheetH},
+    ])];
   }
 
   // -- push banner --
@@ -2832,10 +3169,11 @@ function buildMobile(tokens) {
         labeled(p('cap-unreach'), '④ 연결 안 됨', '한 줄로 두 원인을 말하고 자동 재시도. 목록은 마지막 상태로 흐리게.', phone(p('unreach'), 'Phone · Unreachable', listBody(p('unreach-b'), {unreachable: true}))),
         labeled(p('cap-empty'), '⑤ 비어 있음', '에이전트가 없을 때의 가장 작은 형태.', phone(p('empty'), 'Phone · Empty', listBody(p('empty-b'), {empty: true}))),
         labeled(p('cap-push'), '⑥ 푸시 배너', '루트 에이전트당 하나, 작업명 + 상태 + 프로젝트. 탭하면 ③으로.', pushBanner(p('push'))),
+        labeled(p('cap-start'), '⑦ 시키기', '목록의 +가 여는 시트. 글, 대상(기본 This Mac · Home), 종류, 모델. 종류와 모델은 데스크톱의 마지막 값으로 미리 골라져 있고 시작하면 그 에이전트 상세로 간다.', phone(p('start'), 'Phone · Start', startBody(p('start-b')))),
       ]),
     ])];
   }
-  return screenSheet('screen-mobile', 'Screen / Mobile', 'web/src/MobileTab.tsx, mobile.ts, and the phone app under web/src/mobile/ (entry web/mobile.html), PRD mobile-companion D-08 and D-12: Settings > Mobile after Devices, blocked with only the failing check lit and one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, the connected phones (2 / 4) with 해지 and the automatic-removal notice, and the three push modes. The phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함) on the desktop row rules at phone sizes, the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state (one line naming both causes over the dimmed last list), the empty state, and the push banner that opens the detail. The machine name and tailnet are placeholders and the QR is never a real code.', build, build);
+  return screenSheet('screen-mobile', 'Screen / Mobile', 'web/src/MobileTab.tsx, mobile.ts, and the phone app under web/src/mobile/ (entry web/mobile.html), PRD mobile-companion D-08 and D-12: Settings > Mobile after Devices, blocked with only the failing check lit and one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, the connected phones (2 / 4) with 해지 and the automatic-removal notice, and the three push modes. The phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함) on the desktop row rules at phone sizes, the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state (one line naming both causes over the dimmed last list), the empty state, the push banner that opens the detail, and the start sheet the list’s + opens (PRD home-device-rail D-24): a text box, target (default This Mac · Home), kind, model and 시작 over the dimmed list. The machine name and tailnet are placeholders and the QR is never a real code.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------
@@ -2870,7 +3208,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Settings', build: () => buildSettings(tokens)},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},
-    {name: 'Screen / Menus and Overlays', build: () => buildMenus()},
+    {name: 'Screen / Menus and Overlays', build: () => buildMenus(tokens)},
     {name: 'Screen / Projects Sidebar', build: () => buildProjectsSidebar(tokens)},
     {name: 'Screen / Mobile', build: () => buildMobile(tokens)},
     {name: 'Screen / Disk Cleanup', build: () => buildDiskCleanup(tokens)},

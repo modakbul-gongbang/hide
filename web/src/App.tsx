@@ -15,6 +15,7 @@ import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
 import { expectSurface, focusSignature } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
+import { StartPanelHost } from "./StartPanel";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
@@ -244,6 +245,7 @@ export function App() {
         <ConfirmClose actions={actions} />
         <ConfirmTrash actions={actions} />
         <Palette actions={actions} />
+        <StartPanelHost actions={actions} />
         <ShortcutSheetGate actions={actions} />
         <SettingsGate actions={actions} />
         <WorkspaceDialogs actions={actions} />

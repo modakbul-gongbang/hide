@@ -15,6 +15,7 @@ pub mod clone;
 pub mod document;
 pub mod error;
 pub mod git;
+pub mod home;
 pub mod index;
 pub mod kit;
 pub mod list;

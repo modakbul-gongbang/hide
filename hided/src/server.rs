@@ -91,6 +91,11 @@ pub struct AppState {
     /// Which connections are looking at the Settings agents tab; the daemon
     /// owns the core's one observation flag on their behalf.
     pub demand: Arc<crate::demand::ObservationDemand>,
+    /// Which connections show a start surface (the start panel, a start
+    /// dialog's model menu, a phone's start sheet): the provider catalog is
+    /// read while any does, without the Settings-only hook diagnosis (PRD
+    /// home-device-rail D-18).
+    pub start_demand: Arc<crate::demand::ObservationDemand>,
     /// What the Settings General tab reads about this daemon, sent once after
     /// a handshake. No token, no environment beyond the paths it names.
     pub daemon_info: Arc<Value>,
@@ -1207,26 +1212,29 @@ fn device_listing(
     }
 }
 
-/// Splits an `ai_settings` event: the observation hint is this connection's
-/// demand and reaches the core only when the aggregate changes; a provider or
-/// model choice goes to the core as it came.
+/// Splits an `ai_settings` event: each observation hint (`observing` for the
+/// Settings agents tab, `start_observing` for a start surface) is this
+/// connection's demand and reaches the core only when its aggregate changes;
+/// a provider or model choice goes to the core as it came.
 fn handle_ai_settings(
     state: &AppState,
     mut event: Value,
     connection: u64,
 ) -> Result<ClientAction, String> {
-    let observing = event
-        .get_mut("payload")
-        .and_then(Value::as_object_mut)
-        .and_then(|payload| payload.remove("observing"));
-    match observing {
-        Some(Value::Bool(observing)) => {
-            state.demand.set(connection, observing, |aggregate| {
-                dispatch_observation(state, connection, aggregate)
-            });
+    for demand in [Demand::Settings, Demand::Start] {
+        let hint = event
+            .get_mut("payload")
+            .and_then(Value::as_object_mut)
+            .and_then(|payload| payload.remove(demand.field()));
+        match hint {
+            Some(Value::Bool(observing)) => {
+                demand.of(state).set(connection, observing, |aggregate| {
+                    dispatch_observation(&state.core, demand, connection, aggregate)
+                });
+            }
+            Some(Value::Null) | None => {}
+            Some(_) => return Err(format!("ai_settings.{} must be a boolean", demand.field())),
         }
-        Some(Value::Null) | None => {}
-        Some(_) => return Err("ai_settings.observing must be a boolean".to_owned()),
     }
     let carries_choice = event
         .get("payload")
@@ -1239,24 +1247,55 @@ fn handle_ai_settings(
     Ok(ClientAction::Replies(Vec::new()))
 }
 
+/// The two screens whose look costs the core a provider probe.
+#[derive(Clone, Copy)]
+pub(crate) enum Demand {
+    /// The Settings agents tab: the catalog and the hook diagnosis.
+    Settings,
+    /// A start surface: the catalog only.
+    Start,
+}
+
+impl Demand {
+    fn field(self) -> &'static str {
+        match self {
+            Self::Settings => "observing",
+            Self::Start => "start_observing",
+        }
+    }
+
+    pub(crate) fn of(self, state: &AppState) -> &crate::demand::ObservationDemand {
+        match self {
+            Self::Settings => &state.demand,
+            Self::Start => &state.start_demand,
+        }
+    }
+}
+
 /// Runs under the demand lock (`ObservationDemand::set`), so it only logs
 /// and hands the event to the core's channel.
-fn dispatch_observation(state: &AppState, connection: u64, observing: bool) {
+pub(crate) fn dispatch_observation(
+    core: &CoreHandle,
+    demand: Demand,
+    connection: u64,
+    observing: bool,
+) {
     eprintln!(
         "{}",
         json!({
             "component": "hided",
             "kind": "settings.observation",
             "connection": connection,
+            "demand": demand.field(),
             "observing": observing,
         })
     );
     let event = json!({
         "schema_version": SCHEMA_VERSION,
         "kind": "ai_settings",
-        "payload": {"observing": observing},
+        "payload": {demand.field(): observing},
     });
-    if let Err(error) = state.core.dispatch(event.to_string().into_bytes()) {
+    if let Err(error) = core.dispatch(event.to_string().into_bytes()) {
         eprintln!(
             "{}",
             json!({
@@ -2564,9 +2603,11 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
     state.attachments.release(connection);
     state.mobile.release(connection);
-    state.demand.release(connection, |observing| {
-        dispatch_observation(state, connection, observing)
-    });
+    for demand in [Demand::Settings, Demand::Start] {
+        demand.of(state).release(connection, |observing| {
+            dispatch_observation(&state.core, demand, connection, observing)
+        });
+    }
     let remaining = state
         .clients
         .fetch_sub(1, Ordering::SeqCst)

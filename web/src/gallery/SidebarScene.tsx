@@ -11,7 +11,7 @@ import { TooltipProvider } from "../components/ui/tooltip";
 import { Sidebar } from "../sidebar";
 import { useShellStore } from "../store";
 import { entryLens, useUiStore } from "../ui";
-import { applyEvent, REFERENCE_FOLDS, sidebarScene, type SceneContent, type SceneFolds } from "./sceneData";
+import { applyEvent, OFFLINE_DEVICE, REFERENCE_FOLDS, sidebarScene, type SceneContent, type SceneDevices, type SceneFolds, type SceneFront } from "./sceneData";
 
 /** What one scene document shows; every value comes from its query string. */
 export type SceneParams = {
@@ -21,6 +21,10 @@ export type SceneParams = {
   /** The interface text scale the Appearance font size sets (`--interface-scale`); the sidebar itself does not follow it (PRD sidebar-typography D-05). */
   scale: number;
   content: SceneContent;
+  /** One device (no rail) or the two-device fixture with the rail. */
+  devices: SceneDevices;
+  /** What is in front once the scene opens; a rail tile changes it. */
+  front: SceneFront;
 };
 
 export function sceneParams(params: URLSearchParams): SceneParams {
@@ -30,11 +34,16 @@ export function sceneParams(params: URLSearchParams): SceneParams {
   if (width !== null && !(Number(width) > 0)) throw new Error(`Scene width must be a positive number, got ${width}`);
   if (!(scale > 0)) throw new Error(`Scene scale must be a positive number, got ${params.get("scale")}`);
   if (content !== "reference" && content !== "long") throw new Error(`Unknown scene content ${content}`);
-  return { theme: params.get("theme") === "light" ? "light" : "dark", width: width === null ? null : Number(width), scale, content };
+  const devices = params.get("devices") ?? "one";
+  if (devices !== "one" && devices !== "two") throw new Error(`Unknown scene devices ${devices}`);
+  const front = params.get("front") ?? "local";
+  if (front !== "local" && front !== "mini" && front !== "offline" && front !== "inbox") throw new Error(`Unknown scene front ${front}`);
+  if (devices === "one" && front !== "local") throw new Error(`Scene front ${front} needs devices=two`);
+  return { theme: params.get("theme") === "light" ? "light" : "dark", width: width === null ? null : Number(width), scale, content, devices, front };
 }
 
-export function SidebarScene({ theme, width, scale, content }: SceneParams) {
-  const [folds, setFolds] = useState<SceneFolds>(REFERENCE_FOLDS);
+export function SidebarScene({ theme, width, scale, content, devices, front }: SceneParams) {
+  const [folds, setFolds] = useState<SceneFolds>({ ...REFERENCE_FOLDS, frontDevice: front === "mini" ? "mini" : front === "offline" ? OFFLINE_DEVICE : "local" });
   const actions = useMemo(
     () =>
       createActions((event) => {
@@ -48,15 +57,15 @@ export function SidebarScene({ theme, width, scale, content }: SceneParams) {
   );
 
   // Seed the app's stores before the first paint, and again on every fold.
-  const scene = useMemo(() => sidebarScene(content, folds, Date.now()), [content, folds]);
+  const scene = useMemo(() => sidebarScene(content, folds, Date.now(), devices), [content, folds, devices]);
   useLayoutEffect(() => {
     const rest = width === null ? scene.rest : { ...scene.rest, ui_state: { ...scene.rest.ui_state, sidebar_width: width } };
     useShellStore.setState({ rest, agents: scene.agents, connection: "live" });
   }, [scene, width]);
 
   useLayoutEffect(() => {
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "overview", projectId: "herdr-ide", lens: entryLens(null, "board") } });
-  }, []);
+    useUiStore.setState({ sidebarMode: "projects", inbox: front === "inbox", screen: { kind: "overview", projectId: "herdr-ide", lens: entryLens(null, "board") } });
+  }, [front]);
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -68,7 +77,7 @@ export function SidebarScene({ theme, width, scale, content }: SceneParams) {
 
   return (
     <TooltipProvider>
-      <div className="flex h-full bg-background text-foreground" data-gallery-scene="projects-sidebar" data-scene-content={content}>
+      <div className="flex h-full bg-background text-foreground" data-gallery-scene="projects-sidebar" data-scene-content={content} data-scene-devices={devices} data-scene-front={front}>
         <Sidebar actions={actions} />
       </div>
     </TooltipProvider>

@@ -597,6 +597,31 @@ fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
     );
 }
 
+/// PRD home-device-rail D-18: a start surface's model menu reads the provider
+/// catalog while it shows, without the Settings tab's hook diagnosis, and the
+/// two demands stop independently.
+#[test]
+fn a_start_surface_reads_the_catalog_without_the_settings_diagnosis() {
+    let mut runtime = runtime();
+    let event = |payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "ai_settings", "payload": payload
+        }))
+        .expect("the event encodes")
+    };
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"start_observing": true}))));
+    assert!(runtime.ai_request().observing);
+    assert!(!runtime.settings_observed());
+
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"observing": true}))));
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"start_observing": false}))));
+    assert!(runtime.ai_request().observing, "Settings is still looking");
+    assert!(runtime.settings_observed());
+
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"observing": false}))));
+    assert!(!runtime.ai_request().observing);
+}
+
 #[test]
 fn an_unreadable_choice_and_a_failed_write_are_stated_rather_than_dropped() {
     let mut runtime = runtime();
@@ -1005,6 +1030,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             path: root_a.clone(),
             device_id: "local".to_owned(),
             pinned: false,
+            home: false,
         },
         WorkspaceRegistration {
             primary_checkout_id: None,
@@ -1013,6 +1039,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             path: root_b.clone(),
             device_id: "local".to_owned(),
             pinned: false,
+            home: false,
         },
     ];
     runtime.rebuild_catalog();
@@ -1147,6 +1174,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
         pinned: false,
+        home: false,
     };
     let local_pane = pane("wL:p1", checkout_path);
     let selected_workspace = workspace(
@@ -1674,6 +1702,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
         pinned: false,
+        home: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id =

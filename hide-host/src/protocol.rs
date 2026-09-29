@@ -18,7 +18,8 @@ use crate::root::RootIdentity;
 /// A5); a helper on 8 would ignore them and answer none.
 /// 10: `kit` installs, judges and removes the device's install kit (PRD
 /// device-parity); a helper on 9 would refuse it as an unknown operation.
-pub const PROTOCOL_VERSION: u32 = 10;
+/// 11: `home_sync` manages Hide's Home folder and its project links.
+pub const PROTOCOL_VERSION: u32 = 11;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -148,6 +149,12 @@ pub enum Call {
     /// host's own home folder (`hide_host::register::check`).
     Registrable {
         path: String,
+    },
+    /// Makes this host's Hide Home folder (`~/hide`) hold one link per
+    /// project in `projects` and nothing Hide did not make
+    /// (`hide_host::home::sync`).
+    HomeSync {
+        projects: Vec<String>,
     },
     /// Rechecks and removes one operator-confirmed linked worktree, forced
     /// only as far as the operator accepted

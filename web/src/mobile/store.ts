@@ -4,8 +4,9 @@
 // agent it opened by id, never by name (D-17).
 
 import { create } from "zustand";
-import type { AgentGroup, AgentKey, Conversation, DetailView, Notifications, PairPayload, PushMode, Refusal, RowsState, ServerFrame } from "./protocol";
+import type { AgentGroup, AgentKey, Conversation, DetailView, Notifications, PairPayload, PushMode, Refusal, RowsState, ServerFrame, StartCatalog } from "./protocol";
 import { mergeConversation, sameKey } from "./protocol";
+import { NO_CHOICE, type StartChoice } from "./start";
 
 export type Screen =
   /** No code and no credential on this phone (B13). */
@@ -34,6 +35,21 @@ export type Detail = {
   olderAskedAt: number | null;
 };
 
+/**
+ * The start sheet (B42-B44). The text and choice stay until a start succeeds,
+ * so a refusal or a lost connection never costs the operator what they typed.
+ */
+export type StartSheet = {
+  open: boolean;
+  text: string;
+  choice: StartChoice;
+  /** The request id waiting for hided's answer. */
+  pending: string | null;
+  error: string | null;
+};
+
+export const CLOSED_SHEET: StartSheet = { open: false, text: "", choice: NO_CHOICE, pending: null, error: null };
+
 export type PendingInput = { requestId: string; kind: "text" | "key" };
 
 type PhoneState = {
@@ -58,6 +74,11 @@ type PhoneState = {
   inputError: string | null;
   /** Shown once after pairing: 공유 › 홈 화면에 추가 (B11). */
   installHint: boolean;
+  /** What the start sheet lists; null until hided sends it after the sheet opens. */
+  startCatalog: StartCatalog | null;
+  startSheet: StartSheet;
+  /** The agent a start just made, waiting to appear in the list before its detail opens. */
+  startedAgent: AgentKey | null;
 };
 
 const initial: PhoneState = {
@@ -77,6 +98,9 @@ const initial: PhoneState = {
   pendingInput: null,
   inputError: null,
   installHint: false,
+  startCatalog: null,
+  startSheet: CLOSED_SHEET,
+  startedAgent: null,
 };
 
 export const usePhone = create<PhoneState>(() => initial);
@@ -127,6 +151,9 @@ export function applyFrame(frame: ServerFrame): void {
       patch({ detail: { ...detail, conversation } });
       return;
     }
+    case "start_catalog":
+      patch({ startCatalog: { targets: frame.targets, kinds: frame.kinds, remembered: frame.remembered } });
+      return;
     case "push_state":
       patch({ notifications: frame.notifications === "on" ? "on" : state.notifications });
       return;

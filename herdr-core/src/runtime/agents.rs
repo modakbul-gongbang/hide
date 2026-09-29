@@ -1337,6 +1337,12 @@ impl Runtime {
             self.ai_observing = observing;
             changed = true;
         }
+        if let Some(observing) = payload.start_observing
+            && self.ai_start_observing != observing
+        {
+            self.ai_start_observing = observing;
+            changed = true;
+        }
 
         // A model without the provider it belongs to is not applied to
         // whichever provider happens to be selected: the event is refused and
@@ -1388,7 +1394,7 @@ impl Runtime {
     pub fn ai_request(&self) -> crate::ai::AiRequest {
         let settings = self.ai_settings.clone().unwrap_or_default();
         crate::ai::AiRequest {
-            observing: self.ai_observing,
+            observing: self.ai_observing || self.ai_start_observing,
             models: hide_ai::PROVIDERS
                 .iter()
                 .map(|provider| (*provider, settings.model(*provider).to_owned()))
@@ -1591,6 +1597,9 @@ impl Runtime {
     }
 
     pub(super) fn persist_ui_state(&mut self) {
+        // Every registration change is persisted here, which is when a Home's
+        // links follow it (PRD home-device-rail D-06).
+        self.request_home_link_syncs();
         if let Err(message) = self.write_ui_state() {
             self.set_error("ui_state.save_failed", message, true);
         }

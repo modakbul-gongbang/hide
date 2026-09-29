@@ -20,12 +20,14 @@ import {
   type CloseWatch,
   type CloseWatchFrame,
 } from "./buffers";
+import { createCatalogObserver } from "./agentPicker";
 import { closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { allAgents, overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
+import { useStartPanel } from "./startDraft";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
   catalogWorkspaces,
@@ -84,6 +86,7 @@ export type Actions = ReturnType<typeof createActions>;
 
 export function createActions(dispatch: DispatchFn) {
   const rest = () => useShellStore.getState().rest;
+  const catalogObserver = createCatalogObserver((observing) => dispatch({ schema_version: 2, kind: "ai_settings", payload: { start_observing: observing } }));
   const diagnostic = (message: string) => useShellStore.getState().noteDiagnostic(message);
   const ui = () => useUiStore.getState();
 
@@ -969,8 +972,38 @@ export function createActions(dispatch: DispatchFn) {
       return [];
     },
 
+    /**
+     * A rail tile (PRD home-device-rail D-09): that device in front, which
+     * ends the Inbox. A device Overview on screen follows the device, so the
+     * sidebar and the center keep naming the same one.
+     */
     focusDevice(deviceId: string) {
+      ui().setInbox(false);
+      const screen = ui().screen;
+      if (screen?.kind === "main" && screen.deviceId !== deviceId) ui().setScreen({ kind: "main", deviceId });
+      if ((rest()?.navigator?.focused_device_id ?? "local") === deviceId) return;
       dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
+    },
+
+    /** The rail's Inbox tile: every device's agents in the sidebar, the center unchanged (D-10, D-27). */
+    showInbox() {
+      ui().setInbox(true);
+    },
+
+    /** Every entry point of Add device (the footer button, the rail's `+`, Add project's Host list) opens the one form (D-11). */
+    openAddDevice() {
+      ui().openSettings("devices");
+    },
+
+    /**
+     * The Home row's `+`: a new terminal tab in the device's Home (D-13). The
+     * request id is kept so the pane it answers with is opened when it lists
+     * (`useHomeStart`); a refusal is read by the same id.
+     */
+    startHomeTab(deviceId: string) {
+      const requestId = remoteRequestId();
+      ui().setHomeStart({ requestId, deviceId, refusal: null });
+      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider: "terminal", request_id: requestId, ...deviceField(deviceId) } });
     },
 
     /**
@@ -1034,12 +1067,56 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /**
-     * A new tab in the checkout with the provider started in it (D-05);
-     * `terminal` is the tab alone. `prompt` is the agent's first prompt, sent
-     * once it is ready.
+     * A new tab in a checkout, or in a device's Home (`home`), with the
+     * provider started in it (D-05); `terminal` is the tab alone. `prompt` is
+     * the agent's first prompt, sent once it is ready, `model` a catalog id
+     * (absent is the CLI's default), and `requestId` how the surface finds its
+     * own answer among the core's receipts. A device's start names `deviceId`;
+     * this machine's leaves it out.
      */
-    startAgent(checkoutPath: string, provider: "claude" | "codex" | "terminal", prompt: string | null = null) {
-      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { checkout_path: checkoutPath, provider, ...(prompt ? { prompt } : {}) } });
+    startAgent(request: {
+      target: { checkoutPath: string } | { home: true };
+      deviceId?: string;
+      provider: "claude" | "codex" | "terminal";
+      model?: string | null;
+      prompt?: string | null;
+      requestId?: string;
+    }) {
+      dispatch({
+        schema_version: 2,
+        kind: "agent_start_in_checkout",
+        payload: {
+          ...("checkoutPath" in request.target ? { checkout_path: request.target.checkoutPath } : { home: true }),
+          ...(request.deviceId && request.deviceId !== "local" ? { device_id: request.deviceId } : {}),
+          provider: request.provider,
+          ...(request.model ? { model: request.model } : {}),
+          ...(request.prompt ? { prompt: request.prompt } : {}),
+          ...(request.requestId ? { request_id: request.requestId } : {}),
+        },
+      });
+    },
+
+    /**
+     * Opens the start panel (⌘N, or ⌘K's `에이전트 시작…`); the keyboard goes
+     * to its text box. The draft it kept comes back.
+     */
+    /**
+     * Opens the start panel. Over Settings the panel takes Settings' place,
+     * because Settings holds the keyboard, and Settings is what was in front (B25).
+     */
+    openStartPanel() {
+      const overSettings = ui().overlay === "settings";
+      if (overSettings) ui().closeOverlay("settings");
+      useStartPanel.getState().open(overSettings);
+    },
+
+    /**
+     * Watches the model catalog for a picker on screen; the returned release
+     * is called when it goes away. The first watcher asks hided to read the
+     * catalog and the last one stops it, so two pickers never switch each other off.
+     */
+    observeCatalog(): () => void {
+      return catalogObserver.acquire();
     },
 
     /** A new issue in the project's source (Settings › Issues); the core answers in `issue_work.create`. */
@@ -1087,8 +1164,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** An agent started on a pull request's branch with `prompt` (D-12); it reports through `task_operation`. */
-    delegatePullRequest(workspaceId: string, prNumber: number, provider: "claude" | "codex", prompt: string) {
-      dispatch({ schema_version: 2, kind: "pr_delegate", payload: { workspace_id: workspaceId, pr_number: prNumber, provider, prompt } });
+    delegatePullRequest(workspaceId: string, prNumber: number, provider: "claude" | "codex", model: string | null, prompt: string) {
+      dispatch({ schema_version: 2, kind: "pr_delegate", payload: { workspace_id: workspaceId, pr_number: prNumber, provider, ...(model ? { model } : {}), prompt } });
     },
 
     /** A pull request's row on its Project's PRs tab, unfolded (PRD overview-lenses-prs B21); ⌘-click stays GitHub's. */
@@ -1128,6 +1205,8 @@ export function createActions(dispatch: DispatchFn) {
 
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     openAgent(paneId: string) {
+      // Choosing an agent in the Inbox moves the rail to its device with the rest.
+      ui().setInbox(false);
       beginOpening({ paneId });
       const target = remoteTargetOfPane(rest(), paneId) ?? "local";
       const forward = (rest()?.navigator?.focused_device_id ?? "local") !== target;
@@ -1226,6 +1305,7 @@ export function createActions(dispatch: DispatchFn) {
       branch: string;
       baseBranch: string | null;
       agentKind: string | null;
+      model?: string | null;
       purpose: string | null;
       taskKey?: string | null;
       prompt?: string | null;
@@ -1239,6 +1319,7 @@ export function createActions(dispatch: DispatchFn) {
           branch: request.branch,
           base_branch: request.baseBranch,
           agent_kind: request.agentKind,
+          ...(request.model ? { model: request.model } : {}),
           purpose: request.purpose,
           ...(request.taskKey ? { task_key: request.taskKey } : {}),
           ...(request.prompt ? { prompt: request.prompt } : {}),
@@ -1296,6 +1377,17 @@ export function createActions(dispatch: DispatchFn) {
      * into the display once the core shows it.
      */
     openSurface(surface: Surface) {
+      ui().setInbox(false);
+      if (surface.deviceId !== "local") {
+        // A device's tab comes forward on that device's Herdr, bringing the device with it: one event for rail, sidebar and center (D-16).
+        const status = rest()?.status?.remote?.find((row) => row.target_id === surface.deviceId);
+        const checkout = status?.session?.workspaces.flatMap((row) => row.checkouts).find((row) => row.id === surface.checkoutId);
+        if (!checkout) return diagnostic(`recent: ${surface.checkoutId} is no longer open on ${surface.deviceId}`);
+        expectSurface(surface.key);
+        beginOpening({ checkoutId: checkout.id, deviceId: surface.deviceId, path: checkout.path, workspaceId: surface.workspaceId });
+        dispatch(withDeviceForward(remoteControl(surface.deviceId, { action: "focus_tab", tab_id: surface.id })));
+        return;
+      }
       const checkout = rest()?.navigator?.workspaces?.flatMap((row) => row.checkouts).find((row) => row.id === surface.checkoutId);
       if (!checkout) return diagnostic(`recent: ${surface.checkoutId} is no longer open`);
       const focusDevice = (rest()?.navigator?.focused_device_id ?? "local") !== "local" ? { focus_device: true } : {};

@@ -497,9 +497,13 @@ impl Runtime {
         }));
         match checkout {
             Some(checkout) => self.agent_start_in_checkout(AgentStartInCheckoutPayload {
-                checkout_path: checkout.path.clone(),
+                checkout_path: Some(checkout.path.clone()),
+                device_id: None,
+                home: false,
                 provider: payload.provider,
                 prompt,
+                model: payload.model,
+                request_id: None,
             }),
             None => self.start_worktree_task(
                 CreateWorktreePayload {
@@ -511,6 +515,7 @@ impl Runtime {
                     purpose: None,
                     task_key: None,
                     prompt,
+                    model: payload.model,
                 },
                 true,
             ),

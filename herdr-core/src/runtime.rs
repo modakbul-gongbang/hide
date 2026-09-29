@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agent_areas;
+mod agent_choice;
 mod agent_close;
 mod agent_sleep;
 mod agents;
@@ -15,6 +16,7 @@ mod devices;
 mod documents;
 mod editor;
 mod events;
+mod home;
 mod hosts;
 mod issues;
 mod kit;
@@ -923,6 +925,14 @@ fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bo
         )
 }
 
+/// The first prompt and CLI arguments of the agent one task starts.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct TaskAgentLaunch {
+    pub(crate) task: u64,
+    pub(crate) prompt: Option<String>,
+    pub(crate) args: Vec<String>,
+}
+
 pub struct Runtime {
     snapshot: Snapshot,
     /// Stable identities are separate from device labels: labels are mutable
@@ -1081,6 +1091,8 @@ pub struct Runtime {
     /// True while the Background AI group is on screen, which is the only
     /// time the provider probe runs.
     ai_observing: bool,
+    /// A start surface shows its model menu; reads the catalog only.
+    ai_start_observing: bool,
     /// What the providers last answered. Held beside the snapshot so a
     /// changed choice can restamp the rows without asking again.
     background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
@@ -1235,10 +1247,13 @@ pub struct Runtime {
     /// The checkout whose Hide link a Local `pr_link_issue` waits on: its
     /// answer in `ingest_issue_operation_result` settles `pr_work.link`.
     pr_link_checkout: Option<String>,
-    /// The first prompt for the agent a worktree task starts, by task id. It
-    /// is kept off the snapshot: an issue body has no business on the wire
-    /// after the Start dialog sent it.
-    task_agent_prompt: Option<(u64, String)>,
+    /// How the agent a task starts is launched: its first prompt and its
+    /// CLI arguments (the model, a Home agent's project folders), by task
+    /// id. Kept off the snapshot: an issue body or a request has no business
+    /// on the wire after the surface that sent it.
+    task_agent_launch: Option<TaskAgentLaunch>,
+    /// Each device's Home link sync: the set last sent and whether it runs.
+    home_links: HashMap<String, home::HomeLinkState>,
     /// The catalog and root index most recently accepted from the sync
     /// coordinator, reused when a later precomputation arrives stale so the
     /// reconcile never rebuilds under the runtime lock.
@@ -1544,6 +1559,7 @@ impl Runtime {
             ai_settings: None,
             pending_ai_settings_save: None,
             ai_observing: false,
+            ai_start_observing: false,
             background_ai_providers: Vec::new(),
             usage_window_visible: false,
             usage_popover_open: false,
@@ -1617,7 +1633,8 @@ impl Runtime {
             local_issue_links: BTreeMap::new(),
             next_issue_work_id: 0,
             pr_link_checkout: None,
-            task_agent_prompt: None,
+            task_agent_launch: None,
+            home_links: HashMap::new(),
             last_accepted_catalog: None,
             catalog_roots: workspace::RootIndex::new(),
             checkout_tab_order: BTreeMap::new(),
@@ -1802,7 +1819,23 @@ impl Runtime {
             message: message.into(),
             retryable,
             occurred_at: unix_milliseconds(),
+            request_id: None,
         });
+    }
+
+    /// A refusal that answers one request, named so the surface that sent it
+    /// reads it as its own (`LastErrorSnapshot::request_id`).
+    pub(crate) fn set_request_error(
+        &mut self,
+        kind: impl Into<String>,
+        message: impl Into<String>,
+        retryable: bool,
+        request_id: Option<&str>,
+    ) {
+        self.set_error(kind, message, retryable);
+        if let Some(error) = self.snapshot.status.last_error.as_mut() {
+            error.request_id = request_id.map(str::to_owned);
+        }
     }
 
     pub fn dispatch_json(&mut self, bytes: &[u8]) -> bool {

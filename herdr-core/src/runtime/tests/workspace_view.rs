@@ -593,6 +593,7 @@ fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
             path: other.to_string_lossy().into_owned(),
             device_id: "local".to_owned(),
             pinned: false,
+            home: false,
         });
     runtime.rebuild_catalog();
     let other_checkout = workspace::checkout_id_for_path("workspace:other", &other);
@@ -686,6 +687,7 @@ pub(super) fn second_checkout(runtime: &mut Runtime, directory: &Path) -> (PathB
             path: other.to_string_lossy().into_owned(),
             device_id: "local".to_owned(),
             pinned: false,
+            home: false,
         });
     runtime.rebuild_catalog();
     let checkout = workspace::checkout_id_for_path("workspace:other", &other);

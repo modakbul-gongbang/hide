@@ -35,7 +35,6 @@ import {
   FONT_SIZE_BASE,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
-  ISSUE_AGENT_CHOICES,
   SETTINGS_TABS,
   SLEEP_AFTER_CHOICES,
   githubAccess,
@@ -587,8 +586,8 @@ function IssuesTab({ actions }: { actions: Actions }) {
   const [settingsAt, setSettingsAt] = useState<number | null>(null);
   const settingsError = useErrorSince(settingsAt, ["issue_settings."]);
   // The projects the boards draw issues for: this Mac's, each with its source;
-  // a device's projects keep their issues on that device.
-  const projects = (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && workspace.tasks?.source != null);
+  // a device's projects keep their issues on that device, and the Home is no project.
+  const projects = (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && !workspace.is_home && workspace.tasks?.source != null);
   const access = githubAccess(projects);
   const accessLine = access ? githubAccessLine(access) : null;
   const change = (patch: Partial<IssueSettings>) => {
@@ -670,26 +669,6 @@ function IssuesTab({ actions }: { actions: Actions }) {
                 aria-label="AI가 워크트리 이름 짓기"
                 data-issue-ai-worktree-name={String(settings.ai_worktree_name)}
               />
-            </Row>
-            <Row label="기본 에이전트">
-              <Select
-                value={settings.default_agent}
-                onValueChange={(next) => {
-                  if (next === settings.default_agent) return;
-                  change({ default_agent: next as IssueSettings["default_agent"] });
-                }}
-              >
-                <SelectTrigger aria-label="기본 에이전트" data-issue-default-agent={settings.default_agent}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ISSUE_AGENT_CHOICES.map((choice) => (
-                    <SelectItem key={choice.id} value={choice.id} data-issue-agent-option={choice.id}>
-                      {choice.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </Row>
             <Row label="PR 본문에 Closes 넣도록 지시">
               <Switch

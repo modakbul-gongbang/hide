@@ -1,10 +1,12 @@
 // Recent navigation (docs/UI_BEHAVIOR.md, Recent navigation), kept for the
 // session.
 //
-// One recent-use order over every surface this machine holds, across every
-// project and checkout: its Herdr tabs and the View-area displays (file, diff
-// and browser) of each checkout's Workspace, and the page's own screens, All
-// projects and each Project's Overview, once the operator has been on them.
+// One recent-use order over every surface the shell holds, across every
+// device, project and checkout: this machine's Herdr tabs and the View-area
+// displays (file, diff and browser) of each checkout's Workspace, each
+// connected device's Herdr tabs (PRD home-device-rail D-16), and the page's
+// own screens, a device's Home Overview and each Project's Overview, once the
+// operator has been on them.
 // Recent Panels walks it; Recent Projects walks the projects in the order
 // they were used and restores each one's last Workspace surface, which is
 // this same order narrowed to the project. The core reports what is in
@@ -12,7 +14,9 @@
 // so the order is the shell's convenience: nothing here is authority, and a
 // reload rebuilds it from use.
 
+import { frontDeviceId, localDeviceId } from "./devices";
 import { allProjectsCount } from "./navigation";
+import { remoteContext, remoteView } from "./remote";
 import { catalogWorkspaces, type AgentRow, type Checkout, type SnapshotRest, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
 import type { Screen } from "./ui";
 import { activeDisplay, areasOf } from "./viewLayout";
@@ -27,6 +31,8 @@ const AGENT_SURFACE = "herdr";
 export type Surface = {
   key: string;
   kind: SurfaceKind;
+  /** The device the checkout is on; `local` for this machine's. */
+  deviceId: string;
   workspaceId: string;
   checkoutId: string;
   /** The Herdr tab id, or the display id within its checkout's Workspace. */
@@ -35,15 +41,15 @@ export type Surface = {
   label: string;
 };
 
-export function tabSurface(checkout: Checkout, tabId: string): Surface {
-  return { key: `tab\u0000${checkout.id}\u0000${tabId}`, kind: AGENT_SURFACE, workspaceId: checkout.workspace_id, checkoutId: checkout.id, id: tabId, label: "" };
+export function tabSurface(checkout: Checkout, tabId: string, deviceId = "local"): Surface {
+  return { key: `tab\u0000${checkout.id}\u0000${tabId}`, kind: AGENT_SURFACE, deviceId, workspaceId: checkout.workspace_id, checkoutId: checkout.id, id: tabId, label: "" };
 }
 
 export function displaySurface(checkout: Checkout, display: ViewDisplaySnapshot): Surface {
-  return { key: `display\u0000${checkout.id}\u0000${display.id}`, kind: display.kind, workspaceId: checkout.workspace_id, checkoutId: checkout.id, id: display.id, label: display.label };
+  return { key: `display\u0000${checkout.id}\u0000${display.id}`, kind: display.kind, deviceId: "local", workspaceId: checkout.workspace_id, checkoutId: checkout.id, id: display.id, label: display.label };
 }
 
-/** A screen of the page's own: All projects, or one Project's Overview. */
+/** A screen of the page's own: a device's Home Overview, or one Project's Overview. */
 export type PageScreen = Exclude<Screen, { kind: "workspace" }>;
 
 /**
@@ -56,22 +62,50 @@ export type ScreenVisit = { key: string; screen: PageScreen };
 /** One entry of the recent order: a Workspace surface, or a screen of the page's own. */
 export type RecentEntry = Surface | ScreenVisit;
 
-function screenVisit(screen: PageScreen): ScreenVisit {
-  return { key: screen.kind === "main" ? "main" : `overview:${screen.projectId}`, screen };
+/** A Home Overview that names no device is the front device's; the visit names it, so it stays one place after the front moves. */
+function screenVisit(screen: PageScreen, frontId: string): ScreenVisit {
+  if (screen.kind === "main") {
+    const deviceId = screen.deviceId ?? frontId;
+    return { key: `main:${deviceId}`, screen: { kind: "main", deviceId } };
+  }
+  return { key: `overview:${screen.projectId}`, screen };
 }
 
 export function isScreenVisit(entry: RecentEntry): entry is ScreenVisit {
   return "screen" in entry;
 }
 
-/** All projects is always there; an Overview while its Project is in the catalog, on any device. */
+/** A device's Home Overview while the device is registered; an Overview while its Project is in the catalog, on any device. */
 function screenExists(rest: SnapshotRest | null, screen: PageScreen): boolean {
-  return screen.kind === "main" || catalogWorkspaces(rest).some((workspace) => workspace.id === screen.projectId);
+  if (screen.kind === "main") return (rest?.navigator?.devices ?? []).some((device) => device.id === (screen.deviceId ?? "local"));
+  return catalogWorkspaces(rest).some((workspace) => workspace.id === screen.projectId);
 }
 
 /** This machine's checkouts, in the navigator's order. */
 function localCheckouts(rest: SnapshotRest | null): Checkout[] {
   return (rest?.navigator?.workspaces ?? []).filter((workspace) => workspace.device_id === "local").flatMap((workspace) => workspace.checkouts);
+}
+
+/** A checkout with the device it is on. */
+type DeviceCheckout = { deviceId: string; workspace: Workspace; checkout: Checkout };
+
+/**
+ * Every checkout the shell can bring forward: this machine's, then each
+ * connected device's from the session the core last read, which a device
+ * that is not connected has no current copy of.
+ */
+function allCheckouts(rest: SnapshotRest | null): DeviceCheckout[] {
+  const local = localDeviceId(rest);
+  const rows: DeviceCheckout[] = (rest?.navigator?.workspaces ?? [])
+    .filter((workspace) => workspace.device_id === "local")
+    .flatMap((workspace) => workspace.checkouts.map((checkout) => ({ deviceId: local, workspace, checkout })));
+  for (const status of rest?.status?.remote ?? []) {
+    if (status.state !== "connected") continue;
+    for (const workspace of status.session?.workspaces ?? []) {
+      for (const checkout of workspace.checkouts) rows.push({ deviceId: status.target_id, workspace, checkout });
+    }
+  }
+  return rows;
 }
 
 /** The Workspace in front when it is this checkout's, which is the only one whose displays the snapshot carries. */
@@ -83,10 +117,16 @@ function frontLayoutOf(rest: SnapshotRest | null, checkout: Checkout) {
 /**
  * The surface the operator is using now: the focused checkout's active
  * display while the View area is the one in use, else its visible Herdr
- * tab. `viewInUse` is the page's answer (`keyboardOwner`), since only the
- * page knows where the keyboard is.
+ * tab; over a device in front, the tab that device's Herdr shows.
+ * `viewInUse` is the page's answer (`keyboardOwner`), since only the page
+ * knows where the keyboard is.
  */
 export function currentSurface(rest: SnapshotRest | null, viewInUse: boolean): Surface | null {
+  const context = remoteContext(rest);
+  if (context) {
+    const view = remoteView(context.session);
+    return view?.tab?.id ? tabSurface(view.checkout, view.tab.id, context.device.id) : null;
+  }
   const id = rest?.navigator?.focused_checkout_id;
   const checkout = localCheckouts(rest).find((row) => row.id === id);
   if (!checkout) return null;
@@ -97,13 +137,13 @@ export function currentSurface(rest: SnapshotRest | null, viewInUse: boolean): S
 }
 
 /**
- * What the operator is on now: All projects or an Overview while the page
- * shows one, whichever device is in front, else the Workspace surface in use
- * (`currentSurface`) while this machine is in front.
+ * What the operator is on now: a Home Overview or a Project's Overview while
+ * the page shows one, else the Workspace surface in use (`currentSurface`) on
+ * the device in front.
  */
-export function currentEntry(screen: Screen | null, rest: SnapshotRest | null, local: boolean, viewInUse: boolean): RecentEntry | null {
-  if (screen && screen.kind !== "workspace") return screenVisit(screen);
-  return local ? currentSurface(rest, viewInUse) : null;
+export function currentEntry(screen: Screen | null, rest: SnapshotRest | null, viewInUse: boolean): RecentEntry | null {
+  if (screen && screen.kind !== "workspace") return screenVisit(screen, frontDeviceId(rest));
+  return currentSurface(rest, viewInUse);
 }
 
 /**
@@ -117,20 +157,23 @@ export function focusSignature(rest: SnapshotRest | null): string {
   const checkout = localCheckouts(rest).find((row) => row.id === navigator?.focused_checkout_id);
   const layout = checkout ? frontLayoutOf(rest, checkout) : null;
   const display = layout ? activeDisplay(layout)?.display.id : null;
-  return [navigator?.focused_device_id, checkout?.id, checkout?.active_tab_id, workspaceViewOf(rest)?.panel, display].join("\u0000");
+  const device = remoteView(remoteContext(rest)?.session ?? null);
+  return [navigator?.focused_device_id, checkout?.id, checkout?.active_tab_id, device?.checkout.id, device?.tab?.id, workspaceViewOf(rest)?.panel, display].join("\u0000");
 }
 
 /**
  * Every entry the session still holds, in the navigator's order: each
- * checkout's Herdr tabs, the front Workspace's displays as the snapshot
+ * checkout's Herdr tabs, a connected device's after this machine's, the front Workspace's displays as the snapshot
  * carries them, and the displays remembered for a checkout not in front,
  * which the snapshot does not carry and which the core checks on commit;
  * then the remembered screens that still exist.
  */
 export function availableEntries(rest: SnapshotRest | null, remembered: readonly RecentEntry[]): RecentEntry[] {
   const entries: RecentEntry[] = [];
-  for (const checkout of localCheckouts(rest)) {
-    for (const tab of checkout.tabs) if (tab.id) entries.push(tabSurface(checkout, tab.id));
+  for (const { deviceId, checkout } of allCheckouts(rest)) {
+    for (const tab of checkout.tabs) if (tab.id) entries.push(tabSurface(checkout, tab.id, deviceId));
+    // A device's View displays are not in the snapshot, so only its Herdr tabs are entries.
+    if (deviceId !== localDeviceId(rest)) continue;
     const layout = frontLayoutOf(rest, checkout);
     if (layout) {
       for (const area of areasOf(layout.root)) for (const display of area.displays) entries.push(displaySurface(checkout, display));
@@ -221,14 +264,12 @@ export function resetRecent() {
 
 /** What committing a switcher row brings forward. */
 export type CycleTarget =
-  /** A Workspace surface, in its own checkout. */
+  /** A Workspace surface, in its own checkout, on its own device. */
   | { kind: "surface"; surface: Surface }
-  /** All projects or a Project's Overview, which the page shows itself. */
-  | { kind: "screen"; screen: PageScreen }
-  /** A tab of the device in front, which that device's Herdr focuses. */
-  | { kind: "device_tab"; tabId: string }
-  /** A project with no surface to restore, on its checkout. */
-  | { kind: "checkout"; workspaceId: string; checkoutId: string };
+  /** A device's Home Overview or a Project's Overview, which the page shows itself once the device is in front. */
+  | { kind: "screen"; screen: PageScreen; deviceId: string }
+  /** A project with no surface to restore, on its checkout and device. */
+  | { kind: "checkout"; deviceId: string; workspaceId: string; checkoutId: string };
 
 /** What a switcher row draws and what committing it names. */
 export type CycleItem = {
@@ -236,6 +277,8 @@ export type CycleItem = {
   title: string;
   detail: string;
   kind: SurfaceKind | "project" | PageScreen["kind"];
+  /** The device's name when the row is not on the device in front, drawn as a chip (PRD home-device-rail D-16); null otherwise. */
+  chip: DeviceChipView | null;
   /** The one agent a tab holds, drawn with its status mark and its own mark. */
   agent: Pick<AgentRow, "agent_kind" | "symbol" | "status_label" | "demand" | "activity" | "emphasized" | "waiting_on_descendants"> | null;
   target: CycleTarget;
@@ -248,59 +291,88 @@ export function placeLabel(workspace: Pick<Workspace, "label">, checkout: Pick<C
   return workspace.label === checkout.label ? checkout.label : `${workspace.label} · ${checkout.label}`;
 }
 
+/** A device's chip: its name, and whether it is this machine (which wears the laptop glyph, not the server's). */
+export type DeviceChipView = { label: string; local: boolean };
+
+/** The chip for a row on `deviceId`, or null while that is the device in front. */
+export function deviceChip(rest: SnapshotRest | null, deviceId: string): DeviceChipView | null {
+  if (deviceId === frontDeviceId(rest)) return null;
+  const device = rest?.navigator?.devices?.find((row) => row.id === deviceId);
+  return { label: device?.label ?? deviceId, local: device ? device.kind !== "remote" : deviceId === localDeviceId(rest) };
+}
+
 function findCheckout(rest: SnapshotRest | null, checkoutId: string) {
-  for (const workspace of rest?.navigator?.workspaces ?? []) {
-    const checkout = workspace.checkouts.find((row) => row.id === checkoutId);
-    if (checkout) return { workspace, checkout };
-  }
-  return null;
+  const row = allCheckouts(rest).find((candidate) => candidate.checkout.id === checkoutId);
+  return row ?? null;
+}
+
+/** The agents `deviceId` reports, which a tab's one agent is looked up in. */
+function agentsOf(rest: SnapshotRest | null, deviceId: string): AgentRow[] {
+  if (deviceId === localDeviceId(rest)) return rest?.navigator?.agents ?? [];
+  return rest?.status?.remote?.find((status) => status.target_id === deviceId)?.session?.agents ?? [];
 }
 
 /**
  * A Recent Panels row: a tab holding exactly one agent pane is called by
  * that agent and carries its status mark; any other tab keeps its Herdr
  * label, and a display its own name. A Project's Overview is called by its
- * Project and is gone with it; the every-project Overview reads as its
- * sidebar row does, `Overview` over the project count (PRD sidebar-shell D-02).
+ * Project and is gone with it; a device's Home Overview reads as the sidebar's
+ * Home row does, `Home` over the project count.
  */
 export function panelItem(rest: SnapshotRest | null, entry: RecentEntry): CycleItem | null {
   if (isScreenVisit(entry)) return screenItem(rest, entry);
   const surface = entry;
   const place = findCheckout(rest, surface.checkoutId);
   if (!place) return null;
-  const detail = `${placeLabel(place.workspace, place.checkout)} · ${KIND_LABEL[surface.kind]}`;
-  const base = { key: surface.key, kind: surface.kind, target: { kind: "surface", surface } as const, detail };
+  const detail = `${place.workspace.is_home ? "Home" : placeLabel(place.workspace, place.checkout)} · ${KIND_LABEL[surface.kind]}`;
+  const base = { key: surface.key, kind: surface.kind, chip: deviceChip(rest, place.deviceId), target: { kind: "surface", surface } as const, detail };
   if (surface.kind !== AGENT_SURFACE) return { ...base, title: surface.label, agent: null };
   const tab = place.checkout.tabs.find((row) => row.id === surface.id);
   if (!tab) return null;
   const paneIds = new Set(tab.panes.map((pane) => pane.id));
-  const agents = (rest?.navigator?.agents ?? []).filter((agent) => paneIds.has(agent.pane_id));
+  const agents = agentsOf(rest, place.deviceId).filter((agent) => paneIds.has(agent.pane_id));
   const agent = agents.length === 1 ? agents[0]! : null;
   return { ...base, title: agent?.identity_label ?? tab.label ?? surface.id, agent };
 }
 
 function screenItem(rest: SnapshotRest | null, visit: ScreenVisit): CycleItem | null {
   const { screen } = visit;
-  const target = { kind: "screen", screen } as const;
   if (screen.kind === "main") {
-    const count = allProjectsCount(rest);
-    return { key: visit.key, title: "Overview", detail: `${count} ${count === 1 ? "project" : "projects"}`, kind: screen.kind, agent: null, target };
+    const deviceId = screen.deviceId ?? frontDeviceId(rest);
+    const count = allProjectsCount(rest, deviceId);
+    return {
+      key: visit.key,
+      title: "Home",
+      detail: `${count} ${count === 1 ? "project" : "projects"}`,
+      kind: screen.kind,
+      chip: deviceChip(rest, deviceId),
+      agent: null,
+      target: { kind: "screen", screen, deviceId },
+    };
   }
-  const title = catalogWorkspaces(rest).find((workspace) => workspace.id === screen.projectId)?.label;
-  if (title === undefined) return null;
-  return { key: visit.key, title, detail: "Overview", kind: screen.kind, agent: null, target };
+  const project = catalogWorkspaces(rest).find((workspace) => workspace.id === screen.projectId);
+  if (!project) return null;
+  return {
+    key: visit.key,
+    title: project.label,
+    detail: "Overview",
+    kind: screen.kind,
+    chip: deviceChip(rest, project.device_id),
+    agent: null,
+    target: { kind: "screen", screen, deviceId: project.device_id },
+  };
 }
 
 /** A Recent Projects row: the project, with the surface and checkout it would come back on. */
-export function projectItem(workspace: Workspace, rest: SnapshotRest | null, local: boolean): CycleItem | null {
-  const last = local ? lastSurfaceOf(workspace.id) : null;
+export function projectItem(workspace: Workspace, rest: SnapshotRest | null): CycleItem | null {
+  const last = lastSurfaceOf(workspace.id);
   const lastItem = last ? panelItem(rest, last) : null;
   const restored = lastItem ? last : null;
   const checkout = (restored && workspace.checkouts.find((row) => row.id === restored.checkoutId)) ?? workspace.checkouts[0];
   if (!checkout) return null;
   const detail = lastItem ? `${lastItem.title} · ${checkout.label}` : checkout.label;
-  const target: CycleTarget = restored ? { kind: "surface", surface: restored } : { kind: "checkout", workspaceId: workspace.id, checkoutId: checkout.id };
-  return { key: workspace.id, title: workspace.label, detail, kind: "project", agent: null, target };
+  const target: CycleTarget = restored ? { kind: "surface", surface: restored } : { kind: "checkout", deviceId: workspace.device_id, workspaceId: workspace.id, checkoutId: checkout.id };
+  return { key: workspace.id, title: workspace.label, detail, kind: "project", chip: deviceChip(rest, workspace.device_id), agent: null, target };
 }
 
 // --- the held cycle ---------------------------------------------------------

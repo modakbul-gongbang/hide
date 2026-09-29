@@ -199,10 +199,13 @@ describe("settings rules", () => {
   });
 
   it("names every kit part and where it goes in the one consent, and refuses a relative device socket", () => {
-    const terms = kitConsentTerms("/opt/hide", "/opt/bin").join(" ");
+    const lines = kitConsentTerms("/opt/hide", "/opt/bin");
+    const terms = lines.join(" ");
     for (const named of ["/opt/hide", "/opt/bin", "hook helper", "labels plugin", "hcoord", "~/.claude/settings.json", "~/.codex/hooks.json", "~/.hcoord/bin/hcoord"]) {
       expect(terms).toContain(named);
     }
+    expect(lines).toHaveLength(5);
+    expect(terms).toContain("~/hide");
     expect(terms).not.toContain("changes no hook");
     expect(socketProblem("")).toBeNull();
     expect(socketProblem("/tmp/herdr.sock")).toBeNull();

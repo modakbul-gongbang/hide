@@ -750,12 +750,29 @@ pub(super) struct OverviewOpenSectionPayload {
 /// it. `terminal` means the tab alone.
 #[derive(Debug, Deserialize)]
 pub(super) struct AgentStartInCheckoutPayload {
-    pub(super) checkout_path: String,
+    /// The checkout to start in; absent for a Home start.
+    #[serde(default)]
+    pub(super) checkout_path: Option<String>,
+    /// The device the checkout or Home is on; absent is this machine (PRD
+    /// home-device-rail D-22).
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
+    /// Start in the device's Home rather than a checkout (D-04, D-13).
+    #[serde(default)]
+    pub(super) home: bool,
     pub(super) provider: String,
     /// The agent's first prompt, sent once the agent is ready (an issue
     /// started on a checkout that is not a new worktree).
     #[serde(default)]
     pub(super) prompt: Option<String>,
+    /// The model the agent CLI is started with; absent is the CLI's own
+    /// default (PRD home-device-rail D-18).
+    #[serde(default)]
+    pub(super) model: Option<String>,
+    /// The start surface's own id for this request, stamped on the task
+    /// receipt and on a refusal so that surface reads its own answer.
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -783,6 +800,9 @@ pub(super) struct CreateWorktreePayload {
     /// The agent's first prompt, sent once the agent is ready.
     #[serde(default)]
     pub(super) prompt: Option<String>,
+    /// The model the agent CLI is started with; absent is its own default.
+    #[serde(default)]
+    pub(super) model: Option<String>,
 }
 
 /// `issue_source_set`: a project's issue source chosen in Settings › Issues;
@@ -801,8 +821,6 @@ pub(super) struct IssueSourceSetPayload {
 pub(super) struct IssueSettingsSetPayload {
     #[serde(default)]
     pub(super) ai_worktree_name: Option<bool>,
-    #[serde(default)]
-    pub(super) default_agent: Option<String>,
     #[serde(default)]
     pub(super) closes_instruction: Option<bool>,
 }
@@ -884,6 +902,9 @@ pub(super) struct PrDelegatePayload {
     pub(super) provider: String,
     #[serde(default)]
     pub(super) prompt: String,
+    /// The model the agent CLI is started with; absent is its own default.
+    #[serde(default)]
+    pub(super) model: Option<String>,
 }
 
 /// `issue_set_open`: close or reopen a Local issue.
@@ -978,6 +999,10 @@ pub(super) struct AiSettingsPayload {
     /// starts child processes, so it runs only while somebody is looking.
     #[serde(default)]
     pub(super) observing: Option<bool>,
+    /// True while a start surface shows its model menu (PRD home-device-rail
+    /// D-18): the catalog is read, the Settings-only hook diagnosis is not.
+    #[serde(default)]
+    pub(super) start_observing: Option<bool>,
     /// The provider the operator chose.
     #[serde(default)]
     pub(super) provider: Option<String>,
@@ -3341,6 +3366,8 @@ impl Runtime {
                     // Settings › Issues owns these through their own events.
                     project_issue_sources: current.project_issue_sources,
                     issue_settings: current.issue_settings,
+                    // Every agent start owns this; a shared save carries it.
+                    agent_start: current.agent_start,
                     agent_sleep: current.agent_sleep,
                 };
                 // Visibility and popover activity wake the provider reader,

@@ -90,6 +90,7 @@ fn project(path: &Path, checkouts: bool) -> WorkspaceSnapshot {
         path: path.to_string_lossy().into_owned(),
         device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
         pinned: false,
+        home: false,
     });
     if !checkouts {
         project.checkouts.clear();

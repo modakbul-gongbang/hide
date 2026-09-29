@@ -3,7 +3,7 @@
 // Nothing here reads the store, so every rule is tested without a browser.
 
 import type { DaemonInfo } from "./store";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, IssueSettings, KitComponent, KitComponentId, RemoteStatus, Workspace } from "./snapshot";
+import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, KitComponent, KitComponentId, RemoteStatus, Workspace } from "./snapshot";
 
 export type SettingsTab = "general" | "appearance" | "agents" | "issues" | "devices" | "mobile" | "performance" | "shortcuts";
 
@@ -97,13 +97,6 @@ export function issueSourceChoices(
   ];
   return { value: options.find((option) => option.id === stored)?.id ?? "auto", options };
 }
-
-/** The agents the Start dialog can select first (`issue_settings.default_agent`). */
-export const ISSUE_AGENT_CHOICES: readonly { id: IssueSettings["default_agent"]; label: string }[] = [
-  { id: "claude", label: "Claude" },
-  { id: "codex", label: "Codex" },
-  { id: "terminal", label: "터미널만" },
-];
 
 /** The interface font sizes Appearance offers, the native Settings range. */
 export const FONT_SIZE_MIN = 11;
@@ -252,7 +245,7 @@ export function kitConsentTerms(helperRoot: string | null, cliDir: string | null
   return [
     `Hide copies its helper, the hide command, its hook helper, the agent labels plugin and hcoord into ${root}, and replaces them there when this version of Hide needs newer ones.`,
     `It links hide in ${cliDir ?? "the account's command folder"}, adds its own entries to ~/.claude/settings.json and ~/.codex/hooks.json, links the labels plugin in the device's Herdr, and installs hcoord at ~/.hcoord/bin/hcoord with the device's Node. Another tool's entries, files and plugin settings are left as they are.`,
-    "The helper runs only while Hide holds the SSH connection. The labels plugin runs under the device's Herdr, and hcoord keeps its own daemon.",
+    "The helper runs only while Hide holds the SSH connection, serves registered projects, and manages the device's Home (~/hide and its project links). The labels plugin runs under the device's Herdr, and hcoord keeps its own daemon.",
     "Every move to the Trash or worktree removal still asks you for its target each time. A part you take away stays away until you press Reinstall.",
     "Removing the device takes Hide's parts off it again, except hcoord, which other tools there may use. A different SSH identity asks again.",
   ];

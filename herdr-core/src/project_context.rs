@@ -310,6 +310,7 @@ mod tests {
             last_activity_unix_ms: None,
             checkouts: vec![checkout(id, last_commit_unix_seconds, pane_ids)],
             pinned: false,
+            is_home: false,
             inactive_checkouts: InactiveCheckoutGroupSnapshot::default(),
             removal: Default::default(),
             disk: Default::default(),

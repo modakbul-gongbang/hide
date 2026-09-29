@@ -5,19 +5,27 @@ import { SidebarHeader } from "./components/sidebar-header";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useUiStore, type SidebarMode } from "./ui";
 
-function header({ mode = "projects" as SidebarMode, overviewSelected = false, projectCount = 12 as number | null, switchChord = null as string | null, canAdd = true } = {}) {
+function header({
+  mode = "projects" as SidebarMode,
+  rail = false,
+  title = { name: "This Mac", note: null as string | null },
+  addProject = true,
+  switchChord = null as string | null,
+  canAdd = true,
+} = {}) {
   return renderToStaticMarkup(
     createElement(
       TooltipProvider,
       null,
       createElement(SidebarHeader, {
+        rail,
+        title,
+        addProject,
         mode,
-        overviewSelected,
-        projectCount,
+        home: createElement("li", { "data-home-row": "true" }, "Home"),
         switchChord,
         searchChord: "⌘K",
         newWorkspaceChord: "⇧⌘N",
-        onOverview: () => undefined,
         onMode: () => undefined,
         onSearch: () => undefined,
         onNewWorkspace: canAdd ? () => undefined : null,
@@ -45,19 +53,25 @@ describe("sidebar header (PRD sidebar-shell)", () => {
     expect(tag(html, 'data-sidebar-mode="agents"')).toContain('aria-pressed="false"');
   });
 
-  it("heads the pane with the Overview row and the project count, marked only while it is in front (B1, B2)", () => {
-    const rest = header();
-    expect(rest.indexOf("data-overview-destination")).toBeLessThan(rest.indexOf("data-sidebar-strip"));
-    expect(rest).toContain(">Overview</span>");
-    expect(texts(rest, "data-overview-count")).toEqual(["12 projects"]);
-    expect(tag(rest, "data-overview-destination")).not.toContain("aria-current");
-    expect(tag(rest, "data-overview-destination")).not.toContain("bg-secondary");
-    const selected = tag(header({ overviewSelected: true }), "data-overview-destination");
-    expect(selected).toContain('aria-current="page"');
-    expect(selected).toContain("bg-secondary");
-    expect(texts(header({ projectCount: 1 }), "data-overview-count")).toEqual(["1 project"]);
-    // Before the first snapshot there is no count to show, rather than a zero.
-    expect(header({ projectCount: null })).not.toContain("data-overview-count");
+  it("heads the pane with the Home row above the tab strip when there is no rail, and no Overview row (B7, B11)", () => {
+    const html = header();
+    expect(html.indexOf("data-home-row")).toBeLessThan(html.indexOf("data-sidebar-strip"));
+    expect(html).not.toContain("data-overview-destination");
+    expect(html).not.toContain("data-sidebar-title");
+  });
+
+  it("with the rail, is one line naming what is in front with Add project and Search, and no tabs or Home row (B7)", () => {
+    const html = header({ rail: true, title: { name: "mini", note: "Remote" } });
+    expect(texts(html, "data-sidebar-title-name")).toEqual(["mini"]);
+    expect(html).toContain("Remote");
+    expect(html).not.toContain("data-sidebar-mode");
+    expect(html).not.toContain("data-home-row");
+    expect(html.indexOf("data-sidebar-new-workspace")).toBeLessThan(html.indexOf("data-sidebar-search"));
+    // The Inbox has no Add project: it is not a place a project is added to.
+    const inbox = header({ rail: true, title: { name: "Inbox", note: "모든 기기" }, addProject: false });
+    expect(inbox).toContain("모든 기기");
+    expect(inbox).not.toContain("data-sidebar-new-workspace");
+    expect(tag(inbox, "data-sidebar-search")).toContain('aria-label="Search"');
   });
 
   it("puts Search at the strip's end, and Add project before it on Projects only (B4, B5)", () => {

@@ -18,6 +18,7 @@ pub mod phone;
 pub mod phones;
 pub mod projection;
 pub mod push;
+pub mod start;
 pub mod store;
 pub mod tailscale;
 
@@ -143,6 +144,8 @@ pub struct Config {
     pub herdr_socket: Option<PathBuf>,
     /// Shell windows (desktop and web) on this daemon: "the app is open".
     pub renderers: Arc<AtomicUsize>,
+    /// Which connections show a start surface; a phone's open start sheet is one.
+    pub start_demand: Arc<crate::demand::ObservationDemand>,
 }
 
 pub struct Mobile {
@@ -154,6 +157,11 @@ pub struct Mobile {
     origin: RwLock<Option<String>>,
     frame: watch::Sender<Arc<Value>>,
     projection: watch::Sender<Arc<Projection>>,
+    /// What the start sheet lists, republished when it changes.
+    catalog: watch::Sender<Arc<start::Catalog>>,
+    /// The core's answers to start requests, for the requests waiting on them.
+    answers: watch::Sender<start::Answers>,
+    starts: start::Desk,
     meta: watch::Sender<PhoneMeta>,
     live: Mutex<HashMap<u64, LivePhone>>,
     vapid: Option<push::Vapid>,
@@ -219,6 +227,9 @@ impl Mobile {
             origin: RwLock::new(None),
             frame: watch::channel(Arc::new(Value::Null)).0,
             projection: watch::channel(Arc::new(Projection::default())).0,
+            catalog: watch::channel(Arc::new(start::Catalog::default())).0,
+            answers: watch::channel(Arc::new(Vec::new())).0,
+            starts: start::Desk::default(),
             meta: watch::channel(PhoneMeta {
                 push_mode,
                 live_phones: 0,
@@ -298,6 +309,10 @@ impl Mobile {
 
     pub fn subscribe_projection(&self) -> watch::Receiver<Arc<Projection>> {
         self.projection.subscribe()
+    }
+
+    pub fn subscribe_catalog(&self) -> watch::Receiver<Arc<start::Catalog>> {
+        self.catalog.subscribe()
     }
 
     pub fn subscribe_meta(&self) -> watch::Receiver<PhoneMeta> {
@@ -1092,6 +1107,7 @@ impl Mobile {
     }
 
     pub fn unregister(&self, connection: u64) {
+        self.set_start_sheet(connection, false);
         let removed = self.live().remove(&connection);
         if let Some(phone) = removed {
             self.lock().phones.touch(&phone.phone_id, now_ms());
@@ -1100,6 +1116,67 @@ impl Mobile {
             }));
         }
         self.publish();
+    }
+
+    /// This connection's start sheet opened or closed: while any surface
+    /// shows one, the core reads the provider catalog.
+    pub fn set_start_sheet(&self, connection: u64, open: bool) {
+        self.config.start_demand.set(connection, open, |aggregate| {
+            crate::server::dispatch_observation(
+                &self.config.core,
+                crate::server::Demand::Start,
+                connection,
+                aggregate,
+            )
+        });
+    }
+
+    /// One `start_agent` frame: refused before anything is dispatched when
+    /// the phone is no longer admitted, else started through the core and
+    /// answered once the core says how it went (PRD D-24, D-25).
+    pub async fn start_agent(&self, phone_id: &str, message: &Value) -> Value {
+        let refused = |reason: &str| json!({"type": "start_result", "request_id": message.get("request_id"), "ok": false, "reason": reason});
+        let Some(request_id) = message
+            .get("request_id")
+            .and_then(Value::as_str)
+            .filter(|id| start::request_id_valid(id))
+        else {
+            return json!({"type": "start_result", "ok": false, "reason": "invalid_request"});
+        };
+        if let Err(reason) = self.still_admitted(phone_id) {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_phone", "kind": "start.refused", "phone_id": phone_id, "reason": reason,
+            }));
+            return refused(reason);
+        }
+        let text = |field: &str| message.get(field).and_then(Value::as_str);
+        let (Some(prompt), Some(target), Some(kind)) = (text("text"), text("target"), text("kind"))
+        else {
+            return refused("invalid_request");
+        };
+        let model = match message.get("model") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(model)) => Some(model.as_str()),
+            Some(_) => return refused("invalid_request"),
+        };
+        let catalog = Arc::clone(&self.catalog.borrow());
+        let core = Arc::clone(&self.config.core);
+        self.starts
+            .start(
+                phone_id,
+                start::Request {
+                    request_id,
+                    text: prompt,
+                    target,
+                    kind,
+                    model,
+                },
+                &catalog,
+                self.answers.subscribe(),
+                start::ANSWER_LIMIT,
+                move |event| core.dispatch(event),
+            )
+            .await
     }
 
     pub fn set_viewing(&self, connection: u64, viewing: Option<AgentKey>) {
@@ -1226,6 +1303,9 @@ impl Mobile {
                 cursors = (0, 0);
                 rest = Value::Null;
                 transitions.reset();
+                self.catalog
+                    .send_replace(Arc::new(start::Catalog::default()));
+                self.answers.send_replace(Arc::new(Vec::new()));
                 self.projection.send_if_modified(|current| {
                     if current.groups.is_empty() {
                         false
@@ -1276,6 +1356,23 @@ impl Mobile {
                         }
                         let full = matches!(kind, crate::server::FrameKind::Snapshot);
                         if projection::merge_rest(&mut rest, &value, full) {
+                            let catalog = start::Catalog::of(&rest);
+                            self.catalog.send_if_modified(|current| {
+                                if **current == catalog {
+                                    false
+                                } else {
+                                    *current = Arc::new(catalog);
+                                    true
+                                }
+                            });
+                            self.answers.send_if_modified(|current| {
+                                let mut kept = current.as_ref().clone();
+                                let changed = start::record(&mut kept, start::answers_of(&rest));
+                                if changed {
+                                    *current = Arc::new(kept);
+                                }
+                                changed
+                            });
                             let next = projection::project(&rest);
                             let changed = self.projection.send_if_modified(|current| {
                                 if **current == next {

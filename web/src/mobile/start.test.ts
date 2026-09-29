@@ -1,0 +1,88 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import type { ServerFrame, StartCatalog } from "./protocol";
+import { NO_CHOICE, mayHaveStarted, modelsOf, selectionOf, startFailure, startProblem, targetText } from "./start";
+import { CLOSED_SHEET, applyFrame, patch, usePhone } from "./store";
+
+/** The frame hided/src/mobile/start.rs sends, as its own test builds it. */
+const FRAME = `{
+  "type": "start_catalog",
+  "targets": [
+    {"id": "home:local", "device_id": "local", "label": "Home", "device_label": "This Mac", "connected": true},
+    {"id": "c1", "device_id": "local", "label": "herdr-ide · main", "device_label": "This Mac", "connected": true},
+    {"id": "home:mini", "device_id": "mini", "label": "Home", "device_label": "mini", "connected": false}
+  ],
+  "kinds": [
+    {"id": "claude", "models": ["opus", "sonnet"]},
+    {"id": "codex", "models": []}
+  ],
+  "remembered": {"kind": "codex", "models": {"claude": "sonnet"}}
+}`;
+
+const catalog = JSON.parse(FRAME) as StartCatalog;
+
+describe("selectionOf", () => {
+  it("defaults to This Mac's Home with the remembered kind and its model", () => {
+    const selection = selectionOf(catalog, NO_CHOICE);
+    expect(selection.target?.id).toBe("home:local");
+    expect(targetText(selection.target!)).toBe("This Mac · Home");
+    expect(selection.kind).toBe("codex");
+    // Codex lists no model: the select is disabled on the default.
+    expect(modelsOf(selection)).toEqual([]);
+    expect(selection.model).toBe("");
+  });
+
+  it("follows the operator's changes over the remembered choice", () => {
+    const selection = selectionOf(catalog, { target: "c1", kind: "claude", model: undefined });
+    expect(selection).toMatchObject({ kind: "claude", model: "sonnet" });
+    expect(selection.target?.id).toBe("c1");
+    expect(selectionOf(catalog, { target: null, kind: "claude", model: "" }).model).toBe("");
+  });
+
+  it("keeps a model the catalog no longer lists, and drops a target that left it", () => {
+    expect(selectionOf(catalog, { target: "gone", kind: "claude", model: "haiku" })).toMatchObject({ model: "haiku" });
+    expect(selectionOf(catalog, { target: "gone", kind: null, model: undefined }).target?.id).toBe("home:local");
+  });
+
+  it("shows the remembered model while the catalog is missing", () => {
+    const remembered: StartCatalog = { targets: catalog.targets, kinds: [], remembered: { kind: "claude", models: { claude: "opus" } } };
+    const selection = selectionOf(remembered, NO_CHOICE);
+    expect(selection).toMatchObject({ kind: "claude", model: "opus", entry: null });
+    expect(modelsOf(selection)).toEqual([]);
+    expect(selectionOf(null, NO_CHOICE)).toMatchObject({ target: null, kind: "claude", model: "" });
+  });
+});
+
+describe("startProblem", () => {
+  it("matches what hided refuses, and lets a note run over lines", () => {
+    expect(startProblem("  ")).toBe("empty");
+    expect(startProblem("가".repeat(4001))).toBe("too_long");
+    expect(startProblem("a\u001bb")).toBe("control_characters");
+    expect(startProblem("테스트 고쳐줘\n그리고 PR")).toBeNull();
+  });
+});
+
+describe("startFailure", () => {
+  it("names the core's refusals and never shows a raw kind", () => {
+    expect(startFailure("task_operation.busy")).toContain("진행 중");
+    expect(startFailure("home.conflict")).toContain("~/hide");
+    expect(startFailure("something.new")).toBe("시작하지 못했어요. 다시 시작하세요.");
+    expect(startFailure(null)).toBe("시작하지 못했어요. 다시 시작하세요.");
+  });
+});
+
+describe("the store", () => {
+  beforeEach(() => patch({ startCatalog: null, startSheet: CLOSED_SHEET }));
+
+  it("keeps the catalog frame hided sends", () => {
+    applyFrame(JSON.parse(FRAME) as ServerFrame);
+    expect(usePhone.getState().startCatalog?.targets.map((target) => target.id)).toEqual(["home:local", "c1", "home:mini"]);
+    expect(usePhone.getState().startCatalog?.remembered.kind).toBe("codex");
+  });
+});
+
+describe("mayHaveStarted", () => {
+  it("keeps the request id only while the outcome is unknown, so a tap after a refusal is a new start", () => {
+    for (const reason of ["timeout", "in_flight", "offline"]) expect(mayHaveStarted(reason)).toBe(true);
+    for (const reason of ["task_operation.busy", "home.conflict", "agent_failed", "start_failed", "unknown_target", null]) expect(mayHaveStarted(reason)).toBe(false);
+  });
+});
