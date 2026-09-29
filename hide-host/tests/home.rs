@@ -139,6 +139,62 @@ fn syncs_racing_on_one_home_all_succeed_and_the_marker_lists_every_link() {
 }
 
 #[test]
+fn names_a_case_insensitive_disk_would_fold_together_are_told_apart() {
+    let account = Account::new();
+    let upper = account.project("work/App");
+    let lower = account.project("play/app");
+    let synced = account.sync(&[&upper, &lower]);
+    assert_eq!(
+        names(&synced),
+        [("App-work", upper.as_str()), ("app-play", lower.as_str())]
+    );
+    assert!(synced.skipped.is_empty(), "{:?}", synced.skipped);
+}
+
+#[test]
+fn a_project_named_like_homes_own_files_takes_another_name() {
+    let account = Account::new();
+    let agents = account.project("agents.md");
+    let synced = account.sync(&[&agents]);
+    assert_eq!(names(&synced), [("agents.md-2", agents.as_str())]);
+    assert!(
+        account
+            .hide()
+            .join("AGENTS.md")
+            .symlink_metadata()
+            .unwrap()
+            .is_file()
+    );
+}
+
+#[test]
+fn a_parent_suffix_too_long_for_the_disk_falls_back_to_the_folder_name() {
+    let account = Account::new();
+    // `app-` and 252 more bytes is one past the 255 a file name may take.
+    let long = account.project(&format!("{}/app", "p".repeat(252)));
+    let short = account.project("short/app");
+    let synced = account.sync(&[&long, &short]);
+    assert_eq!(
+        names(&synced),
+        [("app", long.as_str()), ("app-short", short.as_str())]
+    );
+    assert!(synced.skipped.is_empty(), "{:?}", synced.skipped);
+}
+
+#[cfg(unix)]
+#[test]
+fn home_and_its_files_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let account = Account::new();
+    let alpha = account.project("alpha");
+    account.sync(&[&alpha]);
+    let mode = |path: PathBuf| path.metadata().unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(account.hide()), 0o700);
+    assert_eq!(mode(account.hide().join(MARKER_FILE)), 0o600);
+    assert_eq!(mode(account.hide().join("AGENTS.md")), 0o600);
+}
+
+#[test]
 fn removing_a_project_drops_only_its_link() {
     let account = Account::new();
     let alpha = account.project("alpha");

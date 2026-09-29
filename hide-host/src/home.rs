@@ -33,6 +33,9 @@ pub const MAX_LINKS: usize = 256;
 const AGENTS_FILE: &str = "AGENTS.md";
 const CLAUDE_FILE: &str = "CLAUDE.md";
 const MARKER_VERSION: u32 = 1;
+/// The longest file name most disks take; a longer parent-suffixed name falls
+/// back to the folder's own name.
+const MAX_NAME_BYTES: usize = 255;
 
 /// The Home folder after a sync.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -68,8 +71,8 @@ pub struct HomeDrop {
 pub struct HomeSkip {
     pub target: String,
     /// `missing` (not a folder now), `name_taken` (something of the
-    /// operator's holds the link's name), `not_absolute`, or `no_name` (the
-    /// path has no final component).
+    /// operator's holds the link's name), `link_failed` (the disk refused the
+    /// link), `not_absolute`, or `no_name` (the path has no final component).
     pub reason: String,
 }
 
@@ -107,8 +110,15 @@ fn io_error(error: &std::io::Error, what: impl std::fmt::Display) -> HostError {
     HostError::io(error, format!("{what}: {error}"))
 }
 
+/// A link name as a case-insensitive disk (APFS by default) compares it.
+fn folded(name: &str) -> String {
+    name.to_lowercase()
+}
+
 fn reserved(name: &str) -> bool {
-    matches!(name, AGENTS_FILE | CLAUDE_FILE | MARKER_FILE)
+    [AGENTS_FILE, CLAUDE_FILE, MARKER_FILE]
+        .iter()
+        .any(|file| folded(file) == folded(name))
 }
 
 /// Makes `<user_home>/hide` hold one link per project in `projects` (see the
@@ -196,14 +206,14 @@ pub fn sync(user_home: &Path, projects: &[String]) -> HostResult<HomeSynced> {
 
     for (name, target, target_text, action) in plan {
         let entry = home_path.join(name);
-        match action {
-            Action::Keep => {}
-            Action::Create => make_link(target, &entry, name)?,
+        let made = match action {
+            Action::Keep => Ok(()),
+            Action::Create => make_link(target, &entry, name),
             Action::Replace => {
                 std::fs::remove_file(&entry).map_err(|error| {
                     io_error(&error, format!("The link {name} could not be replaced"))
                 })?;
-                make_link(target, &entry, name)?;
+                make_link(target, &entry, name)
             }
             Action::Taken => {
                 skipped.push(HomeSkip {
@@ -212,6 +222,15 @@ pub fn sync(user_home: &Path, projects: &[String]) -> HostResult<HomeSynced> {
                 });
                 continue;
             }
+        };
+        // One link the disk will not take (a name it folds onto another, one
+        // too long) is that project's skip, not the whole Home's failure.
+        if made.is_err() {
+            skipped.push(HomeSkip {
+                target: target_text,
+                reason: "link_failed".to_owned(),
+            });
+            continue;
         }
         next.insert(name.clone(), target_text);
     }
@@ -341,28 +360,29 @@ fn name_projects(
             });
             continue;
         }
-        *shared.entry(base.clone()).or_default() += 1;
+        *shared.entry(folded(&base)).or_default() += 1;
         named.push((base, path));
     }
 
+    // Names are told apart as the disk tells them apart, so `App` and `app`
+    // are two names here too, and none may be one of Hide's own files.
     let mut used: BTreeSet<String> = [AGENTS_FILE, CLAUDE_FILE, MARKER_FILE]
         .into_iter()
-        .map(str::to_owned)
+        .map(folded)
         .collect();
     named
         .into_iter()
         .map(|(base, path)| {
-            let wanted = match path
+            let parent = path
                 .parent()
                 .and_then(Path::file_name)
-                .filter(|_| shared[&base] > 1)
-            {
-                Some(parent) => format!("{base}-{}", parent.to_string_lossy()),
-                None => base,
-            };
+                .map(|parent| format!("{base}-{}", parent.to_string_lossy()))
+                .filter(|_| shared[&folded(&base)] > 1)
+                .filter(|name| name.len() <= MAX_NAME_BYTES);
+            let wanted = parent.unwrap_or(base);
             let mut name = wanted.clone();
             let mut number = 2;
-            while !used.insert(name.clone()) {
+            while !used.insert(folded(&name)) {
                 name = format!("{wanted}-{number}");
                 number += 1;
             }
@@ -378,7 +398,8 @@ fn create_home(user_home: &Path, home_path: &Path) -> HostResult<()> {
         .prefix(".hide-home-")
         .tempdir_in(user_home)
         .map_err(|error| io_error(&error, "~/hide could not be created"))?;
-    set_readable(staging.path(), 0o755)?;
+    // Owner-only: the marker and AGENTS.md name every project of the account.
+    owner_only(staging.path(), 0o700)?;
     write_marker(staging.path(), &Marker::empty())?;
     // A rename onto an empty folder would replace it; check the name is free
     // as late as possible.
@@ -402,20 +423,20 @@ fn write_marker(home: &Path, marker: &Marker) -> HostResult<()> {
     write_atomic(home, MARKER_FILE, &bytes)
 }
 
-/// Writes `name` in `dir` whole or not at all.
+/// Writes `name` in `dir` whole or not at all, owner-only.
 fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> HostResult<()> {
     let what = format!("~/hide/{name} could not be written");
     let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|error| io_error(&error, &what))?;
     file.write_all(bytes)
         .and_then(|()| file.flush())
         .map_err(|error| io_error(&error, &what))?;
-    set_readable(file.path(), 0o644)?;
+    owner_only(file.path(), 0o600)?;
     file.persist(dir.join(name))
         .map_err(|error| io_error(&error.error, &what))?;
     Ok(())
 }
 
-fn set_readable(path: &Path, mode: u32) -> HostResult<()> {
+fn owner_only(path: &Path, mode: u32) -> HostResult<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
