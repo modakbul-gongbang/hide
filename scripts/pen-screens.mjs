@@ -2674,7 +2674,7 @@ function buildMobile(tokens) {
   function pairBody(id) {
     return [
       frame(`${id}-c`, 'Pairing', {layout: 'vertical', gap: SP.lg, alignItems: 'center', width: PHONE_W, height: PHONE_H - STATUS_H - HOME_H, padding: [120, SP.lg, 0, SP.lg]}, [
-        frame(`${id}-logo`, 'Logo', {width: 64, height: 64, cornerRadius: '$--radius-xl', fill: '$--primary', alignItems: 'center', justifyContent: 'center'}, [text(`${id}-lt`, 'h', {size: 34, weight: '700', fill: '$--primary-foreground'})]),
+        frame(`${id}-logo`, 'Logo', {width: 64, height: 64, cornerRadius: '$--radius-xl', clip: true, fill: {type: 'image', enabled: true, url: '../web/public/m/icon-192.png', mode: 'fit'}}, []),
         text(`${id}-t`, `${MACHINE}과 연결`, {size: 22, weight: '600', fill: FG}),
         text(`${id}-d`, '이 폰에서 hide의 에이전트를 보고, 기다리는 에이전트에 답할 수 있어요.', {size: '$--text-title', fill: MUTED, width: CONTENT_W - 32, align: 'center'}),
         frame(`${id}-sp`, 'Gap', {height: LG, width: 1}, []),
