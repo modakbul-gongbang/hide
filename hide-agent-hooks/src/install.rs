@@ -11,7 +11,7 @@
 
 use std::fs;
 use std::io::{ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -462,6 +462,8 @@ fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     #[test]
