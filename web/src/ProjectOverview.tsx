@@ -1,4 +1,4 @@
-import { ArrowDownIcon, FolderGit2Icon, GitMergeIcon, HardDriveIcon, PlusIcon, SquareTerminalIcon } from "lucide-react";
+import { ArrowDownIcon, FolderGit2Icon, GitMergeIcon, HardDriveIcon, PlusIcon, RefreshCwIcon, SquareTerminalIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { Badge } from "./components/ui/badge";
@@ -61,15 +61,14 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
         : [],
     [tasks, workspace, found, lensAgents, sessions, pullRequests],
   );
-  // A local Git project's size is measured each time its Overview opens, and
-  // its tasks are read from its source; every Project's session history is
-  // read once, for the Sessions tile (D-16).
+  // A local Git project's Git facts and pull requests are read whenever this
+  // screen opens. The previous answer stays visible during the worker reads.
   const local = workspace !== null && workspace.is_git === true && !workspace.remote_target_id;
   const localId = local ? workspace.id : null;
   useEffect(() => {
     if (!localId) return;
     actions.measureProjectDisk(localId);
-    actions.readProjectTasks(localId);
+    actions.refreshProjectOverview(localId);
   }, [actions, localId]);
   const sessionsId = workspace?.id ?? null;
   const sessionsDevice = workspace?.device_id ?? null;
@@ -161,7 +160,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
           ) : null}
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-md">
-          <Stats workspace={project} stats={stats} onMerged={showCleanup} />
+          <Stats workspace={project} stats={stats} refreshing={!!rest?.git_worktrees_loading || project.checkouts.some((checkout) => checkout.github?.loading)} onMerged={showCleanup} />
           {view === "agents" ? (
             <AgentsModeToggle mode={lens.agentsMode} onChange={(agentsMode) => setLens({ agentsMode })} />
           ) : view === "issues" ? (
@@ -221,10 +220,13 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
  * opens the same sheet on what is finished. The issue and pull request counts
  * are the tiles'.
  */
-function Stats({ workspace, stats, onMerged }: { workspace: Workspace; stats: BoardStats; onMerged: () => void }) {
+function Stats({ workspace, stats, refreshing, onMerged }: { workspace: Workspace; stats: BoardStats; refreshing: boolean; onMerged: () => void }) {
   if (!workspace.is_git) return <span />;
   return (
     <div className={FACTS_LINE} data-overview-stats="true">
+      <span className={cn("inline-flex size-(--size-icon) items-center justify-center text-muted-foreground", !refreshing && "invisible")} role={refreshing ? "status" : undefined} aria-label={refreshing ? "Refreshing Git facts and pull requests" : undefined} data-overview-refreshing={refreshing ? "true" : undefined}>
+        <RefreshCwIcon aria-hidden="true" className={cn("size-(--size-icon-sm)", refreshing && "animate-spin")} />
+      </span>
       <span className={FACT} data-stat="worktrees">
         <FolderGit2Icon aria-hidden="true" className="size-(--size-icon)" />
         {stats.worktrees} {stats.worktrees === 1 ? "worktree" : "worktrees"}

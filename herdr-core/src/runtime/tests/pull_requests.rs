@@ -12,6 +12,7 @@ fn issue(number: u32) -> IssueSnapshot {
         state: "OPEN".into(),
         project_status: None,
         updated_at_unix_ms: Some(1),
+        created_at_unix_ms: None,
         blocked_by: Vec::new(),
     }
 }

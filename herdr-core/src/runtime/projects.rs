@@ -248,6 +248,11 @@ impl Runtime {
             .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
             .map(|workspace| crate::worktrees::WorktreeProjectRequest {
                 root_path: PathBuf::from(&workspace.path),
+                generation: self
+                    .worktree_project_generations
+                    .get(&workspace.path)
+                    .copied()
+                    .unwrap_or(0),
                 base_override: self
                     .snapshot
                     .ui_state
@@ -285,9 +290,25 @@ impl Runtime {
     /// removal is news about that path.
     pub fn ingest_worktrees(
         &mut self,
-        mut catalog: crate::model::WorktreeCatalogSnapshot,
+        catalog: crate::model::WorktreeCatalogSnapshot,
         removals: u64,
     ) -> bool {
+        self.ingest_worktrees_answer(catalog, removals, true)
+    }
+
+    pub(crate) fn ingest_worktrees_answer(
+        &mut self,
+        mut catalog: crate::model::WorktreeCatalogSnapshot,
+        removals: u64,
+        current: bool,
+    ) -> bool {
+        // Keep the visible values on an Overview refresh. An initial read has
+        // no values to preserve, so accept its slightly old answer and let the
+        // already queued current read correct it; otherwise a moving request
+        // can starve the first catalog entirely.
+        if !current && !self.worktree_catalog.projects.is_empty() {
+            return false;
+        }
         self.removed_worktrees
             .retain(|(settled, _)| *settled > removals);
         for project in &mut catalog.projects {
@@ -298,9 +319,11 @@ impl Runtime {
                     .any(|(_, path)| *path == worktree.path)
             });
         }
-        let changed = self.worktree_catalog != catalog || self.snapshot.git_worktrees_loading;
+        let loading = self.snapshot.git_worktrees_loading && !current;
+        let changed =
+            self.worktree_catalog != catalog || self.snapshot.git_worktrees_loading != loading;
         self.worktree_catalog = catalog;
-        self.snapshot.git_worktrees_loading = false;
+        self.snapshot.git_worktrees_loading = loading;
         self.refresh_worktree_projection();
         changed
     }
@@ -783,6 +806,17 @@ impl Runtime {
     }
 
     pub fn ingest_github(&mut self, github: crate::model::GithubSnapshot) -> bool {
+        self.ingest_github_answer(github, true)
+    }
+
+    pub(crate) fn ingest_github_answer(
+        &mut self,
+        github: crate::model::GithubSnapshot,
+        current: bool,
+    ) -> bool {
+        if !current {
+            return false;
+        }
         // A failed lookup must not erase the answer it failed to replace: the
         // card shows the previous pull requests with `as of` beside them, so a
         // stale project keeps its results and only its status changes.
@@ -855,6 +889,15 @@ impl Runtime {
 
     pub fn refresh_worktrees(&mut self) {
         self.worktree_generation = self.worktree_generation.wrapping_add(1);
+        self.snapshot.git_worktrees_loading = true;
+    }
+
+    pub(super) fn refresh_project_worktrees(&mut self, project_path: &str) {
+        let generation = self
+            .worktree_project_generations
+            .entry(project_path.to_owned())
+            .or_insert(0);
+        *generation = generation.wrapping_add(1);
         self.snapshot.git_worktrees_loading = true;
     }
 
@@ -1725,6 +1768,13 @@ impl Runtime {
     /// Drops the registration and its row. Files, worktrees and Herdr
     /// workspaces are never touched here.
     fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
+        let local_path = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id && workspace.remote_target_id.is_none())
+            .map(|workspace| workspace.path.clone());
         let device = self
             .snapshot
             .ui_state
@@ -1740,6 +1790,9 @@ impl Runtime {
             .retain(|registration| registration.id != workspace_id);
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
+        }
+        if let Some(path) = local_path {
+            self.worktree_project_generations.remove(&path);
         }
         if let Some(device) = device {
             self.refresh_device_catalog(&device);

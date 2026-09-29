@@ -387,7 +387,7 @@ fn deletion_gate_warns_instead_of_blocking_and_reports_pane_consequence() {
 }
 
 #[test]
-fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
+fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     let repo = Repository::new();
     std::fs::write(repo.0.join("tracked"), "original").unwrap();
     git(&repo.0, &["add", "tracked"]).unwrap();
@@ -398,6 +398,7 @@ fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
             root_path: repo.0.clone(),
             bases: BTreeMap::new(),
             base_override: None,
+            generation: 0,
         }],
         generation: 0,
         removals: 0,
@@ -413,18 +414,21 @@ fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
         }
     };
     wait(&mut reader, &request);
-    // The wake after discovery installs the tracked-file stat set; it is
-    // not a re-read.
+    let listed = std::fs::canonicalize(&repo.0).unwrap();
+    let status_before = git_call_count(&listed, "status");
     assert!(reader.read_if_due(request.clone()).is_none());
     let started = std::time::Instant::now();
     while started.elapsed() < Duration::from_secs(20) {
         assert!(reader.read_if_due(request.clone()).is_none());
         std::thread::sleep(Duration::from_millis(100));
     }
+    assert_eq!(git_call_count(&listed, "status"), status_before);
     std::fs::write(repo.0.join("tracked"), "changed contents").unwrap();
-    assert!(wait(&mut reader, &request).projects[0].worktrees[0].dirty);
+    assert!(reader.read_if_due(request.clone()).is_none());
+    assert_eq!(git_call_count(&listed, "status"), status_before);
     request.generation += 1;
     assert!(wait(&mut reader, &request).projects[0].worktrees[0].dirty);
+    assert_eq!(git_call_count(&listed, "status"), status_before + 1);
 }
 
 /// D-09, D-15. The base branch's `behind origin` comes from the same
@@ -517,6 +521,71 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
                 root_path: repo.0.clone(),
                 bases: BTreeMap::new(),
                 base_override: None,
+                generation: 0,
+            })
+            .collect(),
+        generation: 0,
+        removals: 0,
+    };
+    let wait = |reader: &mut WorktreeReader, phase: &str| {
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(result) = reader.read_if_due(request.clone()) {
+                break result.catalog;
+            }
+            assert!(started.elapsed() < Duration::from_secs(15), "{phase}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let catalog = wait(&mut reader, "initial catalog");
+    assert_eq!(catalog.projects.len(), 2);
+    // Status runs in the path git lists, which is the canonical one.
+    let listed = |catalog: &WorktreeCatalogSnapshot, index: usize| {
+        PathBuf::from(&catalog.projects[index].worktrees[0].path)
+    };
+    let (changing_path, quiet_path) = (listed(&catalog, 0), listed(&catalog, 1));
+    let changing_before = git_call_count(&changing_path, "status");
+    let quiet_before = git_call_count(&quiet_path, "status");
+    assert!(changing_before > 0 && quiet_before > 0);
+    git(&changing.0, &["commit", "--allow-empty", "-m", "moved"]).unwrap();
+    assert_eq!(wait(&mut reader, "commit refresh").projects.len(), 2);
+    assert_eq!(
+        git_call_count(&changing_path, "status") - changing_before,
+        1
+    );
+    assert_eq!(git_call_count(&quiet_path, "status") - quiet_before, 0);
+}
+
+/// Git's own ref writes wake the reader without an Overview refresh event.
+/// A pull's many writes settle as one catalog read for the affected project.
+#[test]
+fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
+    let changing = Repository::new();
+    let quiet = Repository::new();
+    git(
+        &changing.0,
+        &["remote", "add", "origin", "https://example.invalid/repo"],
+    )
+    .unwrap();
+    git(
+        &changing.0,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    )
+    .unwrap();
+    git(
+        &changing.0,
+        &["branch", "--set-upstream-to=origin/main", "main"],
+    )
+    .unwrap();
+    let mut reader = WorktreeReader::new();
+    let request = WorktreeRequest {
+        projects: [&changing, &quiet]
+            .into_iter()
+            .map(|repo| WorktreeProjectRequest {
+                root_path: repo.0.clone(),
+                bases: BTreeMap::new(),
+                base_override: None,
+                generation: 0,
             })
             .collect(),
         generation: 0,
@@ -528,27 +597,82 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
             if let Some(result) = reader.read_if_due(request.clone()) {
                 break result.catalog;
             }
-            assert!(started.elapsed() < Duration::from_secs(15));
+            assert!(
+                started.elapsed() < Duration::from_secs(15),
+                "Git watch did not refresh"
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     };
-    let catalog = wait(&mut reader);
-    assert_eq!(catalog.projects.len(), 2);
-    // Status runs in the path git lists, which is the canonical one.
-    let listed = |catalog: &WorktreeCatalogSnapshot, index: usize| {
-        PathBuf::from(&catalog.projects[index].worktrees[0].path)
-    };
-    let (changing_path, quiet_path) = (listed(&catalog, 0), listed(&catalog, 1));
-    let changing_before = git_call_count(&changing_path, "status");
+    let initial = wait(&mut reader);
+    let main = PathBuf::from(&initial.projects[0].worktrees[0].path);
+    let quiet_path = PathBuf::from(&initial.projects[1].worktrees[0].path);
+    let before = git_call_count(&main, "status");
     let quiet_before = git_call_count(&quiet_path, "status");
-    assert!(changing_before > 0 && quiet_before > 0);
-    git(&changing.0, &["commit", "--allow-empty", "-m", "moved"]).unwrap();
-    assert_eq!(wait(&mut reader).projects.len(), 2);
-    assert_eq!(
-        git_call_count(&changing_path, "status") - changing_before,
-        1
-    );
+    git(&changing.0, &["branch", "future"]).unwrap();
+    git(&changing.0, &["switch", "future"]).unwrap();
+    git(
+        &changing.0,
+        &["commit", "--allow-empty", "-m", "remote future"],
+    )
+    .unwrap();
+    git(&changing.0, &["switch", "main"]).unwrap();
+    git(
+        &changing.0,
+        &["update-ref", "refs/remotes/origin/main", "future"],
+    )
+    .unwrap();
+    let updated = wait(&mut reader);
+    assert_eq!(updated.projects[0].worktrees[0].behind_upstream, Some(1));
+    assert_eq!(git_call_count(&main, "status") - before, 1);
     assert_eq!(git_call_count(&quiet_path, "status") - quiet_before, 0);
+}
+
+#[test]
+fn a_watch_change_during_a_read_keeps_the_old_answer_stale() {
+    let repo = Repository::new();
+    let mut reader = WorktreeReader::new();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    reader.inner =
+        BackgroundRead::on_change(Duration::ZERO, move |observation: &ObservedRequest| {
+            started_tx.send(()).unwrap();
+            release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            (observation.clone(), Vec::new())
+        });
+    let request = WorktreeRequest {
+        projects: vec![WorktreeProjectRequest {
+            root_path: repo.0.clone(),
+            bases: BTreeMap::new(),
+            base_override: None,
+            generation: 0,
+        }],
+        generation: 0,
+        removals: 0,
+    };
+    assert!(reader.read_if_due(request.clone()).is_none());
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    reader.git_generations.insert(repo.0.clone(), 1);
+    release_tx.send(()).unwrap();
+    let wait = |reader: &mut WorktreeReader| {
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(answer) = reader.read_if_due(request.clone()) {
+                break answer;
+            }
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    assert!(!wait(&mut reader).observations_current);
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    release_tx.send(()).unwrap();
+    assert!(wait(&mut reader).observations_current);
 }
 
 /// A git invocation is bounded: one that outruns the deadline is killed and
