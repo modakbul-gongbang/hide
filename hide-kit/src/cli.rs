@@ -1,0 +1,118 @@
+//! The `hide` command: a link named `hide` in the account's command folder,
+//! pointing at this build's `hide` (B6).
+//!
+//! The name is Hide's to replace only when it is absent or is already a link
+//! into a place only Hide puts it: an app bundle's `Contents/Resources`, or
+//! one of the target's own roots such as a device helper root. A file, or a
+//! link anywhere else, is the operator's and stays.
+
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+
+use crate::{KitTarget, Observed, RemoveOutcome};
+
+const CLI_NAME: &str = "hide";
+
+pub(crate) fn link_path(target: &KitTarget) -> PathBuf {
+    target.cli_dir.join(CLI_NAME)
+}
+
+fn wanted(target: &KitTarget) -> PathBuf {
+    target.kit_dir.join(CLI_NAME)
+}
+
+/// Whether a link target is one only Hide would have written.
+fn hides_own(target: &KitTarget, destination: &Path) -> bool {
+    if destination == wanted(target) {
+        return true;
+    }
+    if target
+        .owned_roots
+        .iter()
+        .any(|root| destination.starts_with(root))
+    {
+        return true;
+    }
+    let mut parts = destination.iter().rev();
+    parts.next() == Some(OsStr::new(CLI_NAME))
+        && parts.next() == Some(OsStr::new("Resources"))
+        && parts.next() == Some(OsStr::new("Contents"))
+        && parts
+            .next()
+            .is_some_and(|bundle| Path::new(bundle).extension() == Some(OsStr::new("app")))
+}
+
+pub(crate) fn observe(target: &KitTarget) -> Observed {
+    let link = link_path(target);
+    if !wanted(target).is_file() {
+        return Observed::Blocked(format!(
+            "this build has no hide command at {}",
+            wanted(target).display()
+        ));
+    }
+    let metadata = match std::fs::symlink_metadata(&link) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Observed::Missing,
+        Err(error) => {
+            return Observed::Blocked(format!(
+                "{} could not be inspected: {error}",
+                link.display()
+            ));
+        }
+    };
+    if !metadata.file_type().is_symlink() {
+        return Observed::Blocked(format!(
+            "{} is another program's file; Hide left it",
+            link.display()
+        ));
+    }
+    match std::fs::read_link(&link) {
+        Ok(destination) if destination == wanted(target) => Observed::Current,
+        Ok(destination) if hides_own(target, &destination) => Observed::Stale(format!(
+            "{} points at an older Hide, {}",
+            link.display(),
+            destination.display()
+        )),
+        Ok(destination) => Observed::Blocked(format!(
+            "{} already points at {}; Hide left it",
+            link.display(),
+            destination.display()
+        )),
+        Err(error) => Observed::Blocked(format!("{} could not be read: {error}", link.display())),
+    }
+}
+
+pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
+    let link = link_path(target);
+    std::fs::create_dir_all(&target.cli_dir)
+        .map_err(|error| format!("{} could not be created: {error}", target.cli_dir.display()))?;
+    let temporary = target
+        .cli_dir
+        .join(format!(".{CLI_NAME}.hide-kit-{}", std::process::id()));
+    let _ = std::fs::remove_file(&temporary);
+    std::os::unix::fs::symlink(wanted(target), &temporary)
+        .and_then(|()| std::fs::rename(&temporary, &link))
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            format!("{} could not be linked: {error}", link.display())
+        })
+}
+
+pub(crate) fn remove(target: &KitTarget) -> RemoveOutcome {
+    let link = link_path(target);
+    match std::fs::read_link(&link) {
+        Ok(destination) if hides_own(target, &destination) => match std::fs::remove_file(&link) {
+            Ok(()) => RemoveOutcome::Removed,
+            Err(error) => RemoveOutcome::Failed {
+                reason: format!("{} could not be removed: {error}", link.display()),
+            },
+        },
+        Ok(_) => RemoveOutcome::Kept {
+            reason: format!("{} is not Hide's link", link.display()),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => RemoveOutcome::Absent,
+        Err(_) => RemoveOutcome::Kept {
+            reason: format!("{} is not Hide's link", link.display()),
+        },
+    }
+}
