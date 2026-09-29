@@ -1,0 +1,270 @@
+// The links a terminal pane offers under the pointer, and where a click on
+// one goes (docs/UI_BEHAVIOR.md, Terminal links).
+//
+// xterm asks for the links of a row only when the pointer reaches it, so the
+// rows are read then and never per frame: `terminalLinks.ts` finds the URL
+// and path-shaped tokens, and a path is a link only once the desktop host
+// says it exists on this Mac. A path is looked for under the pane's working
+// folder and then under its checkout's root, the answers are cached briefly
+// (`PROBE_CACHE_CAP`, `PROBE_TTL_MS`) so moving along a row asks nothing
+// twice, and a pane on an SSH device or a page with no desktop host offers
+// URLs only, since its paths name files this Mac cannot see.
+//
+// A click opens the link in the front Workspace (a browser display, or the
+// file in View); ⌘-click (Ctrl off macOS) hands it to the operating system.
+// A program's own OSC 8 links take the same routes through xterm's link
+// handler, which replaces xterm's confirm dialog.
+
+import type { IBufferRange, ILink, ILinkHandler, Terminal } from "@xterm/xterm";
+import { hostBridge, opensExternally, type ProbedPath } from "./host";
+import { remoteTargetOfPane } from "./remote";
+import { bufferRow, type CellRow } from "./selection";
+import type { SnapshotRest } from "./snapshot";
+import { useShellStore } from "./store";
+import { JOIN_ROWS, linkCandidates, osc8Target, type LinkCandidate, type LinkTarget } from "./terminalLinks";
+
+/** A path the host found: its physical spelling and kind. */
+export type FoundPath = NonNullable<ProbedPath>;
+
+/** Where a clicked link goes; `actions.ts` implements it. */
+export type TerminalLinkActions = {
+  openLink(url: string, external: boolean): void;
+  openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean): void;
+};
+
+/** Paths whose answer is kept; the oldest goes first. */
+export const PROBE_CACHE_CAP = 512;
+/** How long an answer is trusted, so a file made after a miss becomes a link soon after. */
+export const PROBE_TTL_MS = 10_000;
+/** Paths one host call carries (`MAX_PROBE_PATHS` in the desktop host). */
+const PROBE_BATCH = 64;
+
+type Cached = { answer: ProbedPath; at: number };
+const cache = new Map<string, Cached>();
+
+/**
+ * What each path names on this Mac, from the cache or one host call per 64
+ * missing paths. A failed call, or a refusal (an answer that does not cover
+ * the batch), leaves its paths out of the result and caches nothing, so a
+ * caller can tell "does not exist" (null) from "not known" (absent).
+ */
+export async function probePaths(paths: string[], probe: (paths: string[]) => Promise<ProbedPath[]>, now = Date.now()): Promise<Map<string, ProbedPath>> {
+  const answers = new Map<string, ProbedPath>();
+  const missing: string[] = [];
+  for (const path of new Set(paths)) {
+    const hit = cache.get(path);
+    if (hit && now - hit.at < PROBE_TTL_MS) answers.set(path, hit.answer);
+    else missing.push(path);
+  }
+  for (let from = 0; from < missing.length; from += PROBE_BATCH) {
+    const batch = missing.slice(from, from + PROBE_BATCH);
+    let found: ProbedPath[];
+    try {
+      found = await probe(batch);
+      if (found.length !== batch.length) throw new Error(`the host answered ${found.length} of ${batch.length} paths`);
+    } catch (error) {
+      useShellStore.getState().noteDiagnostic(`terminal link: the path check failed: ${String(error)}`);
+      continue;
+    }
+    batch.forEach((path, index) => {
+      const answer = found[index] ?? null;
+      answers.set(path, answer);
+      cache.delete(path);
+      cache.set(path, { answer, at: now });
+    });
+  }
+  while (cache.size > PROBE_CACHE_CAP) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+  return answers;
+}
+
+/** Forgets every cached answer (tests). */
+export function clearProbeCache(): void {
+  cache.clear();
+}
+
+/** `.` and `..` resolved in an absolute POSIX path, the way the host would read it. */
+export function normalize(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return `/${parts.join("/")}`;
+}
+
+/** The spellings to look a written path up under, in order: as written when absolute, else under the pane's folder and then the checkout's root. */
+export function pathLookups(written: string, cwd: string | null, root: string | null): string[] {
+  if (written.startsWith("/")) return [normalize(written)];
+  if (written.startsWith("~/")) return [written];
+  const bases = [cwd, root].filter((base): base is string => !!base && base.startsWith("/"));
+  return [...new Set(bases.map((base) => normalize(`${base}/${written}`)))];
+}
+
+/** The pane's working folder and its checkout's root, or null for a pane that is not this Mac's. */
+export function paneContext(rest: SnapshotRest | null, paneId: string): { cwd: string | null; root: string | null } | null {
+  if (remoteTargetOfPane(rest, paneId)) return null;
+  for (const workspace of rest?.navigator?.workspaces ?? []) {
+    if (workspace.device_id !== "local") continue;
+    for (const checkout of workspace.checkouts) {
+      const pane = checkout.tabs.flatMap((tab) => tab.panes).find((row) => row.id === paneId);
+      if (pane) return { cwd: pane.cwd || null, root: checkout.path };
+    }
+  }
+  return { cwd: null, root: null };
+}
+
+/**
+ * The checkout a physical path belongs to: the one whose physical root holds
+ * it and is longest, so a worktree nested in another checkout wins; null when
+ * no root does. `roots` answers each checkout's path.
+ */
+export function owningCheckout<C extends { path: string }>(real: string, checkouts: C[], roots: Map<string, ProbedPath>): { checkout: C; root: string } | null {
+  let best: { checkout: C; root: string } | null = null;
+  for (const checkout of checkouts) {
+    const root = roots.get(checkout.path);
+    if (root?.kind !== "directory") continue;
+    if (real !== root.real && !real.startsWith(`${root.real}/`)) continue;
+    if (!best || root.real.length > best.root.length) best = { checkout, root: root.real };
+  }
+  return best;
+}
+
+type Resolved = { target: LinkTarget; found: FoundPath | null };
+
+/**
+ * The first candidate of each group that holds: a URL always, a path when
+ * one of its lookups exists. Every lookup of every group goes out in one
+ * probe.
+ */
+export async function resolveGroups(
+  groups: LinkCandidate[][],
+  context: { cwd: string | null; root: string | null } | null,
+  probe: ((paths: string[]) => Promise<ProbedPath[]>) | null,
+): Promise<{ candidate: LinkCandidate; resolved: Resolved }[]> {
+  const lookups = new Map<LinkCandidate, string[]>();
+  if (context && probe) {
+    for (const candidate of groups.flat()) {
+      if (candidate.target.kind === "path") lookups.set(candidate, pathLookups(candidate.target.path, context.cwd, context.root));
+    }
+  }
+  const answers = probe && lookups.size > 0 ? await probePaths([...lookups.values()].flat(), probe) : new Map<string, ProbedPath>();
+  const chosen: { candidate: LinkCandidate; resolved: Resolved }[] = [];
+  for (const group of groups) {
+    for (const candidate of group) {
+      if (candidate.target.kind === "url") {
+        chosen.push({ candidate, resolved: { target: candidate.target, found: null } });
+        break;
+      }
+      const found = (lookups.get(candidate) ?? []).map((path) => answers.get(path) ?? null).find((answer) => answer !== null) ?? null;
+      if (found) {
+        chosen.push({ candidate, resolved: { target: candidate.target, found } });
+        break;
+      }
+    }
+  }
+  return chosen;
+}
+
+/** Per-terminal link state: whether the pointer is over a link, so a click on one is not also the program's. */
+export type LinkState = { hovered: boolean };
+
+function open(actions: TerminalLinkActions, resolved: Resolved, event: MouseEvent, selecting: boolean): void {
+  // A press that dragged across the link selected its text; the release is not a click.
+  if (selecting) return;
+  const external = opensExternally(event);
+  const { target, found } = resolved;
+  if (target.kind === "url") actions.openLink(target.url, external);
+  else if (found) actions.openTerminalPath(found, target.line, target.column, external);
+}
+
+function rangeOf(candidate: LinkCandidate, top: number): IBufferRange {
+  const first = candidate.spans[0]!;
+  const last = candidate.spans[candidate.spans.length - 1]!;
+  return { start: { x: first.start + 1, y: top + first.row }, end: { x: last.end, y: top + last.row } };
+}
+
+/**
+ * Offers the links of the hovered row. `actions` is read at click time, so a
+ * terminal that moves between panes' hosts always opens with the current one.
+ */
+export function registerTerminalLinks(term: Terminal, paneId: string, state: LinkState, actions: () => TerminalLinkActions): { dispose(): void } {
+  return term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const buffer = term.buffer.active;
+      const top = Math.max(1, y - JOIN_ROWS);
+      const bottom = Math.min(buffer.length, y + JOIN_ROWS);
+      const rows: CellRow[] = [];
+      for (let line = top; line <= bottom; line += 1) rows.push(bufferRow(buffer.getLine(line - 1), term.cols));
+      const groups = linkCandidates(rows, y - top);
+      if (groups.length === 0) {
+        callback(undefined);
+        return;
+      }
+      const rest = useShellStore.getState().rest;
+      const bridge = hostBridge();
+      void resolveGroups(groups, paneContext(rest, paneId), bridge ? (paths) => bridge.probePaths(paths) : null).then((chosen) => {
+        const links: ILink[] = chosen.map(({ candidate, resolved }) => ({
+          range: rangeOf(candidate, top),
+          text: candidate.text,
+          activate: (event) => open(actions(), resolved, event, term.hasSelection()),
+          hover: () => {
+            state.hovered = true;
+          },
+          leave: () => {
+            state.hovered = false;
+          },
+        }));
+        callback(links.length > 0 ? links : undefined);
+      });
+    },
+  });
+}
+
+/**
+ * The handler for links a program marked itself (OSC 8), in place of xterm's
+ * confirm dialog. `file://` and `vscode://file/` addresses are paths and go
+ * the way a detected path does; any other address is left alone and logged.
+ */
+export function osc8Handler(paneId: string, state: LinkState, actions: () => TerminalLinkActions, hasSelection: () => boolean): ILinkHandler {
+  return {
+    allowNonHttpProtocols: true,
+    activate(event, uri) {
+      if (hasSelection()) return;
+      const target = osc8Target(uri);
+      const diagnostic = useShellStore.getState().noteDiagnostic;
+      if (!target) {
+        // The address is the program's text, so the log names only the refusal.
+        diagnostic(`terminal link: ${target === null ? "an unreadable file" : "a link that is not http(s) or a file"} is not opened`);
+        return;
+      }
+      if (target.kind === "url") {
+        open(actions(), { target, found: null }, event, false);
+        return;
+      }
+      const bridge = hostBridge();
+      const context = paneContext(useShellStore.getState().rest, paneId);
+      if (!bridge || !context) {
+        diagnostic("terminal link: a file link names a path this Mac cannot open here");
+        return;
+      }
+      void probePaths([target.path], (paths) => bridge.probePaths(paths)).then((answers) => {
+        // An unanswered path was logged by the check itself.
+        if (!answers.has(target.path)) return;
+        const found = answers.get(target.path) ?? null;
+        if (found) open(actions(), { target, found }, event, false);
+        else diagnostic("terminal link: the linked file does not exist");
+      });
+    },
+    hover() {
+      state.hovered = true;
+    },
+    leave() {
+      state.hovered = false;
+    },
+  };
+}

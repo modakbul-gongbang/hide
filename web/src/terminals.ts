@@ -16,8 +16,9 @@
 // selects locally, and a single primary click that never
 // dragged is replayed on release as one `terminal_click` with the pressed
 // cell; the core decides whether the program gets a mouse report. ⌥ + press
-// and a multi-click stay local. A copy of the selection is assembled here
-// (`selection.ts`), not by xterm.
+// and a multi-click stay local, and so does a press on a link, whose click is
+// the link's (`terminalLinkProvider.ts`). A copy of the selection is
+// assembled here (`selection.ts`), not by xterm.
 
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -26,7 +27,8 @@ import "@xterm/xterm/css/xterm.css";
 import { mapModifiedKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
 import { inPlace, remoteControl, remoteTargetOfPane } from "./remote";
-import { selectionToText, type CellRow } from "./selection";
+import { bufferRow, selectionToText, type CellRow } from "./selection";
+import { osc8Handler, registerTerminalLinks, type LinkState, type TerminalLinkActions } from "./terminalLinkProvider";
 import { pointerModifiers, wheelRows } from "./wheel";
 import { useShellStore, type TerminalChunk } from "./store";
 import type { DispatchFn } from "./ws";
@@ -35,6 +37,10 @@ type Instance = {
   term: Terminal;
   fit: FitAddon;
   dispatch: DispatchFn;
+  /** Where a clicked link goes; replaced on every attach, like `dispatch`. */
+  links: TerminalLinkActions;
+  /** Whether the pointer is over a link. */
+  link: LinkState;
   scale: number;
   /** The element the terminal was opened in; it moves between a host and the parking lot. */
   element: HTMLDivElement;
@@ -334,8 +340,9 @@ function onMouseDown(instance: Instance, event: MouseEvent) {
   instance.press = null;
   // The primary button alone can become a click; ⌥ + press and a second
   // click of a multi-click are the `application` and `localSelection`
-  // routes, and neither is replayed to the program.
-  if (event.button !== 0 || event.altKey || event.detail !== 1) return;
+  // routes, and neither is replayed to the program. A press on a link is the
+  // link's click, so the program does not hear it too.
+  if (event.button !== 0 || event.altKey || event.detail !== 1 || instance.link.hovered) return;
   const geometry = cellGeometry(instance);
   if (!geometry) return;
   instance.press = cellAt(geometry, event);
@@ -364,15 +371,7 @@ function selectedText(instance: Instance): string | null {
   if (!range) return null;
   const buffer = term.buffer.active;
   const rows: CellRow[] = [];
-  for (let y = range.start.y; y <= range.end.y; y += 1) {
-    const line = buffer.getLine(y);
-    const cells: CellRow = [];
-    for (let x = 0; x < term.cols; x += 1) {
-      const cell = line?.getCell(x);
-      cells.push(cell ? (cell.getWidth() === 0 ? null : cell.getChars()) : "");
-    }
-    rows.push(cells);
-  }
+  for (let y = range.start.y; y <= range.end.y; y += 1) rows.push(bufferRow(buffer.getLine(y), term.cols));
   return selectionToText(rows, range.start.x, range.end.x);
 }
 
@@ -392,10 +391,11 @@ function onCopy(instance: Instance, event: ClipboardEvent) {
   event.clipboardData.setData("text/plain", text);
 }
 
-function createInstance(paneId: string, dispatch: DispatchFn, scale: number): Instance {
+function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLinkActions, scale: number): Instance {
   const element = document.createElement("div");
   element.className = "absolute inset-0";
   element.dataset.terminal = paneId;
+  const link: LinkState = { hovered: false };
   const term = new Terminal({
     fontFamily: token("--font-mono"),
     fontSize: Math.round(tokenPx("--text-terminal-base") * scale),
@@ -403,6 +403,9 @@ function createInstance(paneId: string, dispatch: DispatchFn, scale: number): In
     // Herdr owns the history; the pane shows the viewport the core sends.
     scrollback: 0,
     allowProposedApi: true,
+    // A program's own links open like the ones found in the text, never
+    // through xterm's confirm dialog.
+    linkHandler: osc8Handler(paneId, link, () => instance.links, () => instance.term.hasSelection()),
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -410,6 +413,8 @@ function createInstance(paneId: string, dispatch: DispatchFn, scale: number): In
     term,
     fit,
     dispatch,
+    links,
+    link,
     scale,
     element,
     host: null,
@@ -435,6 +440,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, scale: number): In
     return false;
   });
   term.onData((data) => send(new TextEncoder().encode(data)));
+  const linkProvider = registerTerminalLinks(term, paneId, link, () => instance.links);
   const wheel = (event: WheelEvent) => onWheel(paneId, instance, event);
   const down = (event: MouseEvent) => onMouseDown(instance, event);
   const up = (event: MouseEvent) => onMouseUp(paneId, instance, event);
@@ -453,6 +459,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, scale: number): In
     element.removeEventListener("mouseup", up, { capture: true });
     element.removeEventListener("copy", copy, { capture: true });
     if (instance.wheel.frame !== null) cancelAnimationFrame(instance.wheel.frame);
+    linkProvider.dispose();
   };
   return instance;
 }
@@ -467,12 +474,13 @@ export function attachTerminal(
   paneId: string,
   host: HTMLElement,
   dispatch: DispatchFn,
+  links: TerminalLinkActions,
   scale: number,
 ): () => void {
   let instance = instances.get(paneId);
   const fresh = !instance;
   if (!instance) {
-    instance = createInstance(paneId, dispatch, scale);
+    instance = createInstance(paneId, dispatch, links, scale);
     instances.set(paneId, instance);
   }
   if (instance.host) throw new Error(`pane ${paneId} is already shown`);
@@ -480,6 +488,7 @@ export function attachTerminal(
   host.append(shown.element);
   shown.host = host;
   shown.dispatch = dispatch;
+  shown.links = links;
   if (fresh) {
     shown.term.open(shown.element);
     try {
