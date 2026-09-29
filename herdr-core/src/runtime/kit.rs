@@ -83,6 +83,39 @@ pub(crate) enum DeviceKitAnswer {
     Removed(Result<hide_host::protocol::KitRemoved, String>),
 }
 
+/// Why Hide's kit does not run on a device.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum KitDeclined {
+    /// The operator has not allowed Hide's helper there.
+    NoConsent,
+    /// The consent was given to an older build's kit; Hide asks again. What
+    /// that build put there may still be in place.
+    ConsentOutdated,
+    /// This build has no helper for the device's platform.
+    Unsupported(String),
+}
+
+impl KitDeclined {
+    fn reason(self) -> String {
+        match self {
+            Self::NoConsent => {
+                "Hide installs its kit here once you allow its helper on this device".to_owned()
+            }
+            Self::ConsentOutdated => {
+                "Hide needs your permission again before it installs its kit here".to_owned()
+            }
+            Self::Unsupported(message) => message,
+        }
+    }
+
+    /// Whether Hide has certainly put no hook there: never allowed, or a
+    /// platform it has no helper for. An outdated consent may leave an
+    /// older build's hooks in place, so that answer stays unknown.
+    pub(super) fn installed_nothing(&self) -> bool {
+        !matches!(self, Self::ConsentOutdated)
+    }
+}
+
 /// What a removal leaves on a device whose helper is not connected (B24).
 const LEFT_ON_DEVICE: [&str; 4] = [
     "Hide's hook entries",
@@ -403,6 +436,14 @@ impl Runtime {
         device_id: &str,
         answer: DeviceKitAnswer,
     ) -> bool {
+        if let DeviceKitAnswer::Report(_) = &answer
+            && (!self.device_registration_exists(device_id) || self.device_kit_removing(device_id))
+        {
+            // The device went while the call ran: its kit state went with it,
+            // and a late answer must not bring it back for a device added
+            // again under the same id.
+            return false;
+        }
         match answer {
             DeviceKitAnswer::Removed(removed) => self.ingest_device_kit_removal(device_id, removed),
             DeviceKitAnswer::Report(Ok(report)) => self.ingest_kit_report(device_id, &report),
@@ -499,7 +540,7 @@ impl Runtime {
             return self.kit_state(device_id);
         }
         let mut view = match self.device_kit_declined(device_id) {
-            Some(reason) => KitSnapshot::unavailable(reason),
+            Some(declined) => KitSnapshot::unavailable(declined.reason()),
             None => self.kit_state(device_id),
         };
         view.shares_account_with = self
@@ -513,21 +554,15 @@ impl Runtime {
         view
     }
 
-    /// Why Hide's kit does not run on a device at all: no consent, a
-    /// consent given to an older build, or a platform this build has no
-    /// helper for. `None` when it runs there, read or not.
-    pub(super) fn device_kit_declined(&self, device_id: &str) -> Option<String> {
+    /// Why Hide's kit does not run on a device now, if it does not.
+    pub(super) fn device_kit_declined(&self, device_id: &str) -> Option<KitDeclined> {
         let host = self.host_snapshot(device_id);
         match (host.consent.as_str(), host.state.as_str()) {
-            ("none", _) => Some(
-                "Hide installs its kit here once you allow its helper on this device".to_owned(),
-            ),
-            ("outdated", _) => {
-                Some("Hide needs your permission again before it installs its kit here".to_owned())
-            }
-            (_, "unsupported") => Some(host.message.unwrap_or_else(|| {
-                "This Hide build does not support this device's platform".to_owned()
-            })),
+            ("none", _) => Some(KitDeclined::NoConsent),
+            ("outdated", _) => Some(KitDeclined::ConsentOutdated),
+            (_, "unsupported") => Some(KitDeclined::Unsupported(host.message.unwrap_or_else(
+                || "This Hide build does not support this device's platform".to_owned(),
+            ))),
             _ => None,
         }
     }

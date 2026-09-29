@@ -16,6 +16,9 @@ struct KitDevice {
     calls: Mutex<Vec<(KitAction, String, Option<String>)>>,
     answer: Mutex<Result<KitReport, String>>,
     closed: Mutex<Option<String>>,
+    /// When set, an apply or status call waits here until the test lets it
+    /// answer, as a slow device would.
+    gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
 }
 
 impl KitDevice {
@@ -24,7 +27,17 @@ impl KitDevice {
             calls: Mutex::new(Vec::new()),
             answer: Mutex::new(answer),
             closed: Mutex::new(None),
+            gate: Mutex::new(None),
         })
+    }
+
+    /// A device whose next non-removal call answers only once the returned
+    /// sender is used.
+    fn held(answer: Result<KitReport, String>) -> (Arc<Self>, std::sync::mpsc::Sender<()>) {
+        let (release, gate) = std::sync::mpsc::channel();
+        let device = Self::answering(answer);
+        *device.gate.lock().unwrap() = Some(gate);
+        (device, release)
     }
 
     fn calls(&self) -> Vec<(KitAction, String, Option<String>)> {
@@ -47,6 +60,9 @@ impl HostChannel for KitDevice {
             .lock()
             .unwrap()
             .push((action, cli_dir, herdr_socket));
+        if !removing && let Some(gate) = self.gate.lock().unwrap().take() {
+            let _ = gate.recv();
+        }
         if removing {
             let removed = hide_host::protocol::KitRemoved {
                 kit: hide_kit::RemoveReport {
@@ -472,6 +488,47 @@ fn removing_one_of_two_registrations_of_the_same_account_keeps_the_kit() {
     assert!(helper.calls().is_empty(), "{:?}", helper.calls());
     assert_eq!(helper.closed_reason().as_deref(), Some("device removed"));
     assert!(!shared.lock().unwrap().device_kit_removing(DEVICE));
+}
+
+/// A device removed while its install call is still running on the device:
+/// the removal runs after that call, and the call's late answer brings no
+/// kit state back, so the same id added again starts unread.
+#[test]
+fn an_install_answer_that_arrives_after_removal_brings_nothing_back() {
+    let (helper, release) =
+        KitDevice::held(Ok(report(&[(ComponentId::Cli, ComponentState::Installed)])));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Apply(hide_kit::Scope::Automatic));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while helper.calls().is_empty() {
+        assert!(Instant::now() < deadline, "the install call never started");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    dispatch(
+        &shared,
+        "remove_device",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    release.send(()).unwrap();
+    settle(&shared);
+
+    assert_eq!(
+        helper
+            .calls()
+            .into_iter()
+            .map(|(action, ..)| action)
+            .collect::<Vec<_>>(),
+        vec![KitAction::Apply, KitAction::Remove]
+    );
+    let runtime = shared.lock().unwrap();
+    assert!(!runtime.device_kit_removing(DEVICE));
+    assert_eq!(
+        runtime.kit_state(DEVICE),
+        crate::model::KitSnapshot::default()
+    );
 }
 
 /// B24: a device removed while its helper is not connected loses only its

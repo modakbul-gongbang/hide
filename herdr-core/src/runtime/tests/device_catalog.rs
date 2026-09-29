@@ -1342,6 +1342,16 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
         (after.subagents.working, after.subagents.done),
         (Some(2), Some(1))
     );
+
+    // A consent from an older build asks again, but does not unsay the hook
+    // the device's kit last reported in place.
+    runtime.snapshot.ui_state.device_registrations[0]
+        .host_consent
+        .as_mut()
+        .unwrap()
+        .contract = 1;
+    runtime.refresh_device_catalog(TARGET);
+    assert!(children(&runtime).instrumented);
 }
 
 /// Records what a device's Herdr is asked, one connection per request.

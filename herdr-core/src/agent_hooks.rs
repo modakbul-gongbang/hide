@@ -80,9 +80,9 @@ pub fn is_remote_pane(pane_id: &str) -> bool {
 
 /// A device's hook for `runtime`, in the terms the pane judgement reads,
 /// from what the device's kit last reported (PRD device-parity D-21). On a
-/// device where the kit does not run at all (`declined`: no consent, a
-/// consent from an older build, an unsupported platform) nothing is
-/// installed; a hook the kit could not put in place, for whatever reason its
+/// device where Hide has certainly installed nothing (`declined`: never
+/// allowed, or a platform it has no helper for) the hook is not installed;
+/// a hook the kit could not put in place, for whatever reason its
 /// row gives, is not installed either. A device whose kit Hide has not read,
 /// including one whose first read failed, answers nothing, so the cause
 /// stays unknown rather than guessed.
