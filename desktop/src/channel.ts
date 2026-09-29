@@ -7,6 +7,15 @@ export const BINDINGS_CHANNEL = "hide:bindings";
 /** A folder the shell asks Finder to show (a sidebar row's Reveal in Finder), renderer -> main. */
 export const REVEAL_CHANNEL = "hide:reveal";
 
+/**
+ * Terminal links (docs/ARCHITECTURE.md, A clicked path is one event): which
+ * paths a link names exist on this Mac and what they are (invoke), and a
+ * path handed to macOS, opened in its default application or revealed in
+ * Finder when opening would run it (renderer -> main).
+ */
+export const PROBE_PATHS_CHANNEL = "hide:probe-paths";
+export const OPEN_PATH_CHANNEL = "hide:open-path";
+
 /** Add a project's Browse folder: the native folder picker, answered with the chosen folder or null (invoke). */
 export const PICK_FOLDER_CHANNEL = "hide:pick-folder";
 

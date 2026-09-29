@@ -2,8 +2,9 @@
 // (`desktop/`), whose preload exposes `window.hideHost` and nothing else.
 // The bridge carries the app menu's commands in, the operator's macOS pane
 // chords out, so the menu shows and answers the chords the page runs, a
-// folder to show in Finder, and places the pages of browser displays (issue 155); the shell never reaches
-// the host any other way (desktop PRD B11).
+// folder to show in Finder, the paths a terminal link names and handing one
+// to macOS, and places the pages of browser displays (issue 155); the shell
+// never reaches the host any other way (desktop PRD B11).
 
 export type HostKind = "browser" | "electron";
 
@@ -64,6 +65,9 @@ export type BrowserBridge = {
   onEvent(listener: (event: BrowserHostEvent) => void): () => void;
 };
 
+/** A path on this Mac as the host found it: its physical spelling and whether it is a folder; null when it does not exist. */
+export type ProbedPath = { real: string; kind: "file" | "directory" } | null;
+
 export type HostBridge = {
   kind: "electron";
   /** Delivers each app-menu command id; returns the unsubscribe. */
@@ -74,6 +78,10 @@ export type HostBridge = {
   revealPath(path: string): void;
   /** The native folder picker, modal to the window; the chosen folder, or null when the operator cancelled. */
   pickFolder(): Promise<string | null>;
+  /** What each absolute or `~/` path names on this Mac, in order; at most `MAX_PROBE_PATHS` (64) per call. */
+  probePaths(paths: string[]): Promise<ProbedPath[]>;
+  /** Hands an absolute path to macOS: its default application, a Finder window for a folder, or a Finder reveal when opening would run it. */
+  openPath(path: string): void;
   browser: BrowserBridge;
 };
 
@@ -85,6 +93,16 @@ declare global {
 
 export function hostBridge(): HostBridge | null {
   return typeof window !== "undefined" && window.hideHost?.kind === "electron" ? window.hideHost : null;
+}
+
+/**
+ * Whether a click asks for the operating system rather than the shell: ⌘ on
+ * macOS, Ctrl elsewhere, where ⌘ does not exist and Ctrl-click is not the
+ * context menu.
+ */
+export function opensExternally(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
+  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/u.test(navigator.platform || navigator.userAgent);
+  return mac ? event.metaKey : event.ctrlKey;
 }
 
 export function hostKind(): HostKind {

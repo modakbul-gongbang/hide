@@ -334,6 +334,23 @@ Each local pane or tab closed this way gets its own Reopen closed tab entry; a d
 Every entry to a pane or tab close uses this: ⌘W or ⌥W, ⌘⇧W or ⌥⇧W, the desktop menu's commands, a tab's ×, the tab menu's and the palette's `Close tab…`, the pane header's ×, the pane menu's `Close pane`, and the agent row menu's `Close tab…`; closing a View, the phone app and the Overview are unchanged.
 Web owner: `web/src/close.ts` (which sheet, which panes and descendants, and their states), `web/src/Overlays.tsx` (both sheets), `web/src/components/subtree-list.tsx` (the list both the sheet and the removal dialogs draw); core owner: `herdr-core/src/runtime/tree_close.rs`.
 
+### Terminal links
+
+A terminal pane links what its program prints, whichever program it is: an http(s) URL, a path, and a link the program marked itself (OSC 8).
+A plain-text path is a link only where it names something on this Mac, so a word that merely looks like a path draws nothing; the check runs when the pointer reaches a row, never per frame.
+A relative path is looked for under the pane's folder and then under its checkout's root, `~/` names the home folder, and a location written after it (`:12`, `:12:5`, `#L12`, `(12,5)`) is where the file opens.
+A path or URL the terminal wrapped at its last column, or a TUI broke at its own margin and indented, is one link across its rows; a URL spans rows only where the terminal wrapped it, because it cannot be checked.
+Under the pointer a link is underlined and the pointer becomes a hand; a click on it is the link's and never reaches the program, and a drag across it selects its text and opens nothing.
+A click opens it in the front Workspace: a URL as a browser display, a file in View at its line (an ordinary tab, not a preview), a folder revealed in the Explorer.
+A path in another registered checkout brings that checkout forward; with no Workspace in front a URL goes to the default browser.
+⌘-click (Ctrl off macOS) hands the link to the operating system: a URL to the default browser, a path to its default application or, for a folder, a Finder window, within the limits below.
+A path outside every registered checkout, such as `/tmp`, goes to the operating system on a plain click as well.
+The operating system opens only a plain document (text, source, a PDF, an image, audio or video) or a folder whose name has no extension; anything else, such as a script, a program, a spreadsheet, an application bundle or an installer, is revealed in Finder, never opened.
+A program's OSC 8 link takes the same routes with no confirmation dialog: `file://` and `vscode://file/` addresses are paths, any other scheme is not opened, and a refused link goes to the diagnostic log.
+A pane on an SSH device, and a page outside the desktop app, links URLs only, because its paths name files this Mac cannot check.
+A path with a space in it is a link only where the program marks it (OSC 8), since plain text gives no way to tell where it ends.
+Web owner: `web/src/terminalLinks.ts` (detection), `web/src/terminalLinkProvider.ts` (the check and the routes), `web/src/actions.ts` (`openLink`, `openTerminalPath`), `web/src/editor/lineRequest.ts` (the line); desktop owner: `desktop/src/main/localPath.ts`.
+
 ## Web Project Sessions
 
 A Project's Sessions is the Project Overview's Sessions tab (PRD S8), under the Overview's own path back, title and facts line.
