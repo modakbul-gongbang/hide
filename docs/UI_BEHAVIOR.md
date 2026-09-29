@@ -720,7 +720,9 @@ Each checkout is measured under its own limit of one million entries and 30 seco
 An incomplete measurement has no total, and allocated blocks are not a promise of reclaimable space: the result states the volume's free space before and after beside the allocated total.
 Remote device projects are neither measured nor cleaned.
 
-Ignored folders fall into layers in this order: a folder git tracks is source, a folder holding a valid `CACHEDIR.TAG` is build cache, a folder Hide's ecosystem table names beside its marker file is build cache or dependencies, and every other ignored path is Other.
+Only what the ignore rules hide can fall into a layer, so every path git sees is worktree source and is never counted in a layer cell.
+An ignored folder holding a valid `CACHEDIR.TAG` is build cache, one Hide's ecosystem table names beside its marker file is build cache or dependencies, and every other ignored path is Other.
+Measurement reads no git index, so a tracked file inside an ignored folder is found only when the cleanup runs, and that cell is then skipped.
 The table covers Cargo, Node, Python, Gradle and Maven, Swift, Dart, Elixir, .NET and Composer, and applies only to ignored folders; a symlink, a folder holding another git repository and a folder holding tracked files are never removed.
 Other has no checkbox and its folders are never removed, because Hide cannot tell whether what a tool made there can be rebuilt.
 
