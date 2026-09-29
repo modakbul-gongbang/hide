@@ -4,6 +4,7 @@
 // listed but cannot be chosen. A target is never remembered: the default is
 // read from the page when the panel opens, so nothing here is state.
 
+import { railVisible } from "./devices";
 import { remoteContext } from "./remote";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
 import { frontCheckout } from "./snapshot";
@@ -102,8 +103,10 @@ function frontKey(rest: SnapshotRest, screen: Screen | null, noProject: boolean,
  * device's Home is the default. A device's own Home screen names its device,
  * which is then the front device.
  */
-export function startTargets(rest: SnapshotRest | null, screen: Screen | null, inbox = false, settings = false): StartTargets {
+export function startTargets(rest: SnapshotRest | null, screen: Screen | null, selectedInbox = false, settings = false): StartTargets {
   if (!rest) return { groups: [], defaultKey: null };
+  // The Inbox is a rail selection; with no rail there is none, whatever the page still holds.
+  const inbox = selectedInbox && railVisible(rest);
   const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [LOCAL];
   const named = !inbox && screen?.kind === "main" ? screen.deviceId : undefined;
   const frontId = named && devices.some((device) => device.id === named) ? named : (remoteContext(rest)?.device.id ?? "local");

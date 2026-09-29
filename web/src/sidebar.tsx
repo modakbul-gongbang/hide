@@ -65,6 +65,10 @@ export function Sidebar({ actions }: { actions: Actions }) {
   // The rail exists while any remote device is registered; the Inbox is its selection beside the devices (PRD home-device-rail D-10, D-11).
   const rail = useShellStore((s) => railVisible(s.rest));
   const inboxSelected = useUiStore((s) => s.inbox);
+  // The Inbox selection ends with the rail, so the next device's rail opens on This Mac (B12).
+  useEffect(() => {
+    if (!rail && inboxSelected) useUiStore.getState().setInbox(false);
+  }, [rail, inboxSelected]);
   const body = useShellStore((s) => sidebarBody(s.rest, inboxSelected, mode));
   const inbox = body === "inbox";
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
