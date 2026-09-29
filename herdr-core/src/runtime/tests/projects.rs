@@ -1685,6 +1685,24 @@ fn a_cleanup_in_flight_takes_no_dismissal_and_no_second_review() {
     // Another worker's end frees nothing.
     runtime.cleanup_worker_finished(2);
     assert_eq!(runtime.cleanup_worker, Some(3));
+    // A review that has published its answer while its worker has not ended
+    // takes no confirmation either.
+    runtime.cleanup = Some(CleanupSnapshot {
+        id: 3,
+        workspace_id: workspace_id.clone(),
+        phase: "review".into(),
+        usage_ready: true,
+        rows: vec![crate::live::cleanup::CleanupRow {
+            path: "/w/free".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    assert!(!runtime.dispatch_json(&event(
+        "cleanup_confirm",
+        serde_json::json!({"id": 3, "paths": ["/w/free"]}),
+    )));
+    assert_eq!(runtime.cleanup.as_ref().unwrap().phase, "review");
     runtime.cleanup_worker_finished(3);
     assert!(runtime.dispatch_json(&event("cleanup_dismiss", serde_json::json!({}))));
     assert!(runtime.cleanup.is_none());

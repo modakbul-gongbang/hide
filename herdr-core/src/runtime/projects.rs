@@ -305,20 +305,17 @@ impl Runtime {
         changed
     }
 
-    /// What the cleanup worker needs to know about a local Git project's
-    /// checkouts, copied under the lock so the worker reads nothing of the
-    /// runtime while it inspects the disk and Herdr.
-    pub(crate) fn cleanup_input(&self, workspace_id: &str) -> Option<live::cleanup::ReviewInput> {
-        let workspace = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .find(|workspace| {
-                workspace.id == workspace_id
-                    && workspace.remote_target_id.is_none()
-                    && workspace.is_git
-            })?;
+    /// The local Git project a cleanup names, or `None` for anything else.
+    fn cleanup_workspace(&self, workspace_id: &str) -> Option<&crate::model::WorkspaceSnapshot> {
+        self.snapshot.navigator.workspaces.iter().find(|workspace| {
+            workspace.id == workspace_id && workspace.remote_target_id.is_none() && workspace.is_git
+        })
+    }
+
+    fn checkout_facts(
+        &self,
+        workspace: &crate::model::WorkspaceSnapshot,
+    ) -> Vec<live::cleanup::CheckoutFacts> {
         let agent_panes: HashSet<&str> = self
             .snapshot
             .navigator
@@ -326,6 +323,43 @@ impl Runtime {
             .iter()
             .map(|agent| agent.pane_id.as_str())
             .collect();
+        workspace
+            .checkouts
+            .iter()
+            .map(|checkout| live::cleanup::CheckoutFacts {
+                path: PathBuf::from(&checkout.path),
+                agent_working: checkout.agent_summary.working,
+                terminal_panes: checkout
+                    .tabs
+                    .iter()
+                    .flat_map(|tab| tab.panes.iter())
+                    .map(|pane| pane.id.clone())
+                    .filter(|id| !agent_panes.contains(id.as_str()))
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// Only the in-use facts of a local Git project's checkouts, for a read
+    /// that happens once per move: none of the folder or size maps
+    /// [`Self::cleanup_input`] copies.
+    pub(crate) fn cleanup_facts(
+        &self,
+        workspace_id: &str,
+    ) -> Option<Vec<live::cleanup::CheckoutFacts>> {
+        Some(self.checkout_facts(self.cleanup_workspace(workspace_id)?))
+    }
+
+    /// What the cleanup worker needs to know about a local Git project's
+    /// checkouts, copied under the lock so the worker reads nothing of the
+    /// runtime while it inspects the disk and Herdr.
+    pub(crate) fn cleanup_input(&self, workspace_id: &str) -> Option<live::cleanup::ReviewInput> {
+        let workspace = self.cleanup_workspace(workspace_id)?;
+        let worktrees = self
+            .worktree_catalog
+            .project(&workspace.path)
+            .into_iter()
+            .flat_map(|project| &project.worktrees);
         Some(live::cleanup::ReviewInput {
             workspace_id: workspace.id.clone(),
             root: PathBuf::from(&workspace.path),
@@ -333,34 +367,13 @@ impl Runtime {
                 .focused_local_checkout()
                 .filter(|(focused, _)| focused.id == workspace.id)
                 .map(|(_, checkout)| PathBuf::from(&checkout.path)),
-            checkouts: workspace
-                .checkouts
-                .iter()
-                .map(|checkout| live::cleanup::CheckoutFacts {
-                    path: PathBuf::from(&checkout.path),
-                    agent_working: checkout.agent_summary.working,
-                    terminal_panes: checkout
-                        .tabs
-                        .iter()
-                        .flat_map(|tab| tab.panes.iter())
-                        .map(|pane| pane.id.clone())
-                        .filter(|id| !agent_panes.contains(id.as_str()))
-                        .collect(),
-                })
-                .collect(),
-            folders: self
-                .worktree_catalog
-                .project(&workspace.path)
-                .into_iter()
-                .flat_map(|project| &project.worktrees)
+            checkouts: self.checkout_facts(workspace),
+            folders: worktrees
+                .clone()
                 .filter(|worktree| !worktree.disk.folders.is_empty())
                 .map(|worktree| (PathBuf::from(&worktree.path), worktree.disk.folders.clone()))
                 .collect(),
-            bytes: self
-                .worktree_catalog
-                .project(&workspace.path)
-                .into_iter()
-                .flat_map(|project| &project.worktrees)
+            bytes: worktrees
                 .filter_map(|worktree| {
                     Some((PathBuf::from(&worktree.path), worktree.disk.total_bytes?))
                 })
@@ -448,6 +461,12 @@ impl Runtime {
     }
 
     pub(super) fn confirm_cleanup(&mut self, payload: CleanupConfirmPayload) -> bool {
+        // A review worker that has published its answer may not have ended
+        // yet; a confirmation waits for it, so its end can never free the
+        // lane of the worker this one starts.
+        if self.cleanup_worker.is_some() {
+            return false;
+        }
         let Some(review) = self.cleanup.clone().filter(|r| {
             r.id == payload.id && r.phase == "review" && r.usage_error.is_none() && r.usage_ready
         }) else {

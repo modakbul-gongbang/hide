@@ -278,9 +278,7 @@ fn fresh_in_use(
         || {
             let runtime = context.runtime.upgrade()?;
             let guard = runtime.lock().ok()?;
-            guard
-                .cleanup_input(workspace_id)
-                .map(|input| input.checkouts)
+            guard.cleanup_facts(workspace_id)
         },
         |facts| live_in_use(context, facts),
     )
