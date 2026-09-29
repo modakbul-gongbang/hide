@@ -109,16 +109,7 @@ Record operator agent count separately from private pane/agent and attached-chil
 `desktop/e2e/*.spec.ts` and `web/e2e/*.spec.ts` are the primary reproduction path: Playwright drives the real window against an isolated `hided` and a private, pinned Herdr server, and both run in CI.
 Read the closest existing spec before writing a new one; `desktop/e2e/browser.spec.ts` covers the occluded-window case; the fixture launches every desktop app with `--disable-backgrounding-occluded-windows` and without activating it (see [BUILD.md](BUILD.md#the-desktop-app)), so an occluded window keeps painting for capture.
 
-For manual QA on a packaged or dev build that a spec cannot yet reach, use the installed Peekaboo CLI directly, not an MCP server.
-Missing Screen Recording or Accessibility permission blocks automation.
-
-```sh
-/opt/homebrew/bin/peekaboo permissions status --json
-/opt/homebrew/bin/peekaboo app list --json
-```
-
-Discover windows with `peekaboo window list --app hide --json`, then take a fresh `peekaboo see --app hide --json` snapshot.
-For observation while the operator works, prefer `peekaboo see --window-id <candidate-window-id> --no-elements --path <run-path> --json` after resolving that window to the candidate PID.
+For manual QA on a packaged or dev build that a spec cannot yet reach, use the tools and procedure in [VERIFICATION.md: Manual native QA](VERIFICATION.md#manual-native-qa); it owns which tool can address the candidate without reaching the operator's app.
 Do not activate, raise, move or unminimize the window merely to obtain a screenshot without coordination.
 Occluded-window capture is not proof of minimized, hidden, or off-Space capture support; report blank, stale, or unavailable frames explicitly rather than silently focusing the app.
 Confirm the exact PID/window before each mutation, prefer fresh element IDs, and verify the result with another observation.
