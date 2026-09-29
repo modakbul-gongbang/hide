@@ -822,6 +822,7 @@ Web owner: `web/src/StartPanel.tsx`, `web/src/startTargets.ts`, `web/src/startDr
 The start panel starts a Claude or Codex agent with a first instruction anywhere hide can reach (PRD home-device-rail D-17..D-22).
 ⌘N opens it in the desktop app, where it is also File › Start agent; in a browser tab ⌘N stays the browser's and `에이전트 시작…` in ⌘K opens it, on every screen.
 It floats at the ⌘K palette's place and width with no backdrop, and the keyboard lands in its one-line text box, `무엇을 시킬까요?`.
+Opened while Settings is up, it takes Settings' place: Settings closes and the target is the front device's Home.
 Under the text are the target, the agent kind and the model menus, a `⏎` keycap and `시작`; Enter or `시작` sends one `agent_start_in_checkout` with a fresh request id, the text as the agent's first instruction, handed to the CLI as its own argument (ARCHITECTURE.md, the first prompt).
 The target defaults to what is in front: the checkout of the Workspace in front (a worktree when that is it), a project's main checkout while its Overview is in front, and the front device's Home while a Home Overview, the Inbox or Settings is; a device's surface in front makes that device the target's.
 The target menu lists the front device's Home and checkouts, then each other device's Home and checkouts prefixed with its name, with a separator between devices and a check on the chosen item; a device that is not connected is listed disabled with `연결 안 됨`.
@@ -831,7 +832,7 @@ Every start that names Claude or Codex, here or in a dialog, is remembered by th
 Escape or a press outside closes the panel and keeps the text for the next open; a start that goes clears it.
 The panel follows only the answer carrying its own request id, even after it closes: a refusal or a failed start shows its reason inside the panel and keeps the text, and a start that went brings the center to the new pane, on a device by moving the rail, the sidebar and the center together.
 An agent that fails to start after its tab opened puts its text back in the draft with the reason, unless a new draft took its place, so the next ⌘N shows both; the reason stays until the text changes.
-A start with no answer in 30 seconds says so inside the panel.
+A start with no answer in 90 seconds, the core's own limit for one, says so inside the panel.
 New worktree, Start from an issue and 맡기기 carry the same kind and model menus with the remembered choice preselected, and what they start becomes the next default; New worktree's kind menu starts with `Terminal only`, which is never remembered.
 Settings › Issues has no default agent of its own.
 
