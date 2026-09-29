@@ -1038,17 +1038,17 @@ function MachineKit({ device }: { device: Device }) {
     );
   }
   return (
-    <div className="mt-xs space-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
+    <div className="mt-xs grid grid-cols-[auto_auto_minmax(0,1fr)] gap-x-xs gap-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
       {kit.components.map((part) => {
         const line = kitPartLine(part);
         const mark = part.state === "installed" ? "✓" : part.state === "absent" ? "–" : part.state === "failed" ? "✕" : "!";
         const markTone = line.tone === "ok" ? "text-success" : line.tone === "muted" ? "text-muted-foreground" : line.tone === "error" ? "text-destructive" : "text-warning";
         return (
-          <div key={part.id} className="flex gap-xs text-caption" data-kit-part={`${device.id}:${part.id}:${part.state}`}>
+          <div key={part.id} className="col-span-3 grid grid-cols-subgrid text-caption" data-kit-part={`${device.id}:${part.id}:${part.state}`}>
             <span className={markTone} aria-hidden="true">
               {mark}
             </span>
-            <span className="w-[var(--size-device-test-stage-col)] shrink-0 text-foreground">{part.label}</span>
+            <span className="whitespace-nowrap text-foreground">{part.label}</span>
             {part.state === "installed" ? <span className="sr-only">{line.text}</span> : null}
             <span className="min-w-0 break-words text-subtle-foreground">
               {part.state === "installed" ? <span className="break-all font-mono">{part.location}</span> : `${line.text}${part.reason ? `: ${part.reason}` : ""}`}

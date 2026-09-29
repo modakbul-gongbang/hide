@@ -281,7 +281,7 @@ fn report(
         (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),
         (None, Observed::Missing) if recorded => (
             ComponentState::Removed,
-            Some("Removed after Hide installed it; Reinstall puts it back".to_owned()),
+            Some("taken out after Hide installed it; Reinstall puts it back".to_owned()),
         ),
         (None, Observed::Missing) => (ComponentState::NotInstalled, None),
         (None, Observed::Blocked(reason)) => (ComponentState::Failed, Some(reason)),
