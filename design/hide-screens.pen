@@ -111185,7 +111185,7 @@
           "type": "text",
           "id": "screen-disk-cleanup-spec",
           "name": "web/src/DiskCleanupSheet.tsx",
-          "content": "web/src/DiskCleanupSheet.tsx, DiskEntrance.tsx, diskCleanup.ts (PRD disk-layers B1-B28, worded from the shipped app): the Overview facts line with the disk number’s breakdown tooltip (빌드 캐시, 의존성, 워크트리 소스, 기타, 공유 Git), the `≥` number and its tooltip line while a checkout could not be measured, and the low-disk cell that opens the sheet on 끝난 것, then the sheet as a checkout x layer table (빌드 캐시, 의존성, 워크트리, 기타 read-only, 합계) with the checkbox for every unit picked at once (cell, row, column, top-left, the fold of small checkouts, all limited to the rows the filter shows; a worktree pick turns its row’s caches into the disabled Checked state, a partly picked group draws the Checkbox’s Indeterminate). The states the table carries follow: measuring, not measured, in use with its reason beside the name, usage unreadable, another cleanup running, no row for the filter. The confirm step exists only when a worktree is picked; the running step and the result lead with the volume’s free space before and after. Sizes and names are invented mock content.",
+          "content": "web/src/DiskCleanupSheet.tsx, DiskEntrance.tsx, diskCleanup.ts (PRD disk-layers B1-B28, worded from the shipped app): the Overview facts line with the disk number’s breakdown tooltip (빌드 캐시, 의존성, 워크트리 소스, 기타, 공유 Git), the `≥` number and its tooltip line while a checkout could not be measured, and the low-disk cell that opens the sheet on 끝난 것, then the sheet as a checkout x layer table (빌드 캐시, 의존성, 워크트리, 기타 read-only, 합계) with the checkbox for every unit picked at once (cell, row, column, top-left, the fold of small checkouts, all limited to the rows the filter shows; a worktree pick turns its row’s caches into the disabled Checked state, a partly picked group draws the Checkbox’s Indeterminate). The states the table carries follow: measuring, not measured, in use with its reason beside the name, usage unreadable, another cleanup running, no row for the filter. The table has no subtitle, no second header line and no legend, and its footer says only `N칸 · X`. The confirm step exists only when a worktree is picked and names the folder; the result is one line of the volume’s free space before and after over its per-cell rows. Sizes and names are invented mock content.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -112609,7 +112609,7 @@
                           "type": "text",
                           "id": "dc-l-m1-l-l-n",
                           "name": "행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 ",
-                          "content": "행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 상태. 열 머리와 왼쪽 위는 일부만 골라서 가운데 줄. 쓰는 중인 행은 흐리고 이유가 이름 옆에 선다. 워크트리 칸을 켜면 같은 행의 캐시 칸은 포함됨.",
+                          "content": "행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 상태. 열 머리와 왼쪽 위는 일부만 골라서 가운데 줄. 쓰는 중인 행은 이유가 이름 옆에 선다. 워크트리 칸을 켜면 같은 행의 캐시 칸은 포함됨.",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
@@ -112646,16 +112646,6 @@
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-l1-sub",
-                                  "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                  "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "vertical",
@@ -112790,136 +112780,6 @@
                                   "cornerRadius": 2,
                                   "clip": true,
                                   "fill": "$--muted"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-usage-l1-lg",
-                                  "name": "Legend",
-                                  "children": [
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l1-lg0",
-                                      "name": "빌드 캐시",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l1-lg0-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--accent-choice-amber"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-l1-lg0-t",
-                                          "name": "빌드 캐시",
-                                          "content": "빌드 캐시",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l1-lg1",
-                                      "name": "의존성",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l1-lg1-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-blue"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-l1-lg1-t",
-                                          "name": "의존성",
-                                          "content": "의존성",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l1-lg2",
-                                      "name": "기타",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l1-lg2-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-yellow"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-l1-lg2-t",
-                                          "name": "기타",
-                                          "content": "기타",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l1-lg3",
-                                      "name": "소스 · .git",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l1-lg3-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-neutral"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-l1-lg3-t",
-                                          "name": "소스 · .git",
-                                          "content": "소스 · .git",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    }
-                                  ],
-                                  "layout": "horizontal",
-                                  "gap": "$--spacing-md",
-                                  "alignItems": "center"
                                 }
                               ],
                               "layout": "vertical",
@@ -113087,24 +112947,6 @@
                                   "padding": 2,
                                   "fill": "$--muted",
                                   "cornerRadius": "$--radius-sm"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-fb-sp-l1",
-                                  "name": "Spacer",
-                                  "children": [],
-                                  "width": "fill_container",
-                                  "height": 1
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-fb-n-l1",
-                                  "name": "체크박스는 보이는 행에만 닿는다",
-                                  "content": "체크박스는 보이는 행에만 닿는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "horizontal",
@@ -113159,8 +113001,8 @@
                                         {
                                           "type": "text",
                                           "id": "ma-hn-t-l1",
-                                          "name": "체크아웃 · 크기순",
-                                          "content": "체크아웃 · 크기순",
+                                          "name": "체크아웃",
+                                          "content": "체크아웃",
                                           "fill": "$--subtle-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -113224,16 +113066,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hb-l1-r",
-                                          "name": "고를 수 있는 5곳",
-                                          "content": "고를 수 있는 5곳",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -113292,16 +113124,6 @@
                                           "content": "7.9 GB",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hd-l1-r",
-                                          "name": "고를 수 있는 6곳",
-                                          "content": "고를 수 있는 6곳",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -113364,16 +113186,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ht-l1-r",
-                                          "name": "고를 수 있는 4곳",
-                                          "content": "고를 수 있는 4곳",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -113402,16 +113214,6 @@
                                           "content": "3.9 GB",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ho-r-l1",
-                                          "name": "지우지 않음",
-                                          "content": "지우지 않음",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -115687,64 +115489,14 @@
                           "name": "Footer",
                           "children": [
                             {
-                              "type": "frame",
-                              "id": "ma-sum-l1",
-                              "name": "Selection",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-t-l1",
-                                  "name": "빌드 캐시 3 · 의존성 1 · 워크트리 1 · 2",
-                                  "content": "빌드 캐시 3 · 의존성 1 · 워크트리 1 · 20 GB",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-sum-w-l1",
-                                  "name": "Worktree warning",
-                                  "children": [
-                                    {
-                                      "type": "icon",
-                                      "id": "ma-sum-wg-l1",
-                                      "name": "Glyph",
-                                      "enabled": true,
-                                      "width": 14,
-                                      "height": 14,
-                                      "icon": "triangle-alert",
-                                      "library": "lucide",
-                                      "fill": "$--destructive"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-sum-wt-l1",
-                                      "name": "feat/overview-lenses은 폴더째 지워",
-                                      "content": "feat/overview-lenses은 폴더째 지워진다",
-                                      "fill": "$--destructive",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
-                                    }
-                                  ],
-                                  "layout": "horizontal",
-                                  "gap": "$--spacing-xs",
-                                  "alignItems": "center"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-n-l1",
-                                  "name": "의존성은 다음 install이 다시 받는다",
-                                  "content": "의존성은 다음 install이 다시 받는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400"
-                                }
-                              ],
-                              "layout": "vertical",
-                              "gap": 2
+                              "type": "text",
+                              "id": "ma-sum-t-l1",
+                              "name": "4칸 · 워크트리 1 · 20 GB",
+                              "content": "4칸 · 워크트리 1 · 20 GB",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
                             },
                             {
                               "type": "frame",
@@ -115874,16 +115626,6 @@
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-l2-sub",
-                                  "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                  "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "vertical",
@@ -116018,136 +115760,6 @@
                                   "cornerRadius": 2,
                                   "clip": true,
                                   "fill": "$--muted"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-usage-l2-lg",
-                                  "name": "Legend",
-                                  "children": [
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l2-lg0",
-                                      "name": "빌드 캐시",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l2-lg0-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--accent-choice-amber"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-l2-lg0-t",
-                                          "name": "빌드 캐시",
-                                          "content": "빌드 캐시",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l2-lg1",
-                                      "name": "의존성",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l2-lg1-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-blue"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-l2-lg1-t",
-                                          "name": "의존성",
-                                          "content": "의존성",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l2-lg2",
-                                      "name": "기타",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l2-lg2-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-yellow"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-l2-lg2-t",
-                                          "name": "기타",
-                                          "content": "기타",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l2-lg3",
-                                      "name": "소스 · .git",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l2-lg3-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-neutral"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-l2-lg3-t",
-                                          "name": "소스 · .git",
-                                          "content": "소스 · .git",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    }
-                                  ],
-                                  "layout": "horizontal",
-                                  "gap": "$--spacing-md",
-                                  "alignItems": "center"
                                 }
                               ],
                               "layout": "vertical",
@@ -116315,24 +115927,6 @@
                                   "padding": 2,
                                   "fill": "$--muted",
                                   "cornerRadius": "$--radius-sm"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-fb-sp-l2",
-                                  "name": "Spacer",
-                                  "children": [],
-                                  "width": "fill_container",
-                                  "height": 1
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-fb-n-l2",
-                                  "name": "체크박스는 보이는 행에만 닿는다",
-                                  "content": "체크박스는 보이는 행에만 닿는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "horizontal",
@@ -116387,8 +115981,8 @@
                                         {
                                           "type": "text",
                                           "id": "ma-hn-t-l2",
-                                          "name": "체크아웃 · 크기순",
-                                          "content": "체크아웃 · 크기순",
+                                          "name": "체크아웃",
+                                          "content": "체크아웃",
                                           "fill": "$--subtle-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -116452,16 +116046,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hb-l2-r",
-                                          "name": "4곳 선택됨",
-                                          "content": "4곳 선택됨",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -116522,16 +116106,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hd-l2-r",
-                                          "name": "5곳 선택됨",
-                                          "content": "5곳 선택됨",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -116590,16 +116164,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ht-l2-r",
-                                          "name": "고를 수 있는 4곳",
-                                          "content": "고를 수 있는 4곳",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -116628,16 +116192,6 @@
                                           "content": "922 MB",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ho-r-l2",
-                                          "name": "지우지 않음",
-                                          "content": "지우지 않음",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -117756,33 +117310,14 @@
                           "name": "Footer",
                           "children": [
                             {
-                              "type": "frame",
-                              "id": "ma-sum-l2",
-                              "name": "Selection",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-t-l2",
-                                  "name": "빌드 캐시 19 · 의존성 19 · 워크트리 0 ·",
-                                  "content": "빌드 캐시 19 · 의존성 19 · 워크트리 0 · 23 GB",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-n-l2",
-                                  "name": "의존성은 다음 install이 다시 받는다",
-                                  "content": "의존성은 다음 install이 다시 받는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400"
-                                }
-                              ],
-                              "layout": "vertical",
-                              "gap": 2
+                              "type": "text",
+                              "id": "ma-sum-t-l2",
+                              "name": "38칸 · 23 GB",
+                              "content": "38칸 · 23 GB",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
                             },
                             {
                               "type": "frame",
@@ -117912,16 +117447,6 @@
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-l3-sub",
-                                  "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                  "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "vertical",
@@ -118124,24 +117649,6 @@
                                   "padding": 2,
                                   "fill": "$--muted",
                                   "cornerRadius": "$--radius-sm"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-fb-sp-l3",
-                                  "name": "Spacer",
-                                  "children": [],
-                                  "width": "fill_container",
-                                  "height": 1
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-fb-n-l3",
-                                  "name": "체크박스는 보이는 행에만 닿는다",
-                                  "content": "체크박스는 보이는 행에만 닿는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "horizontal",
@@ -118195,8 +117702,8 @@
                                         {
                                           "type": "text",
                                           "id": "ma-hn-t-l3",
-                                          "name": "체크아웃 · 크기순",
-                                          "content": "체크아웃 · 크기순",
+                                          "name": "체크아웃",
+                                          "content": "체크아웃",
                                           "fill": "$--subtle-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -118259,16 +117766,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hb-l3-r",
-                                          "name": "확인 중…",
-                                          "content": "확인 중…",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -118326,16 +117823,6 @@
                                           "content": "0 B",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hd-l3-r",
-                                          "name": "확인 중…",
-                                          "content": "확인 중…",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -118397,16 +117884,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ht-l3-r",
-                                          "name": "확인 중…",
-                                          "content": "확인 중…",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -118435,16 +117912,6 @@
                                           "content": "0 B",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ho-r-l3",
-                                          "name": "지우지 않음",
-                                          "content": "지우지 않음",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -119613,23 +119080,14 @@
                           "name": "Footer",
                           "children": [
                             {
-                              "type": "frame",
-                              "id": "ma-sum-l3",
-                              "name": "Selection",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-t-l3",
-                                  "name": "검토하는 중…",
-                                  "content": "검토하는 중…",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                }
-                              ],
-                              "layout": "vertical",
-                              "gap": 2
+                              "type": "text",
+                              "id": "ma-sum-t-l3",
+                              "name": "검토하는 중…",
+                              "content": "검토하는 중…",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
                             },
                             {
                               "type": "frame",
@@ -119727,8 +119185,8 @@
                             {
                               "type": "text",
                               "id": "dc-l-m5-l-l-n",
-                              "name": "표 위에 한 줄과 다시. 체크박스는 모두 비활성이고",
-                              "content": "표 위에 한 줄과 다시. 체크박스는 모두 비활성이고 배너나 알림은 없다.",
+                              "name": "표 위에 한 줄과 다시. 체크박스는 모두 비활성이다",
+                              "content": "표 위에 한 줄과 다시. 체크박스는 모두 비활성이다.",
                               "fill": "$--muted-foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-caption",
@@ -119765,16 +119223,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-l5-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -119909,136 +119357,6 @@
                                       "cornerRadius": 2,
                                       "clip": true,
                                       "fill": "$--muted"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l5-lg",
-                                      "name": "Legend",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l5-lg0",
-                                          "name": "빌드 캐시",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-l5-lg0-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--accent-choice-amber"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-l5-lg0-t",
-                                              "name": "빌드 캐시",
-                                              "content": "빌드 캐시",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l5-lg1",
-                                          "name": "의존성",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-l5-lg1-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-blue"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-l5-lg1-t",
-                                              "name": "의존성",
-                                              "content": "의존성",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l5-lg2",
-                                          "name": "기타",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-l5-lg2-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-yellow"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-l5-lg2-t",
-                                              "name": "기타",
-                                              "content": "기타",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l5-lg3",
-                                          "name": "소스 · .git",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-l5-lg3-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-neutral"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-l5-lg3-t",
-                                              "name": "소스 · .git",
-                                              "content": "소스 · .git",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-md",
-                                      "alignItems": "center"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -120246,24 +119564,6 @@
                                       "padding": 2,
                                       "fill": "$--muted",
                                       "cornerRadius": "$--radius-sm"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-fb-sp-l5",
-                                      "name": "Spacer",
-                                      "children": [],
-                                      "width": "fill_container",
-                                      "height": 1
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-fb-n-l5",
-                                      "name": "체크박스는 보이는 행에만 닿는다",
-                                      "content": "체크박스는 보이는 행에만 닿는다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "horizontal",
@@ -120317,8 +119617,8 @@
                                             {
                                               "type": "text",
                                               "id": "ma-hn-t-l5",
-                                              "name": "체크아웃 · 크기순",
-                                              "content": "체크아웃 · 크기순",
+                                              "name": "체크아웃",
+                                              "content": "체크아웃",
                                               "fill": "$--subtle-foreground",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
@@ -120381,16 +119681,6 @@
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-hb-l5-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
                                             }
                                           ],
                                           "layout": "vertical",
@@ -120448,16 +119738,6 @@
                                               "content": "7.9 GB",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-hd-l5-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
                                             }
@@ -120519,16 +119799,6 @@
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-ht-l5-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
                                             }
                                           ],
                                           "layout": "vertical",
@@ -120557,16 +119827,6 @@
                                               "content": "3.9 GB",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-ho-r-l5",
-                                              "name": "지우지 않음",
-                                              "content": "지우지 않음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
                                             }
@@ -121345,23 +120605,14 @@
                               "name": "Footer",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "ma-sum-l5",
-                                  "name": "Selection",
-                                  "children": [
-                                    {
-                                      "type": "text",
-                                      "id": "ma-sum-t-l5",
-                                      "name": "쓰는 중인지 확인해야 고를 수 있다",
-                                      "content": "쓰는 중인지 확인해야 고를 수 있다",
-                                      "fill": "$--foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-subhead",
-                                      "fontWeight": "600"
-                                    }
-                                  ],
-                                  "layout": "vertical",
-                                  "gap": 2
+                                  "type": "text",
+                                  "id": "ma-sum-t-l5",
+                                  "name": "쓰는 중인지 확인해야 고를 수 있다",
+                                  "content": "쓰는 중인지 확인해야 고를 수 있다",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-subhead",
+                                  "fontWeight": "600"
                                 },
                                 {
                                   "type": "frame",
@@ -121502,16 +120753,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-l6-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -121646,136 +120887,6 @@
                                       "cornerRadius": 2,
                                       "clip": true,
                                       "fill": "$--muted"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-l6-lg",
-                                      "name": "Legend",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l6-lg0",
-                                          "name": "빌드 캐시",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-l6-lg0-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--accent-choice-amber"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-l6-lg0-t",
-                                              "name": "빌드 캐시",
-                                              "content": "빌드 캐시",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l6-lg1",
-                                          "name": "의존성",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-l6-lg1-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-blue"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-l6-lg1-t",
-                                              "name": "의존성",
-                                              "content": "의존성",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l6-lg2",
-                                          "name": "기타",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-l6-lg2-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-yellow"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-l6-lg2-t",
-                                              "name": "기타",
-                                              "content": "기타",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-l6-lg3",
-                                          "name": "소스 · .git",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-l6-lg3-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-neutral"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-l6-lg3-t",
-                                              "name": "소스 · .git",
-                                              "content": "소스 · .git",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-md",
-                                      "alignItems": "center"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -121943,24 +121054,6 @@
                                       "padding": 2,
                                       "fill": "$--muted",
                                       "cornerRadius": "$--radius-sm"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-fb-sp-l6",
-                                      "name": "Spacer",
-                                      "children": [],
-                                      "width": "fill_container",
-                                      "height": 1
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-fb-n-l6",
-                                      "name": "체크박스는 보이는 행에만 닿는다",
-                                      "content": "체크박스는 보이는 행에만 닿는다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "horizontal",
@@ -122014,8 +121107,8 @@
                                             {
                                               "type": "text",
                                               "id": "ma-hn-t-l6",
-                                              "name": "체크아웃 · 크기순",
-                                              "content": "체크아웃 · 크기순",
+                                              "name": "체크아웃",
+                                              "content": "체크아웃",
                                               "fill": "$--subtle-foreground",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
@@ -122078,16 +121171,6 @@
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-hb-l6-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
                                             }
                                           ],
                                           "layout": "vertical",
@@ -122145,16 +121228,6 @@
                                               "content": "7.9 GB",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-hd-l6-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
                                             }
@@ -122216,16 +121289,6 @@
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-ht-l6-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
                                             }
                                           ],
                                           "layout": "vertical",
@@ -122254,16 +121317,6 @@
                                               "content": "3.9 GB",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-ho-r-l6",
-                                              "name": "지우지 않음",
-                                              "content": "지우지 않음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
                                             }
@@ -122805,23 +121858,14 @@
                               "name": "Footer",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "ma-sum-l6",
-                                  "name": "Selection",
-                                  "children": [
-                                    {
-                                      "type": "text",
-                                      "id": "ma-sum-t-l6",
-                                      "name": " ",
-                                      "content": " ",
-                                      "fill": "$--foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-subhead",
-                                      "fontWeight": "600"
-                                    }
-                                  ],
-                                  "layout": "vertical",
-                                  "gap": 2
+                                  "type": "text",
+                                  "id": "ma-sum-t-l6",
+                                  "name": " ",
+                                  "content": " ",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-subhead",
+                                  "fontWeight": "600"
                                 },
                                 {
                                   "type": "frame",
@@ -122951,8 +121995,8 @@
                                 {
                                   "type": "text",
                                   "id": "cf-l-title",
-                                  "name": "워크트리 1개를 폴더째 지운다",
-                                  "content": "워크트리 1개를 폴더째 지운다",
+                                  "name": "feat/overview-lenses 폴더째 삭제",
+                                  "content": "feat/overview-lenses 폴더째 삭제",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
@@ -122961,8 +122005,8 @@
                                 {
                                   "type": "text",
                                   "id": "cf-l-desc",
-                                  "name": "되돌릴 수 없다. 브랜치와 Git 기록은 남는다.",
-                                  "content": "되돌릴 수 없다. 브랜치와 Git 기록은 남는다.",
+                                  "name": "브랜치는 남음",
+                                  "content": "브랜치는 남음",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -123022,18 +122066,6 @@
                                   "layout": "horizontal",
                                   "gap": "$--spacing-md",
                                   "alignItems": "baseline",
-                                  "width": 438
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "cf-sum-t-l",
-                                  "name": "다른 체크아웃의 캐시 칸 4개 · 16 GB도 함께",
-                                  "content": "다른 체크아웃의 캐시 칸 4개 · 16 GB도 함께 비운다",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400",
-                                  "textGrowth": "fixed-width",
                                   "width": 438
                                 }
                               ],
@@ -123174,16 +122206,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-l4-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -123461,23 +122483,14 @@
                               "name": "Footer",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "ma-sum-l4",
-                                  "name": "Selection",
-                                  "children": [
-                                    {
-                                      "type": "text",
-                                      "id": "ma-sum-t-l4",
-                                      "name": "비울 캐시가 없다",
-                                      "content": "비울 캐시가 없다",
-                                      "fill": "$--foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-subhead",
-                                      "fontWeight": "600"
-                                    }
-                                  ],
-                                  "layout": "vertical",
-                                  "gap": 2
+                                  "type": "text",
+                                  "id": "ma-sum-t-l4",
+                                  "name": "비울 캐시가 없다",
+                                  "content": "비울 캐시가 없다",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-subhead",
+                                  "fontWeight": "600"
                                 },
                                 {
                                   "type": "frame",
@@ -123618,16 +122631,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "rn-l-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -123770,8 +122773,8 @@
                             {
                               "type": "text",
                               "id": "dc-l-rs-l-l-n",
-                              "name": "크기는 정리 전후 볼륨 여유로 말한다. 확인 사이에",
-                              "content": "크기는 정리 전후 볼륨 여유로 말한다. 확인 사이에 상태가 바뀐 칸은 건너뛰고 이유를 적는다.",
+                              "name": "결과는 정리 전후 볼륨 여유 한 줄이다. 확인 사이",
+                              "content": "결과는 정리 전후 볼륨 여유 한 줄이다. 확인 사이에 상태가 바뀐 칸은 건너뛰고 이유를 적는다.",
                               "fill": "$--muted-foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-caption",
@@ -123808,16 +122811,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "rs-l-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -123860,62 +122853,14 @@
                               "name": "Body",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "rs-top-l",
-                                  "name": "Outcome",
-                                  "children": [
-                                    {
-                                      "type": "frame",
-                                      "id": "rs-big-l",
-                                      "name": "Freed",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "rs-big-l-l",
-                                          "name": "디스크에서 잰 여유",
-                                          "content": "디스크에서 잰 여유",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "rs-big-v-l",
-                                          "name": "1.6 GB → 18.3 GB",
-                                          "content": "1.6 GB → 18.3 GB",
-                                          "fill": "$--foreground",
-                                          "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-headline",
-                                          "fontWeight": "600"
-                                        }
-                                      ],
-                                      "layout": "vertical",
-                                      "gap": "$--spacing-xxs"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "rs-sp-l",
-                                      "name": "Spacer",
-                                      "children": [],
-                                      "width": "fill_container",
-                                      "height": 1
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "rs-note-l",
-                                      "name": "할당 합계 17 GB · 실제로 늘어난 여유 17 ",
-                                      "content": "할당 합계 17 GB · 실제로 늘어난 여유 17 GB",
-                                      "fill": "$--subtle-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
-                                    }
-                                  ],
-                                  "layout": "horizontal",
-                                  "gap": "$--spacing-md",
-                                  "alignItems": "start",
-                                  "width": 512
+                                  "type": "text",
+                                  "id": "rs-big-l",
+                                  "name": "여유 1.6 → 18.3 GB",
+                                  "content": "여유 1.6 → 18.3 GB",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-headline",
+                                  "fontWeight": "600"
                                 },
                                 {
                                   "type": "frame",
@@ -125801,7 +124746,7 @@
                           "type": "text",
                           "id": "dc-l-m1-d-l-n",
                           "name": "행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 ",
-                          "content": "행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 상태. 열 머리와 왼쪽 위는 일부만 골라서 가운데 줄. 쓰는 중인 행은 흐리고 이유가 이름 옆에 선다. 워크트리 칸을 켜면 같은 행의 캐시 칸은 포함됨.",
+                          "content": "행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 상태. 열 머리와 왼쪽 위는 일부만 골라서 가운데 줄. 쓰는 중인 행은 이유가 이름 옆에 선다. 워크트리 칸을 켜면 같은 행의 캐시 칸은 포함됨.",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
@@ -125838,16 +124783,6 @@
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-d1-sub",
-                                  "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                  "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "vertical",
@@ -125982,136 +124917,6 @@
                                   "cornerRadius": 2,
                                   "clip": true,
                                   "fill": "$--muted"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-usage-d1-lg",
-                                  "name": "Legend",
-                                  "children": [
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d1-lg0",
-                                      "name": "빌드 캐시",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d1-lg0-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--accent-choice-amber"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-d1-lg0-t",
-                                          "name": "빌드 캐시",
-                                          "content": "빌드 캐시",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d1-lg1",
-                                      "name": "의존성",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d1-lg1-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-blue"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-d1-lg1-t",
-                                          "name": "의존성",
-                                          "content": "의존성",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d1-lg2",
-                                      "name": "기타",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d1-lg2-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-yellow"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-d1-lg2-t",
-                                          "name": "기타",
-                                          "content": "기타",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d1-lg3",
-                                      "name": "소스 · .git",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d1-lg3-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-neutral"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-d1-lg3-t",
-                                          "name": "소스 · .git",
-                                          "content": "소스 · .git",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    }
-                                  ],
-                                  "layout": "horizontal",
-                                  "gap": "$--spacing-md",
-                                  "alignItems": "center"
                                 }
                               ],
                               "layout": "vertical",
@@ -126279,24 +125084,6 @@
                                   "padding": 2,
                                   "fill": "$--muted",
                                   "cornerRadius": "$--radius-sm"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-fb-sp-d1",
-                                  "name": "Spacer",
-                                  "children": [],
-                                  "width": "fill_container",
-                                  "height": 1
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-fb-n-d1",
-                                  "name": "체크박스는 보이는 행에만 닿는다",
-                                  "content": "체크박스는 보이는 행에만 닿는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "horizontal",
@@ -126351,8 +125138,8 @@
                                         {
                                           "type": "text",
                                           "id": "ma-hn-t-d1",
-                                          "name": "체크아웃 · 크기순",
-                                          "content": "체크아웃 · 크기순",
+                                          "name": "체크아웃",
+                                          "content": "체크아웃",
                                           "fill": "$--subtle-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -126416,16 +125203,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hb-d1-r",
-                                          "name": "고를 수 있는 5곳",
-                                          "content": "고를 수 있는 5곳",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -126484,16 +125261,6 @@
                                           "content": "7.9 GB",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hd-d1-r",
-                                          "name": "고를 수 있는 6곳",
-                                          "content": "고를 수 있는 6곳",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -126556,16 +125323,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ht-d1-r",
-                                          "name": "고를 수 있는 4곳",
-                                          "content": "고를 수 있는 4곳",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -126594,16 +125351,6 @@
                                           "content": "3.9 GB",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ho-r-d1",
-                                          "name": "지우지 않음",
-                                          "content": "지우지 않음",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -128879,64 +127626,14 @@
                           "name": "Footer",
                           "children": [
                             {
-                              "type": "frame",
-                              "id": "ma-sum-d1",
-                              "name": "Selection",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-t-d1",
-                                  "name": "빌드 캐시 3 · 의존성 1 · 워크트리 1 · 2",
-                                  "content": "빌드 캐시 3 · 의존성 1 · 워크트리 1 · 20 GB",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-sum-w-d1",
-                                  "name": "Worktree warning",
-                                  "children": [
-                                    {
-                                      "type": "icon",
-                                      "id": "ma-sum-wg-d1",
-                                      "name": "Glyph",
-                                      "enabled": true,
-                                      "width": 14,
-                                      "height": 14,
-                                      "icon": "triangle-alert",
-                                      "library": "lucide",
-                                      "fill": "$--destructive"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-sum-wt-d1",
-                                      "name": "feat/overview-lenses은 폴더째 지워",
-                                      "content": "feat/overview-lenses은 폴더째 지워진다",
-                                      "fill": "$--destructive",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
-                                    }
-                                  ],
-                                  "layout": "horizontal",
-                                  "gap": "$--spacing-xs",
-                                  "alignItems": "center"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-n-d1",
-                                  "name": "의존성은 다음 install이 다시 받는다",
-                                  "content": "의존성은 다음 install이 다시 받는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400"
-                                }
-                              ],
-                              "layout": "vertical",
-                              "gap": 2
+                              "type": "text",
+                              "id": "ma-sum-t-d1",
+                              "name": "4칸 · 워크트리 1 · 20 GB",
+                              "content": "4칸 · 워크트리 1 · 20 GB",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
                             },
                             {
                               "type": "frame",
@@ -129066,16 +127763,6 @@
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-d2-sub",
-                                  "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                  "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "vertical",
@@ -129210,136 +127897,6 @@
                                   "cornerRadius": 2,
                                   "clip": true,
                                   "fill": "$--muted"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-usage-d2-lg",
-                                  "name": "Legend",
-                                  "children": [
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d2-lg0",
-                                      "name": "빌드 캐시",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d2-lg0-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--accent-choice-amber"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-d2-lg0-t",
-                                          "name": "빌드 캐시",
-                                          "content": "빌드 캐시",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d2-lg1",
-                                      "name": "의존성",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d2-lg1-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-blue"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-d2-lg1-t",
-                                          "name": "의존성",
-                                          "content": "의존성",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d2-lg2",
-                                      "name": "기타",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d2-lg2-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-yellow"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-d2-lg2-t",
-                                          "name": "기타",
-                                          "content": "기타",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d2-lg3",
-                                      "name": "소스 · .git",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d2-lg3-sw",
-                                          "name": "Swatch",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "fill": "$--file-neutral"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-usage-d2-lg3-t",
-                                          "name": "소스 · .git",
-                                          "content": "소스 · .git",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-xs",
-                                      "alignItems": "center"
-                                    }
-                                  ],
-                                  "layout": "horizontal",
-                                  "gap": "$--spacing-md",
-                                  "alignItems": "center"
                                 }
                               ],
                               "layout": "vertical",
@@ -129507,24 +128064,6 @@
                                   "padding": 2,
                                   "fill": "$--muted",
                                   "cornerRadius": "$--radius-sm"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-fb-sp-d2",
-                                  "name": "Spacer",
-                                  "children": [],
-                                  "width": "fill_container",
-                                  "height": 1
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-fb-n-d2",
-                                  "name": "체크박스는 보이는 행에만 닿는다",
-                                  "content": "체크박스는 보이는 행에만 닿는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "horizontal",
@@ -129579,8 +128118,8 @@
                                         {
                                           "type": "text",
                                           "id": "ma-hn-t-d2",
-                                          "name": "체크아웃 · 크기순",
-                                          "content": "체크아웃 · 크기순",
+                                          "name": "체크아웃",
+                                          "content": "체크아웃",
                                           "fill": "$--subtle-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -129644,16 +128183,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hb-d2-r",
-                                          "name": "4곳 선택됨",
-                                          "content": "4곳 선택됨",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -129714,16 +128243,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hd-d2-r",
-                                          "name": "5곳 선택됨",
-                                          "content": "5곳 선택됨",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -129782,16 +128301,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ht-d2-r",
-                                          "name": "고를 수 있는 4곳",
-                                          "content": "고를 수 있는 4곳",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -129820,16 +128329,6 @@
                                           "content": "922 MB",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ho-r-d2",
-                                          "name": "지우지 않음",
-                                          "content": "지우지 않음",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -130948,33 +129447,14 @@
                           "name": "Footer",
                           "children": [
                             {
-                              "type": "frame",
-                              "id": "ma-sum-d2",
-                              "name": "Selection",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-t-d2",
-                                  "name": "빌드 캐시 19 · 의존성 19 · 워크트리 0 ·",
-                                  "content": "빌드 캐시 19 · 의존성 19 · 워크트리 0 · 23 GB",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-n-d2",
-                                  "name": "의존성은 다음 install이 다시 받는다",
-                                  "content": "의존성은 다음 install이 다시 받는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400"
-                                }
-                              ],
-                              "layout": "vertical",
-                              "gap": 2
+                              "type": "text",
+                              "id": "ma-sum-t-d2",
+                              "name": "38칸 · 23 GB",
+                              "content": "38칸 · 23 GB",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
                             },
                             {
                               "type": "frame",
@@ -131104,16 +129584,6 @@
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-d3-sub",
-                                  "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                  "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "vertical",
@@ -131316,24 +129786,6 @@
                                   "padding": 2,
                                   "fill": "$--muted",
                                   "cornerRadius": "$--radius-sm"
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "ma-fb-sp-d3",
-                                  "name": "Spacer",
-                                  "children": [],
-                                  "width": "fill_container",
-                                  "height": 1
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ma-fb-n-d3",
-                                  "name": "체크박스는 보이는 행에만 닿는다",
-                                  "content": "체크박스는 보이는 행에만 닿는다",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
                                 }
                               ],
                               "layout": "horizontal",
@@ -131387,8 +129839,8 @@
                                         {
                                           "type": "text",
                                           "id": "ma-hn-t-d3",
-                                          "name": "체크아웃 · 크기순",
-                                          "content": "체크아웃 · 크기순",
+                                          "name": "체크아웃",
+                                          "content": "체크아웃",
                                           "fill": "$--subtle-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -131451,16 +129903,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hb-d3-r",
-                                          "name": "확인 중…",
-                                          "content": "확인 중…",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -131518,16 +129960,6 @@
                                           "content": "0 B",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-hd-d3-r",
-                                          "name": "확인 중…",
-                                          "content": "확인 중…",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -131589,16 +130021,6 @@
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ht-d3-r",
-                                          "name": "확인 중…",
-                                          "content": "확인 중…",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
                                         }
                                       ],
                                       "layout": "vertical",
@@ -131627,16 +130049,6 @@
                                           "content": "0 B",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "ma-ho-r-d3",
-                                          "name": "지우지 않음",
-                                          "content": "지우지 않음",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
                                           "fontWeight": "400"
                                         }
@@ -132805,23 +131217,14 @@
                           "name": "Footer",
                           "children": [
                             {
-                              "type": "frame",
-                              "id": "ma-sum-d3",
-                              "name": "Selection",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ma-sum-t-d3",
-                                  "name": "검토하는 중…",
-                                  "content": "검토하는 중…",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                }
-                              ],
-                              "layout": "vertical",
-                              "gap": 2
+                              "type": "text",
+                              "id": "ma-sum-t-d3",
+                              "name": "검토하는 중…",
+                              "content": "검토하는 중…",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
                             },
                             {
                               "type": "frame",
@@ -132919,8 +131322,8 @@
                             {
                               "type": "text",
                               "id": "dc-l-m5-d-l-n",
-                              "name": "표 위에 한 줄과 다시. 체크박스는 모두 비활성이고",
-                              "content": "표 위에 한 줄과 다시. 체크박스는 모두 비활성이고 배너나 알림은 없다.",
+                              "name": "표 위에 한 줄과 다시. 체크박스는 모두 비활성이다",
+                              "content": "표 위에 한 줄과 다시. 체크박스는 모두 비활성이다.",
                               "fill": "$--muted-foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-caption",
@@ -132957,16 +131360,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-d5-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -133101,136 +131494,6 @@
                                       "cornerRadius": 2,
                                       "clip": true,
                                       "fill": "$--muted"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d5-lg",
-                                      "name": "Legend",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d5-lg0",
-                                          "name": "빌드 캐시",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-d5-lg0-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--accent-choice-amber"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-d5-lg0-t",
-                                              "name": "빌드 캐시",
-                                              "content": "빌드 캐시",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d5-lg1",
-                                          "name": "의존성",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-d5-lg1-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-blue"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-d5-lg1-t",
-                                              "name": "의존성",
-                                              "content": "의존성",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d5-lg2",
-                                          "name": "기타",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-d5-lg2-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-yellow"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-d5-lg2-t",
-                                              "name": "기타",
-                                              "content": "기타",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d5-lg3",
-                                          "name": "소스 · .git",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-d5-lg3-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-neutral"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-d5-lg3-t",
-                                              "name": "소스 · .git",
-                                              "content": "소스 · .git",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-md",
-                                      "alignItems": "center"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -133438,24 +131701,6 @@
                                       "padding": 2,
                                       "fill": "$--muted",
                                       "cornerRadius": "$--radius-sm"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-fb-sp-d5",
-                                      "name": "Spacer",
-                                      "children": [],
-                                      "width": "fill_container",
-                                      "height": 1
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-fb-n-d5",
-                                      "name": "체크박스는 보이는 행에만 닿는다",
-                                      "content": "체크박스는 보이는 행에만 닿는다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "horizontal",
@@ -133509,8 +131754,8 @@
                                             {
                                               "type": "text",
                                               "id": "ma-hn-t-d5",
-                                              "name": "체크아웃 · 크기순",
-                                              "content": "체크아웃 · 크기순",
+                                              "name": "체크아웃",
+                                              "content": "체크아웃",
                                               "fill": "$--subtle-foreground",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
@@ -133573,16 +131818,6 @@
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-hb-d5-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
                                             }
                                           ],
                                           "layout": "vertical",
@@ -133640,16 +131875,6 @@
                                               "content": "7.9 GB",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-hd-d5-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
                                             }
@@ -133711,16 +131936,6 @@
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-ht-d5-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
                                             }
                                           ],
                                           "layout": "vertical",
@@ -133749,16 +131964,6 @@
                                               "content": "3.9 GB",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-ho-r-d5",
-                                              "name": "지우지 않음",
-                                              "content": "지우지 않음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
                                             }
@@ -134537,23 +132742,14 @@
                               "name": "Footer",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "ma-sum-d5",
-                                  "name": "Selection",
-                                  "children": [
-                                    {
-                                      "type": "text",
-                                      "id": "ma-sum-t-d5",
-                                      "name": "쓰는 중인지 확인해야 고를 수 있다",
-                                      "content": "쓰는 중인지 확인해야 고를 수 있다",
-                                      "fill": "$--foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-subhead",
-                                      "fontWeight": "600"
-                                    }
-                                  ],
-                                  "layout": "vertical",
-                                  "gap": 2
+                                  "type": "text",
+                                  "id": "ma-sum-t-d5",
+                                  "name": "쓰는 중인지 확인해야 고를 수 있다",
+                                  "content": "쓰는 중인지 확인해야 고를 수 있다",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-subhead",
+                                  "fontWeight": "600"
                                 },
                                 {
                                   "type": "frame",
@@ -134694,16 +132890,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-d6-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -134838,136 +133024,6 @@
                                       "cornerRadius": 2,
                                       "clip": true,
                                       "fill": "$--muted"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-usage-d6-lg",
-                                      "name": "Legend",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d6-lg0",
-                                          "name": "빌드 캐시",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-d6-lg0-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--accent-choice-amber"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-d6-lg0-t",
-                                              "name": "빌드 캐시",
-                                              "content": "빌드 캐시",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d6-lg1",
-                                          "name": "의존성",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-d6-lg1-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-blue"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-d6-lg1-t",
-                                              "name": "의존성",
-                                              "content": "의존성",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d6-lg2",
-                                          "name": "기타",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-d6-lg2-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-yellow"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-d6-lg2-t",
-                                              "name": "기타",
-                                              "content": "기타",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        },
-                                        {
-                                          "type": "frame",
-                                          "id": "ma-usage-d6-lg3",
-                                          "name": "소스 · .git",
-                                          "children": [
-                                            {
-                                              "type": "frame",
-                                              "id": "ma-usage-d6-lg3-sw",
-                                              "name": "Swatch",
-                                              "children": [],
-                                              "width": 8,
-                                              "height": 8,
-                                              "cornerRadius": 4,
-                                              "fill": "$--file-neutral"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-usage-d6-lg3-t",
-                                              "name": "소스 · .git",
-                                              "content": "소스 · .git",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            }
-                                          ],
-                                          "layout": "horizontal",
-                                          "gap": "$--spacing-xs",
-                                          "alignItems": "center"
-                                        }
-                                      ],
-                                      "layout": "horizontal",
-                                      "gap": "$--spacing-md",
-                                      "alignItems": "center"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -135135,24 +133191,6 @@
                                       "padding": 2,
                                       "fill": "$--muted",
                                       "cornerRadius": "$--radius-sm"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "ma-fb-sp-d6",
-                                      "name": "Spacer",
-                                      "children": [],
-                                      "width": "fill_container",
-                                      "height": 1
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-fb-n-d6",
-                                      "name": "체크박스는 보이는 행에만 닿는다",
-                                      "content": "체크박스는 보이는 행에만 닿는다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "horizontal",
@@ -135206,8 +133244,8 @@
                                             {
                                               "type": "text",
                                               "id": "ma-hn-t-d6",
-                                              "name": "체크아웃 · 크기순",
-                                              "content": "체크아웃 · 크기순",
+                                              "name": "체크아웃",
+                                              "content": "체크아웃",
                                               "fill": "$--subtle-foreground",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
@@ -135270,16 +133308,6 @@
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-hb-d6-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
                                             }
                                           ],
                                           "layout": "vertical",
@@ -135337,16 +133365,6 @@
                                               "content": "7.9 GB",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-hd-d6-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
                                             }
@@ -135408,16 +133426,6 @@
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-ht-d6-r",
-                                              "name": "고를 수 있는 곳 없음",
-                                              "content": "고를 수 있는 곳 없음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
                                             }
                                           ],
                                           "layout": "vertical",
@@ -135446,16 +133454,6 @@
                                               "content": "3.9 GB",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
-                                            },
-                                            {
-                                              "type": "text",
-                                              "id": "ma-ho-r-d6",
-                                              "name": "지우지 않음",
-                                              "content": "지우지 않음",
-                                              "fill": "$--muted-foreground",
-                                              "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-caption",
                                               "fontWeight": "400"
                                             }
@@ -135997,23 +133995,14 @@
                               "name": "Footer",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "ma-sum-d6",
-                                  "name": "Selection",
-                                  "children": [
-                                    {
-                                      "type": "text",
-                                      "id": "ma-sum-t-d6",
-                                      "name": " ",
-                                      "content": " ",
-                                      "fill": "$--foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-subhead",
-                                      "fontWeight": "600"
-                                    }
-                                  ],
-                                  "layout": "vertical",
-                                  "gap": 2
+                                  "type": "text",
+                                  "id": "ma-sum-t-d6",
+                                  "name": " ",
+                                  "content": " ",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-subhead",
+                                  "fontWeight": "600"
                                 },
                                 {
                                   "type": "frame",
@@ -136143,8 +134132,8 @@
                                 {
                                   "type": "text",
                                   "id": "cf-d-title",
-                                  "name": "워크트리 1개를 폴더째 지운다",
-                                  "content": "워크트리 1개를 폴더째 지운다",
+                                  "name": "feat/overview-lenses 폴더째 삭제",
+                                  "content": "feat/overview-lenses 폴더째 삭제",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
@@ -136153,8 +134142,8 @@
                                 {
                                   "type": "text",
                                   "id": "cf-d-desc",
-                                  "name": "되돌릴 수 없다. 브랜치와 Git 기록은 남는다.",
-                                  "content": "되돌릴 수 없다. 브랜치와 Git 기록은 남는다.",
+                                  "name": "브랜치는 남음",
+                                  "content": "브랜치는 남음",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -136214,18 +134203,6 @@
                                   "layout": "horizontal",
                                   "gap": "$--spacing-md",
                                   "alignItems": "baseline",
-                                  "width": 438
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "cf-sum-t-d",
-                                  "name": "다른 체크아웃의 캐시 칸 4개 · 16 GB도 함께",
-                                  "content": "다른 체크아웃의 캐시 칸 4개 · 16 GB도 함께 비운다",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400",
-                                  "textGrowth": "fixed-width",
                                   "width": 438
                                 }
                               ],
@@ -136366,16 +134343,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "ma-d4-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -136653,23 +134620,14 @@
                               "name": "Footer",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "ma-sum-d4",
-                                  "name": "Selection",
-                                  "children": [
-                                    {
-                                      "type": "text",
-                                      "id": "ma-sum-t-d4",
-                                      "name": "비울 캐시가 없다",
-                                      "content": "비울 캐시가 없다",
-                                      "fill": "$--foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-subhead",
-                                      "fontWeight": "600"
-                                    }
-                                  ],
-                                  "layout": "vertical",
-                                  "gap": 2
+                                  "type": "text",
+                                  "id": "ma-sum-t-d4",
+                                  "name": "비울 캐시가 없다",
+                                  "content": "비울 캐시가 없다",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-subhead",
+                                  "fontWeight": "600"
                                 },
                                 {
                                   "type": "frame",
@@ -136810,16 +134768,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "rn-d-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -136962,8 +134910,8 @@
                             {
                               "type": "text",
                               "id": "dc-l-rs-d-l-n",
-                              "name": "크기는 정리 전후 볼륨 여유로 말한다. 확인 사이에",
-                              "content": "크기는 정리 전후 볼륨 여유로 말한다. 확인 사이에 상태가 바뀐 칸은 건너뛰고 이유를 적는다.",
+                              "name": "결과는 정리 전후 볼륨 여유 한 줄이다. 확인 사이",
+                              "content": "결과는 정리 전후 볼륨 여유 한 줄이다. 확인 사이에 상태가 바뀐 칸은 건너뛰고 이유를 적는다.",
                               "fill": "$--muted-foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-caption",
@@ -137000,16 +134948,6 @@
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-title",
                                       "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "rs-d-sub",
-                                      "name": "herdr-ide · 36 체크아웃 · 크기는 할당",
-                                      "content": "herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-ui",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "vertical",
@@ -137052,62 +134990,14 @@
                               "name": "Body",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "rs-top-d",
-                                  "name": "Outcome",
-                                  "children": [
-                                    {
-                                      "type": "frame",
-                                      "id": "rs-big-d",
-                                      "name": "Freed",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "rs-big-l-d",
-                                          "name": "디스크에서 잰 여유",
-                                          "content": "디스크에서 잰 여유",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "rs-big-v-d",
-                                          "name": "1.6 GB → 18.3 GB",
-                                          "content": "1.6 GB → 18.3 GB",
-                                          "fill": "$--foreground",
-                                          "fontFamily": "$--font-mono",
-                                          "fontSize": "$--text-headline",
-                                          "fontWeight": "600"
-                                        }
-                                      ],
-                                      "layout": "vertical",
-                                      "gap": "$--spacing-xxs"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "rs-sp-d",
-                                      "name": "Spacer",
-                                      "children": [],
-                                      "width": "fill_container",
-                                      "height": 1
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "rs-note-d",
-                                      "name": "할당 합계 17 GB · 실제로 늘어난 여유 17 ",
-                                      "content": "할당 합계 17 GB · 실제로 늘어난 여유 17 GB",
-                                      "fill": "$--subtle-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-caption",
-                                      "fontWeight": "400"
-                                    }
-                                  ],
-                                  "layout": "horizontal",
-                                  "gap": "$--spacing-md",
-                                  "alignItems": "start",
-                                  "width": 512
+                                  "type": "text",
+                                  "id": "rs-big-d",
+                                  "name": "여유 1.6 → 18.3 GB",
+                                  "content": "여유 1.6 → 18.3 GB",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-headline",
+                                  "fontWeight": "600"
                                 },
                                 {
                                   "type": "frame",
