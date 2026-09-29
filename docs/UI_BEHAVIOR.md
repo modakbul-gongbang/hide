@@ -280,7 +280,7 @@ Closing a pane or a tab asks about the agents spawned from it only when one of t
 Those are the live descendants of every agent pane that closes, on this machine or a connected device, asleep or not, less the panes that close anyway; a device that is not connected contributes none.
 With none, the close is the ordinary one: a quiet pane closes at once, a working or attention pane asks the Stop-work confirmation, and an unknown status shows the status notice.
 A target whose own status is unknown still shows only the status notice.
-The Stop-work confirmation has one line under its title and lists every pane that closes, named as the sidebar names it, with its status mark; a working or asking pane adds its status word, and a quiet one is dimmed with its state in the mark's tooltip and its accessible name.
+The Stop-work confirmation has one line under its title and lists every pane that closes, named as the sidebar names it, with its status mark; a working, asking or unknown pane adds its status word, and a quiet one is dimmed with its state in the mark's tooltip and its accessible name.
 While it is open the list is live: a pane that settles stays listed and dims, one that starts working or asking brightens, and its title, line, buttons and focus stay as they opened.
 While a listed pane's status is unknown, `Stop work and close` is disabled, `Keep open` takes the keyboard if the button held it, and a `Check status` in the confirmation reads the status again without closing it.
 `Stop work and close` sends the close the confirmation shows at the press.
@@ -786,7 +786,7 @@ On confirmation the core closes every pane in the project's checkouts and waits 
 When an agent in the project spawned agents that run outside it, the confirmation lists them as Delete worktree does, with `Remove only` and `Close N agents and remove` (the destructive one) in place of its one button, neither holding the keyboard; the second closes those agents deepest first and removes the project only once all are gone, a refusal or timeout leaving the project registered with the reason in the error banner and a retry continuing from the agents that remain.
 Removing the project that holds the focused checkout moves focus and pane selection to the next project.
 An add that lands mid-removal cancels the removal and says so, rather than losing the project it just opened a pane in; a completed removal disappears from the snapshot and a repeated request is a quiet no-op.
-A row Herdr shows without a registration offers `Remove project…` too: its confirmation counts its panes the same way and says Hide keeps no registration for it, the confirmation closes those panes, and the row leaves once Herdr drops its workspace; a timeout leaves the row with the reason in the error banner, and repeating the removal closes the panes that remain.
+A row Herdr shows without a registration offers `Remove project…` too: its confirmation counts its panes the same way and says the row goes with them, the confirmation closes those panes, and the row leaves once Herdr drops its workspace; a timeout leaves the row with the reason in the error banner, and repeating the removal closes the panes that remain.
 
 ## Recent navigation
 

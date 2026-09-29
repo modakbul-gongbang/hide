@@ -148,8 +148,8 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
 }
 
 /**
- * The Stop-work sheet: every pane that closes with its mark and status word,
- * a quiet one dimmed. While a pane's activity is unknown, Stop work and close
+ * The Stop-work sheet: every pane that closes with its mark, a status word
+ * on the ones that need the operator and a quiet one dimmed (D-42). While a pane's activity is unknown, Stop work and close
  * waits for the status check the sheet offers (B28, D-39).
  */
 function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; kind: "pane" | "tab"; stopWork: StopWork; footer: RefObject<HTMLDivElement | null> }) {

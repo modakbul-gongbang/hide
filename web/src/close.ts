@@ -35,7 +35,7 @@ export function closeDecision(panes: PaneRow[], agents: AgentRow[]): CloseDecisi
 export function stopWorkCopy(kind: CloseKind): { title: string; consequence: string } {
   return kind === "pane"
     ? { title: "Stop the active pane?", consequence: "Its running process and the listed work stop." }
-    : { title: "Close this tab?", consequence: "The listed working panes stop in one close." };
+    : { title: "Close this tab?", consequence: "The listed panes stop in one close." };
 }
 
 /** A pane the Stop-work sheet lists: working or asking (`active`), unreadable, or quiet. */
