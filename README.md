@@ -83,8 +83,8 @@ See [Browser displays](docs/BROWSER_DISPLAYS.md) for `hide browser open`, the pa
 
 ## Runtime boundaries
 
-- The app ships the pinned Herdr binary and names it to the daemon as `HERDR_BIN_PATH`; it does not start a Herdr server itself.
-  A Herdr server has to be running; start one with `herdr server` from an installed Herdr, or from the bundled binary at `/Applications/hide.app/Contents/Resources/herdr`.
+- The app ships the pinned Herdr binary and names it to the daemon as `HERDR_BIN_PATH`.
+  When no Herdr server answers on the socket the app uses, as after a reboot, the app starts its bundled Herdr there; a server that answers is used as it is and never stopped or replaced, and the server keeps running after the app quits.
 - hide does not collect or store SSH credentials, Herdr credentials, or agent CLI credentials.
 - Claude Code and Codex remain separate tools and must already be installed and signed in if you want to launch them from hide.
 - Remote Explorer trees are read-only.

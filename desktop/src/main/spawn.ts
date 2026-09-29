@@ -70,3 +70,21 @@ export class ChildRunner {
     this.current?.kill("SIGKILL");
   }
 }
+
+/**
+ * The one child this host starts and does not own: a Herdr server. Its panes
+ * are the operator's work and outlive the app, exactly as a server `herdr`
+ * starts from a terminal does, so it leads its own session, keeps no pipe to
+ * this process, and only `herdr server stop` ends it. The caller starts it at
+ * most once per discovery, and only after Herdr said none was running.
+ */
+export function startDetached(file: string, args: readonly string[], env: Record<string, string | undefined>): Promise<{ pid: number } | { spawnError: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(file, args, { detached: true, stdio: "ignore", env });
+    child.once("error", (error) => resolve({ spawnError: error.message }));
+    child.once("spawn", () => {
+      child.unref();
+      resolve({ pid: child.pid! });
+    });
+  });
+}
