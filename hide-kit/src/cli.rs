@@ -21,8 +21,15 @@ fn wanted(target: &KitTarget) -> PathBuf {
     target.kit_dir.join(CLI_NAME)
 }
 
-/// Whether a link target is one only Hide would have written.
+/// Whether a link target is one only Hide would have written. A target that
+/// climbs out with `..` is nobody's to judge by prefix, so it is not Hide's.
 fn hides_own(target: &KitTarget, destination: &Path) -> bool {
+    if destination
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return false;
+    }
     if destination == wanted(target) {
         return true;
     }

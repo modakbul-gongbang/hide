@@ -392,6 +392,14 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
         std::fs::read_link(&link).unwrap(),
         PathBuf::from("/usr/local/bin/some-other-hide")
     );
+
+    // A target that climbs out of a folder Hide owns is not Hide's.
+    std::fs::remove_file(&link).unwrap();
+    let climbing = fixture.target.owned_roots[0].join("../elsewhere/hide");
+    std::os::unix::fs::symlink(&climbing, &link).unwrap();
+    let report = apply(&fixture.target, &Scope::Automatic);
+    assert_eq!(state(&report, ComponentId::Cli), ComponentState::Failed);
+    assert_eq!(std::fs::read_link(&link).unwrap(), climbing);
 }
 
 #[test]
