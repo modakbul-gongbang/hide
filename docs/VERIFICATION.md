@@ -71,6 +71,7 @@ Read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#2-identify-the-build-and-pr
 
 A capture shows an old frame unless the candidate was launched with `--disable-backgrounding-occluded-windows`, because Chromium stops painting an occluded window.
 Before trusting open-computer-use's target, check that `ocu list-apps` shows the candidate's name once and that no other process answers it.
+Its element actions have not yet been exercised against hide's renderer, so observe the effect after every action and record whether it landed.
 The Peekaboo procedure this repository used to name is retired; Peekaboo is no longer part of the QA toolchain.
 
 The window list prints owner PID, window id, owner name, and title for every on-screen window:
