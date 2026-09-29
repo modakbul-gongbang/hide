@@ -154,6 +154,15 @@ export function rowsProblem(state: RowsState): string | null {
   }
 }
 
+/**
+ * A row drawn only with box-drawing characters, such as the rule a TUI draws
+ * across the desktop pane: wrapped at a phone's width it becomes a stack of
+ * rules, so the detail clips it to one line instead.
+ */
+export function boxDrawingRow(text: string): boolean {
+  return /^[\s\u2500-\u257f]*[\u2500-\u257f][\s\u2500-\u257f]*$/.test(text);
+}
+
 /** The QR's payload (D-22): `{v:1, endpoint, code}` as base64url JSON. */
 export type PairPayload = { v: 1; endpoint: string; code: string };
 

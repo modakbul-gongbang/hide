@@ -359,7 +359,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await screenshot(phone, "mobile-phone-list");
 
     // B24: the detail shows the head and the pane's recent rows, newest at the bottom.
-    const history = Array.from({ length: 260 }, (_, index) => `line ${String(index + 1).padStart(3, "0")}`).join("\n");
+    const history = [...Array.from({ length: 260 }, (_, index) => `line ${String(index + 1).padStart(3, "0")}`), `wide ${"w".repeat(300)}`].join("\n");
     execFileSync(herdr.bin, ["pane", "send-text", one, `${history}\n`], { env: herdr.env, timeout: 30_000 });
     await oneRow.tap();
     const detail = phone.locator("[data-phone-detail]");
@@ -370,6 +370,10 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(rows).not.toContainText("line 001");
     const scrollback = phone.locator("[data-phone-scrollback]");
     expect(await scrollback.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(48);
+    // B24: a row as wide as the desktop pane wraps at the phone's width; nothing scrolls sideways.
+    await expect(rows).toContainText("wide www");
+    expect(await scrollback.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+    expect(await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
     // B25: pulling to the top brings the older rows, up to what the pane holds.
     await expect(phone.getByText("위로 당기면 더 불러와요")).toBeVisible();
     await scrollback.evaluate((element) => {
