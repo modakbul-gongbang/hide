@@ -601,6 +601,10 @@ pub struct KitSnapshot {
     /// Whether any part is outdated, missing, removed or failed, which is
     /// the only time the row offers Reinstall.
     pub offers_reinstall: bool,
+    /// Another registered device that reaches the same account on the same
+    /// machine, by its label; removing this device then leaves the kit there
+    /// for it.
+    pub shares_account_with: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -630,6 +634,7 @@ impl KitSnapshot {
             busy: false,
             offers_reinstall: components.iter().any(|part| part.state.needs_attention()),
             components,
+            shares_account_with: None,
         }
     }
 

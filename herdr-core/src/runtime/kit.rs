@@ -284,15 +284,29 @@ impl Runtime {
     /// The device is being removed: with its helper connected, Hide's parts
     /// come off it on the device's kit worker, after any kit call already
     /// running there, and the helper connection closes after that. Without
-    /// one, what stays on the device is recorded (B23, B24). Answers whether
-    /// the removal was started.
+    /// one, or while another registration still reaches the same account,
+    /// what stays on the device is recorded (B23, B24). Answers why the kit
+    /// stays when the removal was not started.
     pub(super) fn queue_device_kit_removal(
         &mut self,
         registration: &crate::model::DeviceRegistration,
-    ) -> bool {
+    ) -> Result<(), &'static str> {
         let device_id = registration.id.as_str();
         self.device_kit_pending.remove(device_id);
         self.kit_states.remove(device_id);
+        let left = |reason: &'static str| {
+            crate::diagnostic!(serde_json::json!({
+                "component": "kit",
+                "kind": "device.kit_left",
+                "device_id": device_id,
+                "reason": reason,
+                "left": LEFT_ON_DEVICE,
+            }));
+            Err(reason)
+        };
+        if self.registration_sharing_account(registration).is_some() {
+            return left("another registered device reaches the same account on that machine");
+        }
         let channel =
             self.device_hosts.get_mut(device_id).and_then(|host| {
                 match std::mem::replace(&mut host.phase, HostPhase::NotAllowed) {
@@ -305,18 +319,8 @@ impl Runtime {
                     }
                 }
             });
-        let left = |reason: &str| {
-            crate::diagnostic!(serde_json::json!({
-                "component": "kit",
-                "kind": "device.kit_left",
-                "device_id": device_id,
-                "reason": reason,
-                "left": LEFT_ON_DEVICE,
-            }));
-        };
         let Some(channel) = channel else {
-            left("the device's helper was not connected");
-            return false;
+            return left("its helper was not connected");
         };
         self.device_kit_removals.insert(
             device_id.to_owned(),
@@ -337,10 +341,9 @@ impl Runtime {
             self.device_kit_removals.remove(device_id);
             self.device_kit_removing.remove(device_id);
             channel.close("device removed");
-            left("the kit worker could not start");
-            return false;
+            return left("the kit worker could not start");
         }
-        true
+        Ok(())
     }
 
     /// Whether Hide is still taking its kit off a removed device; a new
@@ -496,7 +499,7 @@ impl Runtime {
             return self.kit_state(device_id);
         }
         let host = self.host_snapshot(device_id);
-        match (host.consent.as_str(), host.state.as_str()) {
+        let mut view = match (host.consent.as_str(), host.state.as_str()) {
             ("none", _) => KitSnapshot::unavailable(
                 "Hide installs its kit here once you allow its helper on this device",
             ),
@@ -509,7 +512,37 @@ impl Runtime {
                     .unwrap_or("This Hide build does not support this device's platform"),
             ),
             _ => self.kit_state(device_id),
+        };
+        view.shares_account_with = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .find(|registration| registration.id == device_id)
+            .and_then(|registration| self.registration_sharing_account(registration))
+            .map(|other| other.label.clone());
+        view
+    }
+
+    /// Another registration that reaches the same account on the same
+    /// machine: its consent bound the same user and host key, as two
+    /// registrations for two Herdr servers there do. The hooks, the `hide`
+    /// link and the helper root belong to that account, not to one
+    /// registration, so removing one of them leaves those for the other.
+    fn registration_sharing_account(
+        &self,
+        registration: &crate::model::DeviceRegistration,
+    ) -> Option<&crate::model::DeviceRegistration> {
+        fn account(registration: &crate::model::DeviceRegistration) -> Option<(&str, &str)> {
+            let identity = registration.host_consent.as_ref()?.identity.as_ref()?;
+            Some((&identity.user, &identity.host_key_sha256))
         }
+        let own = account(registration)?;
+        self.snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .find(|other| other.id != registration.id && account(other) == Some(own))
     }
 
     pub(super) fn kit_state(&self, device_id: &str) -> KitSnapshot {

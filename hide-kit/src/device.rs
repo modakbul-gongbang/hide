@@ -33,6 +33,7 @@ pub fn device_target(
         env: herdr_bin
             .iter()
             .map(|herdr| ("HERDR_BIN_PATH".to_owned(), herdr.display().to_string()))
+            .chain(crate::hcoord::home_override())
             .collect(),
     });
     KitTarget {

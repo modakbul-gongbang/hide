@@ -226,7 +226,7 @@ describe("unstoredDeviceDrafts (S5.5 B26, B44)", () => {
 
 describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
   const part = (id: KitComponent["id"], state: KitComponent["state"]): KitComponent => ({ id, label: id, state, reason: null, location: null });
-  const kit = (components: KitComponent[], unavailable: string | null = null) => ({ unavailable, busy: false, components, offers_reinstall: false });
+  const kit = (components: KitComponent[], unavailable: string | null = null) => ({ unavailable, busy: false, components, offers_reinstall: false, shares_account_with: null });
 
   it("offers Reinstall only for a part a reinstall would change", () => {
     const offered = (["installed", "outdated", "not_installed", "removed", "failed", "absent"] as const).filter((state) => kitPartNeedsReinstall(part("cli", state)));
@@ -251,5 +251,7 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
     expect(kitRemovalLine(connected)).toMatch(/removes its hook entries, the labels plugin link, its hide link and its helper folder; hcoord stays/);
     const offline = device({ host: { state: "unavailable" } as DeviceHost });
     expect(kitRemovalLine(offline)).toMatch(/not connected .* its kit stays there/);
+    const shared = device({ host: { state: "ready" } as DeviceHost, kit: { ...kit([]), shares_account_with: "Studio, second Herdr" } });
+    expect(kitRemovalLine(shared)).toMatch(/^Studio, second Herdr reaches the same account on .*, so Hide's kit stays there for it\.$/);
   });
 });

@@ -725,13 +725,15 @@ export type KitComponent = {
 /**
  * A machine's install kit (PRD device-parity B7): the same parts on This Mac
  * and every device. `unavailable` says why the kit does not run there at all;
- * `offers_reinstall` is true only while a part needs it.
+ * `offers_reinstall` is true only while a part needs it; `shares_account_with`
+ * names another registered device that reaches the same account there.
  */
 export type Kit = {
   unavailable: string | null;
   busy: boolean;
   components: KitComponent[];
   offers_reinstall: boolean;
+  shares_account_with: string | null;
 };
 
 /** One pane's rectangle in a remote tab, as fractions of the tab's area (`RemotePaneLayoutFrame`). */

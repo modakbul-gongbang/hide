@@ -29,6 +29,23 @@ pub struct HcoordRuntime {
     pub env: Vec<(String, String)>,
 }
 
+/// hcoord's own relocation variable (`plugins/hcoord/src/hcoord/store.ts`,
+/// `platform.ts`): every hcoord file and its daemon's LaunchAgent label follow
+/// it. The kit builds its children's environment from scratch, so a
+/// relocation the kit's process was started with is carried to the shim and
+/// the daemon here; dropped, an isolated install would take the account's
+/// default `com.hcoord.daemon` label and replace the account's own daemon.
+const HOME_VARIABLE: &str = "HCOORD_HOME";
+
+/// The hcoord relocation this process was started with, if any; empty means
+/// none, as hcoord reads it.
+pub(crate) fn home_override() -> Option<(String, String)> {
+    std::env::var(HOME_VARIABLE)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(|value| (HOME_VARIABLE.to_owned(), value))
+}
+
 pub(crate) fn shim_path(home: &Path) -> PathBuf {
     home.join(".hcoord").join("bin").join("hcoord")
 }

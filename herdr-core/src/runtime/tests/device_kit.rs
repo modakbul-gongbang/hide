@@ -422,6 +422,58 @@ fn removing_a_connected_device_takes_its_kit_off_and_then_closes_the_helper() {
     assert!(!shared.lock().unwrap().device_kit_removing(DEVICE));
 }
 
+/// Two registrations that reach one account on one machine (two Herdr
+/// servers there) share its hooks, `hide` link and helper root, so removing
+/// one leaves the kit for the other and only closes its own helper.
+#[test]
+fn removing_one_of_two_registrations_of_the_same_account_keeps_the_kit() {
+    let helper = KitDevice::answering(Ok(report(&[])));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    {
+        let mut runtime = shared.lock().unwrap();
+        let registrations = &mut runtime.snapshot.ui_state.device_registrations;
+        let device = registrations
+            .iter_mut()
+            .find(|registration| registration.id == DEVICE)
+            .unwrap();
+        device.host_consent.as_mut().unwrap().identity = Some(crate::model::HostIdentity {
+            user: "me".to_owned(),
+            hostname: "studio.local".to_owned(),
+            port: 22,
+            host_key_sha256: "SHA256:studio".to_owned(),
+        });
+        let mut twin = device.clone();
+        twin.id = "studio-second-herdr".to_owned();
+        twin.ssh_alias = Some("studio-by-address".to_owned());
+        twin.host_consent
+            .as_mut()
+            .unwrap()
+            .identity
+            .as_mut()
+            .unwrap()
+            .hostname = "10.0.0.7".to_owned();
+        twin.label = "Studio, second Herdr".to_owned();
+        registrations.push(twin);
+        runtime.refresh_device_snapshots();
+    }
+    // The removal confirmation reads this to say the kit stays.
+    assert_eq!(
+        kit(&shared).shares_account_with.as_deref(),
+        Some("Studio, second Herdr")
+    );
+    dispatch(
+        &shared,
+        "remove_device",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    settle(&shared);
+
+    assert!(!registered(&shared));
+    assert!(helper.calls().is_empty(), "{:?}", helper.calls());
+    assert_eq!(helper.closed_reason().as_deref(), Some("device removed"));
+    assert!(!shared.lock().unwrap().device_kit_removing(DEVICE));
+}
+
 /// B24: a device removed while its helper is not connected loses only its
 /// registration; nothing is sent, and adding it again later installs the
 /// whole kit on its next connection.

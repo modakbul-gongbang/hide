@@ -2172,10 +2172,9 @@ impl Runtime {
                     format!(
                         "Unregistered device {}; forgot {registrations} project registrations and closed {tabs} file tabs; {}",
                         payload.device_id,
-                        if kit_removal {
-                            "Hide's kit is coming off the device"
-                        } else {
-                            "Hide's kit stays on the device because its helper was not connected"
+                        match kit_removal {
+                            Ok(()) => "Hide's kit is coming off the device".to_owned(),
+                            Err(reason) => format!("Hide's kit stays on the device because {reason}"),
                         }
                     ),
                 );

@@ -265,6 +265,10 @@ export function kitConsentTerms(helperRoot: string | null, cliDir: string | null
  */
 export function kitRemovalLine(device: Device): string {
   const where = device.ssh_alias ?? device.label;
+  const sharing = device.kit?.shares_account_with;
+  if (sharing) {
+    return `${sharing} reaches the same account on ${where}, so Hide's kit stays there for it.`;
+  }
   if (device.host?.state === "ready") {
     return `On ${where}, Hide removes its hook entries, the labels plugin link, its hide link and its helper folder; hcoord stays because other tools may use it.`;
   }

@@ -49,10 +49,13 @@ pub fn local_target(
         herdr_bin: herdr.is_file().then(|| herdr.clone()),
         hcoord: app_executable(kit_dir).map(|program| HcoordRuntime {
             program,
-            env: vec![
+            env: [
                 ("ELECTRON_RUN_AS_NODE".to_owned(), "1".to_owned()),
                 ("HERDR_BIN_PATH".to_owned(), herdr.display().to_string()),
-            ],
+            ]
+            .into_iter()
+            .chain(crate::hcoord::home_override())
+            .collect(),
         }),
         stop,
     }

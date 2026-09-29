@@ -857,6 +857,7 @@ A machine whose kit does not run says why in that place instead of its parts: a 
 A device not read yet reads that its kit is checked when it connects; the tab reads every machine once when it opens.
 The add form has one Add button and lists, once, what the kit puts on the device and where (B12); a device registered earlier without the helper offers Allow and install on its row, with the same list.
 Removing a device asks once, names in one line what comes off that device and that hcoord stays, or, when its helper is not connected, that the kit stays there; no button is focused when the confirmation opens (B22).
+When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
 
 Settings > Agents lists the hook parts of every machine, This Mac first and then each device in the Devices order, with Reinstall on a part that needs it and nowhere else (B27).
 
