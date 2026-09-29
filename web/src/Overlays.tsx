@@ -145,6 +145,12 @@ function ConfirmSubtreeClose({ actions, kind, targetId, inside, ids }: { actions
   const count = subtree?.rows.filter((row) => !row.target).length ?? 0;
   const targetDevice = subtree?.rows.find((row) => row.target)?.agent.device_id;
   const blocked = subtree?.unknown ?? false;
+  // Every listed descendant left while the sheet was open: there is nothing
+  // left to ask, so it closes without sending anything.
+  const empty = subtree === null;
+  useEffect(() => {
+    if (empty) actions.keepOpen();
+  }, [empty, actions]);
   return (
     <AlertDialogContent data-confirm-close={kind} data-confirm-subtree="true" initialFocus={blocked ? "cancel" : "action"}>
       <AlertDialogHeader>

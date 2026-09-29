@@ -10,41 +10,58 @@ use super::*;
 const A: &str = "/private/tmp/hide-tree-close-a";
 const B: &str = "/private/tmp/hide-tree-close-b";
 
-fn tab_json(workspace: &str, tab: &str, pane: &str) -> [serde_json::Value; 3] {
-    [
-        serde_json::json!({"workspace_id": workspace, "tab_id": tab, "label": ""}),
-        serde_json::json!({"pane_id": pane, "cwd": if workspace == "w1" { A } else { B }}),
-        serde_json::json!({
-            "workspace_id": workspace,
-            "tab_id": tab,
-            "zoomed": false,
-            "area": {"x": 0, "y": 0, "width": 80, "height": 24},
-            "focused_pane_id": pane,
-            "panes": [{"pane_id": pane, "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
-            "splits": []
-        }),
-    ]
+/// The session with every pane in `present`; `status` overrides an agent's
+/// Herdr status by pane. With `shared`, the siblings p2 and p4 share tab t2.
+fn tree_payload(present: &[&str], status: &[(&str, &str)]) -> SessionSnapshotPayload {
+    tree_payload_in(present, status, false)
 }
 
-/// The session with every pane in `present`; `status` overrides an agent's
-/// Herdr status by pane.
-fn tree_payload(present: &[&str], status: &[(&str, &str)]) -> SessionSnapshotPayload {
+fn tree_payload_in(
+    present: &[&str],
+    status: &[(&str, &str)],
+    shared: bool,
+) -> SessionSnapshotPayload {
     let all = [
         ("w1", "w1:t1", "w1:p1", None),
         ("w1", "w1:t2", "w1:p2", Some("w1:p1")),
         ("w1", "w1:t3", "w1:p3", Some("w1:p2")),
-        ("w1", "w1:t4", "w1:p4", Some("w1:p1")),
+        (
+            "w1",
+            if shared { "w1:t2" } else { "w1:t4" },
+            "w1:p4",
+            Some("w1:p1"),
+        ),
         ("w5", "w5:t5", "w5:p5", Some("w1:p4")),
     ];
     let (mut tabs, mut panes, mut layouts, mut agents) = (vec![], vec![], vec![], vec![]);
+    let mut seen_tabs: Vec<&str> = Vec::new();
     for (index, (workspace, tab, pane, parent)) in all.iter().enumerate() {
         if !present.contains(pane) {
             continue;
         }
-        let [t, p, l] = tab_json(workspace, tab, pane);
-        tabs.push(t);
-        panes.push(p);
-        layouts.push(l);
+        let cwd = if *workspace == "w1" { A } else { B };
+        panes.push(serde_json::json!({"pane_id": pane, "cwd": cwd}));
+        if !seen_tabs.contains(tab) {
+            seen_tabs.push(tab);
+            tabs.push(serde_json::json!({"workspace_id": workspace, "tab_id": tab, "label": ""}));
+            let in_tab = all
+                .iter()
+                .filter(|(_, other, id, _)| other == tab && present.contains(id))
+                .enumerate()
+                .map(|(slot, (_, _, id, _))| {
+                    serde_json::json!({"pane_id": id, "rect": {"x": slot * 40, "y": 0, "width": 40, "height": 24}})
+                })
+                .collect::<Vec<_>>();
+            layouts.push(serde_json::json!({
+                "workspace_id": workspace,
+                "tab_id": tab,
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": pane,
+                "panes": in_tab,
+                "splits": []
+            }));
+        }
         let agent_status = status
             .iter()
             .find(|(id, _)| id == pane)
@@ -355,11 +372,8 @@ fn a_refused_descendant_keeps_its_ancestors_open_while_the_other_branch_closes()
         Some("tree_close.incomplete")
     );
 
-    // Closing again takes only what remains.
-    runtime
-        .close_operations
-        .retain(|_, operation| operation.target_id != "w1:p3");
-    runtime.close_capture_order.retain(|entry| entry != &key);
+    // Closing again takes only what remains; the refused close it retries
+    // is no longer in its way.
     close_tree(
         &mut runtime,
         pane_target("w1:p1"),
@@ -495,7 +509,9 @@ fn a_device_descendant_closes_through_the_device_and_fails_when_it_disconnects()
         "the local branch runs beside it"
     );
 
-    runtime.snapshot.status.remote[0].state = "stale".to_owned();
+    // The device leaves the status list altogether (removed or reconnected
+    // without a session): its pane's absence is not a confirmed close.
+    runtime.snapshot.status.remote.clear();
     runtime.tick_async_operations(unix_milliseconds());
     assert_eq!(tree_phase(&runtime, remote_pane).as_deref(), Some("failed"));
     assert_eq!(tree_phase(&runtime, "w1:p4").as_deref(), Some("failed"));
@@ -547,4 +563,113 @@ fn removing_a_project_closes_its_outside_descendants_first_and_a_failure_keeps_i
         "the removal fails through its own banner and nothing of it started"
     );
     assert!(!started(&runtime).contains(&"w1:p1".to_owned()));
+}
+
+#[test]
+fn an_unresolved_close_fails_its_same_tab_sibling_at_once_and_a_retry_waits_for_it() {
+    let mut runtime = tree_runtime(&[]);
+    let shared = |runtime: &mut Runtime, present: &[&str]| {
+        runtime.ingest_session_with_catalog(
+            Ok(tree_payload_in(present, &[], true)),
+            Some(tree_catalog()),
+        );
+    };
+    shared(&mut runtime, &EVERY);
+    close_tree(
+        &mut runtime,
+        pane_target("w1:p1"),
+        &["w1:p2", "w1:p3", "w1:p4", "w5:p5"],
+        true,
+    );
+    shared(&mut runtime, &["w1:p1", "w1:p2", "w1:p4"]);
+    // p2 and p4 share a tab, so one close starts there and the other waits.
+    let first = ["w1:p2", "w1:p4"]
+        .into_iter()
+        .find(|pane| started(&runtime).contains(&(*pane).to_owned()))
+        .expect("one sibling starts");
+    let second = if first == "w1:p2" { "w1:p4" } else { "w1:p2" };
+    assert_eq!(tree_phase(&runtime, second).as_deref(), Some("waiting"));
+
+    // Herdr's answer is lost and the status check cannot tell: the record
+    // stays unknown until the operator checks again, which refuses any
+    // second close in that tab.
+    let operation = runtime
+        .close_operations
+        .values_mut()
+        .find(|operation| operation.target_id == first)
+        .unwrap();
+    operation.phase = "unknown".to_owned();
+    operation.deadline_at_unix_ms = None;
+    runtime.tick_async_operations(unix_milliseconds());
+    assert!(
+        runtime.tree_closes.is_empty(),
+        "the sibling fails instead of waiting behind the unresolved close"
+    );
+    assert!(!started(&runtime).contains(&second.to_owned()));
+    assert!(!started(&runtime).contains(&"w1:p1".to_owned()));
+
+    // Asking again closes nothing while that close is unresolved.
+    close_tree(
+        &mut runtime,
+        pane_target("w1:p1"),
+        &["w1:p2", "w1:p4"],
+        true,
+    );
+    assert!(runtime.tree_closes.is_empty());
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("tree_close.unresolved_close")
+    );
+
+    // Once the topology shows the pane gone, the retry closes the rest.
+    shared(&mut runtime, &["w1:p1", second]);
+    close_tree(&mut runtime, pane_target("w1:p1"), &[second], true);
+    assert!(started(&runtime).contains(&second.to_owned()));
+    shared(&mut runtime, &["w1:p1"]);
+    assert!(started(&runtime).contains(&"w1:p1".to_owned()));
+    shared(&mut runtime, &[]);
+    assert!(runtime.tree_closes.is_empty());
+}
+
+#[test]
+fn a_listed_pane_that_is_not_a_live_descendant_is_never_closed() {
+    let mut runtime = tree_runtime(&[]);
+    // p4 and p5 are another branch of p1, not below p2.
+    close_tree(
+        &mut runtime,
+        pane_target("w1:p2"),
+        &["w1:p3", "w1:p4", "w5:p5", "w1:p1"],
+        true,
+    );
+    assert_eq!(started(&runtime), ["w1:p3"]);
+    leave(&mut runtime, &["w1:p1", "w1:p2", "w1:p4", "w5:p5"]);
+    assert_eq!(started(&runtime), ["w1:p2"]);
+    leave(&mut runtime, &["w1:p1", "w1:p4", "w5:p5"]);
+    assert!(runtime.tree_closes.is_empty());
+
+    // A removal naming panes outside its checkout's descendants closes none
+    // of them before it goes on.
+    let project = runtime
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.path == B)
+        .unwrap()
+        .id
+        .clone();
+    let event = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "remove_workspace",
+        "payload": {"workspace_id": project, "close_descendant_pane_ids": ["w1:p1", "w1:p4"]}
+    }))
+    .unwrap();
+    runtime.dispatch_json(&event);
+    assert!(!started(&runtime).contains(&"w1:p1".to_owned()));
+    assert!(!started(&runtime).contains(&"w1:p4".to_owned()));
 }

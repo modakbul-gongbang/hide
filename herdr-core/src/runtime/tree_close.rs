@@ -286,6 +286,25 @@ impl Runtime {
                 false,
             );
         }
+        let retried = nodes
+            .iter()
+            .chain(target.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        self.dismiss_settled_closes(&retried);
+        // A tab whose earlier close is still unresolved would refuse a node
+        // partway, so the whole close is refused before anything starts (D-22).
+        if retried
+            .iter()
+            .any(|node| matches!(self.tab_close_state(node), TabClose::Unresolved))
+        {
+            return self.refuse_tree_close(
+                &then,
+                "tree_close.unresolved_close",
+                "An earlier close of one of these agents is unresolved; check its status or dismiss it, then close again. Nothing was closed.".to_owned(),
+                true,
+            );
+        }
         let local = nodes
             .iter()
             .chain(target.iter())
@@ -489,23 +508,27 @@ impl Runtime {
                     return Step::Stay;
                 }
                 // One close per tab: a sibling in the same tab starts once
-                // the close in front of it has settled.
-                if self.close_in_flight_for(node) {
-                    return Step::Stay;
+                // the close in front of it has settled, and a close there
+                // that ended unresolved would refuse this one for good.
+                match self.tab_close_state(node) {
+                    TabClose::Free => Step::Start,
+                    TabClose::Busy => Step::Stay,
+                    TabClose::Unresolved => Step::Become(NodeState::Failed("tab_close_unresolved")),
                 }
-                Step::Start
             }
             NodeState::Closing {
                 started_at_unix_ms,
                 handle,
             } => {
-                if !self.node_present(node) {
-                    return Step::Become(NodeState::Closed);
-                }
+                // A device that went away takes its panes out of the
+                // projection too; that absence is not a confirmed close.
                 if let Some(device) = node.device.as_deref()
                     && !self.device_connected(device)
                 {
                     return Step::Become(NodeState::Failed("device_disconnected"));
+                }
+                if !self.node_present(node) {
+                    return Step::Become(NodeState::Closed);
                 }
                 if now.saturating_sub(*started_at_unix_ms) > TREE_CLOSE_PANE_TIMEOUT_MS {
                     return Step::Become(NodeState::Failed("timed_out"));
@@ -800,9 +823,12 @@ impl Runtime {
         }
     }
 
-    /// Whether an ordinary close is already running in the node's tab, which
-    /// would refuse a second one there.
-    fn close_in_flight_for(&self, node: &TreeNode) -> bool {
+    /// What the ordinary closes in the node's tab leave for it: nothing,
+    /// one still running (which the node waits out, since every running
+    /// close has a deadline), or one that ended failed, refused or unknown,
+    /// which refuses a second close in that tab until the operator resolves
+    /// it and so fails the node rather than leaving it waiting.
+    fn tab_close_state(&self, node: &TreeNode) -> TabClose {
         let place = match node.device.as_deref() {
             None => Place::Local,
             Some(device) => Place::Device(device),
@@ -814,31 +840,88 @@ impl Runtime {
             })
             .and_then(|tab| tab.id.clone())
         else {
-            return false;
+            return TabClose::Free;
+        };
+        // Only these move on by themselves; a completed close still queued
+        // behind an unresolved one holds the tab just as a failure does.
+        let running = |phase: &str, deadline: Option<u64>| match phase {
+            "preparing" | "capturing" | "transmitting" | "awaiting_topology" => true,
+            "unknown" => deadline.is_some(),
+            _ => false,
         };
         match node.device.as_deref() {
             None => {
-                self.close_operations
+                let phases = self
+                    .close_operations
                     .values()
-                    .any(|operation| operation.scope_id == tab_id)
-                    || self
-                        .pane_operations
-                        .values()
-                        .any(|operation| operation.scope_id == tab_id)
+                    .filter(|operation| operation.scope_id == tab_id)
+                    .map(|operation| running(&operation.phase, operation.deadline_at_unix_ms))
+                    .chain(
+                        self.pane_operations
+                            .values()
+                            .filter(|operation| operation.scope_id == tab_id)
+                            .map(|operation| {
+                                running(&operation.phase, operation.deadline_at_unix_ms)
+                            }),
+                    )
+                    .collect::<Vec<_>>();
+                if phases.iter().any(|running| *running) {
+                    TabClose::Busy
+                } else if phases.is_empty() {
+                    TabClose::Free
+                } else {
+                    TabClose::Unresolved
+                }
             }
-            Some(device) => self
-                .remote_operations
-                .iter()
-                .any(|((target, _), operation)| {
-                    target == device
-                        && operation.scope_id == tab_id
-                        && matches!(
-                            operation.phase.as_str(),
-                            "transmitting" | "awaiting_topology" | "unknown"
-                        )
-                }),
+            // A device close is not refused by an earlier one that ended;
+            // only one still in flight holds the tab.
+            Some(device) => {
+                if self
+                    .remote_operations
+                    .iter()
+                    .any(|((target, _), operation)| {
+                        target == device
+                            && operation.scope_id == tab_id
+                            && matches!(
+                                operation.phase.as_str(),
+                                "transmitting" | "awaiting_topology" | "unknown"
+                            )
+                    })
+                {
+                    TabClose::Busy
+                } else {
+                    TabClose::Free
+                }
+            }
         }
     }
+
+    /// Asking again to close a pane whose earlier close was refused or
+    /// failed is a retry of that intent (B16, B22): the old record, which
+    /// would refuse the new close, is dismissed as the operator's Dismiss
+    /// would. A result that is still unknown is kept; its check decides.
+    fn dismiss_settled_closes(&mut self, nodes: &[TreeNode]) {
+        let keys = self
+            .close_operations
+            .iter()
+            .filter(|(_, operation)| {
+                matches!(operation.phase.as_str(), "failed" | "refused")
+                    && nodes
+                        .iter()
+                        .any(|node| node.device.is_none() && node.id == operation.target_id)
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in keys {
+            self.dismiss_agent_close(&key);
+        }
+    }
+}
+
+enum TabClose {
+    Free,
+    Busy,
+    Unresolved,
 }
 
 fn tabs_of(workspaces: &[WorkspaceSnapshot]) -> impl Iterator<Item = &TabSnapshot> {

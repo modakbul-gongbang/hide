@@ -289,7 +289,9 @@ Its buttons are `취소`, `이것만 닫기` and `모두 닫기`, and `모두 �
 While a descendant's status is unknown, `모두 닫기` is disabled, `취소` holds the keyboard, and a `상태 확인` in the sheet reads the status again without closing it.
 `이것만 닫기` closes the target alone as the ordinary close, with no second question; its direct children become the operator's roots and their own children stay under them.
 `모두 닫기` sends one event naming the target and exactly the descendants the sheet listed: one that appeared since is not closed, and one already gone counts as closed.
-The core checks each listed pane again as it arrives; if one now needs a status check, or the close slots cannot take them all, nothing closes and the one-line notice says why and what to do.
+The core checks each listed pane again as it arrives; if one now needs a status check, an earlier close of one is still unresolved, or the close slots cannot take them all, nothing closes and the one-line notice says why and what to do.
+A pane whose earlier close was refused is simply closed again, since asking again is the retry.
+If every listed descendant goes while the sheet is open, the sheet closes without sending anything.
 The core closes the deepest descendants first, each pane only after every descendant below it is gone, and the target last, so no descendant ever surfaces as a root on the way; each row reads `closing…` until it goes.
 A descendant whose close is refused, times out, or loses its device keeps itself and its ancestors, the target included, open while the other branches finish; the close failure notice shows and the detail goes to the diagnostic log.
 Closing the same target again lists only what is left.
@@ -923,8 +925,8 @@ The keycaps and the hover tooltip never share space: a tooltip hangs beside its 
 A browser host has no numbered chords, so holding ⌘ or ⌥ there shows nothing.
 Pane focus, active tab, tab order, zoom state, and disappearing anchors all update which controls can show a hint or tooltip; pointer exit, mouse down, scroll, key down, losing key window status, and anchor removal all dismiss an open tooltip.
 
-Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action.
-The one exception is the sheet that closes an agent with the agents it spawned: the operator chose `모두 닫기` as its Enter default (PRD close-agent-subtree D-07, D-18), and a descendant whose status is unknown gives the default back to `취소`; the removal dialogs that ask the same question keep no default.
+Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action, except in the sheet that closes an agent with the agents it spawned.
+There the operator chose `모두 닫기` as the Enter default (PRD close-agent-subtree D-07, D-18), and a descendant whose status is unknown gives the default back to `취소`; the removal dialogs that ask the same question keep no default.
 Escape closes the innermost open layer and returns focus to whatever held it before that layer opened, including a terminal that was focused when a sheet, menu, or overlay opened over it.
 A tooltip or hover card is not a layer: an Escape pressed while one shows still reaches the terminal or the screen it was meant for, and closes the tooltip on its way, whether the tooltip's own dismiss or the shell answers the press.
 A disabled control cannot activate, and destructive meaning always comes from the control's role rather than from its text color alone.
