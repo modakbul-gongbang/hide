@@ -5,11 +5,11 @@
 // question about the agents its checkout spawned outside it.
 
 import { expect, test, type Page } from "@playwright/test";
-import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { spawnAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
@@ -17,29 +17,6 @@ test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
 
 const run = promisify(execFile);
-
-async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
-  const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline) {
-    const read = spawnSync(herdr.bin, ["pane", "read", pane, "--source", "visible", "--format", "text"], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
-    if (read.status === 0 && read.stdout.includes("fixture %")) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`no prompt in pane ${pane}`);
-}
-
-/** A workspace of its own with one agent in it, spawned by `parent` when one is named. */
-async function spawnAgent(herdr: HerdrFixture, label: string, parent: string | null, cwd = path.join(herdr.root, label)): Promise<string> {
-  fs.mkdirSync(cwd, { recursive: true });
-  const created = herdr.run(["workspace", "create", "--cwd", cwd, "--label", label, "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as {
-    result: { root_pane: { pane_id: string } };
-  };
-  const pane = created.result.root_pane.pane_id;
-  await prompt(herdr, pane);
-  herdr.run(["agent", "start", label, "--kind", "claude", "--pane", pane]);
-  if (parent) execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
-  return pane;
-}
 
 /** Every pane id the private Herdr lists right now. */
 async function livePanes(herdr: HerdrFixture): Promise<Set<string>> {
