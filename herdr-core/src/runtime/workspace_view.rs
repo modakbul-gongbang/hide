@@ -538,7 +538,9 @@ impl Runtime {
     /// the front key, one comparison of the editor's tabs, a copy of the
     /// published scalars, and the front Workspace's tree built again: one map
     /// of the editor's tabs and one root check, then a map lookup per display,
-    /// of which there are at most 64.
+    /// of which there are at most 64. The Agent tab bookmark pass adds a
+    /// comparison of the shown tabs and area fronts against what it saw last,
+    /// in a few small vectors and with no write.
     pub(super) fn sync_workspace_view(&mut self) {
         let Some(store) = self.workspace_views.as_ref() else {
             return;

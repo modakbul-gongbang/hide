@@ -259,8 +259,11 @@ impl Runtime {
                 let parked = self.parked_caller(&key, pane_id, &action);
                 let applied =
                     self.apply_workspace_action(&key, &context, request_id, &action, material);
-                if let Ok(done) = &applied {
-                    self.note_control_view(&key, pane_id, &action, &done.view_id, parked);
+                match &applied {
+                    Ok(done) => {
+                        self.note_control_view(&key, pane_id, &action, &done.view_id, parked);
+                    }
+                    Err(_) => self.put_back_parked(&key, parked),
                 }
                 applied
             }

@@ -7,8 +7,8 @@
 //! every event that can move the screen and precedes every snapshot read, so
 //! a tab that becomes visible by any path (an event, Herdr's own focus
 //! followed by the catalog, a device's confirmed switch) is bookmarked in the
-//! same frame it appears in, and the pass costs one comparison when nothing
-//! moved.
+//! same frame it appears in, and when nothing moved the pass is a comparison
+//! that writes nothing and does no I/O.
 //!
 //! - Restore: the active Agent tab was not shown in any Agent area of the
 //!   Workspace at the previous pass. Each area that still holds the bookmarked
@@ -243,7 +243,7 @@ impl Runtime {
         action: &Action,
     ) -> Option<(String, Fronts)> {
         let tab = self.control_caller_tab(key, caller_id)?;
-        if action_view_target(action).is_none() || action_reveals(action) {
+        if !opens_or_selects(action) || action_reveals(action) {
             return None;
         }
         if self.workspace_active_tab(key).as_deref() == Some(tab.as_str()) {
@@ -274,7 +274,7 @@ impl Runtime {
         view_id: &str,
         parked: Option<(String, Fronts)>,
     ) {
-        if action_view_target(action).is_none() {
+        if !opens_or_selects(action) {
             return;
         }
         match parked {
@@ -290,6 +290,14 @@ impl Runtime {
                     self.record_view_bookmark(key, &tab, view_id);
                 }
             }
+        }
+    }
+
+    /// A parked action that was refused may still have placed a display
+    /// before it failed, so the operator's fronts go back either way.
+    pub(super) fn put_back_parked(&mut self, key: &WorkspaceKey, parked: Option<(String, Fronts)>) {
+        if let Some((_, before)) = parked {
+            self.restore_fronts(key, &before);
         }
     }
 
@@ -350,7 +358,7 @@ impl Runtime {
 
 /// The view an open or a select acts on is named by its result; every other
 /// action shares the layout and applies at once (D-06).
-fn action_view_target(action: &Action) -> Option<()> {
+fn opens_or_selects(action: &Action) -> bool {
     matches!(
         action,
         Action::OpenFile { .. }
@@ -358,7 +366,6 @@ fn action_view_target(action: &Action) -> Option<()> {
             | Action::OpenBrowser { .. }
             | Action::Select { .. }
     )
-    .then_some(())
 }
 
 fn action_reveals(action: &Action) -> bool {
