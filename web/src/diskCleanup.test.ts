@@ -13,6 +13,7 @@ import {
   filterCounts,
   footerOf,
   freedFree,
+  gigabytes,
   layoutRows,
   lowFree,
   needsConfirm,
@@ -329,6 +330,13 @@ describe("footer (B13, B16, B17, B18)", () => {
     expect(needsConfirm(planOf(rows, selection))).toBe(false);
   });
 
+  it("says what it waits for instead of claiming there is nothing to clear while the review is out or unreadable", () => {
+    const pending = sheetModel(workspace([checkout("a")], { phase: "loading" }), false);
+    expect(footerOf(pending.rows, EMPTY_SELECTION, pending.state).summary).toBe("검토하는 중…");
+    const unreadable = sheetModel(workspace([checkout("a")], { usage_error: "no herdr" }), false);
+    expect(footerOf(unreadable.rows, EMPTY_SELECTION, unreadable.state).summary).toBe("쓰는 중인지 확인해야 고를 수 있다");
+  });
+
   it("names one worktree, or counts several, in red, and asks the confirmation", () => {
     const one = toggleCell(EMPTY_SELECTION, { path: "/r/done", column: "worktree" });
     expect(footerOf(rows, one).destructive).toBe("done은 폴더째 지워진다");
@@ -391,6 +399,11 @@ describe("result (B22)", () => {
     expect(by("worktree:/r/gone")).toMatchObject({ outcome: "removed", bytes: 4 * GB });
     expect(by("worktree:/r/kept")).toMatchObject({ outcome: "skipped", reason: "State changed." });
     expect(allocatedTotal(lines)).toBe(13 * GB);
+  });
+
+  it("writes free space to one decimal", () => {
+    expect(gigabytes(18.3 * GB)).toBe("18.3 GB");
+    expect(gigabytes(1.6 * GB)).toBe("1.6 GB");
   });
 
   it("reports the volume's own change beside the allocated total", () => {

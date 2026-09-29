@@ -18,6 +18,7 @@ import {
   filterCounts,
   footerOf,
   freedFree,
+  gigabytes,
   isChecked,
   isIncluded,
   layoutRows,
@@ -40,6 +41,7 @@ import {
   type Selection,
   type SheetModel,
   type SheetRow,
+  type SheetState,
 } from "./diskCleanup";
 import { cn } from "./lib/utils";
 import { formatBytes, prChip } from "./projectBoard";
@@ -103,7 +105,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   const shown = visibleRows(model.rows, filter);
   const counts = filterCounts(model.rows);
   const layout = layoutRows(shown);
-  const footer = footerOf(shown, selection);
+  const footer = footerOf(shown, selection, model.state);
   const plan = planOf(shown, selection);
 
   const close = () => {
@@ -156,7 +158,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   return (
     <>
       <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
-        <DialogContent className={SHEET_WIDTH} showCloseButton aria-label={title} data-disk-sheet={workspace.id} data-disk-state={model.state} data-disk-filter={filter}>
+        <DialogContent className={listing ? SHEET_WIDTH : "w-(--size-overview-cleanup)"} showCloseButton aria-label={title} data-disk-sheet={workspace.id} data-disk-state={model.state} data-disk-filter={filter}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription className="text-caption text-muted-foreground">
@@ -167,7 +169,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
           {listing ? (
             <DialogFooter className="items-start justify-between border-t border-border pt-md" data-disk-footer={footer.empty ? "empty" : "ready"}>
               <div className="flex min-w-0 flex-col gap-xxs">
-                <span className="font-mono text-subhead font-semibold text-foreground" data-disk-summary="true">
+                <span className="text-subhead font-semibold tabular-nums text-foreground" data-disk-summary="true">
                   {footer.summary}
                 </span>
                 {footer.destructive ? (
@@ -299,7 +301,7 @@ function TableView({
               체크아웃 · 크기순
             </span>
             {(["build_cache", "dependencies", "worktree"] as const).map((column) => (
-              <ColumnHead key={column} column={column} rows={shown} selection={selection} refs={columnRefs(column)} onToggle={() => onSelection(toggleBundle(selection, columnRefs(column)))} />
+              <ColumnHead key={column} column={column} state={model.state} rows={shown} selection={selection} refs={columnRefs(column)} onToggle={() => onSelection(toggleBundle(selection, columnRefs(column)))} />
             ))}
             <span role="columnheader" className="flex flex-col items-end gap-xxs text-caption text-subtle-foreground">
               기타
@@ -369,7 +371,7 @@ function BundleBox({ state, label, onToggle, data }: { state: BundleState; label
   );
 }
 
-function ColumnHead({ column, rows, selection, refs, onToggle }: { column: Column; rows: SheetRow[]; selection: Selection; refs: CellRef[]; onToggle: () => void }) {
+function ColumnHead({ column, state: sheet, rows, selection, refs, onToggle }: { column: Column; state: SheetState; rows: SheetRow[]; selection: Selection; refs: CellRef[]; onToggle: () => void }) {
   const state = bundleState(selection, refs);
   const selected = refs.filter((ref) => isChecked(selection, ref)).length;
   const bytes = rows.reduce((sum, row) => sum + (column === "worktree" ? (row.total ?? 0) * (row.isMain ? 0 : 1) : row.cache[column].bytes), 0);
@@ -380,7 +382,7 @@ function ColumnHead({ column, rows, selection, refs, onToggle }: { column: Colum
         {LAYER_LABEL[column]}
       </span>
       <span className="pl-lg font-mono text-caption text-muted-foreground">{formatBytes(bytes)}</span>
-      <span className="pl-lg text-caption text-muted-foreground">{selected > 0 ? `${selected}곳 선택됨` : refs.length > 0 ? `고를 수 있는 ${refs.length}곳` : "고를 수 있는 곳 없음"}</span>
+      <span className="pl-lg text-caption text-muted-foreground">{sheet === "pending" ? "확인 중…" : selected > 0 ? `${selected}곳 선택됨` : refs.length > 0 ? `고를 수 있는 ${refs.length}곳` : "고를 수 있는 곳 없음"}</span>
     </div>
   );
 }
@@ -583,9 +585,9 @@ function ResultView({ workspace, seen, onReview, onClose }: { workspace: Workspa
         <div className="flex flex-col gap-xxs">
           <span className="text-caption text-muted-foreground">디스크에서 잰 여유</span>
           <span className="flex items-baseline gap-sm font-mono text-headline font-semibold text-foreground" data-disk-free-change="true">
-            {cleanup.free_before != null ? formatBytes(cleanup.free_before) : "-"}
+            {cleanup.free_before != null ? gigabytes(cleanup.free_before) : "-"}
             <span aria-hidden="true">→</span>
-            {cleanup.free_after != null ? formatBytes(cleanup.free_after) : "…"}
+            {cleanup.free_after != null ? gigabytes(cleanup.free_after) : "…"}
           </span>
         </div>
         <span className="font-mono text-caption text-subtle-foreground" data-disk-allocated="true">
@@ -595,14 +597,14 @@ function ResultView({ workspace, seen, onReview, onClose }: { workspace: Workspa
       </div>
       <ul className="flex flex-col divide-y divide-border border-y border-border" data-disk-result-lines="true">
         {lines.map((line) => (
-          <li key={line.key} className="flex items-baseline gap-md py-sm text-body" data-disk-result-line={line.outcome}>
-            <span className="min-w-0 flex-1 truncate text-foreground">{line.label}</span>
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">{line.what}</span>
-            <span className={cn("shrink-0 text-caption", line.outcome === "removed" ? "text-success" : line.outcome === "failed" ? "text-destructive" : "text-warning")}>
+          <li key={line.key} className="grid items-baseline gap-x-md py-sm text-body" style={{ gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 0.5fr)" }} data-disk-result-line={line.outcome}>
+            <span className="truncate text-foreground">{line.label}</span>
+            <span className="truncate text-muted-foreground">{line.what}</span>
+            <span className={cn("truncate text-caption", line.outcome === "removed" ? "text-success" : line.outcome === "failed" ? "text-destructive" : "text-warning")}>
               {OUTCOME_TEXT[line.outcome]}
               {line.reason ? ` · ${line.reason}` : ""}
             </span>
-            <span className="w-(--spacing-xxxl) shrink-0 text-right font-mono text-caption text-subtle-foreground">{line.bytes !== null ? formatBytes(line.bytes) : ""}</span>
+            <span className="text-right font-mono text-caption text-subtle-foreground">{line.bytes !== null ? formatBytes(line.bytes) : ""}</span>
           </li>
         ))}
         {lines.length === 0 ? <li className="py-sm text-body text-muted-foreground">정리한 칸이 없다</li> : null}

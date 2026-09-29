@@ -315,12 +315,22 @@ export type Footer = {
   note: string | null;
 };
 
-export function footerOf(rows: readonly SheetRow[], selection: Selection): Footer {
+/** What the bottom line says while the table cannot be ticked yet or at all; the ready state speaks for itself (B13, B25). */
+const WAITING_SUMMARY: Partial<Record<SheetState, string>> = {
+  pending: "검토하는 중…",
+  unreadable: "쓰는 중인지 확인해야 고를 수 있다",
+  busy: "",
+};
+
+export function footerOf(rows: readonly SheetRow[], selection: Selection, state: SheetState = "ready"): Footer {
   const plan = planOf(rows, selection);
   const anySelectable = rows.some((row) => CACHE_LAYERS.some((layer) => row.cache[layer].selectable) || row.worktree?.selectable);
   const empty = plan.cells.length === 0 && plan.worktrees.length === 0;
   const { counts } = plan;
-  const summary = empty
+  const waiting = WAITING_SUMMARY[state];
+  const summary = waiting !== undefined
+    ? waiting
+    : empty
     ? anySelectable
       ? "고른 칸 없음"
       : "비울 캐시가 없다"
@@ -441,6 +451,11 @@ function exclusionTextOrMessage(row: CleanupRow): string | null {
 /** The allocated bytes the confirm removed; the volume's own free space says what actually came back. */
 export function allocatedTotal(lines: readonly ResultLine[]): number {
   return lines.reduce((sum, line) => sum + (line.outcome === "removed" ? (line.bytes ?? 0) : 0), 0);
+}
+
+/** Free space to one decimal, the way the volume's own number reads (`1.6 GB → 18.3 GB`). */
+export function gigabytes(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
 export function freedFree(cleanup: DiskCleanup): number | null {
