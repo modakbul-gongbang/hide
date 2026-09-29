@@ -11,6 +11,7 @@ import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
+import { DiskCleanupSheet } from "./DiskCleanupSheet";
 import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Note, Status } from "./components/settings-rows";
@@ -122,6 +123,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
       </Dialog>
     );
   }
+  if (dialog.kind === "disk_cleanup") return <DiskCleanupSheet key={dialog.workspaceId} actions={actions} workspace={target.workspace} filter={dialog.filter} onClose={close} />;
   if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} listed={found !== null} onClose={close} />;
   if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} deviceLabel={deviceLabel(target.workspace)} onClose={close} />;
   if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;

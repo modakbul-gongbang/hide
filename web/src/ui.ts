@@ -3,6 +3,7 @@
 // owns (focus, tabs, layout, sidebar visibility) stays in `store.ts`.
 
 import { create } from "zustand";
+import type { Filter as DiskFilter } from "./diskCleanup";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
 import { NO_FILTER, type IssueFilter } from "./projectBoard";
@@ -141,6 +142,8 @@ export type WorkspaceDialog =
   | { kind: "pr_delegate"; workspaceId: string; prNumber: number }
   | { kind: "purpose"; workspaceId: string; checkoutId: string }
   | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
+  /** The disk cleanup sheet of a local Git project, opened on a filter (PRD disk-layers B1-B3). */
+  | { kind: "disk_cleanup"; workspaceId: string; filter: DiskFilter }
   | { kind: "remove_project"; workspaceId: string };
 
 /** A held-modifier cycle over Recent Panels or Recent Projects; committed when the modifier is released. */
