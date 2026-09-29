@@ -632,7 +632,10 @@ mod tests {
     #[test]
     fn kinds_carry_the_catalog_and_the_remembered_choice() {
         let frame = Catalog::of(&rest()).frame();
-        assert_eq!(frame["kinds"][0], json!({"id": "claude", "models": ["opus", "sonnet"]}));
+        assert_eq!(
+            frame["kinds"][0],
+            json!({"id": "claude", "models": ["opus", "sonnet"]})
+        );
         assert_eq!(frame["kinds"][1], json!({"id": "codex", "models": []}));
         assert!(!frame.to_string().contains("/Users/example"), "{frame}");
         assert_eq!(frame["remembered"]["kind"], "codex");

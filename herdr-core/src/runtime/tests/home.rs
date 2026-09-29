@@ -471,7 +471,10 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
         runtime.persist_ui_state();
     }
     std::thread::sleep(Duration::from_millis(200));
-    assert!(!home.join("app-play").exists(), "nothing reaches a helper that is not ready");
+    assert!(
+        !home.join("app-play").exists(),
+        "nothing reaches a helper that is not ready"
+    );
 
     {
         let mut runtime = shared.lock().unwrap();
