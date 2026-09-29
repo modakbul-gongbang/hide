@@ -310,6 +310,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let desktop_renderers = Arc::new(AtomicUsize::new(0));
     browser_routes.spawn_reaper(Arc::clone(&desktop_renderers), Arc::clone(&shutdown));
     let renderers = Arc::new(AtomicUsize::new(0));
+    let start_demand = Arc::new(demand::ObservationDemand::default());
     let mobile = mobile::Mobile::start(mobile::Config {
         state_dir: env.state_dir.clone(),
         home: env.home.clone(),
@@ -322,6 +323,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         core: Arc::clone(&core),
         herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         renderers: Arc::clone(&renderers),
+        start_demand: Arc::clone(&start_demand),
     });
     let app = AppState {
         core: Arc::clone(&core),
@@ -351,7 +353,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         },
         version: VERSION,
         demand: Arc::new(demand::ObservationDemand::default()),
-        start_demand: Arc::new(demand::ObservationDemand::default()),
+        start_demand,
         daemon_info: Arc::new(serde_json::json!({
             "version": VERSION,
             "schema_version": SCHEMA_VERSION,

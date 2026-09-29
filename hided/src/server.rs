@@ -1229,7 +1229,7 @@ fn handle_ai_settings(
         match hint {
             Some(Value::Bool(observing)) => {
                 demand.of(state).set(connection, observing, |aggregate| {
-                    dispatch_observation(state, demand, connection, aggregate)
+                    dispatch_observation(&state.core, demand, connection, aggregate)
                 });
             }
             Some(Value::Null) | None => {}
@@ -1275,7 +1275,7 @@ impl Demand {
 /// Runs under the demand lock (`ObservationDemand::set`), so it only logs
 /// and hands the event to the core's channel.
 pub(crate) fn dispatch_observation(
-    state: &AppState,
+    core: &CoreHandle,
     demand: Demand,
     connection: u64,
     observing: bool,
@@ -1295,7 +1295,7 @@ pub(crate) fn dispatch_observation(
         "kind": "ai_settings",
         "payload": {demand.field(): observing},
     });
-    if let Err(error) = state.core.dispatch(event.to_string().into_bytes()) {
+    if let Err(error) = core.dispatch(event.to_string().into_bytes()) {
         eprintln!(
             "{}",
             json!({
@@ -2605,7 +2605,7 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     state.mobile.release(connection);
     for demand in [Demand::Settings, Demand::Start] {
         demand.of(state).release(connection, |observing| {
-            dispatch_observation(state, demand, connection, observing)
+            dispatch_observation(&state.core, demand, connection, observing)
         });
     }
     let remaining = state

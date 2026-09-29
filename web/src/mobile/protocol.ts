@@ -46,6 +46,29 @@ export type ConversationMessage = {
   at_ms: number;
 };
 
+/** The agent kinds a phone may start (hided/src/mobile/start.rs KINDS). */
+export type StartKind = "claude" | "codex";
+
+/** One place a start can go; the folder it names never reaches the phone. */
+export type StartTarget = {
+  /** `home:<device_id>` for a device's Home, else the checkout's id. */
+  id: string;
+  device_id: string;
+  label: string;
+  device_label: string;
+  connected: boolean;
+};
+
+export type StartKindEntry = { id: StartKind; models: string[]; models_unavailable_reason: string | null };
+
+/** What the start sheet lists, as hided sends it while the sheet is open. */
+export type StartCatalog = {
+  targets: StartTarget[];
+  kinds: StartKindEntry[];
+  /** The kind and each kind's model the last start chose, shared with the desktop. */
+  remembered: { kind: StartKind | null; models: Partial<Record<StartKind, string>> };
+};
+
 export type ServerFrame =
   | { type: "paired"; credential: string; phone_id: string; name: string }
   | { type: "hello"; mac_name: string; phone_id: string; name: string | null; vapid_public_key: string; notifications: Notifications }
@@ -64,6 +87,8 @@ export type ServerFrame =
       before?: number | null;
     }
   | { type: "input_result"; request_id?: string; ok: boolean; reason: string | null }
+  | ({ type: "start_catalog" } & StartCatalog)
+  | { type: "start_result"; request_id?: string; ok: boolean; reason: string | null; device_id?: string; pane_id?: string }
   | { type: "push_state"; notifications: "on" | "refused" }
   | { type: "refused"; reason: string }
   | { type: "refused_request"; request: string; reason: string };
@@ -76,6 +101,8 @@ export type PhoneMessage =
   | { type: "more" }
   | { type: "close" }
   | ({ type: "input"; request_id: string; device_id: string; pane_id: string } & ({ text: string } | { key: QuickKey }))
+  | { type: "start_sheet"; open: boolean }
+  | { type: "start_agent"; request_id: string; text: string; target: string; kind: StartKind; model?: string }
   | { type: "push_subscription"; subscription: { endpoint: string; keys: { p256dh: string; auth: string } } }
   | { type: "push_permission"; state: "denied" | "default" };
 

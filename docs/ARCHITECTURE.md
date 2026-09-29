@@ -401,7 +401,7 @@ Every handshake has ten seconds to send its first frame.
 The phone app is a static shell and a data channel, kept apart.
 `/m/` serves `mobile.html`, and `/m/manifest.webmanifest`, `/m/sw.js` and the icons come from `web/public/m/` through the same static route as the desktop shell's `/assets`; the page, the service worker and the manifest are served `no-cache`.
 The service worker caches only that shell, so the app opens without a network and shows its unreachable line.
-Pairing, the agent list, an agent's conversation, a pane's rows, replies, keys and the push subscription travel on `/ws` only; the phone calls no other HTTP path.
+Pairing, the agent list, an agent's conversation, a pane's rows, replies, keys, starts and the push subscription travel on `/ws` only; the phone calls no other HTTP path.
 The first frame decides the client: `{client_kind: "phone", token}` for a paired phone or `{client_kind: "phone", pair, name}` to pair; a phone counts toward `MAX_CLIENTS`, and a refusal sends `{type: "refused", reason}` (`code_expired`, `phone_limit`, `revoked`, `mobile_off`) and closes with 4001.
 Every frame to a phone goes through `mobile::phone::encode`, the one place a relay would wrap in end-to-end encryption.
 
@@ -413,7 +413,11 @@ At most four phones pair; the limit is checked before the code is spent.
 A phone keeps at most two connections, the oldest closed first, a connection that answers no ping for 45 seconds is closed and recorded as `phone.silent`, and one whose frame cannot leave within ten seconds is closed and recorded as `phone.stalled`.
 A phone away for seven days is revoked at start, by an hourly sweep and when it next connects, and a revoke, manual or automatic, drops the credential and the subscription in one write and closes that phone's connection.
 
-A phone's whole vocabulary is `open`, `view`, `older`, `more`, `close`, `input`, `push_subscription` and `push_permission`; anything else is answered `refused_request` and recorded as `scope.refused`, and a phone never receives a file, a path, a setting or the core snapshot.
+A phone's whole vocabulary is `open`, `view`, `older`, `more`, `close`, `input`, `start_sheet`, `start_agent`, `push_subscription` and `push_permission`; anything else is answered `refused_request` and recorded as `scope.refused`, and a phone never receives a file, a path, a setting or the core snapshot.
+A phone starts an agent through the same `agent_start_in_checkout` event as the desktop (`mobile/start.rs`, PRD home-device-rail D-24, D-25).
+While its start sheet is open (`start_sheet`), hided sends it a `start_catalog`: every device's Home and checkouts as targets named by id, `claude` and `codex` with the models the provider catalog lists, and the choice the last start remembered; the sheet counts as a start surface for the catalog demand, and the folder a target id leads to stays in hided.
+`start_agent` carries a request id, the text, a target id, a kind and an optional model; it is refused before anything is dispatched when the phone is no longer admitted or the target, kind, model or text is not one the sheet could have sent, and otherwise answered with `start_result` once the core's task slot or last error carries that request id, or `timeout` after 30 seconds.
+A request id the phone repeats is started once: the repeat gets the first answer, or joins it while the first still waits; one connection waits for one start at a time, and a second is answered `in_flight`.
 The list is a projection of the snapshot's `rest` section (`mobile/projection.rs`): the local navigator's agents and every connected device's, in the desktop's four groups, each keyed by device id and pane id with its lineage root.
 hided follows the core only while Mobile is on with a phone paired, reads the snapshot off the core lock with its own cursors once per notification burst, and republishes the list only when it changed.
 A detail shows the agent's conversation (`mobile/conversation.rs`) or its terminal, as the phone chooses with `open` and `view`, and hided reads only the one shown, once a second and only while it is open.

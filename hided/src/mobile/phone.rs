@@ -4,8 +4,8 @@
 //! phone, `{client_kind: "phone", pair, name}` to pair with the live code.
 //! After that the phone may only: open one agent's detail, choose its
 //! conversation or its terminal, ask for older messages or more rows, close
-//! it, send that pane a reply or one key, and register or report its push
-//! subscription. Anything else is refused and recorded.
+//! it, send that pane a reply or one key, open the start sheet and start an
+//! agent from it, and register or report its push subscription. Anything else is refused and recorded.
 //! It never receives a file, a path, a setting or the core's snapshot.
 //!
 //! Every frame to the phone goes through `encode`, the one place a relay
@@ -120,6 +120,19 @@ impl View {
 struct Ask {
     view: View,
     lines: u32,
+}
+
+/// What a phone has open: at most one agent's detail, the start sheet, and
+/// at most one start waiting for the core's answer.
+#[derive(Default)]
+struct Open {
+    detail: Option<Detail>,
+    /// The sheet gets the catalog as it changes.
+    sheet: bool,
+    /// Not aborted when the connection ends: the start already reached the
+    /// core, and settling its request id lets a reconnecting phone's repeat
+    /// read the answer. `start::ANSWER_LIMIT` bounds it.
+    start: Option<tokio::task::JoinHandle<()>>,
 }
 
 struct Detail {
@@ -422,7 +435,8 @@ async fn run(
     let mut projection = mobile.subscribe_projection();
     let mut meta = mobile.subscribe_meta();
     let (frames_tx, mut frames) = mpsc::channel::<Value>(8);
-    let mut detail: Option<Detail> = None;
+    let mut open = Open::default();
+    let mut catalog = mobile.subscribe_catalog();
     let mut ping = tokio::time::interval(PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut heard = tokio::time::Instant::now();
@@ -466,6 +480,11 @@ async fn run(
                 let frame = meta_frame(&meta.borrow_and_update());
                 if !send(socket, encode(&frame), phone_id).await { return; }
             }
+            changed = catalog.changed() => {
+                if changed.is_err() { return; }
+                let frame = catalog.borrow_and_update().frame();
+                if open.sheet && !send(socket, encode(&frame), phone_id).await { return; }
+            }
             Some(frame) = frames.recv() => {
                 if !send(socket, encode(&frame), phone_id).await { return; }
             }
@@ -499,7 +518,7 @@ async fn run(
                 };
                 // A clone of the current list: a watch borrow must not be held across an await.
                 let current = Arc::clone(&projection.borrow());
-                let reply = handle(mobile, connection, phone_id, &message, &mut detail, &frames_tx, &current).await;
+                let reply = handle(mobile, connection, phone_id, &message, &mut open, &frames_tx, &current).await;
                 if let Some(reply) = reply
                     && !send(socket, encode(&reply), phone_id).await
                 {
@@ -516,7 +535,7 @@ async fn handle(
     connection: u64,
     phone_id: &str,
     message: &Value,
-    detail: &mut Option<Detail>,
+    open: &mut Open,
     frames: &mpsc::Sender<Value>,
     projection: &Projection,
 ) -> Option<Value> {
@@ -540,11 +559,11 @@ async fn handle(
             let (older, older_asks) = mpsc::channel(1);
             mobile.set_viewing(connection, Some(key.clone()));
             let task = spawn_detail(Arc::clone(mobile), key, frames.clone(), asks, older_asks);
-            *detail = Some(Detail { ask, older, task });
+            open.detail = Some(Detail { ask, older, task });
             None
         }
         "view" => {
-            match (detail.as_ref(), View::of(message)) {
+            match (open.detail.as_ref(), View::of(message)) {
                 (Some(detail), Some(view)) => detail.ask.send_if_modified(|ask| {
                     let changed = ask.view != view;
                     ask.view = view;
@@ -559,7 +578,7 @@ async fn handle(
             None
         }
         "more" => {
-            if let Some(detail) = detail.as_ref() {
+            if let Some(detail) = open.detail.as_ref() {
                 detail.ask.send_modify(|ask| {
                     ask.lines = (ask.lines + pane::MORE_LINES).min(pane::MAX_LINES);
                 });
@@ -568,7 +587,7 @@ async fn handle(
         }
         "older" => {
             match (
-                detail.as_ref(),
+                open.detail.as_ref(),
                 message.get("before").and_then(Value::as_u64),
             ) {
                 // A pull while the last one is still being read is the same pull.
@@ -581,11 +600,40 @@ async fn handle(
             None
         }
         "close" => {
-            *detail = None;
+            open.detail = None;
             mobile.set_viewing(connection, None);
             None
         }
         "input" => Some(input(mobile, phone_id, message, projection).await),
+        "start_sheet" => {
+            let Some(shown) = message.get("open").and_then(Value::as_bool) else {
+                refusal_logged("scope.refused", Some(phone_id), "start_sheet");
+                return None;
+            };
+            open.sheet = shown;
+            mobile.set_start_sheet(connection, shown);
+            shown.then(|| mobile.subscribe_catalog().borrow().frame())
+        }
+        "start_agent" => {
+            if open.start.as_ref().is_some_and(|task| !task.is_finished()) {
+                return Some(
+                    json!({"type": "start_result", "request_id": message.get("request_id"), "ok": false, "reason": "in_flight"}),
+                );
+            }
+            // The answer can take the core's whole creation time, so it is
+            // awaited beside the socket loop and arrives as a frame.
+            let (mobile, phone_id, message, frames) = (
+                Arc::clone(mobile),
+                phone_id.to_owned(),
+                message.clone(),
+                frames.clone(),
+            );
+            open.start = Some(tokio::spawn(async move {
+                let answer = mobile.start_agent(&phone_id, &message).await;
+                let _ = frames.send(answer).await;
+            }));
+            None
+        }
         "push_subscription" => {
             let subscription = message.get("subscription");
             let field = |name: &str| {
