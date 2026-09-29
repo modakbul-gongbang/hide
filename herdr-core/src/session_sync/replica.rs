@@ -1,6 +1,16 @@
 //! Applies ordered Herdr topology events to the authoritative replica.
 
+use std::collections::VecDeque;
+
 use super::*;
+
+/// How many of the latest ids removed by events a replica remembers
+/// (`retired_ids`); a workspace close retires its tabs and panes with it.
+const RETIRED_ID_WINDOW: usize = 64;
+
+/// How many focus events a replica holds for tabs and panes not announced
+/// yet (`early_focuses`); one more is a divergence that rebuilds the replica.
+const EARLY_FOCUS_LIMIT: usize = 16;
 
 static NEXT_REPLICA_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -19,6 +29,24 @@ pub(crate) struct SessionReplica {
     pending_creation_focuses: BTreeSet<String>,
     pub(crate) pending_workspace_closures: BTreeSet<String>,
     pub(crate) pending_active_tab_focuses: BTreeSet<String>,
+    /// Workspace, tab and pane ids this replica removed on an event, newest
+    /// last. Herdr 0.9.1 can name an id after the event that removed it:
+    /// `tab.close` of a workspace's last tab emits `workspace_closed` then
+    /// `tab_closed` (and `pane.close` then `pane_closed`), and a workspace's
+    /// creation events arrive after the call that created it returns, so a
+    /// seed tab that `layout.apply` replaced is announced closed and then
+    /// focused, given a pane and laid out. An event about an id retired here
+    /// and absent from the replica is already applied, not a divergence.
+    /// Herdr never reuses an id, and such events follow within one burst,
+    /// so a short window is enough.
+    retired_ids: VecDeque<String>,
+    /// Focus events that name a tab or pane Herdr has not announced yet.
+    /// Herdr 0.9.1 emits a workspace's creation events after the call that
+    /// created it returns, carrying the focus of that moment: a tab created
+    /// with focus in a workspace just created emits `tab_focused` for it
+    /// before its `tab_created`. Each is applied once its target arrives;
+    /// only the latest per workspace and kind is kept.
+    early_focuses: Vec<ReplicaEvent>,
     /// How many events this replica has applied since its snapshot. Herdr's
     /// stream carries no sequence, so this is the only position a diagnostic
     /// can name.
@@ -79,6 +107,8 @@ impl SessionReplica {
             pending_creation_focuses: BTreeSet::new(),
             pending_workspace_closures: BTreeSet::new(),
             pending_active_tab_focuses: BTreeSet::new(),
+            retired_ids: VecDeque::new(),
+            early_focuses: Vec::new(),
             applied_events: 0,
         };
         replica.validate()?;
@@ -344,7 +374,6 @@ impl SessionReplica {
                                             .as_deref()
                                             .or(pane.terminal_title.as_deref()),
                                     ),
-                                    workspace_label: non_blank(Some(workspace.label.as_str())),
                                     cwd: pane.cwd.clone().unwrap_or_else(|| path.clone()),
                                     status_label: agent
                                         .map(|agent| agent.status_label.clone())
@@ -483,6 +512,18 @@ impl SessionReplica {
                         active_tab_id,
                         strip,
                         next_tab_label,
+                        // A worktree workspace owns the checkout Herdr binds
+                        // it to, which is this row's path; a marked one is
+                        // checked against its folder once grouped.
+                        owner_workspace_id: workspace
+                            .worktree
+                            .is_some()
+                            .then(|| workspace.workspace_id.clone()),
+                        owner_mark: workspace
+                            .tokens
+                            .get(crate::checkout_owner::OWNER_TOKEN)
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
                         ..CheckoutSnapshot::default()
                     }],
                     pinned: false,
@@ -647,7 +688,13 @@ impl SessionReplica {
                 | ReplicaEvent::WorktreeOpened { .. }
                 | ReplicaEvent::WorktreeRemoved { .. }
         );
-        let refresh_agents = match (candidate.apply_new_event(event, mode), mode) {
+        let applied = candidate
+            .apply_new_event(event, mode)
+            .and_then(|refresh_agents| {
+                candidate.apply_early_focuses(mode)?;
+                Ok(refresh_agents)
+            });
+        let refresh_agents = match (applied, mode) {
             (Ok(refresh_agents), _) => refresh_agents,
             (Err(SessionFetchError::Malformed(detail)), ApplyMode::Reconcile) => {
                 crate::diagnostic!(json!({
@@ -690,6 +737,23 @@ impl SessionReplica {
         data: ReplicaEvent,
         mode: ApplyMode,
     ) -> Result<bool, SessionFetchError> {
+        if let Some((event, id)) = self.names_retired(&data) {
+            crate::diagnostic!(json!({
+                "component": "session_sync",
+                "kind": "event.already_applied",
+                "event": event,
+                "retired_id": id,
+                "applied_events": self.applied_events,
+            }));
+            // What a late event creates inside a retired scope is retired
+            // with it, so the events that follow about it are no-ops too.
+            match &data {
+                ReplicaEvent::TabCreated { tab, .. } => self.retire(&tab.tab_id),
+                ReplicaEvent::PaneCreated { pane } => self.retire(&pane.pane_id),
+                _ => {}
+            }
+            return Ok(false);
+        }
         match data {
             ReplicaEvent::WorkspaceCreated {
                 workspace: input_workspace,
@@ -894,6 +958,7 @@ impl SessionReplica {
                         .remove(&input_tab.workspace_id);
                     self.record_creation_focus(&input_tab);
                 }
+                self.cancel_workspace_closure(&input_tab.workspace_id);
                 self.pending_layouts.insert(input_tab.tab_id.clone());
                 self.state.tabs.push(input_tab);
             }
@@ -991,6 +1056,18 @@ impl SessionReplica {
                 let event = "tab_focused";
                 ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
                 ensure_non_empty(event, "tab_id", &input_tab_id)?;
+                if self.has_workspace(&input_workspace_id)
+                    && !self.state.tabs.iter().any(|tab| tab.tab_id == input_tab_id)
+                {
+                    self.defer_focus(
+                        event,
+                        ReplicaEvent::TabFocused {
+                            workspace_id: input_workspace_id,
+                            tab_id: input_tab_id,
+                        },
+                    )?;
+                    return Ok(false);
+                }
                 let workspace = self
                     .state
                     .workspaces
@@ -1010,6 +1087,10 @@ impl SessionReplica {
                     ));
                 }
                 workspace.active_tab_id = input_tab_id.clone();
+                // A focus Herdr applied after a held one supersedes it.
+                self.early_focuses.retain(|held| {
+                    !matches!(held, ReplicaEvent::TabFocused { workspace_id, .. } if workspace_id == &input_workspace_id)
+                });
                 self.state.tab_focus = Some(crate::sidebar::SessionTabFocus {
                     generation: self.generation,
                     workspace_id: input_workspace_id.clone(),
@@ -1119,6 +1200,22 @@ impl SessionReplica {
             } => {
                 let event = "pane_focused";
                 ensure_non_empty(event, "workspace_id", &input_workspace_id)?;
+                if self.has_workspace(&input_workspace_id)
+                    && !self
+                        .state
+                        .panes
+                        .iter()
+                        .any(|pane| pane.pane_id == input_pane_id)
+                {
+                    self.defer_focus(
+                        event,
+                        ReplicaEvent::PaneFocused {
+                            workspace_id: input_workspace_id,
+                            pane_id: input_pane_id,
+                        },
+                    )?;
+                    return Ok(false);
+                }
                 if !self.state.panes.iter().any(|pane| {
                     pane.pane_id == input_pane_id && pane.workspace_id == input_workspace_id
                 }) {
@@ -1128,6 +1225,8 @@ impl SessionReplica {
                     ));
                 }
                 self.state.focused_pane_id = Some(input_pane_id.clone());
+                self.early_focuses
+                    .retain(|held| !matches!(held, ReplicaEvent::PaneFocused { .. }));
                 self.state.focused_workspace_id = Some(input_workspace_id.clone());
                 if let Some(layout) = self.state.layouts.iter_mut().find(|layout| {
                     layout
@@ -1235,6 +1334,7 @@ impl SessionReplica {
         }
         if let Some(tab) = payload.created_tab {
             validate_tab_wire("pane_moved", &tab)?;
+            self.cancel_workspace_closure(&tab.workspace_id);
             self.pending_layouts.insert(tab.tab_id.clone());
             upsert_tab(&mut self.state.tabs, tab);
         }
@@ -1263,7 +1363,141 @@ impl SessionReplica {
         Ok(())
     }
 
+    /// Whether `event` is about an id an earlier event removed (`retired_ids`).
+    fn names_retired<'a>(&self, event: &'a ReplicaEvent) -> Option<(&'static str, &'a str)> {
+        let workspace = |id: &String| self.retired_ids.contains(id) && !self.has_workspace(id);
+        let tab = |id: &String| {
+            self.retired_ids.contains(id) && !self.state.tabs.iter().any(|tab| &tab.tab_id == id)
+        };
+        let pane = |id: &String| {
+            self.retired_ids.contains(id)
+                && !self.state.panes.iter().any(|pane| &pane.pane_id == id)
+        };
+        let (event, id, retired) = match event {
+            ReplicaEvent::WorkspaceFocused { workspace_id } => {
+                ("workspace_focused", workspace_id, workspace(workspace_id))
+            }
+            ReplicaEvent::TabCreated { tab: created, .. } => (
+                "tab_created",
+                &created.workspace_id,
+                workspace(&created.workspace_id),
+            ),
+            ReplicaEvent::TabClosed { tab_id, .. } => ("tab_closed", tab_id, tab(tab_id)),
+            ReplicaEvent::TabFocused { tab_id, .. } => ("tab_focused", tab_id, tab(tab_id)),
+            ReplicaEvent::TabRenamed { tab_id, .. } => ("tab_renamed", tab_id, tab(tab_id)),
+            ReplicaEvent::PaneCreated { pane: created } => {
+                ("pane_created", &created.tab_id, tab(&created.tab_id))
+            }
+            ReplicaEvent::PaneClosed { pane_id, .. } => ("pane_closed", pane_id, pane(pane_id)),
+            ReplicaEvent::PaneFocused { pane_id, .. } => ("pane_focused", pane_id, pane(pane_id)),
+            ReplicaEvent::PaneUpdated { pane: updated } => {
+                ("pane_updated", &updated.pane_id, pane(&updated.pane_id))
+            }
+            ReplicaEvent::LayoutUpdated { layout } => {
+                ("layout_updated", &layout.tab_id, tab(&layout.tab_id))
+            }
+            _ => return None,
+        };
+        retired.then_some((event, id.as_str()))
+    }
+
+    /// A tab created in a workspace whose last tab closed means the workspace
+    /// survived (a seed tab that `layout.apply` replaced), so it no longer
+    /// waits for `workspace_closed`; its active tab is read from Herdr unless
+    /// an event names it first.
+    fn cancel_workspace_closure(&mut self, workspace_id: &str) {
+        if self.pending_workspace_closures.remove(workspace_id) {
+            self.pending_active_tab_focuses
+                .insert(workspace_id.to_owned());
+        }
+    }
+
+    fn retire(&mut self, id: &str) {
+        if self.retired_ids.len() == RETIRED_ID_WINDOW {
+            self.retired_ids.pop_front();
+        }
+        self.retired_ids.push_back(id.to_owned());
+    }
+
+    fn has_workspace(&self, workspace_id: &str) -> bool {
+        self.state
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.workspace_id == workspace_id)
+    }
+
+    /// Holds a focus event until its tab or pane is announced, replacing an
+    /// earlier held focus of the same kind in the same workspace.
+    fn defer_focus(&mut self, event: &str, focus: ReplicaEvent) -> Result<(), SessionFetchError> {
+        let same = |held: &ReplicaEvent| match (held, &focus) {
+            (
+                ReplicaEvent::TabFocused {
+                    workspace_id: a, ..
+                },
+                ReplicaEvent::TabFocused {
+                    workspace_id: b, ..
+                },
+            )
+            | (
+                ReplicaEvent::PaneFocused {
+                    workspace_id: a, ..
+                },
+                ReplicaEvent::PaneFocused {
+                    workspace_id: b, ..
+                },
+            ) => a == b,
+            _ => false,
+        };
+        self.early_focuses.retain(|held| !same(held));
+        if self.early_focuses.len() == EARLY_FOCUS_LIMIT {
+            return Err(malformed_event(
+                event,
+                "too many focus events ahead of their tabs and panes",
+            ));
+        }
+        self.early_focuses.push(focus);
+        Ok(())
+    }
+
+    /// Applies each held focus whose tab or pane has now been announced.
+    fn apply_early_focuses(&mut self, mode: ApplyMode) -> Result<(), SessionFetchError> {
+        let (ready, held): (Vec<_>, Vec<_>) = std::mem::take(&mut self.early_focuses)
+            .into_iter()
+            .partition(|focus| match focus {
+                ReplicaEvent::TabFocused { tab_id, .. } => {
+                    self.state.tabs.iter().any(|tab| &tab.tab_id == tab_id)
+                }
+                ReplicaEvent::PaneFocused { pane_id, .. } => {
+                    self.state.panes.iter().any(|pane| &pane.pane_id == pane_id)
+                }
+                _ => false,
+            });
+        self.early_focuses = held;
+        for focus in ready {
+            self.apply_new_event(focus, mode)?;
+        }
+        Ok(())
+    }
+
     fn remove_workspace(&mut self, workspace_id: &str) {
+        self.retire(workspace_id);
+        let retired = self
+            .state
+            .tabs
+            .iter()
+            .filter(|tab| tab.workspace_id == workspace_id)
+            .map(|tab| tab.tab_id.clone())
+            .chain(
+                self.state
+                    .panes
+                    .iter()
+                    .filter(|pane| pane.workspace_id == workspace_id)
+                    .map(|pane| pane.pane_id.clone()),
+            )
+            .collect::<Vec<_>>();
+        for id in &retired {
+            self.retire(id);
+        }
         let tab_ids = self
             .state
             .tabs
@@ -1293,10 +1527,35 @@ impl SessionReplica {
             .retain(|tab_id| !tab_ids.contains(tab_id));
         self.pending_workspace_closures.remove(workspace_id);
         self.pending_active_tab_focuses.remove(workspace_id);
+        self.early_focuses.retain(|focus| match focus {
+            ReplicaEvent::TabFocused {
+                workspace_id: held, ..
+            }
+            | ReplicaEvent::PaneFocused {
+                workspace_id: held, ..
+            } => held != workspace_id,
+            _ => true,
+        });
         self.clear_missing_focus();
     }
 
     fn remove_tab(&mut self, tab_id: &str) {
+        self.retire(tab_id);
+        let pane_ids = self
+            .state
+            .panes
+            .iter()
+            .filter(|pane| pane.tab_id == tab_id)
+            .map(|pane| pane.pane_id.clone())
+            .collect::<Vec<_>>();
+        for pane_id in &pane_ids {
+            self.retire(pane_id);
+        }
+        self.early_focuses.retain(|focus| match focus {
+            ReplicaEvent::TabFocused { tab_id: held, .. } => held != tab_id,
+            ReplicaEvent::PaneFocused { pane_id: held, .. } => !pane_ids.contains(held),
+            _ => true,
+        });
         self.state.tabs.retain(|tab| tab.tab_id != tab_id);
         self.state.panes.retain(|pane| pane.tab_id != tab_id);
         self.state.layouts.retain(|layout| layout.tab_id != tab_id);
@@ -1306,6 +1565,10 @@ impl SessionReplica {
     }
 
     fn remove_pane(&mut self, pane_id: &str) {
+        self.retire(pane_id);
+        self.early_focuses.retain(|focus| {
+            !matches!(focus, ReplicaEvent::PaneFocused { pane_id: held, .. } if held == pane_id)
+        });
         self.state.panes.retain(|pane| pane.pane_id != pane_id);
         self.state.agents.retain(|agent| agent.pane_id != pane_id);
         self.clear_missing_focus();

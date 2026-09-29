@@ -40,6 +40,7 @@ use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, PanelCoversPayload, WorkspaceViewPayload, WorkspaceViewStore};
 
+use crate::checkout_owner::{OwnerOpen, TabHost};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::handle::ChangeNotifier;
 use crate::live::{
@@ -415,6 +416,8 @@ pub(crate) const ATTACHED_TAB_LIMIT: usize = 5;
 /// split, and a delegated child changes state often enough that one arrives.
 /// The window keeps a persistently refusing Herdr from being asked once per
 /// event without adding a timer of its own (PRD B36).
+/// A move Herdr acknowledged holds its stamp too, until the published layout
+/// shows the child in its own tab; its events arrive after the answer.
 const RELOCATION_RETRY_INTERVAL_MS: u64 = 5_000;
 
 /// What Herdr says about its tabs, kept per Herdr workspace.
@@ -570,12 +573,6 @@ impl ViewFocusSlot {
             Self::Pane => "Hide keeps it focused",
         }
     }
-}
-
-fn remote_workspace_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
-    projected_id
-        .strip_prefix(&format!("remote:{target_id}:workspace:"))
-        .filter(|workspace_id| !workspace_id.trim().is_empty())
 }
 
 fn remote_tab_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
@@ -867,10 +864,12 @@ fn remote_tab_creation_key(
             cwd.clone(),
             label.clone(),
         )),
-        // A workspace created for a registered project is keyed by its folder.
-        RemoteControlAction::CreateWorkspace { cwd, label, .. } => Some((
+        // An owner being opened is keyed by its folder.
+        RemoteControlAction::OpenOwner {
+            owner, cwd, label, ..
+        } => Some((
             target_id.to_owned(),
-            cwd.clone(),
+            owner.path().to_owned(),
             cwd.clone(),
             label.clone(),
         )),
@@ -959,6 +958,11 @@ pub struct Runtime {
     /// are grouped from the helper's facts (`device_catalog`).
     device_raw_sessions: HashMap<String, RemoteSessionSnapshot>,
     device_facts: HashMap<String, crate::device_catalog::DeviceFacts>,
+    /// Each device checkout's last tab the device's Herdr had in focus, by
+    /// device then checkout id: what opening the row brings forward (PRD
+    /// checkout-workspace-binding B5, D-13), as `visible_tab_ids` is here.
+    /// Pruned to the checkouts the device's session lists.
+    device_recent_tabs: HashMap<String, HashMap<String, String>>,
     /// Each device's repositories' worktrees, read through its helper
     /// (`hide_host::worktrees`); the device's rows carry them.
     device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
@@ -1460,6 +1464,7 @@ impl Runtime {
             changes_published_key: None,
             device_raw_sessions: HashMap::new(),
             device_facts: HashMap::new(),
+            device_recent_tabs: HashMap::new(),
             device_worktrees: HashMap::new(),
             local_host: Arc::new(crate::host_access::InProcessHost),
             document_places: HashMap::new(),
@@ -1874,7 +1879,6 @@ fn project_layout_panes(
                 id: pane.pane_id.clone(),
                 herdr_label: source.and_then(|source| source.label.clone()),
                 terminal_title: source.and_then(|source| source.terminal_title.clone()),
-                workspace_label: agent.map(|agent| agent.workspace_label.clone()),
                 cwd,
                 // This projection cannot see the read record ledger, so both
                 // read-dependent values are refilled from the navigator's

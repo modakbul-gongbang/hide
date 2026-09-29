@@ -1627,7 +1627,7 @@ impl Runtime {
                 true
             }
             Event::CreateTab(payload) => {
-                let Some((workspace_id, workspace_label, checkout_id, cwd)) = self
+                let Some((workspace_id, checkout_id, cwd, host)) = self
                     .snapshot
                     .navigator
                     .workspaces
@@ -1647,9 +1647,13 @@ impl Runtime {
                             .map(|checkout| {
                                 (
                                     workspace.id.clone(),
-                                    workspace.label.clone(),
                                     checkout.id.clone(),
                                     checkout.path.clone(),
+                                    super::projects::tab_host(
+                                        workspace,
+                                        checkout,
+                                        workspace::LOCAL_DEVICE_ID,
+                                    ),
                                 )
                             })
                     })
@@ -1695,8 +1699,6 @@ impl Runtime {
                     self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
                     return true;
                 }
-                let session_workspace_id =
-                    self.reusable_session_workspace_id(&workspace_id, &checkout_id);
                 let Some(context) = self.live.as_ref().cloned() else {
                     self.set_error(
                         "tab.control_unavailable",
@@ -1724,17 +1726,18 @@ impl Runtime {
                         .insert(format!("create:{admission_id}"));
                 }
                 let admission_path = cwd.clone();
-                let action = match session_workspace_id {
-                    Some(session_workspace_id) => RemoteControlAction::CreateTab {
-                        workspace_id: session_workspace_id,
+                let action = match host {
+                    TabHost::Workspace(workspace_id) => RemoteControlAction::CreateTab {
+                        workspace_id,
                         cwd,
                         label: label.to_owned(),
                         area_id,
                         admission_id: Some(admission_id),
                     },
-                    None => RemoteControlAction::CreateWorkspace {
+                    TabHost::Open(owner) => RemoteControlAction::OpenOwner {
+                        owner,
                         cwd,
-                        label: workspace_label,
+                        label: label.to_owned(),
                         area_id,
                         admission_id: Some(admission_id),
                     },

@@ -191,7 +191,6 @@ describe("row menus", () => {
       id,
       herdr_label: null,
       terminal_title: null,
-      workspace_label: null,
       cwd: "/Users/example/hide.worktrees/feature",
       status_label: status,
       requires_close_confirmation: false,

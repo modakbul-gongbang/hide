@@ -17,7 +17,6 @@ use std::sync::Condvar;
 
 const DEVICE: &str = "device-a";
 const WORKSPACE: &str = "remote:device-a:workspace:1";
-const CHECKOUT: &str = "remote:device-a:checkout:1";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Answer {
@@ -173,6 +172,8 @@ impl HostChannel for FakeDevice {
 struct Fixture {
     _dir: tempfile::TempDir,
     root: PathBuf,
+    /// The device checkout, keyed by its folder as the catalog keys it.
+    checkout: String,
     shared: Arc<Mutex<Runtime>>,
     device: Arc<FakeDevice>,
 }
@@ -183,17 +184,23 @@ impl Fixture {
         let root = dir.path().canonicalize().unwrap();
         std::fs::write(root.join("a.txt"), "old\n").unwrap();
         let mut runtime = runtime();
+        let checkout_id = crate::device_catalog::checkout_id(DEVICE, &root.to_string_lossy());
         let mut remote = workspace(
             WORKSPACE,
             "Remote",
             &root.to_string_lossy(),
-            vec![checkout(WORKSPACE, CHECKOUT, &root.to_string_lossy(), None)],
+            vec![checkout(
+                WORKSPACE,
+                &checkout_id,
+                &root.to_string_lossy(),
+                None,
+            )],
         );
         remote.device_id = DEVICE.to_owned();
         remote.remote_target_id = Some(DEVICE.to_owned());
         runtime.snapshot.navigator.workspaces = vec![remote];
         runtime.snapshot.navigator.focused_workspace_id = Some(WORKSPACE.to_owned());
-        runtime.snapshot.navigator.focused_checkout_id = Some(CHECKOUT.to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         let device = FakeDevice::new();
         runtime.device_hosts.insert(
             DEVICE.to_owned(),
@@ -214,6 +221,7 @@ impl Fixture {
         Self {
             _dir: dir,
             root,
+            checkout: checkout_id,
             shared,
             device,
         }
@@ -235,7 +243,7 @@ impl Fixture {
     fn open(&self, name: &str) {
         self.dispatch(
             "file_open",
-            serde_json::json!({"path": self.path(name), "workspace_id": WORKSPACE, "checkout_id": CHECKOUT}),
+            serde_json::json!({"path": self.path(name), "workspace_id": WORKSPACE, "checkout_id": &self.checkout}),
         );
     }
 
@@ -243,7 +251,7 @@ impl Fixture {
         self.dispatch(
             "file_save",
             serde_json::json!({
-                "tab_id": Runtime::file_tab_id(WORKSPACE, CHECKOUT, &self.path(name)),
+                "tab_id": Runtime::file_tab_id(WORKSPACE, &self.checkout, &self.path(name)),
                 "path": self.path(name),
                 "contents_utf8": contents,
             }),
@@ -251,7 +259,7 @@ impl Fixture {
     }
 
     fn document(&self, name: &str) -> Option<EditorDocumentSnapshot> {
-        let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &self.path(name));
+        let tab_id = Runtime::file_tab_id(WORKSPACE, &self.checkout, &self.path(name));
         self.shared
             .lock()
             .unwrap()
@@ -277,7 +285,7 @@ impl Fixture {
         what: &str,
         ready: impl Fn(&EditorDocumentSnapshot) -> bool,
     ) {
-        let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &self.path(name));
+        let tab_id = Runtime::file_tab_id(WORKSPACE, &self.checkout, &self.path(name));
         self.wait(what, |runtime| {
             runtime
                 .editor_documents
@@ -373,7 +381,7 @@ fn a_device_read_that_arrives_after_the_operator_moved_on_does_not_take_the_scre
         !runtime.snapshot.editor.tabs.is_empty()
     });
     let runtime = f.shared.lock().unwrap();
-    assert_eq!(runtime.snapshot.editor.tabs[0].checkout_id, CHECKOUT);
+    assert_eq!(runtime.snapshot.editor.tabs[0].checkout_id, f.checkout);
     assert_eq!(runtime.snapshot.editor.active_tab_id, None);
     assert!(runtime.snapshot.editor.document.is_none());
 }
@@ -888,7 +896,7 @@ fn a_device_file_tab_joins_the_device_strip_and_survives_session_syncs() {
             agents: Vec::new(),
             active_tab_ids: Default::default(),
             focused_workspace_id: Some(WORKSPACE.to_owned()),
-            focused_checkout_id: Some(CHECKOUT.to_owned()),
+            focused_checkout_id: Some(f.checkout.clone()),
             focused_tab_id: None,
             focused_pane_id: None,
             pane_layouts: Vec::new(),
@@ -908,7 +916,7 @@ fn a_device_file_tab_joins_the_device_strip_and_survives_session_syncs() {
         session
     };
     f.open_and_wait("a.txt");
-    let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &f.path("a.txt"));
+    let tab_id = Runtime::file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
     let strip_ids = |runtime: &Runtime| {
         runtime.snapshot.status.remote[0]
             .session
@@ -980,7 +988,7 @@ fn a_device_explorer_change_runs_on_its_host_and_the_open_tab_follows_it() {
             .is_some_and(|operation| operation.phase == "finished")
     });
     assert!(f.root.join("b.txt").is_file() && !f.root.join("a.txt").exists());
-    let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &f.path("a.txt"));
+    let tab_id = Runtime::file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
     assert_eq!(
         f.shared.lock().unwrap().document_places[&tab_id].relative,
         "b.txt"
@@ -1161,7 +1169,7 @@ fn a_device_checkouts_history_comes_from_its_helper_and_stays_with_its_device() 
 fn a_closed_device_file_reopens_only_on_its_device_and_leaves_this_machines_close() {
     let f = Fixture::new();
     f.open_and_wait("a.txt");
-    let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &f.path("a.txt"));
+    let tab_id = Runtime::file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
     f.dispatch("file_close", serde_json::json!({"tab_id": tab_id}));
     {
         let mut runtime = f.shared.lock().unwrap();
@@ -1548,7 +1556,7 @@ fn a_preview_open_landing_right_after_its_restore_read_replaces_that_preview() {
     f.dispatch(
         "file_open",
         serde_json::json!({
-            "path": f.path("a.txt"), "workspace_id": WORKSPACE, "checkout_id": CHECKOUT,
+            "path": f.path("a.txt"), "workspace_id": WORKSPACE, "checkout_id": &f.checkout,
             "preview": true,
         }),
     );
@@ -1610,7 +1618,7 @@ fn the_same_path_on_two_devices_is_two_documents_in_two_views() {
         );
         runtime.sync_workspace_view();
     }
-    let device_tab = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &f.path("a.txt"));
+    let device_tab = Runtime::file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
     let local_tab = Runtime::file_tab_id(local_id, local_checkout, &f.path("a.txt"));
     f.open("a.txt");
     f.wait("the device's document", |runtime| {

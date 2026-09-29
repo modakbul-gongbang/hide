@@ -362,10 +362,11 @@ The workspace inspector uses the canonical representative agent and disconnected
 ## Task identity
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, and the Overview agent line.
-`sidebar.rs` owns the ladder: the plugin's rolling `task`, then the workspace label.
+`sidebar.rs` owns the ladder: the plugin's rolling `task`, then the provider's name (`Claude`, `Codex`, the kind Herdr reports, or `Agent` when it reports none).
+The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
 The plugin publishes no session `name`, does not read Claude's `ai-title` or Codex's first human turn as a separate title, and never renames an agent or tab.
-There is no `summary` token and no missing-summary notice: an agent without a task is titled by its workspace, and the row says nothing else.
+There is no `summary` token and no missing-summary notice: an agent without a task is titled by its provider, and the row says nothing else.
 Truncation belongs to each view and does not shorten tooltip or accessibility text.
 Projection adds bounded-by-metadata strings per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.
 

@@ -1145,6 +1145,234 @@ fn last_tab_close_waits_for_the_workspace_close_cascade() {
     assert!(replica.project().workspaces.is_empty());
 }
 
+/// Herdr 0.9.1 announces a workspace that closes with its last tab or pane
+/// before the tab or pane itself; the trailing event names what the cascade
+/// already removed and must not rebuild the replica.
+#[test]
+fn a_close_event_trailing_its_workspace_close_is_already_applied() {
+    for (trailing, body) in [
+        (
+            "tab_closed",
+            json!({"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}),
+        ),
+        (
+            "pane_closed",
+            json!({"type": "pane_closed", "pane_id": "w1:p1", "workspace_id": "w1"}),
+        ),
+    ] {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let workspace_closed = replica
+            .apply(
+                event(
+                    "workspace_closed",
+                    json!({"type": "workspace_closed", "workspace_id": "w1"}),
+                ),
+                ApplyMode::Strict,
+            )
+            .expect("workspace close event");
+        assert!(workspace_closed.publish);
+
+        let trailing = replica
+            .apply(event(trailing, body), ApplyMode::Strict)
+            .unwrap_or_else(|error| panic!("{trailing} after workspace_closed: {error:?}"));
+        assert!(!trailing.publish);
+        assert!(replica.ready_to_publish());
+        assert!(replica.project().workspaces.is_empty());
+    }
+
+    // A close for a workspace no event closed is still a divergence.
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let error = replica
+        .apply(
+            event(
+                "tab_closed",
+                json!({"type": "tab_closed", "tab_id": "w9:t1", "workspace_id": "w9"}),
+            ),
+            ApplyMode::Strict,
+        )
+        .expect_err("unknown tab");
+    assert_eq!(error.state(), "malformed");
+}
+
+/// Herdr 0.9.1 emits a workspace's creation events after the call that
+/// created it returns, with the focus of that moment, so a tab created with
+/// focus right after its workspace is announced as focused before it is
+/// announced at all. The focus waits for its tab and pane.
+#[test]
+fn a_focus_announced_before_its_tab_and_pane_applies_when_they_arrive() {
+    let created = two_tab_snapshot();
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let events = [
+        event(
+            "tab_focused",
+            json!({"type": "tab_focused", "workspace_id": "w1", "tab_id": "w1:t2"}),
+        ),
+        event(
+            "pane_focused",
+            json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p2"}),
+        ),
+        event(
+            "tab_created",
+            json!({"type": "tab_created", "tab": created["tabs"][1]}),
+        ),
+        event(
+            "pane_created",
+            json!({"type": "pane_created", "workspace_id": "w1", "tab_id": "w1:t2", "pane": created["panes"][1]}),
+        ),
+        event(
+            "layout_updated",
+            json!({"type": "layout_updated", "layout": created["layouts"][1]}),
+        ),
+    ];
+    for (index, next) in events.into_iter().enumerate() {
+        replica
+            .apply(next, ApplyMode::Strict)
+            .unwrap_or_else(|error| panic!("event {index}: {error:?}"));
+    }
+    assert!(replica.ready_to_publish());
+    let projected = replica.project();
+    assert_eq!(
+        projected.workspaces[0].active_tab_id.as_deref(),
+        Some("w1:t2")
+    );
+    assert_eq!(projected.focused_pane_id.as_deref(), Some("w1:p2"));
+
+    // A focus in a workspace Herdr never announced is still a divergence.
+    let error = replica
+        .apply(
+            event(
+                "tab_focused",
+                json!({"type": "tab_focused", "workspace_id": "w9", "tab_id": "w9:t1"}),
+            ),
+            ApplyMode::Strict,
+        )
+        .expect_err("unknown workspace");
+    assert_eq!(error.state(), "malformed");
+}
+
+/// A held focus is Herdr's focus of an earlier moment; a focus Herdr applies
+/// after it wins, so the held one never moves focus back when its pane lands.
+#[test]
+fn a_focus_applied_after_a_held_one_supersedes_it() {
+    let created = two_tab_snapshot();
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let events = [
+        event(
+            "pane_focused",
+            json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p2"}),
+        ),
+        event(
+            "pane_focused",
+            json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p1"}),
+        ),
+        event(
+            "tab_created",
+            json!({"type": "tab_created", "tab": created["tabs"][1]}),
+        ),
+        event(
+            "pane_created",
+            json!({"type": "pane_created", "workspace_id": "w1", "tab_id": "w1:t2", "pane": created["panes"][1]}),
+        ),
+        event(
+            "layout_updated",
+            json!({"type": "layout_updated", "layout": created["layouts"][1]}),
+        ),
+    ];
+    for (index, next) in events.into_iter().enumerate() {
+        replica
+            .apply(next, ApplyMode::Strict)
+            .unwrap_or_else(|error| panic!("event {index}: {error:?}"));
+    }
+    assert!(replica.ready_to_publish());
+    assert_eq!(replica.project().focused_pane_id.as_deref(), Some("w1:p1"));
+}
+
+/// The event order Herdr 0.9.1 emits when Hide opens a workspace and
+/// `layout.apply` replaces its seed tab (the Reopen of a tab whose workspace
+/// closed with it): the seed tab is announced, closed, then focused, given a
+/// pane and laid out, and only then does the restored tab arrive.
+#[test]
+fn a_seed_tab_announced_after_its_close_leaves_the_restored_tab_in_front() {
+    let restored: Value =
+        serde_json::from_str(&two_tab_snapshot().to_string().replace("w1", "w2")).unwrap();
+    let mut workspace = restored["workspaces"][0].clone();
+    workspace["focused"] = json!(true);
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let events = [
+        event(
+            "workspace_created",
+            json!({"type": "workspace_created", "workspace": workspace}),
+        ),
+        event(
+            "workspace_focused",
+            json!({"type": "workspace_focused", "workspace_id": "w2"}),
+        ),
+        event(
+            "tab_created",
+            json!({"type": "tab_created", "tab": restored["tabs"][0]}),
+        ),
+        event(
+            "tab_closed",
+            json!({"type": "tab_closed", "workspace_id": "w2", "tab_id": "w2:t1"}),
+        ),
+        event(
+            "tab_focused",
+            json!({"type": "tab_focused", "workspace_id": "w2", "tab_id": "w2:t1"}),
+        ),
+        event(
+            "pane_created",
+            json!({"type": "pane_created", "workspace_id": "w2", "tab_id": "w2:t1", "pane": restored["panes"][0]}),
+        ),
+        event(
+            "pane_focused",
+            json!({"type": "pane_focused", "workspace_id": "w2", "pane_id": "w2:p1"}),
+        ),
+        event(
+            "layout_updated",
+            json!({"type": "layout_updated", "layout": restored["layouts"][0]}),
+        ),
+        event(
+            "tab_created",
+            json!({"type": "tab_created", "tab": restored["tabs"][1]}),
+        ),
+        event(
+            "pane_created",
+            json!({"type": "pane_created", "workspace_id": "w2", "tab_id": "w2:t2", "pane": restored["panes"][1]}),
+        ),
+        event(
+            "layout_updated",
+            json!({"type": "layout_updated", "layout": restored["layouts"][1]}),
+        ),
+    ];
+    for (index, next) in events.into_iter().enumerate() {
+        replica
+            .apply(next, ApplyMode::Strict)
+            .unwrap_or_else(|error| panic!("event {index}: {error:?}"));
+    }
+    // No event names the restored tab as active, so the coordinator reads it.
+    assert_eq!(
+        replica.workspaces_awaiting_active_tab(),
+        vec!["w2".to_owned()]
+    );
+    assert!(replica.settle_active_tab("w2", "w2:t2"));
+    assert!(replica.ready_to_publish());
+    assert!(replica.refresh_published_state().expect("publishes"));
+    let projected = replica.project();
+    let tabs = projected
+        .tabs
+        .iter()
+        .filter(|tab| tab.workspace_id == "w2")
+        .map(|tab| tab.tab_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(tabs, vec!["w2:t2"]);
+    let restored_workspace = projected
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.workspace_id == "w2")
+        .expect("the reopened workspace is published");
+    assert_eq!(restored_workspace.active_tab_id.as_deref(), Some("w2:t2"));
+}
+
 /// The subscription is opened before the snapshot, so an event emitted just
 /// before the snapshot was taken arrives as well and describes a change the
 /// snapshot already holds. In the reconcile window the snapshot wins and the

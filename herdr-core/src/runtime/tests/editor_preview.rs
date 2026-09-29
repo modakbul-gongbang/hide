@@ -527,6 +527,7 @@ fn reveal_and_reopen_open_ordinary_tabs() {
         workspace_exists: true,
         tab_exists: true,
         fallback_pane_id: None,
+        owner: None,
     };
     runtime.reopen_in_flight = Some(request.item.key().to_owned());
     assert!(runtime.ingest_reopen_result(

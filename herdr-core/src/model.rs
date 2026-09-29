@@ -998,6 +998,22 @@ pub struct CheckoutSnapshot {
     /// so the shell never has to read a number back out of a label it was
     /// given to draw.
     pub next_tab_label: String,
+    /// The host's own id of the Herdr workspace that owns this checkout, where
+    /// every tab Hide creates here goes (`checkout_owner`); `None` while no
+    /// owner is open. Read from the session Hide already holds, never sent to
+    /// the shell.
+    #[serde(skip_serializing)]
+    pub owner_workspace_id: Option<String>,
+    /// A device's raw row only: its Herdr workspace's `hide_owner` token,
+    /// which the grouping checks against the checkout's folder
+    /// (`device_catalog::group`).
+    #[serde(skip_serializing)]
+    pub owner_mark: Option<String>,
+    /// A device checkout whose folder the device's helper has not confirmed:
+    /// whether it is a Git checkout is unknown, so an owner cannot be opened
+    /// for it until it is (`checkout_owner`).
+    #[serde(skip_serializing)]
+    pub unconfirmed: bool,
 }
 
 /// One entry in a checkout's tab strip.
@@ -1287,7 +1303,6 @@ pub struct PaneSnapshot {
     /// the one that runs it stays testable in the shell.
     pub herdr_label: Option<String>,
     pub terminal_title: Option<String>,
-    pub workspace_label: Option<String>,
     pub cwd: String,
     /// The one short human word for the agent in this pane, from the same
     /// derivation the sidebar row uses.

@@ -2279,11 +2279,10 @@ impl Runtime {
                 );
             }
         }
-        // A device checkout names the one Herdr workspace that holds it; its
-        // project can hold several (`device_catalog`).
-        let session_workspace_id = if let Some(target_id) = remote_target_id.as_deref() {
-            crate::device_catalog::remote_checkout_source_id(target_id, &checkout.id)
-                .map(str::to_owned)
+        // A device checkout's purpose goes to its owner workspace; its other
+        // workspaces only hold tabs there (D-10).
+        let session_workspace_id = if remote_target_id.is_some() {
+            checkout.owner_workspace_id.clone()
         } else {
             workspace::authoritative_session_space(
                 &self.last_session_spaces,
@@ -2385,7 +2384,7 @@ impl Runtime {
             );
             return true;
         };
-        let (workspace_path, checkout_label, next_tab_label) = {
+        let (workspace_path, next_tab_label) = {
             let workspace = self
                 .snapshot
                 .navigator
@@ -2398,17 +2397,11 @@ impl Runtime {
                 .iter()
                 .find(|checkout| checkout.id == checkout_id)
                 .expect("local_checkout_ids named a listed checkout");
-            (
-                workspace.path.clone(),
-                checkout.label.clone(),
-                checkout.next_tab_label.clone(),
-            )
+            (workspace.path.clone(), checkout.next_tab_label.clone())
         };
-        let session_workspace_id = self.reusable_session_workspace_id(&workspace_id, &checkout_id);
-        let label = session_workspace_id
-            .as_ref()
-            .map(|_| next_tab_label)
-            .unwrap_or_else(|| format!("hide {checkout_label}"));
+        let host = self
+            .local_tab_host(&workspace_id, &checkout_id)
+            .expect("local_checkout_ids named a listed checkout");
         let prompt = agent_kind.as_ref().and(payload.prompt.clone());
         let id = match self.begin_task_operation(
             "agent_start",
@@ -2427,8 +2420,8 @@ impl Runtime {
         let request = live::CheckoutTabRequest {
             id,
             checkout_path: payload.checkout_path,
-            label,
-            session_workspace_id,
+            label: next_tab_label,
+            host,
         };
         let Some(context) = self.live.as_ref().cloned() else {
             return self.ingest_task_operation_result(
@@ -2459,19 +2452,11 @@ impl Runtime {
             })
     }
 
-    /// Returns a live Herdr workspace that belongs only to this Hide project.
-    ///
-    /// A Herdr workspace can contain panes from several repository roots. Its
-    /// label and future tabs then belong to none of those projects reliably,
-    /// so opening another tab there would carry a neighboring project's name
-    /// and keep mixing the two catalogs. Prefer the checkout's visible tab,
-    /// then its other tabs, then the project's remaining session workspaces,
-    /// but reuse a candidate only while this project is its sole owner.
-    pub(super) fn reusable_session_workspace_id(
-        &self,
-        project_id: &str,
-        checkout_id: &str,
-    ) -> Option<String> {
+    /// Where a new tab in one local checkout goes: its owner Herdr workspace,
+    /// or that owner opened first (PRD checkout-workspace-binding D-07). A
+    /// workspace that merely holds the checkout's tabs is never the answer
+    /// (D-08).
+    pub(super) fn local_tab_host(&self, project_id: &str, checkout_id: &str) -> Option<TabHost> {
         let project = self
             .snapshot
             .navigator
@@ -2482,37 +2467,7 @@ impl Runtime {
             .checkouts
             .iter()
             .find(|checkout| checkout.id == checkout_id)?;
-        let mut candidates = Vec::new();
-        if let Some(workspace_id) = self
-            .visible_tab_ids
-            .get(checkout_id)
-            .and_then(|tab_id| {
-                self.snapshot
-                    .pane_layouts
-                    .iter()
-                    .find(|layout| &layout.tab_id == tab_id)
-            })
-            .map(|layout| layout.workspace_id.clone())
-        {
-            candidates.push(workspace_id);
-        }
-        candidates.extend(
-            checkout
-                .tabs
-                .iter()
-                .filter_map(|tab| tab.workspace_id.clone()),
-        );
-        candidates.extend(project.session_workspace_ids.iter().cloned());
-        candidates.into_iter().find(|candidate| {
-            project.session_workspace_ids.contains(candidate)
-                && self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .filter(|workspace| workspace.session_workspace_ids.contains(candidate))
-                    .all(|workspace| workspace.id == project_id)
-        })
+        Some(tab_host(project, checkout, workspace::LOCAL_DEVICE_ID))
     }
 
     pub(super) fn migrate_main_branch(&mut self, payload: MigrateMainBranchPayload) -> bool {
@@ -2683,6 +2638,41 @@ impl Runtime {
         // workspace_closed rebuilds the catalog off the runtime lock.
         self.persist_current_ui_state();
     }
+}
+
+/// Where a new tab in `checkout` of `project` on `device_id` goes: the owner
+/// the session names, else the owner to open.
+pub(super) fn tab_host(
+    project: &WorkspaceSnapshot,
+    checkout: &crate::model::CheckoutSnapshot,
+    device_id: &str,
+) -> TabHost {
+    match &checkout.owner_workspace_id {
+        Some(owner) => TabHost::Workspace(owner.clone()),
+        None => TabHost::Open(owner_open(project, checkout, device_id)),
+    }
+}
+
+/// How `checkout` of `project` gets its owner opened. A workspace Hide opens
+/// is named as the sidebar names the checkout: a linked worktree by its
+/// branch, the primary checkout and a plain folder by the project (D-14).
+pub(super) fn owner_open(
+    project: &WorkspaceSnapshot,
+    checkout: &crate::model::CheckoutSnapshot,
+    device_id: &str,
+) -> OwnerOpen {
+    let label = if checkout.is_worktree {
+        &checkout.label
+    } else {
+        &project.label
+    };
+    OwnerOpen::for_checkout(
+        device_id,
+        &checkout.path,
+        &project.path,
+        project.is_git,
+        label,
+    )
 }
 
 #[cfg(test)]

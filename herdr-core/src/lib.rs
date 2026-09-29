@@ -4,6 +4,7 @@ mod agent_sleep_herdr;
 mod agent_start;
 mod ai;
 mod changes;
+mod checkout_owner;
 mod device_catalog;
 pub mod diagnostics;
 mod disk;

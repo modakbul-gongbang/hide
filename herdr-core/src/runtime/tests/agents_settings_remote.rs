@@ -4,11 +4,19 @@ use super::*;
 fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
     let mut runtime = runtime();
     let projected_workspace_id = "remote:mini:workspace:w1";
+    // The checkout's owner on the device is w1.
+    let mut owned = checkout(
+        projected_workspace_id,
+        &crate::device_catalog::checkout_id("mini", "/tmp/herdr-ide-remote-tab"),
+        "/tmp/herdr-ide-remote-tab",
+        None,
+    );
+    owned.owner_workspace_id = Some("w1".to_owned());
     let mut remote_workspace = workspace(
         projected_workspace_id,
         "Fixture",
         "/tmp/herdr-ide-remote-tab",
-        Vec::new(),
+        vec![owned],
     );
     remote_workspace.remote_target_id = Some("mini".to_owned());
     remote_workspace.device_id = "mini".to_owned();

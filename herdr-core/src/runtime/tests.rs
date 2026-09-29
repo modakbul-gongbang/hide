@@ -466,7 +466,6 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
         id: id.to_owned(),
         herdr_label: None,
         terminal_title: None,
-        workspace_label: None,
         cwd: cwd.to_owned(),
         status_label: "Attached".to_owned(),
         requires_close_confirmation: false,

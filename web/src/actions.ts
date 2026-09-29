@@ -26,7 +26,7 @@ import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
-import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
+import { remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
   catalogWorkspaces,
   deviceOfCheckout,
@@ -233,12 +233,6 @@ export function createActions(dispatch: DispatchFn) {
       const checkout = project?.checkouts.find((row) => row.id === checkoutId);
       if (!checkout) {
         return diagnostic(`focus_workspace: ${checkoutId} is not on ${context.device.label}`);
-      }
-      // A registered project Herdr has no workspace in yet is opened by
-      // creating one at its folder there (find-or-create, as on this machine).
-      if (checkoutId.endsWith(REGISTERED_CHECKOUT)) {
-        sendRemote(host.targetId, { action: "create_tab", workspace_id: workspaceId, checkout_id: checkoutId, cwd: checkout.path, label: checkout.next_tab_label });
-        return;
       }
       sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId });
       return;
@@ -965,13 +959,6 @@ export function createActions(dispatch: DispatchFn) {
       if (deviceId === "local") {
         dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, focus_device: true, ...(expanded === undefined ? {} : { expanded }) } });
         return;
-      }
-      // A registered device project Herdr has no workspace in yet is opened
-      // by creating one at its folder there, as its sidebar row does.
-      if (checkoutId.endsWith(REGISTERED_CHECKOUT)) {
-        const checkout = rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces.flatMap((row) => row.checkouts).find((row) => row.id === checkoutId);
-        if (!checkout) return diagnostic(`open workspace: ${checkoutId} is not on ${deviceId}`);
-        return dispatch(withDeviceForward(remoteControl(deviceId, { action: "create_tab", workspace_id: workspaceId, checkout_id: checkoutId, cwd: checkout.path, label: checkout.next_tab_label })));
       }
       dispatch(withDeviceForward(remoteControl(deviceId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId })));
     },

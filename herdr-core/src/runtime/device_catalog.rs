@@ -53,6 +53,8 @@ impl Runtime {
         let empty = DeviceFacts::default();
         let catalog =
             device_catalog::catalog_state(raw, self.device_facts.get(target).unwrap_or(&empty));
+        self.bring_recent_device_tabs(target, &mut session);
+        self.rename_saved_device_checkouts(target, &session);
         let mut dropped_moves = Vec::new();
         self.place_device_strips(target, &mut session, &mut dropped_moves);
         if !dropped_moves.is_empty() {
@@ -83,6 +85,92 @@ impl Runtime {
             self.restore_front_when_ready();
         }
         changed
+    }
+
+    /// Carries folds saved under a device checkout's old, workspace-keyed id
+    /// over to its folder-keyed id (`device_catalog::legacy_checkout_ids`); a
+    /// device's selection is not saved (`ui_state.focused_checkout_id` holds
+    /// only this machine's), since the device's own Herdr focus picks it.
+    fn rename_saved_device_checkouts(&mut self, target: &str, session: &RemoteSessionSnapshot) {
+        let Some(raw) = self.device_raw_sessions.get(target) else {
+            return;
+        };
+        let ui = &self.snapshot.ui_state;
+        let saved = ui
+            .expanded_checkout_ids
+            .iter()
+            .chain(&ui.collapsed_checkout_ids);
+        let renamed = device_catalog::legacy_checkout_ids(
+            target,
+            raw,
+            session,
+            &ui.workspace_registrations,
+            saved,
+        );
+        if renamed.is_empty() {
+            return;
+        }
+        let rename = |id: &mut String| {
+            if let Some(new) = renamed.get(id.as_str()) {
+                *id = new.clone();
+            }
+        };
+        let ui = &mut self.snapshot.ui_state;
+        ui.expanded_checkout_ids.iter_mut().for_each(rename);
+        ui.collapsed_checkout_ids.iter_mut().for_each(rename);
+        ui.expanded_checkout_ids.sort();
+        ui.expanded_checkout_ids.dedup();
+        ui.collapsed_checkout_ids.sort();
+        ui.collapsed_checkout_ids.dedup();
+        crate::diagnostic!(serde_json::json!({
+            "component": "device_catalog",
+            "kind": "catalog.checkout_ids_renamed",
+            "target": target,
+            "count": renamed.len(),
+        }));
+        self.persist_current_ui_state();
+    }
+
+    /// Remembers the tab the device's Herdr has in focus under the checkout
+    /// holding it, and makes each checkout's remembered tab, while it still
+    /// exists, the one its row brings forward; the grouping's own choice is
+    /// the fallback for a checkout with nothing remembered.
+    fn bring_recent_device_tabs(&mut self, target: &str, session: &mut RemoteSessionSnapshot) {
+        let recent = self
+            .device_recent_tabs
+            .entry(target.to_owned())
+            .or_default();
+        if let (Some(checkout), Some(tab)) = (
+            session.focused_checkout_id.as_ref(),
+            session.focused_tab_id.as_ref(),
+        ) {
+            recent.insert(checkout.clone(), tab.clone());
+        }
+        let listed = session
+            .workspaces
+            .iter()
+            .flat_map(|project| project.checkouts.iter())
+            .map(|checkout| checkout.id.as_str())
+            .collect::<HashSet<_>>();
+        recent.retain(|checkout, _| listed.contains(checkout.as_str()));
+        for checkout in session
+            .workspaces
+            .iter_mut()
+            .flat_map(|project| project.checkouts.iter_mut())
+        {
+            let Some(tab) = recent.get(&checkout.id).filter(|tab| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|listed| listed.id.as_ref() == Some(*tab))
+            }) else {
+                continue;
+            };
+            checkout.active_tab_id = Some(tab.clone());
+            session
+                .active_tab_ids
+                .insert(checkout.id.clone(), tab.clone());
+        }
     }
 
     /// A file tab names its checkout's project; grouping moves a checkout
@@ -361,6 +449,7 @@ impl Runtime {
 
     pub(super) fn forget_device_catalog(&mut self, target: &str) {
         self.device_raw_sessions.remove(target);
+        self.device_recent_tabs.remove(target);
         self.device_facts.remove(target);
         self.device_worktrees.remove(target);
     }

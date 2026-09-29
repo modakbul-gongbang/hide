@@ -1225,6 +1225,17 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     }
 }
 
+/// The name of an agent kind as a person says it: the two providers Hide
+/// starts by their product names, any other kind exactly as Herdr reports it.
+pub(crate) fn provider_name(kind: Option<&str>) -> String {
+    match non_empty(kind) {
+        Some("claude") => "Claude".to_owned(),
+        Some("codex") => "Codex".to_owned(),
+        Some(kind) => kind.to_owned(),
+        None => "Agent".to_owned(),
+    }
+}
+
 /// Re-derives every drawn value of a row whose sleep mark was just set.
 pub fn rederive(agent: &mut SidebarAgentSnapshot) {
     derive_from_axes(agent);
@@ -1260,15 +1271,17 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .filter(|value| valid_elapsed(value))
         .unwrap_or_default();
 
-    let identity_label = task.unwrap_or_else(|| workspace_label.clone());
+    let agent_kind = non_empty(agent.agent.as_deref()).unwrap_or("unknown");
+    // Until its first task, an agent is named by what it is, never by the
+    // Herdr workspace it happens to run in (PRD checkout-workspace-binding
+    // D-09): that label names another checkout as often as this one.
+    let identity_label = task.unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         pane_id,
         workspace_label,
         checkout_label: None,
-        agent_kind: non_empty(agent.agent.as_deref())
-            .unwrap_or("unknown")
-            .to_owned(),
+        agent_kind: agent_kind.to_owned(),
         demand: demand.name().to_owned(),
         activity: activity.name().to_owned(),
         completed,
@@ -1823,7 +1836,6 @@ mod tests {
                         id: (*id).to_owned(),
                         herdr_label: None,
                         terminal_title: None,
-                        workspace_label: None,
                         cwd: "/fixture".to_owned(),
                         status_label: "Unknown".to_owned(),
                         requires_close_confirmation: false,
@@ -2412,23 +2424,26 @@ mod tests {
         );
     }
 
-    /// PRD D-01: the rolling task is the title and the workspace is the final
-    /// fallback. Herdr's agent name and the retired `name` token are control
-    /// identifiers, not display titles.
+    /// PRD D-01, checkout-workspace-binding D-09: the rolling task is the
+    /// title and the provider is the fallback. Herdr's agent name, the
+    /// retired `name` token and the Herdr workspace label (`home-graph`,
+    /// another checkout's name as often as this one's) are never titles.
     #[test]
-    fn identity_ladder_uses_task_then_workspace_and_ignores_names() {
+    fn identity_ladder_uses_task_then_provider_and_ignores_names_and_workspace_labels() {
         let projected = projected(json!([
-            {"pane_id":"p2","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p3","id":"sasu-implementor","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","name":"첫 프롬프트"}},
-            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}}
+            {"pane_id":"p2","id":"impl-x","agent":"claude","workspace_label":"home-graph","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p3","id":"sasu-implementor","agent":"claude","workspace_label":"home-graph","tokens":{"status_working":"●","activity":"0000000000003","name":"첫 프롬프트"}},
+            {"pane_id":"p4","id":"p4","agent":"codex","workspace_label":"web-shell-pivot-s3","tokens":{"status_working":"●","activity":"0000000000004"}},
+            {"pane_id":"p5","id":"p5","agent":"gemini","workspace_label":"home-graph","tokens":{"status_working":"●","activity":"0000000000005"}},
+            {"pane_id":"p6","id":"p6","workspace_label":"home-graph","tokens":{"status_working":"●","activity":"0000000000006"}}
         ]));
         let labels = projected
             .iter()
-            .map(|agent| agent.identity_label.as_str())
-            .collect::<Vec<_>>();
+            .map(|agent| (agent.pane_id.as_str(), agent.identity_label.as_str()))
+            .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(
-            labels,
-            ["hook 보고 경로 수정", "hide", "hook 보고 경로 수정"]
+            labels.into_values().collect::<Vec<_>>(),
+            ["hook 보고 경로 수정", "Claude", "Codex", "gemini", "Agent"]
         );
     }
 
@@ -2437,9 +2452,9 @@ mod tests {
     #[test]
     fn a_legacy_summary_token_is_ignored() {
         let projected = projected(json!([
-            {"pane_id":"p1","id":"p1","workspace_label":"task-factory","tokens":{"status_idle":"○","activity":"0000000000001","summary":"Check agent-context-labels settings"}}
+            {"pane_id":"p1","id":"p1","agent":"codex","workspace_label":"task-factory","tokens":{"status_idle":"○","activity":"0000000000001","summary":"Check agent-context-labels settings"}}
         ]));
-        assert_eq!(projected[0].identity_label, "task-factory");
+        assert_eq!(projected[0].identity_label, "Codex");
         assert_eq!(projected[0].detail, None);
     }
 

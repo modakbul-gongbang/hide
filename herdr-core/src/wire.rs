@@ -615,10 +615,6 @@ pub(crate) fn empty_params() -> Value {
     Value::Object(Default::default())
 }
 
-pub(crate) fn workspace_create_params(cwd: &str, label: &str) -> Result<Value, String> {
-    workspace_create_with_env_params(cwd, label, Default::default())
-}
-
 pub(crate) fn workspace_create_with_env_params(
     cwd: &str,
     label: &str,
@@ -685,6 +681,92 @@ pub(crate) fn workspace_issue_params(
     issue: Option<&str>,
 ) -> Result<Value, String> {
     workspace_metadata_params(workspace_id, "issue", issue)
+}
+
+/// `worktree.open` for one checkout path, from its repository's main
+/// worktree: Herdr answers with the workspace it already binds to that
+/// checkout, or binds or opens one (`already_open`). It carries no label,
+/// because Herdr applies one to a workspace that was already open too.
+pub(crate) fn worktree_open_params(path: &str, repository_root: &str) -> Result<Value, String> {
+    params(req::WorktreeOpenParams {
+        branch: None,
+        cwd: Some(repository_root.into()),
+        focus: true,
+        label: None,
+        path: Some(path.into()),
+        trust_repository: None,
+        workspace_id: None,
+    })
+}
+
+/// What `worktree.open` answered: the bound workspace, its active tab and
+/// pane, and whether Herdr had it open before this request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OpenedWorktree {
+    pub(crate) workspace_id: String,
+    pub(crate) label: String,
+    pub(crate) tab_id: String,
+    pub(crate) pane_id: String,
+    pub(crate) already_open: bool,
+}
+
+pub(crate) fn opened_worktree(value: Value) -> Result<OpenedWorktree, String> {
+    let missing = "worktree.open response is missing workspace, tab or root pane";
+    match response(value, missing)? {
+        res::ResponseResult::WorktreeOpened {
+            workspace,
+            tab,
+            root_pane,
+            already_open,
+            ..
+        } => Ok(OpenedWorktree {
+            label: workspace.label,
+            workspace_id: nonempty_id(workspace.workspace_id, missing)?,
+            tab_id: nonempty_id(tab.tab_id, missing)?,
+            pane_id: nonempty_id(root_pane.pane_id, missing)?,
+            already_open,
+        }),
+        _ => Err(missing.into()),
+    }
+}
+
+/// Each workspace's id and the value of one of its metadata tokens, from a
+/// `workspace.list` answer.
+pub(crate) fn listed_workspace_tokens(
+    value: Value,
+    token: &str,
+) -> Result<Vec<(String, Option<String>)>, String> {
+    let missing = "workspace.list response is missing workspaces";
+    match response(value, missing)? {
+        res::ResponseResult::WorkspaceList { workspaces } => Ok(workspaces
+            .into_iter()
+            .map(|workspace| {
+                let mark = workspace
+                    .tokens
+                    .into_iter()
+                    .find(|(key, _)| String::from(key.clone()) == token)
+                    .map(|(_, value)| value);
+                (workspace.workspace_id, mark)
+            })
+            .collect()),
+        _ => Err(missing.into()),
+    }
+}
+
+pub(crate) fn workspace_rename_params(workspace_id: &str, label: &str) -> Result<Value, String> {
+    params(req::WorkspaceRenameParams {
+        workspace_id: workspace_id.into(),
+        label: label.into(),
+    })
+}
+
+pub(crate) fn workspace_list_params() -> Result<Value, String> {
+    params(req::EmptyParams(Default::default()))
+}
+
+/// Hide's owner mark on a plain-folder workspace it opened (`checkout_owner`).
+pub(crate) fn workspace_owner_mark_params(workspace_id: &str, mark: &str) -> Result<Value, String> {
+    workspace_metadata_params(workspace_id, crate::checkout_owner::OWNER_TOKEN, Some(mark))
 }
 
 pub(crate) fn workspace_purpose_params(
@@ -798,10 +880,6 @@ pub(crate) fn move_outcome(
         });
     }
     nonempty_id(created_tab_id.ok_or_else(|| missing.to_owned())?, missing)
-}
-
-pub(crate) fn tab_create_params(workspace: &str, cwd: &str, label: &str) -> Result<Value, String> {
-    tab_create_with_env_params(workspace, cwd, label, Default::default())
 }
 
 pub(crate) fn tab_create_with_env_params(
@@ -1260,15 +1338,6 @@ pub(crate) fn workspace_active_tab(value: Value) -> Result<String, String> {
         _ => Err(missing.into()),
     }
 }
-pub(crate) fn created_workspace_pane(value: Value) -> Result<String, String> {
-    let missing = "workspace.create response is missing root_pane.pane_id";
-    match response(value, missing)? {
-        res::ResponseResult::WorkspaceCreated { root_pane, .. } => {
-            nonempty_id(root_pane.pane_id, missing)
-        }
-        _ => Err(missing.into()),
-    }
-}
 pub(crate) fn created_tab(value: Value) -> Result<(String, String), String> {
     let tab_missing = "tab.create response is missing tab.tab_id";
     let pane_missing = "tab.create response is missing root_pane.pane_id";
@@ -1655,7 +1724,7 @@ mod tests {
             serde_json::from_slice::<Value>(&bytes).unwrap()["result"].clone()
         };
         assert_eq!(
-            created_workspace_pane(load("workspace.create.json")).unwrap(),
+            created_workspace(load("workspace.create.json")).unwrap().2,
             "w1:p1"
         );
         assert_eq!(

@@ -18,6 +18,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::checkout_owner::OwnerOpen;
 use crate::find::PaneFindOptions;
 use crate::fork::ForkRequest;
 use crate::handle::ChangeNotifier;
@@ -131,11 +132,6 @@ pub struct WorkspaceCreationOutcome {
     pub git_init_error: Option<String>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct CreatedWorkspace {
-    pane_id: String,
-}
-
 pub fn spawn_workspace_creation(
     context: LiveContext,
     path: String,
@@ -204,13 +200,17 @@ pub fn spawn_workspace_creation(
                     let needs_herdr_workspace = before_catalog
                         .iter()
                         .any(|workspace| workspace.id == registration.id);
+                    // The project's first workspace is its checkout's owner
+                    // (PRD checkout-workspace-binding B12), never a plain
+                    // workspace a later tab would pass over.
                     let created = needs_herdr_workspace
                         .then(|| {
-                            create_herdr_workspace(
+                            ensure_owner(
                                 context.api_connector.as_ref(),
-                                &registration.path,
-                                &registration.label,
+                                &registered_owner(&registration.path, &registration.label),
+                                Default::default(),
                             )
+                            .map_err(|error| error.message().to_owned())
                         })
                         .transpose()?;
                     let session = if created.is_some() {
@@ -233,7 +233,8 @@ pub fn spawn_workspace_creation(
                         registrations,
                         workspaces,
                         session,
-                        created_pane_id: created.map(|created| created.pane_id),
+                        created_pane_id: created
+                            .and_then(|(_, first_tab)| first_tab.map(|(_, pane_id)| pane_id)),
                         git_init_error,
                     })
                 });
@@ -254,18 +255,20 @@ pub fn spawn_workspace_creation(
         .map_err(|error| format!("workspace creation worker could not be started: {error}"))
 }
 
-fn create_herdr_workspace(
-    connector: &dyn ApiConnector,
-    cwd: &str,
-    label: &str,
-) -> Result<CreatedWorkspace, String> {
-    let result = control_request(
-        connector,
-        "workspace.create",
-        wire::workspace_create_params(cwd, label)?,
-    )?;
-    let pane_id = wire::created_workspace_pane(result)?;
-    Ok(CreatedWorkspace { pane_id })
+/// The owner a newly registered project's checkout gets: a Git checkout is
+/// opened from its repository's main worktree, a plain folder is created
+/// and marked at the registered path, the same path the catalog keys it by.
+fn registered_owner(path: &str, label: &str) -> OwnerOpen {
+    match hide_project::facts(Path::new(path)) {
+        Ok(facts) if facts.kind == hide_project::ProjectKind::Git => OwnerOpen::for_checkout(
+            crate::workspace::LOCAL_DEVICE_ID,
+            &facts.checkout_root.to_string_lossy(),
+            &facts.root.to_string_lossy(),
+            true,
+            label,
+        ),
+        _ => OwnerOpen::for_checkout(crate::workspace::LOCAL_DEVICE_ID, path, path, false, label),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -395,7 +398,10 @@ pub enum RemoteControlAction {
         area_id: Option<String>,
         admission_id: Option<u64>,
     },
-    CreateWorkspace {
+    /// A new tab in a checkout whose owner Herdr workspace is not open: the
+    /// owner is opened first and the tab lands in it (`checkout_owner`).
+    OpenOwner {
+        owner: OwnerOpen,
         cwd: String,
         label: String,
         area_id: Option<String>,
@@ -437,7 +443,7 @@ impl RemoteControlAction {
             Self::FocusWorkspace { .. } => "workspace.focus",
             Self::FocusTab { .. } => "tab.focus",
             Self::CreateTab { .. } => "tab.create",
-            Self::CreateWorkspace { .. } => "workspace.create",
+            Self::OpenOwner { owner, .. } => owner.kind(),
             Self::CloseTab { .. } => "tab.close",
             Self::MoveTab { .. } => "tab.move",
             Self::RenameTab { .. } => "tab.rename",
@@ -574,24 +580,21 @@ fn execute_remote_control(
             let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
             (Some(tab_id), Some(pane_id))
         }
-        RemoteControlAction::CreateWorkspace {
+        RemoteControlAction::OpenOwner {
+            owner,
             cwd,
             label,
             admission_id,
             ..
         } => {
-            let result = mutation_request(
+            let tab = open_owner_tab(
                 connector,
-                "workspace.create",
-                wire::workspace_create_with_env_params(
-                    cwd,
-                    label,
-                    local_create_env(*admission_id),
-                )?,
+                owner,
+                cwd,
+                label,
+                local_create_env(*admission_id),
             )?;
-            let (_, tab_id, pane_id) =
-                wire::created_workspace(result).map_err(ControlFailure::Ambiguous)?;
-            (Some(tab_id), Some(pane_id))
+            (Some(tab.tab_id), Some(tab.pane_id))
         }
         RemoteControlAction::CloseTab { tab_id } => {
             mutation_request(connector, "tab.close", wire::tab_target_params(tab_id)?)?;
@@ -625,6 +628,186 @@ fn execute_remote_control(
     Ok(RemoteControlOutcome::Acknowledged {
         created_tab_id,
         created_pane_id,
+    })
+}
+
+/// A tab Hide created in a checkout's owner Herdr workspace.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OwnedTab {
+    pub(crate) workspace_id: String,
+    pub(crate) tab_id: String,
+    pub(crate) pane_id: String,
+}
+
+/// Plain-folder owners are found and made one at a time, so two requests
+/// racing for a folder with no owner converge on one workspace; a Git
+/// checkout converges through `worktree.open` itself (`already_open`). The
+/// lock spans every folder and device rather than one folder: an open here
+/// happens once per folder per Herdr server life (D-11), and each call it
+/// holds across is bounded by its own timeout, so the rare wait this costs
+/// an unrelated folder is not worth a keyed lock registry.
+static FOLDER_OWNER_OPEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Opens a checkout's owner and creates one tab in it (PRD
+/// checkout-workspace-binding B2, B12, B13): a newly opened owner's first tab
+/// is the new tab, and an owner that was already open gets a new tab. A
+/// refusal fails the request; nothing is created in any other workspace (B3).
+pub(crate) fn open_owner_tab(
+    connector: &dyn ApiConnector,
+    owner: &OwnerOpen,
+    cwd: &str,
+    label: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<OwnedTab, ControlFailure> {
+    let (workspace_id, first_tab) = ensure_owner(connector, owner, env.clone())?;
+    let owned = match first_tab {
+        Some((tab_id, pane_id)) => {
+            // The owner's first tab is the new tab, so it takes the label the
+            // request carries, as `tab.create` would give it; the tab is real
+            // either way.
+            if !label.trim().is_empty()
+                && let Err(error) = mutation_request(
+                    connector,
+                    "tab.rename",
+                    wire::tab_rename_params(&tab_id, label)?,
+                )
+            {
+                crate::diagnostic!(json!({
+                    "component": "checkout_owner",
+                    "kind": "owner.tab_label_failed",
+                    "workspace_id": workspace_id,
+                    "tab_id": tab_id,
+                    "message": error.message(),
+                }));
+            }
+            OwnedTab {
+                workspace_id,
+                tab_id,
+                pane_id,
+            }
+        }
+        None => create_tab_in(connector, &workspace_id, cwd, label, env)?,
+    };
+    crate::diagnostic!(json!({
+        "component": "checkout_owner",
+        "kind": "owner.tab_created",
+        "path": owner.path(),
+        "method": owner.kind(),
+        "workspace_id": owned.workspace_id,
+        "tab_id": owned.tab_id,
+    }));
+    Ok(owned)
+}
+
+/// The checkout's owner workspace, opened when none is open, and the tab and
+/// pane Herdr made with it when this call opened it (`None` when it was
+/// already open). `env` reaches the first pane only where Herdr takes it
+/// (`workspace.create`); `worktree.open` takes none.
+fn ensure_owner(
+    connector: &dyn ApiConnector,
+    owner: &OwnerOpen,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<(String, Option<(String, String)>), ControlFailure> {
+    match owner {
+        OwnerOpen::Worktree {
+            path,
+            repository_root,
+            label,
+        } => {
+            let opened = wire::opened_worktree(mutation_request(
+                connector,
+                "worktree.open",
+                wire::worktree_open_params(path, repository_root)?,
+            )?)
+            .map_err(ControlFailure::Ambiguous)?;
+            if opened.already_open {
+                return Ok((opened.workspace_id, None));
+            }
+            // Only a workspace Herdr opened for this request takes the
+            // checkout's name (D-14); the tab is real either way.
+            if !label.trim().is_empty()
+                && opened.label != *label
+                && let Err(error) = mutation_request(
+                    connector,
+                    "workspace.rename",
+                    wire::workspace_rename_params(&opened.workspace_id, label)?,
+                )
+            {
+                crate::diagnostic!(json!({
+                    "component": "checkout_owner",
+                    "kind": "owner.label_failed",
+                    "workspace_id": opened.workspace_id,
+                    "path": path,
+                    "message": error.message(),
+                }));
+            }
+            Ok((opened.workspace_id, Some((opened.tab_id, opened.pane_id))))
+        }
+        OwnerOpen::Folder { path, label, mark } => {
+            let _serialized = FOLDER_OWNER_OPEN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let listed = request_with_connector(
+                connector,
+                "workspace.list",
+                wire::workspace_list_params()?,
+                Duration::from_secs(5),
+            )
+            .map_err(|error| ControlFailure::Definite(format!("workspace.list failed: {error}")))
+            .and_then(|value| {
+                wire::listed_workspace_tokens(value, crate::checkout_owner::OWNER_TOKEN)
+                    .map_err(ControlFailure::Definite)
+            })?;
+            if let Some((workspace_id, _)) = listed
+                .into_iter()
+                .find(|(_, value)| value.as_deref() == Some(mark.as_str()))
+            {
+                return Ok((workspace_id, None));
+            }
+            let created = mutation_request(
+                connector,
+                "workspace.create",
+                wire::workspace_create_with_env_params(path, label, env)?,
+            )?;
+            let (workspace_id, tab_id, pane_id) =
+                wire::created_workspace(created).map_err(ControlFailure::Ambiguous)?;
+            // The tab is real either way; without its mark only the next tab
+            // in this folder makes another owner.
+            if let Err(error) = mutation_request(
+                connector,
+                "workspace.report_metadata",
+                wire::workspace_owner_mark_params(&workspace_id, mark)?,
+            ) {
+                crate::diagnostic!(json!({
+                    "component": "checkout_owner",
+                    "kind": "owner.mark_failed",
+                    "workspace_id": workspace_id,
+                    "path": path,
+                    "message": error.message(),
+                }));
+            }
+            Ok((workspace_id, Some((tab_id, pane_id))))
+        }
+    }
+}
+
+fn create_tab_in(
+    connector: &dyn ApiConnector,
+    workspace_id: &str,
+    cwd: &str,
+    label: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<OwnedTab, ControlFailure> {
+    let result = mutation_request(
+        connector,
+        "tab.create",
+        wire::tab_create_with_env_params(workspace_id, cwd, label, env)?,
+    )?;
+    let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
+    Ok(OwnedTab {
+        workspace_id: workspace_id.to_owned(),
+        tab_id,
+        pane_id,
     })
 }
 
@@ -1032,6 +1215,10 @@ pub struct ReopenRequest {
     pub workspace_exists: bool,
     pub tab_exists: bool,
     pub fallback_pane_id: Option<String>,
+    /// The owner of the checkout the closed item belongs to: a tab that has to
+    /// be made again lands there, never in the workspace it was closed from
+    /// (PRD checkout-workspace-binding D-16). `None` for a file.
+    pub owner: Option<OwnerOpen>,
 }
 
 const REOPEN_INTENT_ENV: &str = "HIDE_REOPEN_INTENT";
@@ -1152,6 +1339,13 @@ fn restore_tab_position(
     layout: crate::recent_closed::ClosedLayout,
     notices: &mut Vec<String>,
 ) -> crate::recent_closed::ClosedLayout {
+    // The position is an index among the tabs of the workspace it was closed
+    // from; a tab that reopened in the checkout's owner elsewhere keeps the
+    // place Herdr gave it. That is the usual case for a tab closed outside
+    // the owner, and for a plain folder whose owner closed with its last tab.
+    if layout.workspace_id != context.workspace_id {
+        return layout;
+    }
     let params = match wire::tab_move_params(&layout.tab_id, context.tab_index) {
         Ok(params) => params,
         Err(message) => {
@@ -1283,7 +1477,14 @@ fn run_herdr_reopen(
             context,
             layout,
             panes,
-        } => reopen_tab(connector, key, context, &layout.root, panes),
+        } => reopen_tab(
+            connector,
+            key,
+            context,
+            reopen_owner(request)?,
+            &layout.root,
+            panes,
+        ),
         ClosedItem::File { .. } => unreachable!("file reopen uses the filesystem worker"),
     }
 }
@@ -1292,6 +1493,7 @@ fn ensure_workspace_and_tab(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
+    owner: &OwnerOpen,
     tab_exists: bool,
     root: &ClosedLayoutNode,
     notices: &mut Vec<String>,
@@ -1301,16 +1503,22 @@ fn ensure_workspace_and_tab(
     }
     let snapshot = fetch_session_with_connector(connector)
         .map_err(|error| format!("session.snapshot before reopen failed: {}", error.message()))?;
-    let original_workspace_exists = snapshot
-        .workspaces
-        .iter()
-        .any(|workspace| workspace.workspace_id == context.workspace_id);
+    // The tab goes to the checkout's owner. A retry adopts only a layout or a
+    // workspace seed carrying this intent's marker: in the owner when it is
+    // open, else in a workspace that appeared since the close.
+    let open_owner = owner
+        .find_in(
+            snapshot
+                .workspaces
+                .iter()
+                .map(crate::checkout_owner::WorkspaceFacts::from),
+        )
+        .map(str::to_owned);
     let workspace_marker = reopen_intent_marker(key, ReopenIntentStage::Workspace);
     let layout_marker = reopen_intent_marker(key, ReopenIntentStage::Layout);
-    let candidate_workspace_ids = if original_workspace_exists {
-        vec![context.workspace_id.clone()]
-    } else {
-        snapshot
+    let candidate_workspace_ids = match &open_owner {
+        Some(owner) => vec![owner.clone()],
+        None => snapshot
             .workspaces
             .iter()
             .filter(|workspace| {
@@ -1319,7 +1527,7 @@ fn ensure_workspace_and_tab(
                     .contains(&workspace.workspace_id)
             })
             .map(|workspace| workspace.workspace_id.clone())
-            .collect()
+            .collect(),
     };
     let mut recovered_layouts = Vec::new();
     let mut recovered_workspace_seeds = Vec::new();
@@ -1352,23 +1560,19 @@ fn ensure_workspace_and_tab(
             recovered_workspace_seeds.len()
         ));
     }
-    let (workspace_id, seed_tab_id) = if original_workspace_exists {
-        (context.workspace_id.clone(), None)
-    } else if let Some(seed) = recovered_workspace_seeds.pop() {
+    let (workspace_id, seed_tab_id) = if let Some(seed) = recovered_workspace_seeds.pop() {
         (seed.0, Some(seed.1))
+    } else if let Some(owner) = open_owner {
+        (owner, None)
     } else {
-        let created = reopen_request(
+        // The owner's first tab is the seed the layout replaces.
+        let (workspace_id, first_tab) = ensure_owner(
             connector,
-            &format!("herdr-core:{key}:workspace"),
-            "workspace.create",
-            wire::workspace_create_with_env_params(
-                &context.checkout_path,
-                &context.workspace_label,
-                reopen_intent_env(key, ReopenIntentStage::Workspace),
-            )?,
-        )?;
-        let (workspace_id, tab_id, _) = wire::created_workspace(created)?;
-        (workspace_id, Some(tab_id))
+            owner,
+            reopen_intent_env(key, ReopenIntentStage::Workspace),
+        )
+        .map_err(|failure| failure.message().to_owned())?;
+        (workspace_id, first_tab.map(|(tab_id, _)| tab_id))
     };
     let tagged_root = tag_reopen_layout(root, key, ReopenIntentStage::Layout);
     let applied = reopen_request(
@@ -1543,7 +1747,15 @@ fn reopen_pane(
             command: None,
             env: Default::default(),
         };
-        let layout = ensure_workspace_and_tab(connector, key, context, false, &root, &mut notices)?;
+        let layout = ensure_workspace_and_tab(
+            connector,
+            key,
+            context,
+            reopen_owner(request)?,
+            false,
+            &root,
+            &mut notices,
+        )?;
         (layout.focused_pane_id, layout.tab_id)
     };
     if let Some(agent) = &pane.agent {
@@ -1625,10 +1837,18 @@ fn wrap_surviving_subtree(
     })
 }
 
+fn reopen_owner(request: &ReopenRequest) -> Result<&OwnerOpen, String> {
+    request
+        .owner
+        .as_ref()
+        .ok_or_else(|| "the closed item names no checkout to reopen in".to_owned())
+}
+
 fn reopen_tab(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
+    owner: &OwnerOpen,
     root: &ClosedLayoutNode,
     panes: &[ClosedPane],
 ) -> Result<ReopenOutcome, String> {
@@ -1643,8 +1863,15 @@ fn reopen_tab(
     else {
         return Err("the closed tab contained no panes".into());
     };
-    let layout =
-        ensure_workspace_and_tab(connector, key, context, false, &root, &mut common_notices)?;
+    let layout = ensure_workspace_and_tab(
+        connector,
+        key,
+        context,
+        owner,
+        false,
+        &root,
+        &mut common_notices,
+    )?;
     let mut new_ids = Vec::new();
     layout.root.pane_ids(&mut new_ids);
     let terminal_panes = terminal_ids
@@ -2362,8 +2589,8 @@ pub fn spawn_remote_control(
         RemoteControlAction::CreateTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-create")
         }
-        RemoteControlAction::CreateWorkspace { .. } => {
-            format!("herdr-core-remote-{target_id}-workspace-create")
+        RemoteControlAction::OpenOwner { .. } => {
+            format!("herdr-core-remote-{target_id}-owner-open")
         }
         RemoteControlAction::CloseTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-close")
@@ -2441,7 +2668,7 @@ fn recover_local_creation(
             workspace_id,
             ..
         } => (*id, Some(workspace_id.as_str())),
-        RemoteControlAction::CreateWorkspace {
+        RemoteControlAction::OpenOwner {
             admission_id: Some(id),
             ..
         } => (*id, None),
@@ -2488,7 +2715,7 @@ pub fn spawn_local_control(
     let worker_name = match &action {
         RemoteControlAction::FocusTab { .. } => "herdr-core-tab-focus",
         RemoteControlAction::CreateTab { .. } => "herdr-core-tab-create",
-        RemoteControlAction::CreateWorkspace { .. } => "herdr-core-workspace-create",
+        RemoteControlAction::OpenOwner { .. } => "herdr-core-owner-open",
         RemoteControlAction::CloseTab { .. } => "herdr-core-tab-close",
         RemoteControlAction::MoveTab { .. } => "herdr-core-tab-move",
         RemoteControlAction::RenameTab { .. } => "herdr-core-tab-rename",
@@ -3846,6 +4073,7 @@ mod tests {
             workspace_exists: true,
             tab_exists: true,
             fallback_pane_id: Some("outer-left".into()),
+            owner: None,
         };
 
         let outcome = reopen_pane(
@@ -4024,6 +4252,7 @@ mod tests {
             workspace_exists: true,
             tab_exists: true,
             fallback_pane_id: Some("w1:p1".into()),
+            owner: None,
         };
 
         let outcome = reopen_pane(
@@ -4109,7 +4338,10 @@ mod tests {
                     }})
                 }
             }
-            "tab.move" => json!({"type":"tab_list","tabs":[]}),
+            "workspace.list" => json!({"type":"workspace_list","workspaces":[
+                {"workspace_id":"w2","number":2,"label":"other","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w2:t1","agent_status":"idle"}
+            ]}),
+            "workspace.report_metadata" => json!({"type":"ok"}),
             _ => unreachable!(),
         });
         let context = ClosedContext {
@@ -4149,6 +4381,11 @@ mod tests {
             &herdr.connector(),
             "layout-intent",
             &context,
+            &OwnerOpen::Folder {
+                path: "/tmp".into(),
+                label: "Fixture".into(),
+                mark: crate::checkout_owner::owner_mark("local", "/tmp"),
+            },
             false,
             &layout_root,
             &mut notices,
@@ -4165,13 +4402,17 @@ mod tests {
         );
         assert_eq!(
             herdr.methods(),
+            // The closed tab's workspace is gone, so it reopens in the
+            // folder's owner, made and marked here; the old index names a
+            // place in another workspace and is not restored.
             [
                 "session.snapshot",
                 "layout.export",
+                "workspace.list",
                 "workspace.create",
+                "workspace.report_metadata",
                 "layout.apply",
-                "layout.apply",
-                "tab.move"
+                "layout.apply"
             ]
         );
     }
@@ -4183,7 +4424,8 @@ mod tests {
             move |method, params| match method {
                 "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
                     "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                    "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
+                    "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle",
+                        "worktree":{"repo_key":"/tmp","repo_name":"tmp","repo_root":"/tmp","checkout_path":"/tmp","is_linked_worktree":false}}],
                     "tabs":[{"workspace_id":"w1","tab_id":"w1:t2","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
                     "panes":[], "layouts":[], "agents":[]
                 }}),
@@ -4253,6 +4495,11 @@ mod tests {
             &herdr.connector(),
             "recovered-intent",
             &context,
+            &OwnerOpen::Worktree {
+                path: "/tmp".into(),
+                repository_root: "/tmp".into(),
+                label: "Fixture".into(),
+            },
             false,
             &root,
             &mut notices,
@@ -4507,82 +4754,255 @@ mod tests {
     }
 
     #[test]
-    fn workspace_creation_uses_the_official_focused_root_pane_contract() {
-        let herdr = FakeHerdr::start("workspace-create-contract", |_, _| {
-            json!({
-                "type": "workspace_created",
-                "workspace": {"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
-                "tab": {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w1:p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
-            })
-        });
+    fn a_registered_project_gets_its_checkouts_owner_not_a_plain_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let folder = root.join("notes");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let folder = folder.to_string_lossy().into_owned();
+        let repo = repo.to_string_lossy().into_owned();
 
-        let created = create_herdr_workspace(
-            &herdr.connector(),
-            "/tmp/herdr-ide-verify-workspace",
-            "Verify workspace",
-        )
-        .expect("workspace create request");
         assert_eq!(
-            created,
-            CreatedWorkspace {
-                pane_id: "w1:p1".to_owned()
-            }
+            registered_owner(&folder, "Notes"),
+            OwnerOpen::for_checkout(
+                crate::workspace::LOCAL_DEVICE_ID,
+                &folder,
+                &folder,
+                false,
+                "Notes"
+            )
         );
-
         assert_eq!(
-            herdr.calls(),
-            [(
-                "workspace.create".to_owned(),
-                json!({
-                    "cwd": "/tmp/herdr-ide-verify-workspace",
-                    "focus": true,
-                    "label": "Verify workspace",
-                })
-            )]
+            registered_owner(&repo, "Repo"),
+            OwnerOpen::Worktree {
+                path: repo.clone(),
+                repository_root: repo.clone(),
+                label: "Repo".to_owned(),
+            }
         );
     }
 
     #[test]
-    fn local_tab_control_can_create_an_exclusive_workspace() {
-        let herdr = FakeHerdr::start("local-workspace-control", |method, _| match method {
-            "workspace.create" => json!({
-                "type": "workspace_created",
-                "workspace": {"workspace_id": "w2", "number": 2, "label": "hide", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w2:t1", "agent_status": "idle"},
-                "tab": {"tab_id": "w2:t1", "workspace_id": "w2", "number": 1, "label": "hide", "focused": true, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w2:p1", "terminal_id": "fixture-terminal", "workspace_id": "w2", "tab_id": "w2:t1", "focused": true, "agent_status": "idle", "revision": 1}
+    fn local_tab_control_opens_the_checkouts_bound_workspace_when_none_is_open() {
+        let herdr = FakeHerdr::start("owner-open-worktree", |method, _| match method {
+            "worktree.open" => json!({
+                "type": "worktree_opened",
+                "already_open": false,
+                "workspace": {"workspace_id": "w9", "number": 9, "label": "repo-feat", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"},
+                "worktree": {"path": "/repo-feat", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": true, "label": "repo-feat"},
+                "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"pane_id": "w9:p1", "terminal_id": "fixture-terminal", "workspace_id": "w9", "tab_id": "w9:t1", "focused": true, "agent_status": "idle", "revision": 1}
+            }),
+            "tab.rename" => json!({
+                "type": "tab_info",
+                "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"}
+            }),
+            "workspace.rename" => json!({
+                "type": "workspace_info",
+                "workspace": {"workspace_id": "w9", "number": 9, "label": "feat", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"}
             }),
             other => panic!("unexpected {other}"),
         });
 
         let outcome = execute_remote_control(
             &herdr.connector(),
-            &RemoteControlAction::CreateWorkspace {
-                cwd: "/tmp/herdr-ide-hide".to_owned(),
-                label: "hide".to_owned(),
+            &RemoteControlAction::OpenOwner {
+                owner: OwnerOpen::Worktree {
+                    path: "/repo-feat".to_owned(),
+                    repository_root: "/repo".to_owned(),
+                    label: "feat".to_owned(),
+                },
+                cwd: "/repo-feat".to_owned(),
+                label: "Tab 2".to_owned(),
                 area_id: None,
                 admission_id: None,
             },
         )
-        .expect("workspace control request");
+        .expect("owner open");
 
+        // A newly opened owner's first tab is the new tab.
         assert!(matches!(
             outcome,
             RemoteControlOutcome::Acknowledged {
                 created_tab_id: Some(ref tab_id),
                 created_pane_id: Some(ref pane_id),
-            } if tab_id == "w2:t1" && pane_id == "w2:p1"
+            } if tab_id == "w9:t1" && pane_id == "w9:p1"
         ));
+        // Herdr opens a linked worktree only from its repository's main
+        // worktree, and a label on the open would rename a workspace that was
+        // already there, so the new one is named after it opens (D-14).
         assert_eq!(
             herdr.calls(),
-            [(
-                "workspace.create".to_owned(),
-                json!({
-                    "cwd": "/tmp/herdr-ide-hide",
-                    "focus": true,
-                    "label": "hide"
-                })
-            )]
+            [
+                (
+                    "worktree.open".to_owned(),
+                    json!({"cwd": "/repo", "path": "/repo-feat", "focus": true})
+                ),
+                (
+                    "workspace.rename".to_owned(),
+                    json!({"workspace_id": "w9", "label": "feat"})
+                ),
+                (
+                    "tab.rename".to_owned(),
+                    json!({"tab_id": "w9:t1", "label": "Tab 2"})
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_second_request_for_an_open_owner_adds_a_tab_there_instead_of_another_workspace() {
+        let herdr = FakeHerdr::start("owner-already-open", |method, _| match method {
+            "worktree.open" => json!({
+                "type": "worktree_opened",
+                "already_open": true,
+                "workspace": {"workspace_id": "w9", "number": 9, "label": "hide", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"},
+                "worktree": {"path": "/repo", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": false, "label": "hide"},
+                "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"pane_id": "w9:p1", "terminal_id": "fixture-terminal", "workspace_id": "w9", "tab_id": "w9:t1", "focused": true, "agent_status": "idle", "revision": 1}
+            }),
+            "tab.create" => json!({
+                "type": "tab_created",
+                "tab": {"tab_id": "w9:t2", "workspace_id": "w9", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"pane_id": "w9:p2", "terminal_id": "fixture-terminal-2", "workspace_id": "w9", "tab_id": "w9:t2", "focused": true, "agent_status": "idle", "revision": 1}
+            }),
+            other => panic!("unexpected {other}"),
+        });
+
+        let tab = open_owner_tab(
+            &herdr.connector(),
+            &OwnerOpen::Worktree {
+                path: "/repo".to_owned(),
+                repository_root: "/repo".to_owned(),
+                label: "hide".to_owned(),
+            },
+            "/repo",
+            "Tab 2",
+            Default::default(),
+        )
+        .expect("owner tab");
+
+        assert_eq!(
+            tab,
+            OwnedTab {
+                workspace_id: "w9".to_owned(),
+                tab_id: "w9:t2".to_owned(),
+                pane_id: "w9:p2".to_owned(),
+            }
+        );
+        assert_eq!(herdr.methods(), ["worktree.open", "tab.create"]);
+    }
+
+    #[test]
+    fn a_refused_owner_open_fails_the_request_and_creates_nothing_elsewhere() {
+        let herdr = FakeHerdr::start_with_errors("owner-refused", |method, _| match method {
+            "worktree.open" => Err(("not_found".to_owned(), "no such checkout".to_owned())),
+            other => panic!("unexpected {other}"),
+        });
+
+        let failure = open_owner_tab(
+            &herdr.connector(),
+            &OwnerOpen::Worktree {
+                path: "/gone".to_owned(),
+                repository_root: "/gone".to_owned(),
+                label: "gone".to_owned(),
+            },
+            "/gone",
+            "Tab 1",
+            Default::default(),
+        )
+        .expect_err("a refused open fails");
+
+        assert!(!failure.is_ambiguous());
+        assert!(failure.message().contains("no such checkout"));
+        assert_eq!(herdr.methods(), ["worktree.open"]);
+    }
+
+    #[test]
+    fn a_plain_folder_reuses_its_marked_owner_and_marks_a_new_one_only_when_none_is_live() {
+        let mark = crate::checkout_owner::owner_mark("local", "/notes");
+        let listed_mark = mark.clone();
+        let marked = Arc::new(Mutex::new(false));
+        let marked_in_server = marked.clone();
+        let herdr = FakeHerdr::start("owner-folder", move |method, params| match method {
+            "workspace.list" => {
+                let tokens = if *marked_in_server.lock().unwrap() {
+                    json!({"hide_owner": listed_mark})
+                } else {
+                    json!({})
+                };
+                json!({"type": "workspace_list", "workspaces": [
+                    {"workspace_id": "w1", "number": 1, "label": "other", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
+                    {"workspace_id": "w4", "number": 4, "label": "notes", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w4:t1", "agent_status": "idle", "tokens": tokens}
+                ]})
+            }
+            "workspace.create" => json!({
+                "type": "workspace_created",
+                "workspace": {"workspace_id": "w4", "number": 4, "label": "notes", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w4:t1", "agent_status": "idle"},
+                "tab": {"tab_id": "w4:t1", "workspace_id": "w4", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"pane_id": "w4:p1", "terminal_id": "fixture-terminal", "workspace_id": "w4", "tab_id": "w4:t1", "focused": true, "agent_status": "idle", "revision": 1}
+            }),
+            "workspace.report_metadata" => {
+                assert_eq!(params["tokens"]["hide_owner"], json!(listed_mark));
+                *marked_in_server.lock().unwrap() = true;
+                json!({"type": "ok"})
+            }
+            "tab.rename" => json!({
+                "type": "tab_info",
+                "tab": {"tab_id": "w4:t1", "workspace_id": "w4", "number": 1, "label": "Tab 1", "focused": true, "pane_count": 1, "agent_status": "idle"}
+            }),
+            "tab.create" => json!({
+                "type": "tab_created",
+                "tab": {"tab_id": "w4:t2", "workspace_id": "w4", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"pane_id": "w4:p2", "terminal_id": "fixture-terminal-2", "workspace_id": "w4", "tab_id": "w4:t2", "focused": true, "agent_status": "idle", "revision": 1}
+            }),
+            other => panic!("unexpected {other}"),
+        });
+        let owner = OwnerOpen::Folder {
+            path: "/notes".to_owned(),
+            label: "notes".to_owned(),
+            mark,
+        };
+
+        let first = open_owner_tab(
+            &herdr.connector(),
+            &owner,
+            "/notes",
+            "Tab 1",
+            Default::default(),
+        )
+        .expect("first tab");
+        let second = open_owner_tab(
+            &herdr.connector(),
+            &owner,
+            "/notes",
+            "Tab 2",
+            Default::default(),
+        )
+        .expect("second tab");
+
+        assert_eq!(
+            (first.workspace_id.as_str(), first.tab_id.as_str()),
+            ("w4", "w4:t1")
+        );
+        assert_eq!(
+            (second.workspace_id.as_str(), second.tab_id.as_str()),
+            ("w4", "w4:t2")
+        );
+        assert!(*marked.lock().unwrap());
+        assert_eq!(
+            herdr.methods(),
+            [
+                "workspace.list",
+                "workspace.create",
+                "workspace.report_metadata",
+                "tab.rename",
+                "workspace.list",
+                "tab.create"
+            ]
         );
     }
 
