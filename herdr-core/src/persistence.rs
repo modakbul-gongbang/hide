@@ -806,6 +806,7 @@ mod tests {
                 path: "/repo/alpha".to_owned(),
                 device_id: "local".to_owned(),
                 pinned: true,
+                home: false,
             }],
             ..UiStateSnapshot::default()
         };

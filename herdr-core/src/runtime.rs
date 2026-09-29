@@ -16,6 +16,7 @@ mod devices;
 mod documents;
 mod editor;
 mod events;
+mod home;
 mod hosts;
 mod issues;
 mod memory;
@@ -1226,6 +1227,8 @@ pub struct Runtime {
     /// id. Kept off the snapshot: an issue body or a request has no business
     /// on the wire after the surface that sent it.
     task_agent_launch: Option<TaskAgentLaunch>,
+    /// Each device's Home link sync: the set last sent and whether it runs.
+    home_links: HashMap<String, home::HomeLinkState>,
     /// The catalog and root index most recently accepted from the sync
     /// coordinator, reused when a later precomputation arrives stale so the
     /// reconcile never rebuilds under the runtime lock.
@@ -1592,6 +1595,7 @@ impl Runtime {
             next_issue_work_id: 0,
             pr_link_checkout: None,
             task_agent_launch: None,
+            home_links: HashMap::new(),
             last_accepted_catalog: None,
             catalog_roots: workspace::RootIndex::new(),
             checkout_tab_order: BTreeMap::new(),

@@ -3514,6 +3514,18 @@ impl Runtime {
         });
     }
 
+    /// Adds CLI arguments learned after the task began (a Home start's
+    /// linked folders, known once its helper answered).
+    pub(super) fn extend_task_agent_args(&mut self, id: u64, args: Vec<String>) {
+        if let Some(launch) = self
+            .task_agent_launch
+            .as_mut()
+            .filter(|launch| launch.task == id)
+        {
+            launch.args.extend(args);
+        }
+    }
+
     /// The agent the task's worker should now start: the created pane, the
     /// chosen kind, its first prompt and its CLI arguments, once the creation
     /// is settled.

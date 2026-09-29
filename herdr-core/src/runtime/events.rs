@@ -724,7 +724,16 @@ pub(super) struct OverviewOpenSectionPayload {
 /// it. `terminal` means the tab alone.
 #[derive(Debug, Deserialize)]
 pub(super) struct AgentStartInCheckoutPayload {
-    pub(super) checkout_path: String,
+    /// The checkout to start in; absent for a Home start.
+    #[serde(default)]
+    pub(super) checkout_path: Option<String>,
+    /// The device the checkout or Home is on; absent is this machine (PRD
+    /// home-device-rail D-22).
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
+    /// Start in the device's Home rather than a checkout (D-04, D-13).
+    #[serde(default)]
+    pub(super) home: bool,
     pub(super) provider: String,
     /// The agent's first prompt, sent once the agent is ready (an issue
     /// started on a checkout that is not a new worktree).

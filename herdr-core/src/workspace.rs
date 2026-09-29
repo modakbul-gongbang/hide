@@ -102,6 +102,7 @@ pub fn registration(
             device_id.to_owned()
         },
         pinned: false,
+        home: false,
     })
 }
 
@@ -129,6 +130,7 @@ pub fn inspect_registered(registration: &WorkspaceRegistration) -> WorkspaceSnap
         false,
     );
     workspace.pinned = registration.pinned;
+    workspace.is_home = registration.home;
     apply_primary_checkout(&mut workspace, registration.primary_checkout_id.as_deref());
     workspace
 }
@@ -409,6 +411,7 @@ fn adopt_registration(workspace: &mut WorkspaceSnapshot, registration: &Workspac
     workspace.registered = true;
     workspace.temporary = false;
     workspace.pinned = registration.pinned;
+    workspace.is_home = registration.home;
     workspace.device_id = registration.device_id.clone();
     workspace.remote_target_id =
         (registration.device_id != LOCAL_DEVICE_ID).then(|| registration.device_id.clone());
@@ -475,6 +478,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     last_activity_unix_ms: None,
                     checkouts: Vec::new(),
                     pinned: false,
+                    is_home: false,
                     inactive_checkouts: Default::default(),
                     removal: Default::default(),
                     disk: Default::default(),
@@ -810,6 +814,7 @@ fn inspect(
         session_workspace_ids: Vec::new(),
         last_activity_unix_ms: None,
         pinned: false,
+        is_home: false,
         checkouts,
         inactive_checkouts: Default::default(),
         removal: Default::default(),
@@ -1372,6 +1377,7 @@ mod tests {
             last_activity_unix_ms: None,
             checkouts: Vec::new(),
             pinned: false,
+            is_home: false,
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
@@ -1428,6 +1434,7 @@ mod tests {
             last_activity_unix_ms: None,
             checkouts: Vec::new(),
             pinned: false,
+            is_home: false,
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),

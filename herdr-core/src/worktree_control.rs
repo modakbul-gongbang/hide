@@ -56,6 +56,39 @@ impl WorktreeTarget {
     }
 }
 
+/// The Herdr a new tab and the agent started in it go to: this machine's or
+/// a device's. A tab needs no file helper, so a device whose helper is not
+/// ready can still take one (PRD home-device-rail D-22).
+#[derive(Clone)]
+pub struct TabTarget {
+    connector: Arc<dyn ApiConnector>,
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+    /// This machine: a provider missing from this PATH is refused before
+    /// Herdr is asked.
+    local: bool,
+}
+
+impl TabTarget {
+    pub(crate) fn local(context: &LiveContext) -> Self {
+        Self {
+            connector: Arc::clone(&context.api_connector),
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+            local: true,
+        }
+    }
+
+    pub(crate) fn device(context: &RemoteControlContext) -> Self {
+        Self {
+            connector: Arc::clone(&context.api_connector),
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+            local: false,
+        }
+    }
+}
+
 pub fn spawn_worktree_close(
     target: WorktreeTarget,
     id: u64,
@@ -1022,31 +1055,116 @@ fn launch_agent(
 }
 
 pub fn spawn_checkout_tab_create(
-    context: LiveContext,
+    target: TabTarget,
     request: CheckoutTabRequest,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-checkout-tab-create".into())
-        .spawn(move || {
-            let result = create_checkout_tab(context.api_connector.as_ref(), &request);
-            if let Some(runtime) = context.runtime.upgrade() {
-                if let Ok(mut guard) = runtime.lock() {
-                    guard.ingest_task_operation_result(request.id, result);
-                } else {
-                    return;
-                }
-                context.notifier.notify();
-            }
-            start_task_agent(
-                context.api_connector.as_ref(),
-                &context.runtime,
-                &context.notifier,
-                true,
-                request.id,
-            );
-        })
+        .spawn(move || open_tab_and_start_agent(&target, &request))
         .map(|_| ())
         .map_err(|error| format!("checkout tab worker could not be started: {error}"))
+}
+
+/// Opens the task's tab, publishes it, then starts the task's agent in it.
+fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
+    let result = create_checkout_tab(target.connector.as_ref(), request);
+    let Some(runtime) = target.runtime.upgrade() else {
+        return;
+    };
+    if let Ok(mut guard) = runtime.lock() {
+        guard.ingest_task_operation_result(request.id, result);
+    } else {
+        return;
+    }
+    drop(runtime);
+    target.notifier.notify();
+    start_task_agent(
+        target.connector.as_ref(),
+        &target.runtime,
+        &target.notifier,
+        target.local,
+        request.id,
+    );
+}
+
+/// How long the helper may take to bring a Home in step: a stat per
+/// project and a link each, at most [`hide_host::home::MAX_LINKS`].
+const HOME_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A Home start or a new tab in Home (PRD home-device-rail D-04): the
+/// device's registered projects its Home links, and the helper that makes
+/// them.
+pub struct HomeStartRequest {
+    pub id: u64,
+    pub device_id: String,
+    pub projects: Vec<String>,
+    pub host: Arc<dyn crate::host_access::HostChannel>,
+}
+
+/// Brings the device's Home in step with its projects, then opens a tab in
+/// it and starts the task's agent there. The disk work runs on the helper,
+/// off the runtime lock; the lock is taken only to publish each step.
+pub fn spawn_home_start(target: TabTarget, request: HomeStartRequest) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-home-start".into())
+        .spawn(move || {
+            let HomeStartRequest {
+                id,
+                device_id,
+                projects,
+                host,
+            } = request;
+            let synced = sync_home(host.as_ref(), &projects);
+            let Some(runtime) = target.runtime.upgrade() else {
+                return;
+            };
+            let tab = match runtime.lock() {
+                Ok(mut guard) => guard.ingest_home_start_sync(id, &device_id, &projects, synced),
+                Err(_) => return,
+            };
+            drop(runtime);
+            target.notifier.notify();
+            if let Some(tab) = tab {
+                open_tab_and_start_agent(&target, &tab);
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("Home start worker could not be started: {error}"))
+}
+
+/// Brings a device's Home links in step after its registrations changed
+/// (D-06). Nothing reaches the screen: the answer is the diagnostic log's.
+pub fn spawn_home_link_sync(
+    runtime: Weak<Mutex<Runtime>>,
+    device_id: String,
+    projects: Vec<String>,
+    host: Arc<dyn crate::host_access::HostChannel>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-home-link-sync".into())
+        .spawn(move || {
+            let synced = sync_home(host.as_ref(), &projects);
+            if let Some(runtime) = runtime.upgrade()
+                && let Ok(mut guard) = runtime.lock()
+            {
+                guard.ingest_home_link_sync(&device_id, &projects, synced);
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("Home link sync worker could not be started: {error}"))
+}
+
+fn sync_home(
+    host: &dyn crate::host_access::HostChannel,
+    projects: &[String],
+) -> Result<hide_host::home::HomeSynced, crate::host_access::HostCallError> {
+    crate::host_access::call_as(
+        host,
+        hide_host::protocol::Call::HomeSync {
+            projects: projects.to_vec(),
+        },
+        HOME_SYNC_TIMEOUT,
+    )
 }
 
 fn create_checkout_tab(
@@ -1818,6 +1936,7 @@ mod tests {
             session_workspace_ids: vec!["w-purpose".to_owned()],
             last_activity_unix_ms: None,
             pinned: false,
+            is_home: false,
             checkouts: vec![crate::model::CheckoutSnapshot {
                 id: "checkout".to_owned(),
                 workspace_id: "project".to_owned(),
@@ -2033,6 +2152,7 @@ mod tests {
             session_workspace_ids: vec!["w-purpose".to_owned()],
             last_activity_unix_ms: None,
             pinned: false,
+            is_home: false,
             checkouts: vec![crate::model::CheckoutSnapshot {
                 id: "checkout".to_owned(),
                 workspace_id: "project".to_owned(),
@@ -2151,6 +2271,7 @@ mod tests {
             session_workspace_ids: vec!["w-outer".to_owned(), "w-authority".to_owned()],
             last_activity_unix_ms: None,
             pinned: false,
+            is_home: false,
             checkouts: vec![crate::model::CheckoutSnapshot {
                 id: "checkout".to_owned(),
                 workspace_id: "outer".to_owned(),
@@ -2210,6 +2331,7 @@ mod tests {
             session_workspace_ids: vec!["w-first".to_owned()],
             last_activity_unix_ms: None,
             pinned: false,
+            is_home: false,
             checkouts: vec![crate::model::CheckoutSnapshot {
                 id: "checkout".to_owned(),
                 workspace_id: "project".to_owned(),

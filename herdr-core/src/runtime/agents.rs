@@ -1637,6 +1637,9 @@ impl Runtime {
     }
 
     pub(super) fn persist_ui_state(&mut self) {
+        // Every registration change is persisted here, which is when a Home's
+        // links follow it (PRD home-device-rail D-06).
+        self.request_home_link_syncs();
         if let Err(message) = self.write_ui_state() {
             self.set_error("ui_state.save_failed", message, true);
         }

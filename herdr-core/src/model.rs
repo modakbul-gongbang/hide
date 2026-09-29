@@ -866,6 +866,11 @@ pub struct WorkspaceSnapshot {
     /// (D-07), so an unregistered workspace is never pinned.
     #[serde(default)]
     pub pinned: bool,
+    /// This row is its device's Home (`~/hide`, PRD home-device-rail D-01):
+    /// the registration's flag carried onto the row. The shell draws it as
+    /// the Home row and never lists or counts it as a project.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_home: bool,
     pub checkouts: Vec<CheckoutSnapshot>,
     /// Checkout rows grouped after the active rows in this project. The full
     /// rows stay in `checkouts`, which remains the authority for focus,
@@ -2507,6 +2512,11 @@ pub struct WorkspaceRegistration {
     /// takes the pin with it; nothing else about the pin is stored.
     #[serde(default)]
     pub pinned: bool,
+    /// The device's Home folder (`~/hide`), registered by its first Home
+    /// start (PRD home-device-rail D-01, D-04). Absent in every other
+    /// registration and in stores written before Home existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
