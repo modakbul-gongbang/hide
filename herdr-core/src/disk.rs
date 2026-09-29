@@ -21,6 +21,64 @@ use crate::reader::BackgroundRead;
 /// One checkout's share of a request: entries it may visit, and how long.
 const ENTRY_LIMIT: usize = 1_000_000;
 const TIME_LIMIT: Duration = Duration::from_secs(30);
+/// The whole request's bound, whatever the number of checkouts: entries
+/// visited, distinct hard-linked inodes remembered, and time. A checkout the
+/// request cannot reach in time is an unavailable row, never a larger number.
+const REQUEST_ENTRY_LIMIT: usize = 10_000_000;
+const REQUEST_SEEN_LIMIT: usize = 1_000_000;
+const REQUEST_TIME_LIMIT: Duration = Duration::from_secs(300);
+
+/// What one request has used across all its checkouts. Only a file with more
+/// than one link needs remembering to be counted once.
+struct RequestBudget {
+    started: std::time::Instant,
+    visited: usize,
+    seen: HashSet<(u64, u64)>,
+    entry_limit: usize,
+    seen_limit: usize,
+    time_limit: Duration,
+}
+
+impl RequestBudget {
+    fn new(entry_limit: usize, seen_limit: usize, time_limit: Duration) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            visited: 0,
+            seen: HashSet::new(),
+            entry_limit,
+            seen_limit,
+            time_limit,
+        }
+    }
+
+    fn spent(&self) -> bool {
+        self.visited > self.entry_limit
+            || self.seen.len() >= self.seen_limit
+            || self.started.elapsed() > self.time_limit
+    }
+}
+
+/// Why a measurement has no total: a code for the log, the words the row keeps.
+struct Failure {
+    code: &'static str,
+    reason: String,
+}
+
+impl Failure {
+    fn new(code: &'static str, reason: impl Into<String>) -> Self {
+        Self {
+            code,
+            reason: reason.into(),
+        }
+    }
+
+    fn incomplete(error: std::io::Error) -> Self {
+        Self::new(
+            "unreadable",
+            format!("Disk measurement incomplete: {error}"),
+        )
+    }
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DiskRequest {
@@ -137,6 +195,18 @@ struct Item {
 /// one without a total.
 pub(crate) fn read_with(
     request: &DiskRequest,
+    finished: impl FnMut(&DiskUsageSnapshot),
+) -> Vec<DiskUsageSnapshot> {
+    read_limited(
+        request,
+        RequestBudget::new(REQUEST_ENTRY_LIMIT, REQUEST_SEEN_LIMIT, REQUEST_TIME_LIMIT),
+        finished,
+    )
+}
+
+fn read_limited(
+    request: &DiskRequest,
+    mut budget: RequestBudget,
     mut finished: impl FnMut(&DiskUsageSnapshot),
 ) -> Vec<DiskUsageSnapshot> {
     // The deepest explicitly requested root owns its subtree. Shared Git and
@@ -151,7 +221,6 @@ pub(crate) fn read_with(
     });
     roots.dedup();
     let root_set: HashSet<_> = roots.iter().cloned().collect();
-    let mut seen = HashSet::new();
     let measured_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -163,7 +232,7 @@ pub(crate) fn read_with(
     let mut result = Vec::new();
     for root in &roots {
         let layered = !request.shared_git.contains(root);
-        let row = measure_root(root, &root_set, &mut seen, layered);
+        let row = measure_root(root, &root_set, &mut budget, layered);
         let row = DiskUsageSnapshot {
             measured_at_unix_ms: measured_at,
             volume_free_bytes: free,
@@ -185,7 +254,7 @@ pub(crate) fn read_with(
 fn measure_root(
     root: &PathBuf,
     root_set: &HashSet<PathBuf>,
-    seen: &mut HashSet<(u64, u64)>,
+    budget: &mut RequestBudget,
     layered: bool,
 ) -> DiskUsageSnapshot {
     let started = std::time::Instant::now();
@@ -193,7 +262,7 @@ fn measure_root(
     let mut bytes = 0u64;
     let mut children = BTreeMap::<String, u64>::new();
     let mut tally = Tally::default();
-    let mut failure = None;
+    let mut failure: Option<Failure> = None;
     let base = layered.then(|| Rc::new(base_rules(root, exclude_dir(root).as_deref())));
     let mut stack = vec![Item {
         path: root.clone(),
@@ -204,9 +273,17 @@ fn measure_root(
     // declared measurement boundary. Descendant links count their own
     // allocated blocks and are never traversed.
     if std::fs::canonicalize(root).is_ok_and(|canonical| canonical != *root) {
-        failure = Some(
-            "The measurement root is an alias. Refresh with the canonical checkout path.".into(),
-        );
+        failure = Some(Failure::new(
+            "alias",
+            "The measurement root is an alias. Refresh with the canonical checkout path.",
+        ));
+        stack.clear();
+    }
+    if budget.spent() {
+        failure = Some(Failure::new(
+            "request_limit",
+            "The measurement request ran past its limits before reaching this checkout. Measure again.",
+        ));
         stack.clear();
     }
     while let Some(item) = stack.pop() {
@@ -216,8 +293,19 @@ fn measure_root(
             rules,
         } = item;
         visited += 1;
+        budget.visited += 1;
         if visited > ENTRY_LIMIT || started.elapsed() > TIME_LIMIT {
-            failure = Some("Measurement exceeded its 30 second / one million entry limit. This component is unavailable; measure again after reducing the folder size.".into());
+            failure = Some(Failure::new(
+                "limit",
+                "Measurement exceeded its 30 second / one million entry limit. This component is unavailable; measure again after reducing the folder size.",
+            ));
+            break;
+        }
+        if budget.spent() {
+            failure = Some(Failure::new(
+                "request_limit",
+                "The measurement request ran past its limits. This component is unavailable; measure again.",
+            ));
             break;
         }
         if path != *root && root_set.contains(&path) {
@@ -226,11 +314,15 @@ fn measure_root(
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(value) => value,
             Err(error) => {
-                failure = Some(format!("Disk measurement incomplete: {error}"));
+                failure = Some(Failure::incomplete(error));
                 break;
             }
         };
-        if !seen.insert((metadata.dev(), metadata.ino())) {
+        // Only a file with several links can be reached twice.
+        if metadata.nlink() > 1
+            && !metadata.is_dir()
+            && !budget.seen.insert((metadata.dev(), metadata.ino()))
+        {
             continue;
         }
         let allocated = metadata.blocks().saturating_mul(512);
@@ -258,15 +350,15 @@ fn measure_root(
                     let mut descendants = Vec::new();
                     for entry in entries {
                         if descendants.len() + stack.len() + visited >= ENTRY_LIMIT {
-                            failure =
-                                Some("Measurement exceeded its one million entry limit.".into());
+                            failure = Some(Failure::new(
+                                "limit",
+                                "Measurement exceeded its one million entry limit.",
+                            ));
                             break;
                         }
                         match entry {
                             Ok(entry) => descendants.push((entry.path(), entry.file_type().ok())),
-                            Err(error) => {
-                                failure = Some(format!("Disk measurement incomplete: {error}"));
-                            }
+                            Err(error) => failure = Some(Failure::incomplete(error)),
                         }
                     }
                     descendants.sort_by(|a, b| a.0.cmp(&b.0));
@@ -298,13 +390,21 @@ fn measure_root(
                     }
                 }
                 Err(error) => {
-                    failure = Some(format!("Disk measurement incomplete: {error}"));
+                    failure = Some(Failure::incomplete(error));
                     break;
                 }
             }
         }
     }
     let largest = children.into_iter().max_by_key(|(_, size)| *size);
+    if let Some(failure) = &failure {
+        crate::diagnostic!(serde_json::json!({
+            "component": "disk",
+            "kind": "disk.measure_failed",
+            "checkout": root,
+            "reason_code": failure.code,
+        }));
+    }
     let (layers, folders) = if failure.is_none() && layered {
         let (layers, folders) = tally.finish(root);
         (Some(layers), folders)
@@ -316,7 +416,7 @@ fn measure_root(
         total_bytes: failure.is_none().then_some(bytes),
         largest_child_name: largest.as_ref().map(|(name, _)| name.clone()),
         largest_child_bytes: largest.map(|(_, size)| size),
-        unavailable_reason: failure,
+        unavailable_reason: failure.map(|failure| failure.reason),
         layers,
         folders,
         ..Default::default()
@@ -634,6 +734,30 @@ mod tests {
         assert_eq!(order.len(), 2);
         assert_eq!(order.iter().filter(|(_, measured)| *measured).count(), 1);
         assert!(rows[0].layers.is_some() && rows[1].layers.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_request_that_runs_past_its_own_limit_leaves_the_checkouts_it_did_not_reach_unavailable() {
+        let root = fixture("request-limit");
+        for name in ["a", "b", "c"] {
+            for n in 0..5 {
+                write(&root.join(name).join(format!("file{n}")), 100);
+            }
+        }
+        // Each checkout is well inside its own limit; the request as a whole is not.
+        let rows = read_limited(
+            &DiskRequest {
+                paths: vec![root.join("a"), root.join("b"), root.join("c")],
+                ..Default::default()
+            },
+            RequestBudget::new(8, 1_000, Duration::from_secs(60)),
+            |_| {},
+        );
+        let measured = rows.iter().filter(|row| row.total_bytes.is_some()).count();
+        assert!(measured < 3, "the request stopped: {measured} measured");
+        let cut = rows.iter().find(|row| row.total_bytes.is_none()).unwrap();
+        assert!(cut.layers.is_none() && cut.unavailable_reason.is_some());
         std::fs::remove_dir_all(root).unwrap();
     }
 
