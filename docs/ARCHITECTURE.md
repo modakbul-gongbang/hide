@@ -838,7 +838,8 @@ A `~/hide` without the marker, an empty folder included, is the operator's: noth
 Only an entry that is still the link Hide recorded is ever removed, and nothing is followed through a link; a link whose project left the registrations or whose folder is gone is dropped at the next sync and logged (`home.link_dropped`), never shown.
 A Home links at most 256 projects; more is a reported failure.
 Once a device has a Home, every registration change there (every one is persisted, which is where `request_home_link_syncs` runs) sends one background sync with the new set; one runs per device at a time, a change during it is caught up when it answers, and the answer reaches only the diagnostic log.
-The first look after launch adopts the current set without writing, so launching Hide never touches a device's disk.
+A set counts as sent only once it is: launching Hide writes nothing, the first registration change after it syncs, a device whose helper is not ready is tried again on the next change, and a set that failed is not sent again until the registrations change or a Home start runs.
+The helper holds an exclusive `flock` on the account's home folder for each sync, so a start's sync and a background one, or two Macs' helpers on one device, run one after the other and each reads the marker the other wrote.
 A Home agent is started with each linked project's real folder as `--add-dir <folder>` (both CLIs take it, one flag per folder), so its sandbox lets it edit a project through its link; the edit shows as that project's checkout change, and the agent row stays under Home.
 Removing a device, or losing its connection, leaves its `~/hide` and its agents on it; registering it again continues them.
 Consent contract 2 is unchanged: the helper's scope grows to `~/hide`, its links and instruction files for devices that already allowed it, and only the add-device consent wording names Home (D-05).
