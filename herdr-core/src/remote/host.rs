@@ -1034,9 +1034,24 @@ async fn install(
     })
 }
 
+/// Numbers each upload this process stages, so two connections to one
+/// account (two registrations of the same machine) never share a staging
+/// name.
+static NEXT_UPLOAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether `path` already holds exactly `package`'s bytes.
+async fn holds(raw: &RawSftpSession, path: &str, package: &Package, what: &str) -> bool {
+    matches!(
+        remote_digest(raw, path, package.bytes.len(), what).await,
+        Ok(found) if found == package.digest
+    )
+}
+
 /// Uploads `package` beside its final name, checks the uploaded bytes, and
 /// renames it into place, so the final name only ever holds a whole,
-/// verified copy.
+/// verified copy. Another connection to the same account can place the same
+/// build at the same time: a final name that already holds these bytes is
+/// kept rather than replaced.
 async fn place_file(
     raw: &RawSftpSession,
     version_dir: &str,
@@ -1048,7 +1063,12 @@ async fn place_file(
     let (folder, name) = final_path
         .rsplit_once('/')
         .unwrap_or((version_dir, package.relative.as_str()));
-    let staging = format!("{folder}/.upload-{name}-{}", std::process::id());
+    let staging = format!(
+        "{folder}/.upload-{name}-{}-{}",
+        std::process::id(),
+        NEXT_UPLOAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    // Only a process that ended with this same pid could have left it.
     let _ = raw.remove(&staging).await;
     let handle = raw
         .open(
@@ -1090,10 +1110,20 @@ async fn place_file(
         let _ = raw.remove(&staging).await;
         return Err(error);
     }
-    let _ = raw.remove(&final_path).await;
-    raw.rename(&staging, &final_path)
-        .await
-        .map_err(|error| sftp_failure(&format!("The {what} could not be put in place"), error))?;
+    if holds(raw, &final_path, package, what).await {
+        let _ = raw.remove(&staging).await;
+    } else {
+        let _ = raw.remove(&final_path).await;
+        if let Err(error) = raw.rename(&staging, &final_path).await {
+            let _ = raw.remove(&staging).await;
+            if !holds(raw, &final_path, package, what).await {
+                return Err(sftp_failure(
+                    &format!("The {what} could not be put in place"),
+                    error,
+                ));
+            }
+        }
+    }
     let placed = raw.lstat(&final_path).await.map_err(|error| {
         sftp_failure(
             &format!("The installed {what} could not be inspected"),
