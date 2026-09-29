@@ -297,7 +297,7 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
 });
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
+  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
 }
 
 test("Delete worktree closes the agents its checkout spawned outside it before the folder goes", async ({ page }) => {
@@ -330,6 +330,11 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     await page.locator('[data-sidebar-mode="projects"]').click();
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${branch}"]`) });
+    // A branch with nothing ahead of main reads as merged, so once the core
+    // has read that its row sits under the folded Inactive group.
+    const inactive = page.locator('[data-inactive-checkouts][aria-expanded="false"]');
+    await expect(feature.or(inactive)).toBeVisible({ timeout: 30_000 });
+    if (await inactive.isVisible()) await inactive.click();
     await expect(feature).toBeVisible({ timeout: 30_000 });
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
     await page.getByRole("menu", { name: `${branch} actions` }).locator('[data-menu-item="delete_worktree"]').click();
