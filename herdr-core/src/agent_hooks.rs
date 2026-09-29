@@ -79,17 +79,21 @@ pub fn is_remote_pane(pane_id: &str) -> bool {
 }
 
 /// A device's hook for `runtime`, in the terms the pane judgement reads,
-/// from what the device's kit last reported (PRD device-parity D-21). A hook
-/// the kit could not put in place, for whatever reason its row gives, is not
-/// installed; a device whose kit Hide has not read answers nothing, so the
-/// cause stays unknown rather than guessed.
+/// from what the device's kit last reported (PRD device-parity D-21). On a
+/// device where the kit does not run at all (`declined`: no consent, a
+/// consent from an older build, an unsupported platform) nothing is
+/// installed; a hook the kit could not put in place, for whatever reason its
+/// row gives, is not installed either. A device whose kit Hide has not read,
+/// including one whose first read failed, answers nothing, so the cause
+/// stays unknown rather than guessed.
 pub fn device_hook_status(
+    declined: bool,
     kit: &crate::model::KitSnapshot,
     runtime: AgentRuntime,
 ) -> Option<hide_agent_hooks::HookStatus> {
     use hide_agent_hooks::HookStatus;
     use hide_kit::{ComponentId, ComponentState};
-    if kit.unavailable.is_some() {
+    if declined {
         return Some(HookStatus::NotInstalled);
     }
     let id = match runtime {

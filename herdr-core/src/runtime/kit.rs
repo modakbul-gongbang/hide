@@ -498,20 +498,9 @@ impl Runtime {
         if device_id == LOCAL_DEVICE_ID {
             return self.kit_state(device_id);
         }
-        let host = self.host_snapshot(device_id);
-        let mut view = match (host.consent.as_str(), host.state.as_str()) {
-            ("none", _) => KitSnapshot::unavailable(
-                "Hide installs its kit here once you allow its helper on this device",
-            ),
-            ("outdated", _) => KitSnapshot::unavailable(
-                "Hide needs your permission again before it installs its kit here",
-            ),
-            (_, "unsupported") => KitSnapshot::unavailable(
-                host.message
-                    .as_deref()
-                    .unwrap_or("This Hide build does not support this device's platform"),
-            ),
-            _ => self.kit_state(device_id),
+        let mut view = match self.device_kit_declined(device_id) {
+            Some(reason) => KitSnapshot::unavailable(reason),
+            None => self.kit_state(device_id),
         };
         view.shares_account_with = self
             .snapshot
@@ -522,6 +511,25 @@ impl Runtime {
             .and_then(|registration| self.registration_sharing_account(registration))
             .map(|other| other.label.clone());
         view
+    }
+
+    /// Why Hide's kit does not run on a device at all: no consent, a
+    /// consent given to an older build, or a platform this build has no
+    /// helper for. `None` when it runs there, read or not.
+    pub(super) fn device_kit_declined(&self, device_id: &str) -> Option<String> {
+        let host = self.host_snapshot(device_id);
+        match (host.consent.as_str(), host.state.as_str()) {
+            ("none", _) => Some(
+                "Hide installs its kit here once you allow its helper on this device".to_owned(),
+            ),
+            ("outdated", _) => {
+                Some("Hide needs your permission again before it installs its kit here".to_owned())
+            }
+            (_, "unsupported") => Some(host.message.unwrap_or_else(|| {
+                "This Hide build does not support this device's platform".to_owned()
+            })),
+            _ => None,
+        }
     }
 
     /// Another registration that reaches the same account on the same

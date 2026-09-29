@@ -1311,6 +1311,19 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
             herdr_socket_path: None,
             host_consent: Some(consent),
         });
+    // Allowed, but the first read of its kit failed: the cause is unknown,
+    // not a missing hook.
+    runtime.ingest_device_kit_answer(
+        TARGET,
+        crate::runtime::DeviceKitAnswer::Report(Err("the helper connection closed".to_owned())),
+    );
+    let unread = children(&runtime);
+    assert!(!unread.instrumented);
+    assert_eq!(
+        unread.uninstrumented_code.as_deref(),
+        Some(hide_agent_hooks::diagnosis::UninstrumentedReason::Unknown.code())
+    );
+
     runtime.ingest_kit_report(
         TARGET,
         &hide_kit::KitReport {

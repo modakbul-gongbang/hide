@@ -50,9 +50,10 @@ impl Runtime {
     /// B14). A device whose kit Hide has not read yet leaves the cause
     /// unknown rather than guessing it.
     fn judge_device_pane_children(&self, target: &str, session: &mut RemoteSessionSnapshot) {
-        let kit = self.kit_view(target);
+        let declined = self.device_kit_declined(target).is_some();
+        let kit = self.kit_state(target);
         let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
-            crate::agent_hooks::device_hook_status(&kit, runtime)
+            crate::agent_hooks::device_hook_status(declined, &kit, runtime)
         };
         let agents = &session.agents;
         let tokens = &session.pane_hook_tokens;
