@@ -14,6 +14,14 @@ A same-machine relationship omits `parent_machine`.
 Writing the same relationship again must converge on the same values.
 If hcoord cannot write the tokens, it leaves the running agent and pane intact and reports the retry action rather than inventing another parent source.
 
+## After a Herdr server restart
+
+Herdr does not restore pane tokens when its server restarts; it restores panes, their ids and each agent's session reference, so the child keeps its pane and its session while both tokens are gone.
+The hcoord ledger keeps the relationship, and the running daemon writes it back: every 5 s for this machine's Herdr and every 60 s for a saved remote machine, it reads each Herdr server that holds a registered child with one `herdr pane list` and writes the tokens only to a child whose pane still hosts its recorded session and lacks them.
+This does not depend on which started first: after a reboot the daemon can start minutes before Herdr, and the tokens return within one interval of Herdr answering.
+A server that does not answer is logged once to the daemon's stderr and adds nothing to the ledger; a write Herdr refuses is logged and tried again five minutes later.
+A `lineage.reconciled` ledger event records each pass that wrote a token.
+
 ## Machine id
 
 On macOS the id is `IOPlatformUUID` from `ioreg -rd1 -c IOPlatformExpertDevice`.

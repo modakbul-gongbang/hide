@@ -2,7 +2,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_OUTBOX_LETTERS, MAX_QUEUE, REMOTE_PROTOCOL, SPAWN_EVENT_SLOTS, own, put, type Ledger, type LetterRecord } from "./model";
+import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_OUTBOX_LETTERS, MAX_QUEUE, REMOTE_PROTOCOL, SPAWN_EVENT_SLOTS, own, put, sameExecution, type Ledger, type LetterRecord } from "./model";
 import { event } from "./model";
 import { execute, recordLetter, watchForRequest } from "./service";
 import { outboxCount, parseLetter, readOutbox, removeLetters, type Found, type RawLetter } from "./outbox";
@@ -12,7 +12,7 @@ import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath
 import { notifyHuman, notifyText } from "./platform";
 import { isLocalMachine, remoteCall, remoteCallAsync, requireRemoteHerdr, remoteOutcome, savedMachine, type Raw } from "./remote";
 import { reconcileAlert, recordClean, recordReady, recordStart } from "./health";
-import { readLineage, writeLineage, type LineageWrite } from "./lineage";
+import { lineageCurrent, readRouteLineage, writeLineage, type LineageWrite } from "./lineage";
 import { machineId } from "./identity";
 import { HCOORD_VERSION } from "./version";
 
@@ -30,6 +30,13 @@ const SWEEP_LETTERS_PER_TICK = 16;
 const COLLECT_INTERVAL_MS = 5000;
 const COLLECT_BACKOFF_MS = 30_000;
 const COLLECT_LETTERS = 64;
+// A local `pane list` costs one short Herdr call, so a lost token comes back
+// within seconds; a remote one is an SSH round trip inside the operation
+// queue, so it runs as rarely as the unreachable backoff.
+const LOCAL_LINEAGE_MS = 5000;
+const REMOTE_LINEAGE_MS = 60_000;
+// A write Herdr refused is not retried every pass.
+const LINEAGE_WRITE_RETRY_MS = 5 * 60_000;
 const mutation = (operation: string): boolean => !["status", "agent.list", "agent.show", "watch.list", "request.show", "inbox", "graph", "events"].includes(operation);
 
 export async function callDaemon(operation: string, args: Record<string, unknown> = {}, home = os.homedir(), timeoutOverrideMs?: number): Promise<WireResult> {
@@ -338,26 +345,55 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
     }
     return commit(operation, args, at, letter);
   };
-  const reconcileLineage = (): void => {
-    let filled = 0, failed = 0, unchanged = 0;
-    const participants = Object.values(ledger.participants).filter((participant) => participant.parent !== null && participant.pane !== null);
-    for (const participant of participants) {
-      const parent = participant.parent === null ? undefined : own(ledger.participants, participant.parent);
-      if (!parent || parent.pane === null) { failed += 1; continue; }
-      try {
-        const observed = inspectParticipant(participant);
-        if (observed.connection !== "connected") { failed += 1; continue; }
-        const current = readLineage(participant);
-        const expectedMachine = (participant.machine === parent.machine || (isLocalMachine(participant.machine) && isLocalMachine(parent.machine))) ? null : undefined;
-        if (current.parentPane === parent.pane && (expectedMachine === undefined ? current.parentMachine !== null : current.parentMachine === null)) { unchanged += 1; continue; }
-        const result = lineageFor(participant);
-        if (result?.status === "written") filled += 1;
-        else failed += 1;
-      } catch { failed += 1; }
+  // Herdr drops every pane token when its server restarts, and after a reboot
+  // that restart can land minutes after this daemon starts (2026-09-29: all
+  // 39 children failed a startup-only pass and stayed roots). So every route
+  // holding a child is read on a timer: one `pane list` per route, and a write
+  // only where a live child lost its tokens.
+  const routeReadAt = new Map<string, number>();
+  const unreadableRoutes = new Set<string>();
+  const writeRetryAt = new Map<string, number>();
+  const reconcileLineage = (now: number): void => {
+    for (const id of writeRetryAt.keys()) if (!own(ledger.participants, id)) writeRetryAt.delete(id);
+    const routes = new Map<string, import("./model").Participant[]>();
+    for (const child of Object.values(ledger.participants)) {
+      if (child.parent === null || child.pane === null) continue;
+      const key = `${child.machine}\u0000${child.hostScope}`;
+      routes.set(key, [...(routes.get(key) ?? []), child]);
     }
-    if (filled > 0 || failed > 0) {
+    let scanned = 0, filled = 0, failed = 0;
+    for (const [key, children] of routes) {
+      const { machine, hostScope } = children[0]!;
+      const local = isLocalMachine(machine);
+      if (now - (routeReadAt.get(key) ?? -Infinity) < (local ? LOCAL_LINEAGE_MS : REMOTE_LINEAGE_MS)) continue;
+      routeReadAt.set(key, now);
+      const panes = readRouteLineage(machine, hostScope, local ? 2000 : 20_000);
+      if (panes === null) {
+        // One line when the route stops answering, not one per pass while a server is down.
+        if (!unreadableRoutes.has(key)) process.stderr.write(`${JSON.stringify({ event: "hcoord.lineage_route_unavailable", at: new Date(now).toISOString(), machine })}\n`);
+        unreadableRoutes.add(key);
+        continue;
+      }
+      unreadableRoutes.delete(key);
+      for (const child of children) {
+        const parent = own(ledger.participants, child.parent!);
+        const pane = panes.get(child.pane!);
+        if (!parent || parent.pane === null || !pane) continue;
+        if (!sameExecution(child, { machine, hostScope, pane: child.pane, session: pane.session, instance: pane.instance })) continue;
+        scanned += 1;
+        if (lineageCurrent(parent, child, pane) || (writeRetryAt.get(child.id) ?? 0) > now) continue;
+        let result: LineageWrite;
+        try { result = writeLineage(parent, child); }
+        catch (error) { result = { status: "failed", parentPane: parent.pane, parentMachine: null, message: error instanceof Error ? error.message : "lineage token write failed", nextAction: null }; }
+        if (result.status === "written") { filled += 1; writeRetryAt.delete(child.id); continue; }
+        failed += 1;
+        writeRetryAt.set(child.id, now + LINEAGE_WRITE_RETRY_MS);
+        process.stderr.write(`${JSON.stringify({ event: "hcoord.lineage_write_failed", at: new Date(now).toISOString(), participant: child.id, parent: parent.id, machine: child.machine, reason: result.message.slice(0, 300) })}\n`);
+      }
+    }
+    if (filled > 0) {
       const next = structuredClone(ledger);
-      event(next, new Date().toISOString(), "lineage.reconciled", "daemon", null, { scanned: participants.length, filled, failed, unchanged });
+      event(next, new Date(now).toISOString(), "lineage.reconciled", "daemon", null, { scanned, filled, failed });
       saveLedger(next, home); ledger = next;
     }
   };
@@ -692,11 +728,18 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
     fs.chmodSync(socketFile, 0o600);
     recordReady(process.pid, new Date().toISOString(), home);
     reconcileAlert(home, Date.now(), true, notifyText);
-    processing = processing.then(() => reconcileLineage()).catch((error) => {
-      process.stderr.write(`${JSON.stringify({ event: "hcoord.lineage_reconcile_failed", at: new Date().toISOString(), code: error instanceof HcoordError ? error.code : "internal" })}\n`);
-    });
+    let lineagePending = false;
+    const queueLineage = (): void => {
+      if (lineagePending || closing) return;
+      lineagePending = true;
+      processing = processing.then(() => { if (!closing) reconcileLineage(Date.now()); }).catch((error) => {
+        process.stderr.write(`${JSON.stringify({ event: "hcoord.lineage_reconcile_failed", at: new Date().toISOString(), code: error instanceof HcoordError ? error.code : "internal" })}\n`);
+      }).finally(() => { lineagePending = false; });
+    };
+    queueLineage();
     if (closing) server.close();
     const timer = setInterval(() => {
+      queueLineage();
       if (tickPending || closing) return;
       tickPending = true;
       processing = processing.then(() => {
