@@ -177,12 +177,20 @@ impl Runtime {
         self.log_home_sync(device, projects, &synced);
         self.register_home(device, &synced.home);
         // The agent may write every linked project through its link (D-02,
-        // D-08); each CLI takes the real folders as extra roots.
-        let folders: Vec<String> = synced
+        // D-08); each CLI takes the real folders as extra roots. Herdr cannot
+        // pass a path with a control character, which would fail the whole
+        // start, so such a folder is left out of the roots and logged.
+        let (folders, unpassable): (Vec<String>, Vec<String>) = synced
             .links
             .iter()
             .map(|link| link.target.clone())
-            .collect();
+            .partition(|folder| !folder.chars().any(char::is_control));
+        for folder in &unpassable {
+            crate::diagnostic!(serde_json::json!({
+                "component": "home", "kind": "home.root_skipped", "target": device,
+                "reason": "control_character", "chars": folder.chars().count(),
+            }));
+        }
         self.extend_task_agent_args(id, agent_choice::agent_arguments(None, &folders));
         if let Some(operation) = self.snapshot.task_operation.as_mut() {
             operation.repository_root = Some(synced.home.clone());
