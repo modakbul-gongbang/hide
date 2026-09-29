@@ -45,7 +45,7 @@ function useStartAnswer() {
       // The pane is opened as an agent row opens it, so a device's pane moves rail, sidebar and center together.
       if (answer.paneId) ui.setFocusWhenListed(answer.paneId);
       if (answer.agentPhase === "failed") panel.fail(answer.agentMessage ?? "에이전트가 시작되지 않았습니다.");
-      else panel.finish();
+      else panel.finish(answer.agentPhase === "starting" ? answer.taskId : null);
       return true;
     };
     if (settle()) return undefined;
@@ -63,8 +63,26 @@ function useStartAnswer() {
   }, [request]);
 }
 
+/**
+ * Follows a start whose tab opened while its agent was still starting: an
+ * agent that then fails to start puts its text back in the draft with the
+ * reason, so the next ⌘N shows both and nothing written is lost (B31).
+ */
+function useSpentStart() {
+  const spent = useStartPanel((s) => s.spent);
+  const operation = useShellStore((s) => s.rest?.task_operation);
+  useEffect(() => {
+    if (!spent) return;
+    const panel = useStartPanel.getState();
+    if (!operation || operation.id !== spent.taskId) return panel.settle();
+    if (operation.agent_phase === "failed" || operation.agent_phase === "unknown") panel.restore(operation.agent_message ?? "에이전트가 시작되지 않았습니다.");
+    else if (operation.agent_phase !== "starting") panel.settle();
+  }, [spent, operation]);
+}
+
 export function StartPanelHost({ actions }: { actions: Actions }) {
   useStartAnswer();
+  useSpentStart();
   const open = useStartPanel((s) => s.isOpen);
   // A palette or a dialog opening over the panel takes the place; the draft stays.
   const covered = useUiStore((s) => s.overlay !== "none" || s.workspaceDialog !== null);

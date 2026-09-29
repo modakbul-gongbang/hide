@@ -830,6 +830,7 @@ While the catalog is being read or cannot be read, the model menu shows the reme
 Every start that names Claude or Codex, here or in a dialog, is remembered by the core with its model, so the next open preselects that kind and its model with no `recent` mark; the target is not remembered and follows what is in front on every open.
 Escape or a press outside closes the panel and keeps the text for the next open; a start that goes clears it.
 The panel follows only the answer carrying its own request id, even after it closes: a refusal or a failed start shows its reason inside the panel and keeps the text, and a start that went brings the center to the new pane, on a device by moving the rail, the sidebar and the center together.
+An agent that fails to start after its tab opened puts its text back in the draft with the reason, unless a new draft took its place, so the next ⌘N shows both; the reason stays until the text changes.
 A start with no answer in 30 seconds says so inside the panel.
 New worktree, Start from an issue and 맡기기 carry the same kind and model menus with the remembered choice preselected, and what they start becomes the next default; New worktree's kind menu starts with `Terminal only`, which is never remembered.
 Settings › Issues has no default agent of its own.

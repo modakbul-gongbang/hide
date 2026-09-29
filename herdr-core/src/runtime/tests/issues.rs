@@ -564,14 +564,11 @@ fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
         .as_mut()
         .unwrap()
         .agent_phase = Some("starting".into());
-    assert!(runtime.ingest_task_agent_result(
-        id,
-        live::TaskAgentOutcome::StartedWithoutPrompt("agent_blocked".into())
-    ));
+    assert!(runtime.ingest_task_agent_result(id, live::TaskAgentOutcome::Started));
     assert!(runtime.task_agent_launch.is_none());
     let operation = runtime.snapshot().task_operation.clone().unwrap();
     assert_eq!(operation.agent_phase.as_deref(), Some("started"));
-    assert_eq!(operation.agent_message.as_deref(), Some("agent_blocked"));
+    assert_eq!(operation.agent_message, None);
 }
 
 /// A runtime whose project reads Local issues and holds one, `L-1`.

@@ -1258,24 +1258,6 @@ pub(crate) fn pane_process_group(value: Value) -> Result<PaneProcessGroup, Strin
     }
 }
 
-/// The first prompt for an agent that `agent.start` reported ready. No wait:
-/// the prompt is the operator's, and the pane shows how the turn goes.
-pub(crate) fn agent_prompt_params(pane_id: &str, text: &str) -> Result<Value, String> {
-    params(req::AgentPromptParams {
-        target: pane_id.into(),
-        text: text.into(),
-        wait: None,
-    })
-}
-
-pub(crate) fn prompted_agent(value: Value) -> Result<(), String> {
-    let missing = "agent.prompt response is missing its agent";
-    match response(value, missing)? {
-        res::ResponseResult::AgentPrompted { .. } => Ok(()),
-        _ => Err(missing.into()),
-    }
-}
-
 pub(crate) fn started_agent(value: Value) -> Result<String, String> {
     let missing = "agent.start response is missing agent pane";
     match response(value, missing)? {

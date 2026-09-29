@@ -3585,7 +3585,6 @@ impl Runtime {
         };
         let (phase, message) = match outcome {
             live::TaskAgentOutcome::Started => ("started", None),
-            live::TaskAgentOutcome::StartedWithoutPrompt(message) => ("started", Some(message)),
             live::TaskAgentOutcome::Failed(message) => ("failed", Some(message)),
             live::TaskAgentOutcome::Unknown(message) => ("unknown", Some(message)),
         };

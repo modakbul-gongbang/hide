@@ -865,8 +865,6 @@ pub struct PendingAgentStart {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskAgentOutcome {
     Started,
-    /// The agent started, but the first prompt it was given was not sent.
-    StartedWithoutPrompt(String),
     /// Herdr refused, or the agent is not installed; nothing started.
     Failed(String),
     /// Herdr did not answer; the agent may be running. The pane says which.
@@ -912,122 +910,59 @@ fn start_task_agent(
     notifier.notify();
 }
 
-/// Herdr's refusal of an argument it cannot type safely into the pane's
-/// shell (a line break or a tab); nothing was typed.
-const INVALID_AGENT_ARGUMENT: &str = "invalid_agent_argument";
-
 /// Starts the agent with its first prompt (PRD home-device-rail D-26).
 ///
-/// The prompt goes as the CLI's own argument after `--`: Claude Code and
-/// Codex hold it through their startup questions (folder trust, sign-in) and
-/// send it once those are answered. Herdr reports an agent on such a
-/// question as idle and ready, and `agent.prompt` would type into the
-/// question, so typing is only the fallback for a prompt Herdr cannot pass
-/// as an argument (one with a line break), after the agent answered ready.
+/// The prompt always goes as the CLI's own argument after `--`: Claude Code
+/// and Codex hold it through their startup questions (folder trust, sign-in)
+/// and send it once those are answered. Nothing is ever typed into the pane,
+/// because Herdr reports an agent on such a question as idle and ready, and a
+/// typed prompt would answer the question. A prompt that cannot be passed,
+/// or a start Herdr refuses, fails the start with the reason; the surface
+/// that sent it keeps the text.
 fn launch_with_prompt(
     connector: &dyn ApiConnector,
     local: bool,
     id: u64,
     pane_id: &str,
     kind: &str,
-    args: Vec<String>,
+    mut args: Vec<String>,
     prompt: Option<String>,
 ) -> TaskAgentOutcome {
-    let Some(prompt) = prompt else {
-        return launch_agent(connector, local, id, pane_id, kind, args).into();
-    };
-    let mut with_prompt = args.clone();
-    with_prompt.extend(["--".to_owned(), prompt.clone()]);
-    match launch_agent(connector, local, id, pane_id, kind, with_prompt) {
-        Launch::Refused { code, .. } if code == INVALID_AGENT_ARGUMENT => {
-            match launch_agent(connector, local, id, pane_id, kind, args).into() {
-                TaskAgentOutcome::Started => {
-                    send_first_prompt(connector, id, pane_id, &prompt, PROMPT_READY_WAIT)
-                }
-                outcome => outcome,
-            }
+    if let Some(prompt) = prompt {
+        match prompt_argument(&prompt) {
+            Ok(argument) => args.extend(["--".to_owned(), argument]),
+            Err(message) => return TaskAgentOutcome::Failed(message),
         }
-        launch => launch.into(),
     }
+    launch_agent(connector, local, id, pane_id, kind, args).into()
 }
 
-/// How long a typed first prompt waits for an agent that answered its start
-/// but is holding a question Herdr reports as blocked: the operator answers
-/// it in the pane, and the prompt goes in after (D-26). Past this the prompt
-/// is reported unsent rather than typed into the question.
-pub(crate) const PROMPT_READY_WAIT: Duration = Duration::from_secs(600);
-const PROMPT_READY_POLL: Duration = Duration::from_secs(1);
-const AGENT_BLOCKED: &str = "agent_blocked";
-
-/// Hands a started agent its first prompt (the text the operator started it
-/// with). Herdr refuses a prompt to an agent holding a question without
-/// typing anything, so a refusal of that kind waits for the question to be
-/// answered and sends then. The agent is running either way, so a prompt
-/// that could not be sent is reported on the started agent rather than as a
-/// failed start.
-fn send_first_prompt(
-    connector: &dyn ApiConnector,
-    id: u64,
-    pane_id: &str,
-    prompt: &str,
-    ready_wait: Duration,
-) -> TaskAgentOutcome {
-    let params = match wire::agent_prompt_params(pane_id, prompt) {
-        Ok(params) => params,
-        Err(message) => return TaskAgentOutcome::StartedWithoutPrompt(message),
-    };
-    let deadline = Instant::now() + ready_wait;
-    loop {
-        let answer = request_with_correlation_id(
-            connector,
-            &format!("herdr-core:task:{id}:prompt"),
-            "agent.prompt",
-            params.clone(),
-            Duration::from_secs(15),
-        );
-        let message = match answer {
-            Ok(value) => match wire::prompted_agent(value) {
-                Ok(()) => return TaskAgentOutcome::Started,
-                Err(message) => message,
-            },
-            Err(ApiError::Remote { code, .. }) if code == AGENT_BLOCKED => {
-                match wait_until_unblocked(connector, pane_id, deadline) {
-                    Ok(()) => continue,
-                    Err(message) => message,
-                }
+/// The first prompt as one argument Herdr can type into the pane's shell,
+/// which refuses a line break or a tab in an argument. Each line break becomes
+/// U+2028 (LINE SEPARATOR), which Herdr passes through and the model reads as
+/// a line break, and a tab four spaces; any other control character is refused
+/// rather than dropped.
+fn prompt_argument(prompt: &str) -> Result<String, String> {
+    let mut argument = String::with_capacity(prompt.len());
+    let mut chars = prompt.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                chars.next_if_eq(&'\n');
+                argument.push('\u{2028}');
             }
-            Err(error) => error.to_string(),
-        };
-        return TaskAgentOutcome::StartedWithoutPrompt(format!(
-            "The agent started, but its first prompt was not sent ({message}). Paste it into the pane."
-        ));
-    }
-}
-
-/// Waits until the agent in `pane_id` no longer holds a question, reading
-/// `agent.get` once a second, until `deadline`.
-fn wait_until_unblocked(
-    connector: &dyn ApiConnector,
-    pane_id: &str,
-    deadline: Instant,
-) -> Result<(), String> {
-    loop {
-        if Instant::now() >= deadline {
-            return Err("the agent is still waiting on a question in its pane".into());
-        }
-        thread::sleep(PROMPT_READY_POLL);
-        let state = request_with_connector(
-            connector,
-            "agent.get",
-            wire::agent_target_params(pane_id)?,
-            Duration::from_secs(5),
-        )
-        .map_err(|error| format!("agent.get failed: {error}"))
-        .and_then(wire::agent_state)?;
-        if state.status != "blocked" {
-            return Ok(());
+            '\n' => argument.push('\u{2028}'),
+            '\t' => argument.push_str("    "),
+            c if c.is_control() => {
+                return Err(format!(
+                    "The first prompt has a control character (U+{:04X}) that cannot be passed to the agent; remove it and start again.",
+                    u32::from(c)
+                ));
+            }
+            c => argument.push(c),
         }
     }
+    Ok(argument)
 }
 
 pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), String> {
@@ -2872,10 +2807,6 @@ mod tests {
             "foreground_processes":[{"pid":4100,"name":"zsh"}]
         }}})
     }
-    fn blocked() -> Value {
-        json!({"error":{"code":"agent_blocked","message":"the agent is waiting on a question"}})
-    }
-
     fn requests_of(server: &Server) -> Vec<Value> {
         server.requests.lock().unwrap().clone()
     }
@@ -2925,21 +2856,14 @@ mod tests {
         );
     }
 
-    /// D-26: a prompt Herdr cannot pass as an argument (a line break) is
-    /// refused before anything is typed; the agent starts without it, and the
-    /// prompt is typed once the agent is ready, waiting while Herdr reports it
-    /// blocked on a question.
+    /// D-26, B31: a multi-line prompt still travels as the CLI's own
+    /// argument, its line breaks as U+2028 and its tabs as spaces; nothing is
+    /// typed into the pane, where a startup question would take it.
     #[test]
-    fn a_multi_line_prompt_is_typed_once_the_agent_is_free() {
+    fn a_multi_line_prompt_travels_as_one_argument_and_is_never_typed() {
         let server = server(vec![
             shell_ready(),
-            json!({"error":{"code":"invalid_agent_argument","message":"agent arguments cannot be encoded safely for the target shell"}}),
-            shell_ready(),
             json!({"result":{"type":"agent_started","argv":[],"agent":agent("idle")}}),
-            blocked(),
-            json!({"result":{"type":"agent_info","agent":agent("blocked")}}),
-            json!({"result":{"type":"agent_info","agent":agent("idle")}}),
-            json!({"result":{"type":"agent_prompted","agent":agent("working")}}),
         ]);
         let outcome = launch_with_prompt(
             &server,
@@ -2948,40 +2872,67 @@ mod tests {
             "w1:p1",
             "claude",
             vec!["--model".into(), "opus".into()],
-            Some("fix the tests\nthen push".into()),
+            Some("1\nfix the tests\r\n\tthen push".into()),
         );
         assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
         let requests = requests_of(&server);
+        assert_eq!(methods_of(&requests), ["pane.process_info", "agent.start"]);
         assert_eq!(
-            methods_of(&requests),
-            [
-                "pane.process_info",
-                "agent.start",
-                "pane.process_info",
-                "agent.start",
-                "agent.prompt",
-                "agent.get",
-                "agent.get",
-                "agent.prompt"
-            ]
-        );
-        assert_eq!(requests[3]["params"]["args"], json!(["--model", "opus"]));
-        assert_eq!(
-            requests[7]["params"]["text"],
-            json!("fix the tests\nthen push")
+            requests[1]["params"]["args"],
+            json!([
+                "--model",
+                "opus",
+                "--",
+                "1\u{2028}fix the tests\u{2028}    then push"
+            ])
         );
     }
 
-    /// D-26, B31: a question left unanswered past the wait is reported on the
-    /// started agent; nothing is typed into the question.
+    /// B31: a prompt with a character that cannot be passed fails the start
+    /// with the reason, and Herdr is not asked at all.
     #[test]
-    fn a_first_prompt_still_blocked_at_the_deadline_is_reported_unsent() {
-        let server = server(vec![blocked()]);
-        let outcome = send_first_prompt(&server, 7, "w1:p1", "fix the tests", Duration::ZERO);
-        let TaskAgentOutcome::StartedWithoutPrompt(message) = outcome else {
-            panic!("expected an unsent prompt, got {outcome:?}");
+    fn a_prompt_with_another_control_character_fails_the_start_before_herdr() {
+        let server = server(vec![]);
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            "w1:p1",
+            "claude",
+            Vec::new(),
+            Some("fix\u{7}the bell".into()),
+        );
+        let TaskAgentOutcome::Failed(message) = outcome else {
+            panic!("expected a failed start, got {outcome:?}");
         };
-        assert!(message.contains("still waiting on a question"), "{message}");
-        assert_eq!(server.requests.lock().unwrap().len(), 1);
+        assert!(message.contains("U+0007"), "{message}");
+        assert!(requests_of(&server).is_empty());
+    }
+
+    /// B31: a start Herdr refuses is a failed start with Herdr's reason; the
+    /// agent is not started again without its prompt.
+    #[test]
+    fn a_refused_start_is_reported_and_not_retried_without_the_prompt() {
+        let server = server(vec![
+            shell_ready(),
+            json!({"error":{"code":"invalid_agent_argument","message":"agent arguments cannot be encoded safely for the target shell"}}),
+        ]);
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            "w1:p1",
+            "claude",
+            Vec::new(),
+            Some("fix the tests".into()),
+        );
+        let TaskAgentOutcome::Failed(message) = outcome else {
+            panic!("expected a failed start, got {outcome:?}");
+        };
+        assert!(message.contains("invalid_agent_argument"), "{message}");
+        assert_eq!(
+            methods_of(&requests_of(&server)),
+            ["pane.process_info", "agent.start"]
+        );
     }
 }
