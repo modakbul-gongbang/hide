@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ChevronUpIcon, FolderIcon, HouseIcon, LayoutDashboardIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Actions } from "./actions";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
@@ -17,8 +17,8 @@ import { visibleWindow, type CycleItem } from "./recent";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { displayMark } from "./ViewAreas";
 import { AgentMark } from "./AgentMark";
-import { closeSheet, statusUnknownNotice, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
-import { SubtreeList } from "./components/subtree-list";
+import { closeSheet, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
+import { RowMark, SubtreeList } from "./components/subtree-list";
 import { knownProvider } from "./workspace";
 
 /**
@@ -134,6 +134,7 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
           data-confirm-close={pending.kind}
           data-confirm-subtree={sheet.sheet === "subtree" ? "true" : undefined}
           initialFocus={sheet.sheet === "subtree" ? (blocked ? "cancel" : "action") : "container"}
+          {...(sheet.sheet === "subtree" ? { "aria-describedby": undefined } : {})}
         >
           {sheet.sheet === "subtree" ? (
             <SubtreeClose actions={actions} kind={pending.kind} targetId={pending.targetId} subtree={sheet.subtree} footer={footer} />
@@ -163,21 +164,24 @@ function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; 
         {stopWork.rows.map((row) => (
           <li
             key={row.pane.id}
+            aria-label={`${row.label}, ${row.agent?.status_label ?? row.pane.status_label}`}
             data-stop-work-row={row.pane.id}
             data-stop-work-state={row.state}
             className={`flex min-w-0 items-start gap-xs ${row.state === "quiet" ? "opacity-(--opacity-read-status)" : ""}`}
           >
-            <span className="flex w-(--size-agent-mark) shrink-0 justify-center">{row.agent ? <StatusMark symbol={row.agent.symbol} className={markTone(row.agent)} /> : null}</span>
-            <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-xs">
+            <span className="flex w-(--size-agent-mark) shrink-0 justify-center">
+              {row.agent ? <RowMark symbol={row.agent.symbol} tone={markTone(row.agent)} status={row.state === "quiet" ? row.agent.status_label : null} /> : null}
+            </span>
+            <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-xs" aria-hidden="true">
               <span className="min-w-0 break-words text-foreground">{row.label}</span>
-              <span className={`shrink-0 ${row.agent ? markTone(row.agent) : "text-subtle-foreground"}`}>{row.agent?.status_label ?? row.pane.status_label}</span>
+              {row.state === "quiet" ? null : <span className="shrink-0 text-subtle-foreground" data-stop-work-status="true">{row.agent?.status_label ?? row.pane.status_label}</span>}
             </span>
           </li>
         ))}
       </ul>
       {stopWork.unknown ? (
         <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-stop-work-blocked="true">
-          <span className="min-w-0 break-words">{statusUnknownNotice(stopWork.unknown.label)}</span>
+          <span className="min-w-0 break-words">{stopWork.unknown.label}: status unknown.</span>
           <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-stop-work-check-status="true">
             Check status
           </Button>
@@ -193,6 +197,9 @@ function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; 
   );
 }
 
+/** What 이것만 닫기 leaves, said by its tooltip and its accessible description (B5, D-42). */
+const CLOSE_ONLY_RESULT = "자식은 계속 실행되고 내 목록으로 올라옵니다.";
+
 /**
  * The close of an agent with descendants (D-07, D-17, D-18, D-19): one list
  * of what closes with it, and 취소 / 이것만 닫기 / 모두 닫기 with 모두 닫기 the
@@ -203,17 +210,17 @@ function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: A
   const count = subtree.rows.filter((row) => !row.target).length;
   const targetDevice = subtree.rows.find((row) => row.target)?.agent.device_id;
   const closeAllBlocked = subtree.unknown || subtree.targetUnknown;
+  const closeOnlyResult = useId();
   return (
     <>
       <AlertDialogHeader>
         <AlertDialogTitle>{subtreeTitle(kind, count)}</AlertDialogTitle>
-        <AlertDialogDescription data-subtree-consequence="true">이것만 닫기: 자식은 계속 실행되고 내 목록으로 올라옵니다.</AlertDialogDescription>
       </AlertDialogHeader>
       <SubtreeList subtree={subtree} targetDevice={targetDevice ?? (targetId ?? undefined)} />
       {closeAllBlocked ? (
         <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-subtree-blocked="true">
           <span className="min-w-0 break-words">
-            {subtree.targetUnknown ? "상태를 모르는 에이전트가 있어 닫기 전에 상태를 확인해야 합니다." : "상태를 모르는 자식이 있어 모두 닫기 전에 상태를 확인해야 합니다."}
+            {subtree.targetUnknown ? "상태를 모르는 에이전트가 있습니다." : "상태를 모르는 자식이 있습니다."}
           </span>
           <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-subtree-check-status="true">
             상태 확인
@@ -224,9 +231,14 @@ function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: A
         <AlertDialogCancel data-subtree-cancel="true" data-close-cancel="true">
           취소
         </AlertDialogCancel>
-        <Button variant="secondary" disabled={subtree.targetUnknown} onClick={() => actions.confirmClose()} data-subtree-close-only="true">
-          이것만 닫기
-        </Button>
+        <Hint label={CLOSE_ONLY_RESULT} reveals>
+          <Button variant="secondary" disabled={subtree.targetUnknown} onClick={() => actions.confirmClose()} aria-describedby={closeOnlyResult} data-subtree-close-only="true">
+            이것만 닫기
+          </Button>
+        </Hint>
+        <span id={closeOnlyResult} className="sr-only">
+          {CLOSE_ONLY_RESULT}
+        </span>
         <Button
           variant="destructive"
           disabled={closeAllBlocked}

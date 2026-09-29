@@ -31,11 +31,11 @@ export function closeDecision(panes: PaneRow[], agents: AgentRow[]): CloseDecisi
   return targets.some((row) => row.confirmation) ? { action: "confirm" } : { action: "close" };
 }
 
-/** The Stop-work sheet's words, which stay as they are while it is open (B28). */
+/** The Stop-work sheet's words, one line under the title, which stay as they are while it is open (B28, D-42). */
 export function stopWorkCopy(kind: CloseKind): { title: string; consequence: string } {
   return kind === "pane"
-    ? { title: "Stop the active pane?", consequence: "Closing this pane terminates its running process and interrupts the listed work." }
-    : { title: "Close this tab?", consequence: "Closing the tab terminates all listed working or attention panes in one operation." };
+    ? { title: "Stop the active pane?", consequence: "Its running process and the listed work stop." }
+    : { title: "Close this tab?", consequence: "The listed working panes stop in one close." };
 }
 
 /** A pane the Stop-work sheet lists: working or asking (`active`), unreadable, or quiet. */

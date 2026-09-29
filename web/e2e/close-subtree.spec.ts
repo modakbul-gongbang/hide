@@ -115,8 +115,12 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     const opacity = (pane: string) => sheet.locator(`[data-subtree-row="${pane}"]`).evaluate((row) => Number(getComputedStyle(row).opacity));
     for (const pane of [working, asking, finished]) expect(await opacity(pane)).toBe(1);
     expect(await opacity(quiet)).toBeLessThan(1);
-    // Each row says its state in words too.
+    // Each row's accessible name says its state; only the rows that need the
+    // operator show the word, and a quiet row's mark says it on hover.
     await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("aria-label", /병합 전 검증/);
+    for (const pane of [working, asking, finished]) await expect(sheet.locator(`[data-subtree-row="${pane}"] [data-subtree-status]`)).toHaveCount(1);
+    await expect(sheet.locator(`[data-subtree-row="${quiet}"] [data-subtree-status]`)).toHaveCount(0);
+    await expect(sheet.locator(`[data-subtree-row="${quiet}"] [data-row-mark-hint]`)).toHaveCount(1);
     await screenshot(page, "close-subtree-states");
 
     // The list is live (D-20, B13): a child spawned while the sheet is open
@@ -175,7 +179,8 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
     await expect(sheet.locator("[data-subtree-row]").first()).toHaveAttribute("data-subtree-row", target);
     await expect(sheet.locator("[data-subtree-row]").nth(1)).toHaveAttribute("data-subtree-row", child);
     await expect(sheet.locator("[data-subtree-row]").nth(2)).toHaveAttribute("data-subtree-row", grandchild);
-    await expect(sheet.locator("[data-subtree-consequence]")).toHaveText("이것만 닫기: 자식은 계속 실행되고 내 목록으로 올라옵니다.");
+    // No sentence under the title: what Close only leaves is its button's tooltip and description.
+    await expect(sheet.locator("[data-subtree-close-only]")).toHaveAccessibleDescription("자식은 계속 실행되고 내 목록으로 올라옵니다.");
     // Enter's default is Close all (D-18).
     await expect(sheet.locator("[data-subtree-close-all]")).toBeFocused();
     await screenshot(page, "close-subtree-sheet");
@@ -340,11 +345,14 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     }).toPass({ timeout: 30_000, intervals: [500] });
 
     const dialog = page.locator("[data-delete-worktree]");
-    await expect(dialog.locator("[data-removal-subtree]")).toContainText("1 agent spawned from this worktree runs outside it:", { timeout: 30_000 });
+    await expect(dialog.locator("[data-removal-subtree]")).toContainText("1 agent outside this worktree", { timeout: 30_000 });
+    // The core's warnings are badges, the path shows once.
+    await expect(dialog.locator('[data-delete-warning="not pushed"]')).toBeVisible();
+    await expect(dialog.getByText(/repo-spawner/)).toHaveCount(1);
     await expect(dialog.locator(`[data-subtree-row="${outside}"]`)).toBeVisible();
     const withOutside = dialog.locator('[data-delete-confirm="with-outside"]');
-    await expect(withOutside).toHaveText("Close 1 agent outside, then delete");
-    await expect(dialog.locator('[data-delete-confirm="only"]')).toHaveText("Delete only this worktree");
+    await expect(withOutside).toHaveText("Close 1 agent and delete");
+    await expect(dialog.locator('[data-delete-confirm="only"]')).toHaveText("Delete only");
     // Neither action holds the keyboard when the dialog opens (D-35).
     await expect(withOutside).not.toBeFocused();
     await expect(dialog.locator('[data-delete-confirm="only"]')).not.toBeFocused();
@@ -387,11 +395,11 @@ test("Remove project closes the agents its panes spawned outside it before the p
     await page.getByRole("menu", { name: "fixture actions" }).locator('[data-menu-item="remove_project"]').click();
 
     const dialog = page.locator("[data-remove-project]");
-    await expect(dialog.locator("[data-removal-subtree]")).toContainText("1 agent spawned from this project runs outside it:", { timeout: 30_000 });
+    await expect(dialog.locator("[data-removal-subtree]")).toContainText("1 agent outside this project", { timeout: 30_000 });
     await expect(dialog.locator(`[data-subtree-row="${outside}"]`)).toBeVisible();
     const withOutside = dialog.locator('[data-remove-confirm="with-outside"]');
-    await expect(withOutside).toHaveText("Close 1 agent outside, then remove");
-    await expect(dialog.locator('[data-remove-confirm="only"]')).toHaveText("Remove only this project");
+    await expect(withOutside).toHaveText("Close 1 agent and remove");
+    await expect(dialog.locator('[data-remove-confirm="only"]')).toHaveText("Remove only");
     await expect(withOutside).not.toBeFocused();
     expect(await rowTops([dialog.locator("[data-remove-cancel]"), dialog.locator('[data-remove-confirm="only"]'), withOutside])).toHaveLength(1);
     await screenshot(page, "close-subtree-remove-project");
