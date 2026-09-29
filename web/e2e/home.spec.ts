@@ -14,7 +14,8 @@ import { enterWorkspace, screenshot } from "./wire";
 test.describe.configure({ timeout: 120_000 });
 
 async function pinFixture(page: Page) {
-  const row = page.locator("[data-project-row]").filter({ hasText: "fixture" }).first();
+  // The fixture is a plain folder, which the sidebar draws as one row.
+  const row = page.locator("nav[data-sidebar]").getByRole("button", { name: "fixture", exact: true });
   await row.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
   await expect(page.locator("[data-home-count]")).toHaveText("1 project", { timeout: 20_000 });
@@ -51,7 +52,7 @@ test("Home's + makes ~/hide with a link per project and opens a tab there", asyn
       .poll(() => JSON.stringify(herdr.run(["api", "snapshot"])).includes(fs.realpathSync(home)), { timeout: 20_000 })
       .toBe(true);
     await expect(page.locator("[data-home-count]")).toHaveText("1 project");
-    await expect(page.locator("[data-project-row]").filter({ hasText: /^hide$/ })).toHaveCount(0);
+    await expect(page.locator("nav[data-sidebar]").getByRole("button", { name: /^(hide|Home)$/ })).toHaveCount(0);
     await screenshot(page, "home-tab-opened");
   } finally {
     daemon?.stop();
