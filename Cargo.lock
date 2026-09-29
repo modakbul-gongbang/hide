@@ -1364,6 +1364,7 @@ dependencies = [
  "hex",
  "hide-herdr-client",
  "hide-host",
+ "hide-session",
  "http-body-util",
  "hyper",
  "hyper-util",

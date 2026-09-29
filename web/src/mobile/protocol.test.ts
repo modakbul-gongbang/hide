@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxDrawingRow, headerLine, macNameOf, notificationRow, openKey, parseFragment, replyProblem, rowsProblem, staleTags, toBase64Url, type AgentGroup, type PhoneAgent } from "./protocol";
+import { MAX_MESSAGES, boxDrawingRow, headerLine, mergeConversation, messageTime, macNameOf, notificationRow, openKey, parseFragment, replyProblem, rowsProblem, staleTags, toBase64Url, type AgentGroup, type ConversationMessage, type PhoneAgent } from "./protocol";
 
 const CREDENTIAL = "a".repeat(64);
 
@@ -110,5 +110,37 @@ describe("boxDrawingRow", () => {
     expect(boxDrawingRow("── 3 files ──")).toBe(false);
     expect(boxDrawingRow("")).toBe(false);
     expect(boxDrawingRow("    ")).toBe(false);
+  });
+});
+
+describe("mergeConversation", () => {
+  const message = (id: number): ConversationMessage => ({ id, who: "agent", text: `m${id}`, truncated: false, at_ms: 0 });
+  const ids = (list: ConversationMessage[]) => list.map((item) => item.id);
+
+  it("replaces on a fresh page, prepends an older one, and appends once each", () => {
+    const fresh = mergeConversation(null, { mode: "reset", messages: [message(30), message(40)], before: 30 });
+    expect(fresh).toEqual({ messages: [message(30), message(40)], before: 30 });
+    const older = mergeConversation(fresh, { mode: "older", messages: [message(10), message(20), message(30)], before: null });
+    expect(ids(older.messages)).toEqual([10, 20, 30, 40]);
+    expect(older.before).toBeNull();
+    const appended = mergeConversation(older, { mode: "append", messages: [message(40), message(50)] });
+    expect(ids(appended.messages)).toEqual([10, 20, 30, 40, 50]);
+    expect(mergeConversation(appended, { mode: "reset", messages: [message(60)], before: 60 })).toEqual({ messages: [message(60)], before: 60 });
+  });
+
+  it("drops the oldest past the cap and keeps the page before them readable", () => {
+    const full = { messages: Array.from({ length: MAX_MESSAGES }, (_, index) => message(index + 1)), before: null };
+    const next = mergeConversation(full, { mode: "append", messages: [message(MAX_MESSAGES + 1)] });
+    expect(next.messages).toHaveLength(MAX_MESSAGES);
+    expect(next.messages[0]?.id).toBe(2);
+    expect(next.before).toBe(2);
+  });
+});
+
+describe("messageTime", () => {
+  it("is the hour and minute today, with the day before today", () => {
+    const now = new Date(2026, 8, 29, 15, 0);
+    expect(messageTime(new Date(2026, 8, 29, 9, 5).getTime(), now)).toBe("09:05");
+    expect(messageTime(new Date(2026, 8, 28, 23, 41).getTime(), now)).toBe("9/28 23:41");
   });
 });

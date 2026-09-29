@@ -312,6 +312,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let renderers = Arc::new(AtomicUsize::new(0));
     let mobile = mobile::Mobile::start(mobile::Config {
         state_dir: env.state_dir.clone(),
+        home: env.home.clone(),
         port,
         cli: mobile::tailscale::CliSource {
             pinned: env.tailscale_bin.clone(),

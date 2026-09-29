@@ -14,7 +14,7 @@ Before changing browser displays, read `docs/BROWSER_DISPLAYS.md` for who owns a
 - `herdr-core/` - platform-neutral Rust runtime, an rlib whose owner-thread handle (`herdr-core/src/handle.rs`) `hided` drives. It projects Herdr-owned pane topology and owns Hide's UI state; the shell owns neither.
 - `hide-agent-hooks/` - the only code that writes a configuration file the operator owns (each agent runtime's hook file). A separate crate because a `settings.json` write must never sit behind the render lock; see `docs/agent-hooks.md`.
 - `hide-ai/` - the provider boundary for background AI features, backed by the user's own logged-in CLIs; see `docs/AI_PROVIDERS.md`.
-- `hide-session/` - shared local Claude and Codex session location, incremental reading, and conversation parsing used by the plugin and core usage fallback.
+- `hide-session/` - shared local Claude and Codex session location, incremental and backwards page reading, and conversation parsing used by the plugin, the core usage fallback and the phone's conversation.
 - `plugins/` - Herdr plugins shipped from this repository, each installable on its own with `herdr plugin install <owner>/<repo>/plugins/<name>`: `agent-context-labels/` and `hcoord/`.
 
 ## Before Opening A Pull Request

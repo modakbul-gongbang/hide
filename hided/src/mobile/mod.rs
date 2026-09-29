@@ -5,12 +5,14 @@
 //! Settings > Mobile is on. A phone pairs with a five-minute code from the QR,
 //! holds a credential of its own, and talks only over `/ws` (`phone.rs`): it
 //! sees the agent list (`projection.rs`), reads and answers one pane
-//! (`pane.rs`), and receives Web Push (`push.rs`). The core knows nothing of
+//! (`pane.rs`), reads its agent's conversation (`conversation.rs`), and
+//! receives Web Push (`push.rs`). The core knows nothing of
 //! phones; this module reads its snapshot like any other client.
 //!
 //! What the renderer sees is one `mobile` frame, republished on every
 //! change; what it asks is one of the `mobile_*` events.
 
+pub mod conversation;
 pub mod pane;
 pub mod phone;
 pub mod phones;
@@ -132,6 +134,8 @@ pub struct PhoneMeta {
 
 pub struct Config {
     pub state_dir: PathBuf,
+    /// Where this Mac's agents write their transcripts.
+    pub home: PathBuf,
     pub port: u16,
     pub cli: CliSource,
     pub host_name: Option<String>,
@@ -1174,6 +1178,10 @@ impl Mobile {
         {
             self.publish();
         }
+    }
+
+    pub fn home(&self) -> &std::path::Path {
+        &self.config.home
     }
 
     /// The Herdr connection for a pane on this Mac or a connected device.

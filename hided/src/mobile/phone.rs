@@ -2,9 +2,10 @@
 //!
 //! The first frame names it: `{client_kind: "phone", token}` for a paired
 //! phone, `{client_kind: "phone", pair, name}` to pair with the live code.
-//! After that the phone may only: open one agent's detail, ask for more of
-//! its rows, close it, send that pane a reply or one key, and register or
-//! report its push subscription. Anything else is refused and recorded.
+//! After that the phone may only: open one agent's detail, choose its
+//! conversation or its terminal, ask for older messages or more rows, close
+//! it, send that pane a reply or one key, and register or report its push
+//! subscription. Anything else is refused and recorded.
 //! It never receives a file, a path, a setting or the core's snapshot.
 //!
 //! Every frame to the phone goes through `encode`, the one place a relay
@@ -17,8 +18,9 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+use super::conversation::{self, Tail, Transcript};
 use super::pane::{self, Input, PaneError};
-use super::projection::{AgentKey, Projection};
+use super::projection::{self as agents, AgentKey, Projection};
 use super::store::{Notifications, PushSubscription};
 use super::{InputState, Mobile, PhoneMeta, Reservation};
 
@@ -96,8 +98,34 @@ fn meta_frame(meta: &PhoneMeta) -> Value {
     })
 }
 
+/// Which half of a detail the phone shows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum View {
+    Conversation,
+    Terminal,
+}
+
+impl View {
+    fn of(message: &Value) -> Option<Self> {
+        match message.get("view").and_then(Value::as_str) {
+            Some("conversation") | None => Some(Self::Conversation),
+            Some("terminal") => Some(Self::Terminal),
+            Some(_) => None,
+        }
+    }
+}
+
+/// What the phone asked of its open detail.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Ask {
+    view: View,
+    lines: u32,
+}
+
 struct Detail {
-    lines: tokio::sync::watch::Sender<u32>,
+    ask: tokio::sync::watch::Sender<Ask>,
+    /// The cursors of older conversation pages the phone pulled for.
+    older: mpsc::Sender<u64>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -107,80 +135,199 @@ impl Drop for Detail {
     }
 }
 
-/// Reads the open pane once a second and sends its rows when their text or
-/// the asked line count changed. Herdr's read `revision` counts pane state,
-/// not output, so it cannot say that new rows arrived.
+/// Serves the open detail once a second: the conversation while the phone
+/// shows it and the pane has one, the pane's rows otherwise, so a pane
+/// without a transcript still shows its terminal.
 fn spawn_detail(
     mobile: Arc<Mobile>,
     key: AgentKey,
     frames: mpsc::Sender<Value>,
-    mut lines: tokio::sync::watch::Receiver<u32>,
+    mut asks: tokio::sync::watch::Receiver<Ask>,
+    mut older: mpsc::Receiver<u64>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut last: Option<(String, u32)> = None;
-        let mut last_error: Option<&'static str> = None;
+        let mut rows = RowsReader::default();
+        let mut transcript: Option<Transcript> = None;
+        // Whether the phone was last told the pane has a conversation.
+        let mut told: Option<bool> = None;
         loop {
-            let asked = *lines.borrow_and_update();
-            let pane_id = key.herdr_pane_id().to_owned();
-            let device_id = key.device_id.clone();
-            let reader = Arc::clone(&mobile);
-            // Resolving a device's connection waits on the core owner thread,
-            // so it runs on the blocking pool with the read itself.
-            let read = tokio::task::spawn_blocking(move || {
-                reader
-                    .herdr_api(&device_id)
-                    .and_then(|connector| pane::read(&connector, &pane_id, asked))
-            })
-            .await
-            .unwrap_or_else(|error| Err(PaneError::Unavailable(error.to_string())));
-            let frame = match read {
-                Ok(rows) => {
-                    last_error = None;
-                    if last
-                        .as_ref()
-                        .is_some_and(|(text, lines)| *lines == asked && *text == rows.text)
-                    {
-                        None
-                    } else {
-                        let frame = json!({
-                            "type": "rows", "device_id": key.device_id, "pane_id": key.pane_id,
-                            "state": "ok", "text": rows.text, "lines": asked,
-                            // Herdr says whether it cut older rows off this read.
-                            "more": asked < pane::MAX_LINES && rows.truncated,
-                        });
-                        last = Some((rows.text, asked));
-                        Some(frame)
-                    }
+            let ask = *asks.borrow_and_update();
+            let mut outgoing = Vec::new();
+            if ask.view == View::Conversation {
+                let (next, frame) = conversation_step(&mobile, &key, transcript.take()).await;
+                transcript = next;
+                outgoing.extend(frame);
+                if transcript.is_none() && told != Some(false) {
+                    outgoing.push(json!({
+                        "type": "conversation", "device_id": key.device_id, "pane_id": key.pane_id, "state": "none",
+                    }));
                 }
-                Err(error) => {
-                    last = None;
-                    if last_error == Some(error.reason()) {
-                        None
-                    } else {
-                        last_error = Some(error.reason());
-                        if let PaneError::Unavailable(message) = &error {
-                            herdr_core::diagnostic!(json!({
-                                "component": "mobile_phone", "kind": "pane.read_failed", "message": message,
-                            }));
-                        }
-                        Some(json!({
-                            "type": "rows", "device_id": key.device_id, "pane_id": key.pane_id,
-                            "state": error.reason(),
-                        }))
-                    }
+                told = Some(transcript.is_some());
+            }
+            if ask.view == View::Terminal || transcript.is_none() {
+                outgoing.extend(rows.read(&mobile, &key, ask.lines).await);
+            }
+            for frame in outgoing {
+                if frames.send(frame).await.is_err() {
+                    return;
                 }
-            };
-            if let Some(frame) = frame
-                && frames.send(frame).await.is_err()
-            {
-                return;
             }
             tokio::select! {
                 _ = tokio::time::sleep(DETAIL_INTERVAL) => {}
-                changed = lines.changed() => if changed.is_err() { return },
+                changed = asks.changed() => if changed.is_err() { return },
+                Some(cursor) = older.recv() => {
+                    let Some(pager) = transcript.as_ref().map(Transcript::pager) else { continue };
+                    match tokio::task::spawn_blocking(move || pager.before(cursor)).await {
+                        Ok(Ok(page)) => {
+                            let frame = json!({
+                                "type": "conversation", "device_id": key.device_id, "pane_id": key.pane_id,
+                                "state": "ok", "mode": "older", "messages": page.messages, "before": page.before,
+                            });
+                            if frames.send(frame).await.is_err() { return; }
+                        }
+                        Ok(Err(error)) => conversation_failed(&error.to_string()),
+                        Err(error) => conversation_failed(&error.to_string()),
+                    }
+                }
             }
         }
     })
+}
+
+fn conversation_failed(message: &str) {
+    herdr_core::diagnostic!(json!({
+        "component": "mobile_phone", "kind": "conversation.read_failed", "message": message,
+    }));
+}
+
+/// One pass over the pane's conversation: open its transcript and send the
+/// newest page, or send what the agent appended. The transcript comes back
+/// `None` when the pane has no conversation to show. A failed Herdr read
+/// keeps an open transcript, so a slow answer does not flip the phone to
+/// the terminal.
+async fn conversation_step(
+    mobile: &Arc<Mobile>,
+    key: &AgentKey,
+    transcript: Option<Transcript>,
+) -> (Option<Transcript>, Option<Value>) {
+    // An SSH device's transcript is on that device.
+    if key.device_id != agents::LOCAL_DEVICE {
+        return (None, None);
+    }
+    let reader = Arc::clone(mobile);
+    let pane_id = key.herdr_pane_id().to_owned();
+    let (transcript, page) = tokio::task::spawn_blocking(move || {
+        let source = reader
+            .herdr_api(agents::LOCAL_DEVICE)
+            .and_then(|connector| conversation::source(&connector, &pane_id));
+        let source = match source {
+            Ok(Some(source)) => source,
+            Ok(None) | Err(PaneError::Gone) => return (None, None),
+            Err(error) => {
+                if let PaneError::Unavailable(message) = &error {
+                    conversation_failed(message);
+                }
+                return (transcript, None);
+            }
+        };
+        if let Some(mut open) = transcript.filter(|open| open.source() == &source) {
+            match open.poll() {
+                Ok(Tail::Messages(messages)) => {
+                    let appended = (!messages.is_empty()).then_some((messages, None, "append"));
+                    return (Some(open), appended);
+                }
+                Ok(Tail::Reset) => {}
+                Err(error) => conversation_failed(&error.to_string()),
+            }
+        }
+        match Transcript::open(reader.home(), &pane_id, source) {
+            Ok((open, page)) => (Some(open), Some((page.messages, page.before, "reset"))),
+            // Reported, and nothing written yet.
+            Err(hide_session::SessionError::SessionFileMissing) => (None, None),
+            Err(error) => {
+                conversation_failed(&error.to_string());
+                (None, None)
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|error| {
+        conversation_failed(&error.to_string());
+        (None, None)
+    });
+    let frame = page.map(|(messages, before, mode)| {
+        let mut frame = json!({
+            "type": "conversation", "device_id": key.device_id, "pane_id": key.pane_id,
+            "state": "ok", "mode": mode, "messages": messages,
+        });
+        if mode == "reset" {
+            frame["before"] = json!(before);
+        }
+        frame
+    });
+    (transcript, frame)
+}
+
+/// Reads the open pane's rows and answers only when their text or the asked
+/// line count changed. Herdr's read `revision` counts pane state, not output,
+/// so it cannot say that new rows arrived.
+#[derive(Default)]
+struct RowsReader {
+    last: Option<(String, u32)>,
+    last_error: Option<&'static str>,
+}
+
+impl RowsReader {
+    async fn read(&mut self, mobile: &Arc<Mobile>, key: &AgentKey, asked: u32) -> Option<Value> {
+        let pane_id = key.herdr_pane_id().to_owned();
+        let device_id = key.device_id.clone();
+        let reader = Arc::clone(mobile);
+        // Resolving a device's connection waits on the core owner thread,
+        // so it runs on the blocking pool with the read itself.
+        let read = tokio::task::spawn_blocking(move || {
+            reader
+                .herdr_api(&device_id)
+                .and_then(|connector| pane::read(&connector, &pane_id, asked))
+        })
+        .await
+        .unwrap_or_else(|error| Err(PaneError::Unavailable(error.to_string())));
+        match read {
+            Ok(rows) => {
+                self.last_error = None;
+                if self
+                    .last
+                    .as_ref()
+                    .is_some_and(|(text, lines)| *lines == asked && *text == rows.text)
+                {
+                    return None;
+                }
+                let frame = json!({
+                    "type": "rows", "device_id": key.device_id, "pane_id": key.pane_id,
+                    "state": "ok", "text": rows.text, "lines": asked,
+                    // Herdr says whether it cut older rows off this read.
+                    "more": asked < pane::MAX_LINES && rows.truncated,
+                });
+                self.last = Some((rows.text, asked));
+                Some(frame)
+            }
+            Err(error) => {
+                self.last = None;
+                if self.last_error == Some(error.reason()) {
+                    return None;
+                }
+                self.last_error = Some(error.reason());
+                if let PaneError::Unavailable(message) = &error {
+                    herdr_core::diagnostic!(json!({
+                        "component": "mobile_phone", "kind": "pane.read_failed", "message": message,
+                    }));
+                }
+                Some(json!({
+                    "type": "rows", "device_id": key.device_id, "pane_id": key.pane_id,
+                    "state": error.reason(),
+                }))
+            }
+        }
+    }
 }
 
 fn key_of(message: &Value) -> Option<AgentKey> {
@@ -382,17 +529,54 @@ async fn handle(
                     json!({"type": "rows", "device_id": message.get("device_id"), "pane_id": message.get("pane_id"), "state": "gone"}),
                 );
             };
-            let (lines, receiver) = tokio::sync::watch::channel(pane::FIRST_LINES);
+            let Some(view) = View::of(message) else {
+                refusal_logged("scope.refused", Some(phone_id), "view");
+                return None;
+            };
+            let (ask, asks) = tokio::sync::watch::channel(Ask {
+                view,
+                lines: pane::FIRST_LINES,
+            });
+            let (older, older_asks) = mpsc::channel(1);
             mobile.set_viewing(connection, Some(key.clone()));
-            let task = spawn_detail(Arc::clone(mobile), key, frames.clone(), receiver);
-            *detail = Some(Detail { lines, task });
+            let task = spawn_detail(Arc::clone(mobile), key, frames.clone(), asks, older_asks);
+            *detail = Some(Detail { ask, older, task });
+            None
+        }
+        "view" => {
+            match (detail.as_ref(), View::of(message)) {
+                (Some(detail), Some(view)) => detail.ask.send_if_modified(|ask| {
+                    let changed = ask.view != view;
+                    ask.view = view;
+                    changed
+                }),
+                (_, None) => {
+                    refusal_logged("scope.refused", Some(phone_id), "view");
+                    false
+                }
+                (None, Some(_)) => false,
+            };
             None
         }
         "more" => {
             if let Some(detail) = detail.as_ref() {
-                detail
-                    .lines
-                    .send_modify(|lines| *lines = (*lines + pane::MORE_LINES).min(pane::MAX_LINES));
+                detail.ask.send_modify(|ask| {
+                    ask.lines = (ask.lines + pane::MORE_LINES).min(pane::MAX_LINES);
+                });
+            }
+            None
+        }
+        "older" => {
+            match (
+                detail.as_ref(),
+                message.get("before").and_then(Value::as_u64),
+            ) {
+                // A pull while the last one is still being read is the same pull.
+                (Some(detail), Some(cursor)) => {
+                    let _ = detail.older.try_send(cursor);
+                }
+                (_, None) => refusal_logged("scope.refused", Some(phone_id), "older"),
+                (None, Some(_)) => {}
             }
             None
         }

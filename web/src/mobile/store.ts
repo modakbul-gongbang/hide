@@ -4,8 +4,8 @@
 // agent it opened by id, never by name (D-17).
 
 import { create } from "zustand";
-import type { AgentGroup, AgentKey, Notifications, PairPayload, PushMode, Refusal, RowsState, ServerFrame } from "./protocol";
-import { sameKey } from "./protocol";
+import type { AgentGroup, AgentKey, Conversation, DetailView, Notifications, PairPayload, PushMode, Refusal, RowsState, ServerFrame } from "./protocol";
+import { mergeConversation, sameKey } from "./protocol";
 
 export type Screen =
   /** No code and no credential on this phone (B13). */
@@ -19,8 +19,20 @@ export type Screen =
 
 export type Rows = { state: RowsState; text: string; lines: number; more: boolean };
 
-/** `moreAskedAt` is the line count when older rows were last asked for, so one pull asks once. */
-export type Detail = { key: AgentKey; rows: Rows | null; moreAskedAt: number | null };
+/**
+ * `moreAskedAt` is the line count when older rows were last asked for, and
+ * `olderAskedAt` the cursor older messages were last asked before, so one
+ * pull asks once. `conversation` is null until hided says whether the pane
+ * has one; `none` leaves the terminal alone on screen.
+ */
+export type Detail = {
+  key: AgentKey;
+  view: DetailView;
+  rows: Rows | null;
+  moreAskedAt: number | null;
+  conversation: Conversation | "none" | null;
+  olderAskedAt: number | null;
+};
 
 export type PendingInput = { requestId: string; kind: "text" | "key" };
 
@@ -105,6 +117,14 @@ export function applyFrame(frame: ServerFrame): void {
           ? { state: "ok", text: frame.text ?? "", lines: frame.lines ?? 0, more: frame.more ?? false }
           : { state: frame.state, text: detail.rows?.text ?? "", lines: detail.rows?.lines ?? 0, more: false };
       patch({ detail: { ...detail, rows } });
+      return;
+    }
+    case "conversation": {
+      const detail = state.detail;
+      if (!detail || !sameKey(detail.key, frame)) return;
+      const current = detail.conversation === "none" ? null : detail.conversation;
+      const conversation = frame.state === "ok" ? mergeConversation(current, frame) : "none";
+      patch({ detail: { ...detail, conversation } });
       return;
     }
     case "push_state":
