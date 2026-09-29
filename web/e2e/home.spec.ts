@@ -40,17 +40,18 @@ test("Home's + makes ~/hide with a link per project and opens a tab there", asyn
     expect(fs.existsSync(home)).toBe(false);
 
     await openHomeTab(page);
-    await expect.poll(() => fs.existsSync(path.join(home, ".hide-home.json")), { timeout: 30_000 }).toBe(true);
-    for (const guide of ["AGENTS.md", "CLAUDE.md"]) expect(fs.existsSync(path.join(home, guide))).toBe(true);
+    // B17: the tab opens in Home once Home's sync answered, so everything the
+    // sync writes is on disk by the time Herdr has a pane there.
+    await expect
+      .poll(() => fs.existsSync(home) && JSON.stringify(herdr.run(["api", "snapshot"])).includes(fs.realpathSync(home)), { timeout: 30_000 })
+      .toBe(true);
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    for (const file of [".hide-home.json", "AGENTS.md", "CLAUDE.md"]) expect(fs.existsSync(path.join(home, file))).toBe(true);
     const link = path.join(home, "fixture");
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(link)).toBe(fs.realpathSync(path.join(herdr.root, "fixture")));
 
-    // B17: the tab opens in Home and the center goes there; the Home is still no project (B16).
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 20_000 });
-    await expect
-      .poll(() => JSON.stringify(herdr.run(["api", "snapshot"])).includes(fs.realpathSync(home)), { timeout: 20_000 })
-      .toBe(true);
+    // The Home is still no project (B16).
     await expect(page.locator("[data-home-count]")).toHaveText("1 project");
     await expect(page.locator("nav[data-sidebar]").getByRole("button", { name: /^(hide|Home)$/ })).toHaveCount(0);
     // The path back names Home and its folder, never Home as a project.
