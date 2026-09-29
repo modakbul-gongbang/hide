@@ -58,6 +58,7 @@
   --color-accent-choice-sky: var(--accent-choice-sky);
   --color-accent-choice-violet: var(--accent-choice-violet);
   --color-accent-choice-amber: var(--accent-choice-amber);
+  --color-device-remote: var(--device-remote);
   --color-warning: var(--warning);
   --color-success: var(--success);
   --color-agent-working: var(--agent-working);
@@ -139,6 +140,7 @@
   --ratio-agent-mark-font: 0.53;
   --size-tab-strip: 32px;
   --size-traffic-light-inset: 69px;
+  --size-rail: 52px;
   --size-pane-header: 28px;
   --size-sidebar-min: 220px;
   --size-sidebar-ideal: 292px;
@@ -284,6 +286,7 @@
   --accent-choice-sky: #38bdf8;
   --accent-choice-violet: #a78bfa;
   --accent-choice-amber: #fb923c;
+  --device-remote: var(--accent-choice-violet);
   --warning: #b45309;
   --success: #15803d;
   --agent-working: #2563eb;
@@ -354,6 +357,7 @@
   --accent-choice-sky: #7dd3fc;
   --accent-choice-violet: #c4b5fd;
   --accent-choice-amber: #fdba74;
+  --device-remote: var(--accent-choice-violet);
   --warning: #ffb847;
   --success: #5ee69e;
   --agent-working: #61a6ff;

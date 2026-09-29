@@ -35810,6 +35810,24 @@
     "--size-mobile-row-inset": {
       "type": "number",
       "value": 44
+    },
+    "--device-remote": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#A78BFA"
+        },
+        {
+          "value": "#C4B5FD",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--size-rail": {
+      "type": "number",
+      "value": 52
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",
