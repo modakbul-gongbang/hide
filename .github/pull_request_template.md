@@ -48,8 +48,6 @@ GitHub에 붙여넣은 이미지는 user-attachments로 인라인 렌더링됩�
 깨는 것이 없으면 이 섹션을 지우세요.
 -->
 
-**AI tooling**: <!-- 리뷰 입력이지 저작자 표시가 아닙니다. 사람이 직접 / 일부 AI 도구 / 대부분 AI 도구 중 하나와, 뒤의 둘이면 손으로 무엇을 대조했는지 한 줄. -->
-
 <details><summary>Verification record</summary>
 
 <!-- PRD 경로, base/head SHA, 실행한 suite와 결과, 리뷰 subagent의 Fix now·Follow-up, 등록된 증거 목록, 변경 경로. Sasu `/ship`이 채웁니다. 손으로 여는 PR이면 이 블록을 지우세요. -->
