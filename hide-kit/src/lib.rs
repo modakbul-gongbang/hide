@@ -22,16 +22,20 @@ mod cli;
 mod hcoord;
 mod hooks;
 mod labels;
+mod local;
 mod payload;
 pub mod process;
 mod record;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
 pub use hcoord::{HcoordRuntime, NODE_MINIMUM, find_node};
 pub use labels::{LABELS_PLUGIN_ID, labels_home};
+pub use local::{STANDALONE_REASON, bundled_kit_dir, local_target};
 pub use record::kit_state_dir;
 
 /// One part of the kit.
@@ -183,6 +187,9 @@ pub struct KitTarget {
     pub herdr_bin: Option<PathBuf>,
     /// What runs hcoord on this machine, or why nothing can.
     pub hcoord: Result<HcoordRuntime, String>,
+    /// Raised by the kit's owner when it is going away: a child the kit is
+    /// waiting on is ended and no further part is started.
+    pub stop: Arc<AtomicBool>,
 }
 
 /// What an apply is allowed to do.
@@ -313,6 +320,11 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     let mut changed = false;
     let mut components = Vec::with_capacity(ComponentId::ALL.len());
     for id in ComponentId::ALL {
+        // The owner is quitting: what is done is recorded, and the rest waits
+        // for the next launch or connection.
+        if target.stop.load(Ordering::Relaxed) {
+            break;
+        }
         let observed = observe(id, target);
         let recorded = record.contains(id);
         let install_now = match &observed {

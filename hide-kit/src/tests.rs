@@ -166,6 +166,7 @@ impl Fixture {
                 program: PathBuf::from("/bin/sh"),
                 env: vec![("HCOORD_TEST".to_owned(), "1".to_owned())],
             }),
+            stop: Arc::default(),
         };
         Self {
             _dir: dir,

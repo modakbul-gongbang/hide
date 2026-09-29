@@ -4,13 +4,15 @@
 //!
 //! Every child the kit starts (`herdr plugin uninstall`, `node --version`,
 //! `hcoord daemon ensure`) is short-lived, so none outlives the call that
-//! started it. Output is capped, because a child that writes forever must not
+//! started it, and a raised stop flag ends it at once, so the daemon that owns
+//! the kit can quit without waiting out a deadline. Output is capped, because a child that writes forever must not
 //! grow the daemon (rule 15).
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -43,7 +45,8 @@ impl Finished {
 }
 
 /// Runs `program` with `args` and `env` added to an empty-ish environment
-/// that keeps only `PATH` and `HOME`, and waits at most `deadline`.
+/// that keeps only `PATH` and `HOME`, and waits at most `deadline`, or
+/// until `stop` is raised.
 ///
 /// The environment is built rather than inherited: a daemon launched from a
 /// Herdr pane carries that pane's `HERDR_*` identity, and a child that
@@ -54,6 +57,7 @@ pub fn run(
     env: &[(String, String)],
     home: &Path,
     deadline: Duration,
+    stop: &AtomicBool,
 ) -> Result<Finished, String> {
     let mut command = Command::new(program);
     command
@@ -82,6 +86,14 @@ pub fn run(
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
+            Ok(None) if stop.load(Ordering::Relaxed) => {
+                // SAFETY: as below, the group is the one this call made.
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+                let _ = child.wait();
+                break Err(format!("{name} was stopped because Hide is quitting"));
+            }
             Ok(None) if started.elapsed() >= deadline => {
                 // SAFETY: the group id is the child's own pid, set by
                 // `process_group(0)`; signalling it reaches only processes
@@ -158,11 +170,37 @@ mod tests {
             &[],
             home.path(),
             Duration::from_millis(300),
+            &AtomicBool::new(false),
         );
         assert!(result.unwrap_err().contains("did not finish"));
         assert!(started.elapsed() < Duration::from_secs(5));
         thread::sleep(Duration::from_millis(2500));
         assert!(!marker.exists(), "the grandchild outlived the deadline");
+    }
+
+    #[test]
+    fn a_raised_stop_ends_the_child_before_its_deadline() {
+        let home = tempfile::tempdir().unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let raiser = {
+            let stop = stop.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(200));
+                stop.store(true, Ordering::Relaxed);
+            })
+        };
+        let started = Instant::now();
+        let result = run(
+            Path::new("/bin/sh"),
+            &["-c", "sleep 30"],
+            &[],
+            home.path(),
+            Duration::from_secs(60),
+            &stop,
+        );
+        raiser.join().unwrap();
+        assert!(result.unwrap_err().contains("quitting"));
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
@@ -176,6 +214,7 @@ mod tests {
             &[("GIVEN".to_owned(), "yes".to_owned())],
             home.path(),
             Duration::from_secs(5),
+            &AtomicBool::new(false),
         )
         .unwrap();
         assert_eq!(finished.code, Some(3));

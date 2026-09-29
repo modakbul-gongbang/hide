@@ -9,6 +9,7 @@
 //! is a Node the machine already has (D-27).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use crate::{KitTarget, Observed, payload, process};
@@ -111,12 +112,21 @@ pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
 pub(crate) fn ensure(target: &KitTarget) -> Result<(), String> {
     let runtime = target.hcoord.as_ref().map_err(Clone::clone)?;
     let cli = cli(&target.home).display().to_string();
+    // The daemon's LaunchAgent keeps the environment this call ran with, so
+    // it names the Herdr the kit targets rather than whichever one a later
+    // shell would find.
+    let mut env = runtime.env.clone();
+    env.push((
+        "HERDR_SOCKET_PATH".to_owned(),
+        target.herdr_socket.display().to_string(),
+    ));
     let finished = process::run(
         &runtime.program,
         &[&cli, "daemon", "ensure", "--json"],
-        &runtime.env,
+        &env,
         &target.home,
         ENSURE_DEADLINE,
+        &target.stop,
     )?;
     let last = finished
         .stdout
@@ -146,7 +156,7 @@ pub(crate) fn ensure(target: &KitTarget) -> Result<(), String> {
 /// already names (the operator's choice), then the first on `PATH`, then the
 /// usual install folders; each must answer a version of at least
 /// [`NODE_MINIMUM`] within five seconds.
-pub fn find_node(home: &Path) -> Result<PathBuf, String> {
+pub fn find_node(home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     if let Some(named) = std::fs::read_to_string(shim_path(home))
         .ok()
@@ -170,8 +180,14 @@ pub fn find_node(home: &Path) -> Result<PathBuf, String> {
             continue;
         }
         seen.push(candidate.clone());
-        let Ok(finished) = process::run(&candidate, &["--version"], &[], home, NODE_PROBE_DEADLINE)
-        else {
+        let Ok(finished) = process::run(
+            &candidate,
+            &["--version"],
+            &[],
+            home,
+            NODE_PROBE_DEADLINE,
+            stop,
+        ) else {
             continue;
         };
         match parse_node_version(&finished.stdout) {

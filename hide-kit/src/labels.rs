@@ -151,6 +151,7 @@ fn uninstall_managed(target: &KitTarget) -> Result<(), String> {
         &env,
         &target.home,
         UNINSTALL_DEADLINE,
+        &target.stop,
     )?;
     if finished.succeeded() {
         Ok(())
