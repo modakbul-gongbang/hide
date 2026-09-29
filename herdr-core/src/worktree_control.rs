@@ -937,11 +937,17 @@ fn launch_with_prompt(
     launch_agent(connector, local, id, pane_id, kind, args).into()
 }
 
+/// The longest first prompt, in bytes once encoded, that a start carries. The
+/// argument travels on the agent's command line, which the OS caps near 1 MB
+/// with the environment included; 300 KB was observed arriving whole through
+/// the pinned Herdr.
+const MAX_PROMPT_BYTES: usize = 256 * 1024;
+
 /// The first prompt as one argument Herdr can type into the pane's shell,
 /// which refuses a line break or a tab in an argument. Each line break becomes
 /// U+2028 (LINE SEPARATOR), which Herdr passes through and the model reads as
 /// a line break, and a tab four spaces; any other control character is refused
-/// rather than dropped.
+/// rather than dropped, and so is a prompt over [`MAX_PROMPT_BYTES`].
 fn prompt_argument(prompt: &str) -> Result<String, String> {
     let mut argument = String::with_capacity(prompt.len());
     let mut chars = prompt.chars().peekable();
@@ -961,6 +967,12 @@ fn prompt_argument(prompt: &str) -> Result<String, String> {
             }
             c => argument.push(c),
         }
+    }
+    if argument.len() > MAX_PROMPT_BYTES {
+        return Err(format!(
+            "The first prompt is longer than {} KB, more than the agent's command line can carry; shorten it and start again.",
+            MAX_PROMPT_BYTES / 1024
+        ));
     }
     Ok(argument)
 }
@@ -2906,6 +2918,29 @@ mod tests {
             panic!("expected a failed start, got {outcome:?}");
         };
         assert!(message.contains("U+0007"), "{message}");
+        assert!(requests_of(&server).is_empty());
+    }
+
+    /// A prompt over the cap fails the start before Herdr is asked, rather
+    /// than failing inside the pane's shell where no one reads it.
+    #[test]
+    fn a_prompt_over_the_cap_fails_the_start_before_herdr() {
+        let server = server(vec![]);
+        let at_cap = "가".repeat(MAX_PROMPT_BYTES / 3);
+        assert!(prompt_argument(&at_cap).is_ok());
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            "w1:p1",
+            "claude",
+            Vec::new(),
+            Some(format!("{at_cap}a\n")),
+        );
+        let TaskAgentOutcome::Failed(message) = outcome else {
+            panic!("expected a failed start, got {outcome:?}");
+        };
+        assert!(message.contains("256 KB"), "{message}");
         assert!(requests_of(&server).is_empty());
     }
 
