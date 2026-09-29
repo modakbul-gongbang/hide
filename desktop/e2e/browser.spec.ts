@@ -25,6 +25,7 @@ let app: ElectronApplication | null = null;
 let server: http.Server;
 let origin: string;
 let cliSequence = 0;
+let extraWorkspace: string | null = null;
 
 const PAGES: Record<string, string> = {
   "/a.html": '<!doctype html><meta charset="utf-8"><title>Page A</title><body style="background:lavender"><h1>Page A</h1><input id="q" aria-label="query">',
@@ -57,6 +58,8 @@ test.afterEach(async () => {
   if (info.status !== info.expectedStatus) console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
   await app?.close().catch(() => undefined);
   app = null;
+  if (extraWorkspace) herdr.run(["workspace", "close", extraWorkspace]);
+  extraWorkspace = null;
   run.cleanup();
 });
 
@@ -138,12 +141,12 @@ async function nativePageShot(url: string, name: string): Promise<void> {
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
-async function cliFromPane(args: string[]): Promise<Record<string, unknown>> {
+async function cliFromPane(args: string[], pane = herdr.panes[0]): Promise<Record<string, unknown>> {
   const sequence = ++cliSequence;
   const output = path.join(herdr.root, `desktop-cli-${sequence}.json`);
   const status = path.join(herdr.root, `desktop-cli-${sequence}.status`);
   const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[path.resolve("..", "target", "debug", "hide"), ...args].map(quote).join(" ")} > ${quote(output)}; printf '%s' "$?" > ${quote(status)}\n`;
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  const sent = spawnSync(herdr.bin, ["pane", "send-text", pane, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
   await expect.poll(() => fs.existsSync(status) ? fs.readFileSync(status, "utf8") : null, { timeout: 20_000 }).not.toBeNull();
   return { status: Number(fs.readFileSync(status, "utf8")), ...(JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) || "{}") as Record<string, unknown>) };
@@ -394,6 +397,31 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
   await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", focused!);
   const revealed = await openFromCli(`${origin}/b.html`, ["--reveal", "--wait"]);
   expect(revealed).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+});
+
+test("browser: a login in one Workspace is available in another", async () => {
+  const other = path.join(herdr.root, "second-checkout");
+  fs.mkdirSync(other, { recursive: true });
+  const created = herdr.run(["workspace", "create", "--cwd", other, "--label", "second", "--no-focus"]) as { result: { workspace: { workspace_id: string }; root_pane: { pane_id: string } } };
+  extraWorkspace = created.result.workspace.workspace_id;
+  const otherPane = created.result.root_pane.pane_id;
+  await expect.poll(() => {
+    const read = spawnSync(herdr.bin, ["pane", "read", otherPane, "--source", "visible", "--format", "text"], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+    return read.stdout.includes("fixture %");
+  }).toBe(true);
+
+  ({ app } = await launch(run.env));
+  const page = await app.firstWindow();
+  await enterWorkspace(page, "fixture");
+  expect(await openFromCli(`${origin}/a.html`, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true });
+  await viewOf(`${origin}/a.html`);
+  await inPage(`${origin}/a.html`, "document.cookie = 'shared=ready; path=/'");
+  const firstScreen = await page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen");
+
+  const opened = await cliFromPane(["browser", "open", `${origin}/b.html`, "--reveal", "--wait"], otherPane);
+  expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+  await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toBe(firstScreen);
+  expect(await inPage(`${origin}/b.html`, "document.cookie")).toContain("shared=ready");
 });
 
 test("new-tab: empty page creates no native renderer and address loads in the same display", async () => {
