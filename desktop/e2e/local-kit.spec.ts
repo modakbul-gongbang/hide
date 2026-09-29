@@ -6,7 +6,7 @@
 // desktop host, attached to that daemon. HCOORD_HOME inside the private HOME
 // gives the kit's hcoord daemon a LaunchAgent label of its own.
 
-import { expect } from "@playwright/test";
+import { expect, type ElectronApplication } from "@playwright/test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -15,7 +15,7 @@ import { enterWorkspace } from "../../web/e2e/wire";
 import {
   bootoutTestLabel, claudeSettings, codexHooks, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL, readSettings, seedAgentFiles,
 } from "./device-home";
-import { hostLog, isolate, launch, screenshot, test } from "./fixture";
+import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_APP, "a packaged hide.app is required");
@@ -52,7 +52,7 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
   };
   fs.writeFileSync(daemonLog, "");
   let daemon = startDaemon();
-  let app: Awaited<ReturnType<typeof launch>>["app"] | undefined;
+  let app: ElectronApplication | undefined;
   try {
     await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
     // B1: the first launch installs every part, asking nothing.
@@ -74,8 +74,8 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     expect(launchdPid(label)).not.toBeNull();
     expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operatorDaemon);
 
-    ({ app } = await launch(run.env));
-    const page = await app.firstWindow();
+    app = await relaunch(run.env);
+    const page = await shellPage(app);
     await enterWorkspace(page, "fixture");
     await page.locator("[data-open-settings]").click();
     await expect(page.locator('[data-settings="true"]')).toBeVisible();

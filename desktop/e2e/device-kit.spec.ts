@@ -4,7 +4,7 @@
 // private daemon, desktop profile and two Herdr servers, one standing in for
 // the device's own.
 
-import { expect, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,19 +14,25 @@ import {
   bootoutTestLabel, claudeSettings, codexHooks, deviceHome, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL,
   proveDeviceHome, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
 } from "./device-home";
-import { hostLog, isolate, launch, screenshot, test } from "./fixture";
+import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_SSH_PORT, "an isolated SSH server is required");
 
 const DEVICE = "ssh-kit";
 const ALIAS = "isolated-kit";
+const SECOND_DEVICE = "ssh-kit-second";
+const SECOND_ALIAS = "isolated-kit-second";
 const PARTS = ["cli", "claude_code_hook", "codex_hook", "labels", "hcoord"];
 const LABELS_ID = "hide.agent-context-labels";
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
-type DaemonEvent = { kind?: string; device_id?: string; reason?: string; components?: { id: string; state?: string; outcome?: unknown; reason?: string | null }[] };
+type DaemonEvent = {
+  kind?: string; device_id?: string; target?: string; reason?: string;
+  components?: { id: string; state?: string; outcome?: unknown; reason?: string | null }[];
+  upload?: { sent: number; reused: number; missing: string[] };
+};
 
 function daemonEvents(log: string): DaemonEvent[] {
   return fs.readFileSync(log, "utf8").split("\n").filter((line) => line.startsWith("{")).map((line) => JSON.parse(line) as DaemonEvent);
@@ -45,6 +51,51 @@ async function sendFrame(page: Page, state: { port: number; token: string }, fra
       };
     });
   }, { ...state, frame });
+}
+
+type DeviceRun = Awaited<ReturnType<typeof startDeviceRun>>;
+
+/**
+ * A private daemon started from a staged build, two private Herdr servers
+ * (this Mac's and the device's), the isolated sshd reached under `aliases`,
+ * and the device's private HOME proved and reset.
+ */
+async function startDeviceRun(name: string, aliases: string[]) {
+  const home = deviceHome();
+  const local = await startHerdr({ agents: false });
+  const device = await startHerdr({ agents: false });
+  const run = isolate(local, name);
+  const bridge = fs.mkdtempSync("/tmp/hide-kb-");
+  const helper = path.join(run.root, "device-helper");
+  const cliDir = path.join(run.root, "device-bin");
+  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
+  run.env.HIDE_HOST_HELPER_ROOT = helper;
+  run.env.HIDE_HOST_CLI_DIR = cliDir;
+  writeSshConfig(run.env.HOME!, aliases);
+  const hcoordHome = proveDeviceHome(run.env, aliases[0]!, home);
+  const label = hcoordLabel(hcoordHome);
+  const operatorDaemon = launchdPid(OPERATOR_HCOORD_LABEL);
+  const original = resetDeviceHome(home, label);
+  const build = stageBuild(run.root);
+  const daemonLog = path.join(run.root, "daemon.log");
+  const daemonOutput = fs.openSync(daemonLog, "w");
+  const daemon = spawn(path.join(build, "hided"), [], { env: run.env, stdio: ["ignore", daemonOutput, daemonOutput] });
+  fs.closeSync(daemonOutput);
+  await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
+  return { home, local, device, run, bridge, helper, cliDir, hcoordHome, label, operatorDaemon, original, daemonLog, daemon };
+}
+
+function stopDeviceRun(setup: DeviceRun): void {
+  // The daemon's records go beside the screenshots when a run keeps them.
+  const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (evidence) fs.copyFileSync(setup.daemonLog, path.join(evidence, `${path.basename(setup.run.root)}-daemon.jsonl`));
+  setup.run.cleanup();
+  if (setup.daemon.exitCode === null) setup.daemon.kill("SIGTERM");
+  bootoutTestLabel(setup.label);
+  expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(setup.operatorDaemon);
+  fs.rmSync(setup.bridge, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  setup.device.stop();
+  setup.local.stop();
 }
 
 /** The plugin list the device's Herdr answers, as JSON text. */
@@ -82,31 +133,12 @@ async function inDevicePane(herdr: HerdrFixture, line: string, label: string): P
 }
 
 test("a device gets this Mac's kit, keeps a part the operator removed out until Reinstall, and gives the kit back on removal", async () => {
-  const home = deviceHome();
-  const local = await startHerdr({ agents: false });
-  const device = await startHerdr({ agents: false });
-  const run = isolate(local, "kit");
-  const bridge = fs.mkdtempSync("/tmp/hide-kb-");
-  const helper = path.join(run.root, "device-helper");
-  const cliDir = path.join(run.root, "device-bin");
-  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
-  run.env.HIDE_HOST_HELPER_ROOT = helper;
-  run.env.HIDE_HOST_CLI_DIR = cliDir;
-  writeSshConfig(run.env.HOME!, [ALIAS]);
-  const hcoordHome = proveDeviceHome(run.env, ALIAS, home);
-  const label = hcoordLabel(hcoordHome);
-  const operatorDaemon = launchdPid(OPERATOR_HCOORD_LABEL);
-  const original = resetDeviceHome(home, label);
-  const build = stageBuild(run.root);
-  const daemonLog = path.join(run.root, "daemon.log");
-  const daemonOutput = fs.openSync(daemonLog, "w");
-  const daemon = spawn(path.join(build, "hided"), [], { env: run.env, stdio: ["ignore", daemonOutput, daemonOutput] });
-  fs.closeSync(daemonOutput);
-  let app: Awaited<ReturnType<typeof launch>>["app"] | undefined;
+  const setup = await startDeviceRun("kit", [ALIAS]);
+  const { home, device, run, bridge, helper, cliDir, hcoordHome, label, operatorDaemon, original, daemonLog } = setup;
+  let app: ElectronApplication | undefined;
   try {
-    await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
-    ({ app } = await launch(run.env));
-    const page = await app.firstWindow();
+    app = await relaunch(run.env);
+    const page = await shellPage(app);
     await enterWorkspace(page, "fixture");
     const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { port: number; token: string };
 
@@ -190,11 +222,53 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     throw error;
   } finally {
     await app?.close().catch(() => undefined);
-    run.cleanup();
-    if (daemon.exitCode === null) daemon.kill("SIGTERM");
-    bootoutTestLabel(label);
-    fs.rmSync(bridge, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    device.stop();
-    local.stop();
+    stopDeviceRun(setup);
+  }
+});
+
+// Two registrations that reach one account (two Herdr servers on one
+// machine) connect together when the daemon starts: both upload the same
+// build into one helper root and run the kit on one HOME at once. Removing
+// one leaves the account's kit for the other; removing the last takes it off.
+test("two registrations of one device account connect at once and share its kit until the last is removed", async () => {
+  const setup = await startDeviceRun("kit2", [ALIAS, SECOND_ALIAS]);
+  const { home, device, run, helper, cliDir, original, daemonLog } = setup;
+  let app: ElectronApplication | undefined;
+  try {
+    app = await relaunch(run.env);
+    const page = await shellPage(app);
+    const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { port: number; token: string };
+    const both = [[DEVICE, ALIAS], [SECOND_DEVICE, SECOND_ALIAS]] as const;
+    await Promise.all(both.map(([id, alias]) => sendFrame(page, state, { kind: "register_device", payload: {
+      id, label: id, ssh_alias: alias, herdr_socket_path: device.socket, host_consent: true,
+    } })));
+    for (const [id] of both) {
+      await expect.poll(() => daemonEvents(daemonLog).find((line) => line.kind === "apply.completed" && line.device_id === id)?.components, { timeout: 120_000 })
+        .toEqual(PARTS.map((part) => expect.objectContaining({ id: part, state: "installed" })));
+      const ready = daemonEvents(daemonLog).filter((line) => line.kind === "host.ready" && line.target === id);
+      expect(ready.map((line) => line.upload?.missing)).toEqual(ready.map(() => []));
+    }
+    expect(daemonEvents(daemonLog).filter((line) => line.kind === "host.failed")).toEqual([]);
+    const current = path.join(fs.realpathSync(helper), "current");
+    expect(fs.readlinkSync(path.join(cliDir, "hide"))).toBe(path.join(current, "hide"));
+
+    await sendFrame(page, state, { kind: "remove_device", payload: { device_id: DEVICE } });
+    await expect.poll(() => daemonEvents(daemonLog).find((line) => line.device_id === DEVICE && /^device\.kit_/.test(line.kind ?? ""))?.reason, { timeout: 30_000 })
+      .toBe("another registered device reaches the same account on that machine");
+    expect(fs.readlinkSync(path.join(cliDir, "hide"))).toBe(path.join(current, "hide"));
+    expect(JSON.stringify(readSettings(claudeSettings(home)))).toContain(path.join(current, "hide-agent-hooks"));
+
+    await sendFrame(page, state, { kind: "remove_device", payload: { device_id: SECOND_DEVICE } });
+    await expect.poll(() => daemonEvents(daemonLog).find((line) => line.device_id === SECOND_DEVICE && /^device\.kit_/.test(line.kind ?? ""))?.kind, { timeout: 60_000 })
+      .toBe("device.kit_removed");
+    expect(readSettings(claudeSettings(home))).toEqual(original.claude);
+    expect(readSettings(codexHooks(home))).toEqual(original.codex);
+    expect(fs.existsSync(helper)).toBe(false);
+  } catch (error) {
+    console.log(fs.readFileSync(daemonLog, "utf8"));
+    throw error;
+  } finally {
+    await app?.close().catch(() => undefined);
+    stopDeviceRun(setup);
   }
 });
