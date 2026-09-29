@@ -563,3 +563,28 @@ fn a_device_checkout_start_opens_its_tab_on_that_device() {
         "a checkout start writes no Home"
     );
 }
+
+/// A start names exactly one place; neither or both is refused under its own
+/// request id before anything is asked of Herdr or a helper.
+#[test]
+fn a_start_naming_no_place_or_two_is_refused() {
+    let shared = Arc::new(Mutex::new(runtime()));
+    for (request_id, payload) in [
+        ("none", json!({"provider": "claude"})),
+        (
+            "both",
+            json!({"provider": "claude", "home": true, "checkout_path": "/work/app"}),
+        ),
+    ] {
+        let mut payload = payload;
+        payload["request_id"] = json!(request_id);
+        dispatch(&shared, payload);
+        let runtime = shared.lock().unwrap();
+        let error = runtime.snapshot.status.last_error.as_ref().unwrap();
+        assert_eq!(
+            (error.kind.as_str(), error.request_id.as_deref()),
+            ("agent_start.invalid_target", Some(request_id))
+        );
+        assert!(runtime.snapshot.task_operation.is_none());
+    }
+}

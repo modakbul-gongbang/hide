@@ -2412,10 +2412,22 @@ impl Runtime {
             .clone()
             .filter(|device| !device.is_empty())
             .unwrap_or_else(|| workspace::LOCAL_DEVICE_ID.to_owned());
-        if payload.home {
-            return self.start_in_home(&device, agent_kind, model, prompt, request_id);
-        }
-        let checkout_path = payload.checkout_path.clone().unwrap_or_default();
+        // A start names one place: a device's Home, or one of its checkouts.
+        let checkout_path = match (payload.home, payload.checkout_path.clone()) {
+            (true, None) => {
+                return self.start_in_home(&device, agent_kind, model, prompt, request_id);
+            }
+            (false, Some(path)) if !path.is_empty() => path,
+            _ => {
+                self.set_request_error(
+                    "agent_start.invalid_target",
+                    "A start names either Home or one checkout",
+                    false,
+                    request_id.as_deref(),
+                );
+                return true;
+            }
+        };
         let local = device == workspace::LOCAL_DEVICE_ID;
         let found = if local {
             self.local_checkout_tab(&checkout_path)
