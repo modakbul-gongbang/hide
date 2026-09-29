@@ -10,7 +10,7 @@ import { Keycap } from "./components/ui/keycap";
 import { Hint, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/tooltip";
 import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
-import type { AreaTabInteraction } from "./AreaTree";
+import { tabFit, type AreaTabInteraction } from "./AreaTree";
 
 // The sole Agent tab rendering unit, reused by every local and device area.
 const NONE: AsyncOperation[] = [];
@@ -27,7 +27,7 @@ export function AgentTab({ number, entry, checkout, interaction, actions, renami
   const operations = useShellStore((s) => s.rest?.status?.async_operations) ?? NONE;
   const agent = checkout.tabs.find((row) => row.id === entry.source_id)?.agent;
   const identity = `${agent ? `${agent.agent_kind} agent` : "Terminal"} tab ${entry.label}${agent ? ` · ${agent.status_label}` : ""}`;
-  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={`Close tab ${entry.label}`} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
+  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={`Close tab ${entry.label}`} icon={interaction.icon} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
 }
 
 const RENAME_FAILURE = "이름을 저장하지 못했습니다 · 다시 시도";
@@ -60,6 +60,7 @@ function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions
         <Input
           ref={input}
           aria-label="Tab name"
+          data-renaming="true"
           aria-invalid={failed || undefined}
           aria-describedby={failed ? "tab-rename-failure" : undefined}
           className="h-(--size-control-sm) flex-1 px-xs text-caption"
@@ -97,6 +98,7 @@ const TabButton = memo(function TabButton({
   number,
   closing,
   closeLabel,
+  icon,
   dragging,
   areaActive,
   onSelect,
@@ -112,12 +114,15 @@ const TabButton = memo(function TabButton({
   number: number | null;
   closing: boolean;
   closeLabel: string;
+  /** The bar draws its tabs as marks (`AreaTabInteraction.icon`). */
+  icon: boolean;
   dragging: boolean;
   areaActive: boolean;
   onSelect: () => void;
   onClose: () => void;
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
 }) {
+  const fit = tabFit(active, icon);
   return (
     <Hint label={identity} reveals>
     <div
@@ -128,7 +133,7 @@ const TabButton = memo(function TabButton({
       data-tab={entry.source_id}
       data-tab-kind={entry.kind}
       data-closing={closing ? "true" : "false"}
-      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
+      className={`group relative flex min-w-0 flex-1 cursor-default select-none items-center gap-xs text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${fit.tab} ${
         active ? "bg-background text-foreground" : "text-subtle-foreground hover:bg-accent"
       } ${dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={onPointerDown}
@@ -141,7 +146,7 @@ const TabButton = memo(function TabButton({
       }}
     >
       {mark}
-      {editor ?? <span className="min-w-0 flex-1 truncate">
+      {editor ?? <span className={`min-w-0 flex-1 truncate ${fit.title}`}>
         {entry.label}
         {closing ? <span className="text-muted-foreground"> closing…</span> : null}
       </span>}
@@ -149,7 +154,7 @@ const TabButton = memo(function TabButton({
         <Button
           variant="ghost"
           size="icon-sm"
-          className={`shrink-0 hover:bg-popover hover:text-foreground ${number !== null ? "invisible" : `focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}`}
+          className={`shrink-0 hover:bg-popover hover:text-foreground ${fit.close} ${number !== null ? "invisible" : `focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}`}
           aria-label={closeLabel}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {

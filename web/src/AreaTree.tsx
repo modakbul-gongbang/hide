@@ -1,5 +1,6 @@
 import { ChevronDownIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { EntryContextMenu, EntryDropdown, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
@@ -7,11 +8,40 @@ import { holdShellDrag } from "./shellDrag";
 import { useUiStore } from "./ui";
 import { IDLE, movePointer, pressTab, relayout, releasePointer, type DragSession } from "./areaDrag";
 import { focusFromKeyboard, installFocusModality } from "./areaFocus";
-import { RATIO_MAX, RATIO_MIN, RESIZE_STEP, areasOf, dropTarget, findArea, locateDisplay, ratioAtOffset, revealedScroll, sameTarget, singleAreaGeometry, steppedRatio, areaGeometry,
+import { RATIO_MAX, RATIO_MIN, RESIZE_STEP, areasOf, dropTarget, findArea, iconTabs, locateDisplay, ratioAtOffset, revealedScroll, sameTarget, singleAreaGeometry, steppedRatio, areaGeometry,
   type Area, type AreaItem, type AreaLayout, type AreaNode, type AreaSplit, type AreaWords,
   type DividerBox, type DropTarget, type Geometry, type LayoutSizes, type Point, type Rect, type TabSlot } from "./areaLayout";
 
-export type AreaTabInteraction = { selected: boolean; areaActive: boolean; dragging: boolean; press: (event: React.PointerEvent<HTMLElement>) => void; select: () => void };
+/**
+ * `icon` says the bar draws its tabs as marks: too many Agent tabs to keep a
+ * title each (`iconTabs`), so every tab keeps only its marks and the selected
+ * one adds its close control. A View tab is always titled.
+ */
+export type AreaTabInteraction = { selected: boolean; icon: boolean; areaActive: boolean; dragging: boolean; press: (event: React.PointerEvent<HTMLElement>) => void; select: () => void };
+
+/**
+ * The classes that fit a tab's contents to its slot (`Component / Adaptive
+ * Work Tab`): with titles, as the bar always drew them; as marks, centred
+ * with nothing else, or on the selected tab with its close control at the end.
+ */
+export function tabFit(selected: boolean, icon: boolean): { tab: string; title: string; close: string } {
+  if (!icon) return { tab: "px-sm", title: "", close: "" };
+  return selected
+    ? { tab: "pl-xs", title: "hidden", close: "ml-auto" }
+    : { tab: "justify-center px-xs", title: "hidden", close: "hidden" };
+}
+
+/**
+ * A tab's slot in its bar. Titled, every tab asks for the preferred width and
+ * all shrink alike down to the title minimum; as marks, an unselected tab is
+ * the icon identity and the selected one adds its close control. A tab being
+ * renamed keeps the preferred width so its field stays usable.
+ */
+function tabSlot(selected: boolean, icon: boolean): string {
+  if (!icon) return "flex w-(--size-tab-preferred) min-w-(--size-tab-title-min)";
+  const width = selected ? "w-[calc(var(--size-tab-icon-identity)_+_var(--size-control-sm))]" : "w-(--size-tab-icon-identity)";
+  return `flex shrink-0 ${width} has-data-renaming:w-(--size-tab-preferred)`;
+}
 export type DrawnArea<I extends AreaItem> = { layout: AreaLayout<I>; geometry: Geometry; sizes: LayoutSizes };
 export type AreaAdapter<I extends AreaItem> = {
   words: AreaWords;
@@ -429,9 +459,32 @@ function AreaView({ area, index, count, switcher }: { area: Area<I>; index: numb
 function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; active: boolean; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
   const shown = area.displays.find((row) => row.id === area.active) ?? null;
+  const selectedId = tree.adapter.shown ? tree.adapter.shown(area)?.id : area.active;
+  // The tabs share the room left of the bar's own controls, and Agent tabs
+  // turn to marks when they could no longer each keep a title (`iconTabs`); a
+  // file is not told apart by its type's mark, so View tabs keep their titles
+  // and scroll. The room is the zone's, which the bar sizes, so the tabs' own
+  // widths never feed back.
+  const zone = useRef<HTMLDivElement>(null);
+  const newTab = useRef<HTMLButtonElement>(null);
+  const [icon, setIcon] = useState(false);
+  const tabCount = area.displays.length;
+  useLayoutEffect(() => {
+    const node = zone.current;
+    if (column !== "agent" || !node) return;
+    const measure = () => iconTabs(node.clientWidth - (newTab.current?.offsetWidth ?? 0), tabCount, tokenPx("--size-tab-title-min"));
+    setIcon(measure());
+    // A resize lands before paint, so the frame never shows titled tabs overflowing.
+    const observer = new ResizeObserver(() => {
+      const next = measure();
+      flushSync(() => setIcon(next));
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [tabCount]);
   // The shown view's tab stays in sight however many tabs the area holds
   // (B20, B21): the strip scrolls itself, and nothing around it, whenever
-  // the shown view changes or the strip is resized.
+  // the shown view changes, the tabs change density or the strip is resized.
   const strip = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const list = strip.current;
@@ -446,37 +499,39 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
     const observer = new ResizeObserver(reveal);
     observer.observe(list);
     return () => observer.disconnect();
-  }, [area.active, area.displays.length]);
+  }, [area.active, area.displays.length, icon]);
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch border-b border-border" data-area-tab-bar={area.id} {...data("tab-bar", area.id)} {...tree.adapter.barAttributes}>
-      <div ref={strip} role="tablist" aria-label={`${tree.adapter.tabListLabel}, area ${index + 1} of ${count}`} className="flex min-w-0 items-stretch overflow-x-auto">
-        {area.displays.map((display) => (
-          <EntryContextMenu
-            key={display.id}
-            label={`${tree.adapter.label(display)} ${tree.adapter.words.item} actions`}
-            items={() => tree.menu(display.id)}
-            onSelect={(id) => tree.adapter.runMenu(id, display.id)}
-            onCloseAutoFocus={tree.adapter.onMenuCloseAutoFocus}
-            className="flex shrink-0"
-            data-tab-menu={display.id}
-            data-area-item={display.id}
+      <div ref={zone} className="flex min-w-0 flex-1 items-stretch">
+        <div ref={strip} role="tablist" aria-label={`${tree.adapter.tabListLabel}, area ${index + 1} of ${count}`} className="flex min-w-0 items-stretch overflow-x-auto">
+          {area.displays.map((display) => (
+            <EntryContextMenu
+              key={display.id}
+              label={`${tree.adapter.label(display)} ${tree.adapter.words.item} actions`}
+              items={() => tree.menu(display.id)}
+              onSelect={(id) => tree.adapter.runMenu(id, display.id)}
+              onCloseAutoFocus={tree.adapter.onMenuCloseAutoFocus}
+              className={tabSlot(display.id === selectedId, icon)}
+              data-tab-menu={display.id}
+              data-area-item={display.id}
+            >
+              {tree.adapter.tab(display, { selected: display.id === selectedId, icon, areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
+            </EntryContextMenu>
+          ))}
+        </div>
+        <Hint label={tree.adapter.newTabLabel} shortcut={tree.adapter.newTabShortcut}>
+          <button
+            ref={newTab}
+            type="button"
+            aria-label={tree.adapter.newTabLabel}
+            {...data("new-tab", area.id)} {...(column === "agent" ? { "data-new-agent-tab": "true" } : {})}
+            className="flex min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+            onClick={() => tree.adapter.newTab(area.id)}
           >
-            {tree.adapter.tab(display, { selected: display.id === (tree.adapter.shown ? tree.adapter.shown(area)?.id : area.active), areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
-          </EntryContextMenu>
-        ))}
+            <PlusIcon className="size-(--size-icon)" />
+          </button>
+        </Hint>
       </div>
-      <Hint label={tree.adapter.newTabLabel} shortcut={tree.adapter.newTabShortcut}>
-        <button
-          type="button"
-          aria-label={tree.adapter.newTabLabel}
-          {...data("new-tab", area.id)} {...(column === "agent" ? { "data-new-agent-tab": "true" } : {})}
-          className="flex min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-          onClick={() => tree.adapter.newTab(area.id)}
-        >
-          <PlusIcon className="size-(--size-icon)" />
-        </button>
-      </Hint>
-      <span className="min-w-0 flex-1" />
       {switcher ? <AreaSwitcher current={area.id} /> : null}
       {shown ? (
         <EntryDropdown

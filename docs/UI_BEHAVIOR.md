@@ -95,6 +95,8 @@ Only the active area's selected tab carries the accent; clicking a tab or pane a
 All shown tabs stay attached and awake, while only the active area's tab receives read and sleep-visit updates.
 Pane headers, child chips, relationship controls and pane splits remain inside each canvas; find belongs to the focused pane.
 
+An Agent area's tabs share its bar the way a browser's tabs do (the Pen library's `Component / Adaptive Work Tab`): each asks for the preferred width, and all shrink alike while an equal share still holds the title minimum.
+Below that every tab keeps only its marks at the icon identity width, the selected one adding its close control, and the strip scrolls once even the marks overflow.
 Agent and View areas share the drag, divider and narrow-window controls described below.
 A drag keeps its original tab in place and changes no terminal size until a valid drop.
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
@@ -130,7 +132,8 @@ The side panel holds one or more View areas, each with its own tab bar above its
 A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
 One area is active: the next file opens there, the palette and the keyboard act on it, and only its active view's tab carries the accent indicator.
 Every other area still shows its own active view's tab, with a primary title and no indicator, so the operator sees what each area holds and which one is in charge.
-An area whose tabs outrun its width scrolls its own strip so the shown view's tab stays in sight whenever the shown view changes or the area is resized.
+An area's tabs each ask for the preferred width and shrink alike down to the title minimum; a file's type mark does not tell files apart, so a View tab keeps its title and never turns to marks the way an Agent tab does.
+An area whose tabs outrun its width even at that minimum scrolls its own strip so the shown view's tab stays in sight whenever the shown view changes or the area is resized.
 Clicking a tab or a view, or moving focus to another area from the palette, makes that area active.
 The divider between two areas turns accent-colored on hover and keyboard focus, drags with a guide line, and lands once on release, so a drag never resizes a document or a terminal on every pointer move.
 A focused divider moves with the arrow keys along its axis, one step and one change per press.

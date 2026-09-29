@@ -153,7 +153,7 @@ function DisplayTab({ display, interaction, actions }: { display: ViewDisplaySna
       data-tab-only={tabOnly ? "true" : "false"}
       data-unavailable={unavailable ? "true" : "false"}
       data-view-state={display.state}
-      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
+      className={`group relative flex min-w-0 flex-1 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
         selected ? "text-foreground" : "text-subtle-foreground hover:bg-accent"
       } ${interaction.dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={interaction.press}
