@@ -12,8 +12,8 @@ const FRAME = `{
     {"id": "home:mini", "device_id": "mini", "label": "Home", "device_label": "mini", "connected": false}
   ],
   "kinds": [
-    {"id": "claude", "models": ["opus", "sonnet"], "models_unavailable_reason": null},
-    {"id": "codex", "models": [], "models_unavailable_reason": "offline"}
+    {"id": "claude", "models": ["opus", "sonnet"]},
+    {"id": "codex", "models": []}
   ],
   "remembered": {"kind": "codex", "models": {"claude": "sonnet"}}
 }`;

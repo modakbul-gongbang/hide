@@ -59,7 +59,7 @@ export type StartTarget = {
   connected: boolean;
 };
 
-export type StartKindEntry = { id: StartKind; models: string[]; models_unavailable_reason: string | null };
+export type StartKindEntry = { id: StartKind; models: string[] };
 
 /** What the start sheet lists, as hided sends it while the sheet is open. */
 export type StartCatalog = {

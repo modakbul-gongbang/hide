@@ -131,11 +131,10 @@ impl Catalog {
                 .iter()
                 .filter_map(Value::as_str)
                 .collect();
-            catalog.kinds.push(json!({
-                "id": kind,
-                "models": models,
-                "models_unavailable_reason": provider.and_then(|provider| provider.get("models_unavailable_reason")).filter(|reason| reason.is_string()),
-            }));
+            // The provider's own reason for an empty list can carry a path
+            // or stderr, which never reaches a phone; an empty list is all
+            // the sheet needs to offer the CLI default alone.
+            catalog.kinds.push(json!({"id": kind, "models": models}));
         }
         catalog
     }
@@ -581,7 +580,7 @@ mod tests {
                 ]}}],
                 "background_ai": {"providers": [
                     {"id": "claude", "models": ["opus", "sonnet"], "models_unavailable_reason": null},
-                    {"id": "codex", "models": [], "models_unavailable_reason": "offline"},
+                    {"id": "codex", "models": [], "models_unavailable_reason": "codex app-server failed: /Users/example/.codex/config.toml"},
                 ]},
             },
             "ui_state": {"agent_start": {"kind": "codex", "models": {"claude": "opus"}}},
@@ -633,11 +632,9 @@ mod tests {
     #[test]
     fn kinds_carry_the_catalog_and_the_remembered_choice() {
         let frame = Catalog::of(&rest()).frame();
-        assert_eq!(
-            frame["kinds"][0],
-            json!({"id": "claude", "models": ["opus", "sonnet"], "models_unavailable_reason": null})
-        );
-        assert_eq!(frame["kinds"][1]["models_unavailable_reason"], "offline");
+        assert_eq!(frame["kinds"][0], json!({"id": "claude", "models": ["opus", "sonnet"]}));
+        assert_eq!(frame["kinds"][1], json!({"id": "codex", "models": []}));
+        assert!(!frame.to_string().contains("/Users/example"), "{frame}");
         assert_eq!(frame["remembered"]["kind"], "codex");
         let empty = Catalog::of(&json!({})).frame();
         assert_eq!(empty["remembered"], json!({"kind": null, "models": {}}));
