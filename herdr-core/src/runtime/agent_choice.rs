@@ -64,7 +64,7 @@ pub(crate) fn agent_arguments(model: Option<&str>, add_dirs: &[String]) -> Vec<S
 impl Runtime {
     /// Remembers the kind and model a start named, so every start surface
     /// preselects them next (D-18, D-20). `terminal` is never remembered, and
-    /// a start with no model keeps the kind's last one.
+    /// a start with no model chose the CLI default, which is remembered too.
     pub(super) fn remember_agent_choice(&mut self, agent_kind: Option<&str>, model: Option<&str>) {
         let Some(kind) = agent_kind.filter(|kind| AGENT_KINDS.contains(kind)) else {
             return;
@@ -72,9 +72,10 @@ impl Runtime {
         let choice = &mut self.snapshot.ui_state.agent_start;
         let before = choice.clone();
         choice.kind = Some(kind.to_owned());
-        if let Some(model) = model {
-            choice.models.insert(kind.to_owned(), model.to_owned());
-        }
+        match model {
+            Some(model) => choice.models.insert(kind.to_owned(), model.to_owned()),
+            None => choice.models.remove(kind),
+        };
         if *choice != before {
             self.persist_ui_state();
         }

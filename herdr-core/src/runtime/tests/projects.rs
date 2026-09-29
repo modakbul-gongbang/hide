@@ -1660,9 +1660,15 @@ fn agent_start_remembers_its_choice_and_answers_its_own_request() {
     assert_eq!(
         choice.models.get("codex").map(String::as_str),
         Some("gpt-6-astra"),
-        "a start with no model keeps each kind's last one"
+        "a start remembers only its own kind's model"
     );
     assert!(!choice.models.contains_key("claude"));
+
+    // B29: choosing the CLI default is a choice too, and the next open shows it.
+    assert!(runtime.dispatch_json(&start("codex", "", "r3b")));
+    let choice = runtime.snapshot.ui_state.agent_start.clone();
+    assert_eq!(choice.kind.as_deref(), Some("codex"));
+    assert!(choice.models.is_empty(), "{choice:?}");
 
     let (restored, _, _) = persistence::load(&runtime.state_path);
     assert_eq!(restored.agent_start, choice);
