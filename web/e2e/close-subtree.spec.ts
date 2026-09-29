@@ -4,7 +4,7 @@
 // children running as the operator's own rows. Delete worktree asks the same
 // question about the agents its checkout spawned outside it.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -56,6 +56,75 @@ async function closeOrder(herdr: HerdrFixture, watched: string[]): Promise<strin
 async function agentsMode(page: Page): Promise<void> {
   await page.locator('[data-sidebar-mode="agents"]').click();
 }
+
+/** Sets and clears the status tokens one pane reports, the way the label plugin does. */
+function report(herdr: HerdrFixture, pane: string, set: Record<string, string>): void {
+  const args = ["pane", "report-metadata", pane, "--source", "e2e-status"];
+  for (const [name, value] of Object.entries(set)) args.push("--token", `${name}=${value}`);
+  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
+}
+
+/** The tops of `buttons`, rounded: one value means they share one row. */
+async function rowTops(buttons: Locator[]): Promise<number[]> {
+  const tops = new Set<number>();
+  for (const button of buttons) tops.add(Math.round((await button.boundingBox())!.y));
+  return [...tops];
+}
+
+test("the close sheet counts and brightens the descendants that need the operator and dims the quiet one", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const target = herdr.panes[1];
+    const working = await spawnAgent(herdr, "working", target);
+    const asking = await spawnAgent(herdr, "asking", target);
+    const finished = await spawnAgent(herdr, "finished", target);
+    const quiet = await spawnAgent(herdr, "quiet", target);
+    report(herdr, working, { status_working: "●", task: "계보 투영 구현" });
+    report(herdr, asking, { status_question_new: "?", expected_reply: "병합 전에 검증을 다시 돌릴까요?", task: "병합 전 검증" });
+    report(herdr, finished, { status_done: "✓", task: "릴리스 노트 초안" });
+    report(herdr, quiet, { task: "로그 정리" });
+
+    daemon = await startHided(herdr, "close-subtree-states");
+    const sent = countSent(page);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    await agentsMode(page);
+    await expect(page.locator(`[data-agent-tree-toggle="${target}"]`)).toBeVisible({ timeout: 30_000 });
+
+    const sheet = page.locator("[data-confirm-subtree]");
+    const summary = sheet.locator("[data-subtree-summary]");
+    // Every state has to be in before the sheet opens on it.
+    await expect(async () => {
+      if (await sheet.isVisible()) {
+        await page.keyboard.press("Escape");
+        await expect(sheet).toHaveCount(0);
+      }
+      await page.locator(`[data-terminal-host="${target}"]`).click();
+      await page.keyboard.press("Alt+KeyW");
+      await expect(summary).toHaveAttribute("data-subtree-summary", "진행 중 1 · 답 대기 1 · 확인 안 한 결과 1", { timeout: 3_000 });
+    }).toPass({ timeout: 30_000, intervals: [500] });
+    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 4개를 닫을까요?");
+    await expect(sheet.locator(`[data-subtree-row="${working}"]`)).toHaveAttribute("data-subtree-state", "working");
+    await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("data-subtree-state", "waiting");
+    await expect(sheet.locator(`[data-subtree-row="${finished}"]`)).toHaveAttribute("data-subtree-state", "unread");
+    await expect(sheet.locator(`[data-subtree-row="${quiet}"]`)).toHaveAttribute("data-subtree-state", "quiet");
+    // Bright rows keep full opacity; the quiet one is dimmed.
+    const opacity = (pane: string) => sheet.locator(`[data-subtree-row="${pane}"]`).evaluate((row) => Number(getComputedStyle(row).opacity));
+    for (const pane of [working, asking, finished]) expect(await opacity(pane)).toBe(1);
+    expect(await opacity(quiet)).toBeLessThan(1);
+    // Each row says its state in words too.
+    await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("aria-label", /병합 전 검증/);
+    await screenshot(page, "close-subtree-states");
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+    expect(sent.get("close_tree") ?? 0).toBe(0);
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
 
 test("the close sheet closes the whole subtree deepest first, and Close only keeps the children", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -176,6 +245,8 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     // Neither action holds the keyboard when the dialog opens (D-35).
     await expect(withOutside).not.toBeFocused();
     await expect(dialog.locator('[data-delete-confirm="only"]')).not.toBeFocused();
+    // The three result-named buttons stand on one row.
+    expect(await rowTops([dialog.locator("[data-delete-cancel]"), dialog.locator('[data-delete-confirm="only"]'), withOutside])).toHaveLength(1);
     await screenshot(page, "close-subtree-delete-worktree");
 
     await withOutside.click();
@@ -185,6 +256,49 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     expect(live.has(outside)).toBe(false);
     expect(live.has(spawner)).toBe(false);
     expect(fs.existsSync(worktree)).toBe(false);
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+test("Remove project closes the agents its panes spawned outside it before the project goes", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    // The fixture project's second agent spawned one in a folder of its own.
+    const outside = await spawnAgent(herdr, "outside", herdr.panes[1]);
+
+    daemon = await startHided(herdr, "close-subtree-project");
+    const last = new Map<string, Record<string, unknown>>();
+    countSent(page, last);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await agentsMode(page);
+    await expect(page.locator(`[data-agent-tree-toggle="${herdr.panes[1]}"]`)).toBeVisible({ timeout: 30_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+
+    // A plain folder's row: its menu target is the row itself.
+    await page.locator("[data-project-menu]").filter({ has: page.getByRole("button", { name: /^fixture,/ }) }).first().click({ button: "right" });
+    await page.getByRole("menu", { name: "fixture actions" }).locator('[data-menu-item="remove_project"]').click();
+
+    const dialog = page.locator("[data-remove-project]");
+    await expect(dialog.locator("[data-removal-subtree]")).toContainText("1 agent spawned from this project runs outside it:", { timeout: 30_000 });
+    await expect(dialog.locator(`[data-subtree-row="${outside}"]`)).toBeVisible();
+    const withOutside = dialog.locator('[data-remove-confirm="with-outside"]');
+    await expect(withOutside).toHaveText("Close 1 agent outside, then remove");
+    await expect(dialog.locator('[data-remove-confirm="only"]')).toHaveText("Remove only this project");
+    await expect(withOutside).not.toBeFocused();
+    expect(await rowTops([dialog.locator("[data-remove-cancel]"), dialog.locator('[data-remove-confirm="only"]'), withOutside])).toHaveLength(1);
+    await screenshot(page, "close-subtree-remove-project");
+
+    await withOutside.click();
+    expect(last.get("remove_workspace")).toMatchObject({ close_descendant_pane_ids: [outside] });
+    await expect.poll(async () => {
+      const live = await livePanes(herdr);
+      return [outside, ...herdr.panes].filter((pane) => live.has(pane));
+    }, { timeout: 60_000 }).toEqual([]);
   } finally {
     daemon?.stop();
     herdr.stop();
