@@ -132,8 +132,8 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
 
 /**
  * The close of an agent with descendants (D-07, D-17, D-18, D-19): one list
- * of what closes with it, drawn live from the rows the sheet showed when it
- * opened, and 취소 / 이것만 닫기 / 모두 닫기 with 모두 닫기 the Enter default.
+ * of what closes with it, redrawn from every snapshot, and 취소 / 이것만 닫기 /
+ * 모두 닫기 with 모두 닫기 the Enter default.
  * While a listed descendant's activity is unknown, 모두 닫기 waits for a
  * status check the sheet itself offers, and the default is 취소.
  */
@@ -153,6 +153,17 @@ function ConfirmSubtreeClose({ actions, kind, targetId, inside }: { actions: Act
   useEffect(() => {
     if (empty) actions.keepOpen();
   }, [empty, actions]);
+  // A descendant whose status turns unknown while the sheet is open disables
+  // 모두 닫기 under the keyboard; 취소 takes it, as when the sheet opens
+  // blocked (D-19).
+  const footer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!blocked) return;
+    const active = document.activeElement;
+    const dialog = footer.current?.closest("[data-confirm-subtree]");
+    if (active && active !== document.body && !active.matches("[data-subtree-close-all]")) return;
+    dialog?.querySelector<HTMLElement>("[data-subtree-cancel]")?.focus();
+  }, [blocked]);
   return (
     <AlertDialogContent data-confirm-close={kind} data-confirm-subtree="true" initialFocus={blocked ? "cancel" : "action"}>
       <AlertDialogHeader>
@@ -168,7 +179,7 @@ function ConfirmSubtreeClose({ actions, kind, targetId, inside }: { actions: Act
           </Button>
         </p>
       ) : null}
-      <AlertDialogFooter>
+      <AlertDialogFooter ref={footer}>
         <AlertDialogCancel data-subtree-cancel="true">취소</AlertDialogCancel>
         <Button variant="secondary" onClick={() => actions.confirmClose()} data-subtree-close-only="true">
           이것만 닫기

@@ -343,8 +343,8 @@ impl Runtime {
             }));
             self.dismiss_agent_close(&key);
         }
-        // Each pane waits for its own listed descendants only; a child that
-        // appeared after the sheet opened is neither closed nor waited for.
+        // Each pane waits for its own listed descendants only; a child the
+        // event does not list is neither closed nor waited for.
         let listed_ids = nodes
             .iter()
             .map(|node| node.id.clone())
