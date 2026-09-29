@@ -22775,7 +22775,7 @@
           "type": "text",
           "id": "sys-checkbox-spec",
           "name": "Shaped from shadcn Checkbox/",
-          "content": "Shaped from shadcn Checkbox/Checked’s Checkbox frame over Radix: --size-checkbox square, rounded-xs, a --size-icon-sm check glyph, checked fills --primary - hide’s sizes already match the shadcn node’s own 16/4/12.",
+          "content": "Shaped from shadcn Checkbox/Checked’s Checkbox frame over Radix: --size-checkbox square, rounded-xs, a --size-icon-sm check glyph, checked and indeterminate fill --primary (a minus for a group whose members are partly checked) - hide’s sizes already match the shadcn node’s own 16/4/12.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -22816,6 +22816,17 @@
                       "width": 12,
                       "height": 12,
                       "icon": "check",
+                      "library": "lucide",
+                      "fill": "$--primary-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "chk-bar",
+                      "name": "Glyph",
+                      "enabled": false,
+                      "width": 12,
+                      "height": 12,
+                      "icon": "minus",
                       "library": "lucide",
                       "fill": "$--primary-foreground"
                     }
@@ -22901,6 +22912,42 @@
                   "strokeAlignment": "inner",
                   "descendants": {
                     "chk-i": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "chk-mixed-l-cell",
+              "name": "Indeterminate",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "chk-mixed-l-cap",
+                  "name": "Indeterminate",
+                  "content": "Indeterminate",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "chk-mixed-l",
+                  "type": "ref",
+                  "ref": "chk-m",
+                  "name": "Indeterminate",
+                  "fill": "$--primary",
+                  "stroke": "$--primary",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner",
+                  "descendants": {
+                    "chk-bar": {
                       "enabled": true
                     }
                   }
@@ -23075,6 +23122,42 @@
                   "strokeAlignment": "inner",
                   "descendants": {
                     "chk-i": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "chk-mixed-d-cell",
+              "name": "Indeterminate",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "chk-mixed-d-cap",
+                  "name": "Indeterminate",
+                  "content": "Indeterminate",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "chk-mixed-d",
+                  "type": "ref",
+                  "ref": "chk-m",
+                  "name": "Indeterminate",
+                  "fill": "$--primary",
+                  "stroke": "$--primary",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner",
+                  "descendants": {
+                    "chk-bar": {
                       "enabled": true
                     }
                   }

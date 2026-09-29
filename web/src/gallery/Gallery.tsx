@@ -155,6 +155,7 @@ const renderers: Renderers = {
   "Checkbox": {
     "Unchecked": () => <LabeledCheckbox />,
     "Checked": () => <LabeledCheckbox checked />,
+    "Indeterminate": () => <LabeledCheckbox checked="indeterminate" />,
     "Focus": () => <LabeledCheckbox state="focus" />,
     "Disabled": () => <LabeledCheckbox disabled />,
     "Checked Disabled": () => <LabeledCheckbox checked disabled />,
@@ -320,7 +321,7 @@ function GallerySelect({ value, open, disabled, state }: { value?: string; open?
   );
 }
 
-function LabeledCheckbox({ checked, disabled, state }: { checked?: boolean; disabled?: boolean; state?: "focus" }) {
+function LabeledCheckbox({ checked, disabled, state }: { checked?: boolean | "indeterminate"; disabled?: boolean; state?: "focus" }) {
   return (
     <label className="flex items-center gap-sm text-body">
       <Checkbox defaultChecked={checked} disabled={disabled} data-gallery-state={state} />

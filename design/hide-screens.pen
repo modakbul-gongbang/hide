@@ -71435,6 +71435,9 @@
                                     "hideui:chk-i": {
                                       "fill": "$--primary-foreground",
                                       "enabled": false
+                                    },
+                                    "hideui:chk-bar": {
+                                      "fill": "$--primary-foreground"
                                     }
                                   }
                                 },
@@ -71760,6 +71763,9 @@
                                     "hideui:chk-i": {
                                       "fill": "$--primary-foreground",
                                       "enabled": true
+                                    },
+                                    "hideui:chk-bar": {
+                                      "fill": "$--primary-foreground"
                                     }
                                   }
                                 },
@@ -73597,6 +73603,9 @@
                                     "hideui:chk-i": {
                                       "fill": "$--primary-foreground",
                                       "enabled": false
+                                    },
+                                    "hideui:chk-bar": {
+                                      "fill": "$--primary-foreground"
                                     }
                                   }
                                 },
@@ -73922,6 +73931,9 @@
                                     "hideui:chk-i": {
                                       "fill": "$--primary-foreground",
                                       "enabled": true
+                                    },
+                                    "hideui:chk-bar": {
+                                      "fill": "$--primary-foreground"
                                     }
                                   }
                                 },
