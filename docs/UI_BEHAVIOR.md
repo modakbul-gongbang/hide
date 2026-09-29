@@ -357,7 +357,7 @@ A worktree whose Git state has not been read shows `?` where the files go, never
 Resting on a head brightens it and opens the checkout card: the path, the base and `↑N ↓N`, the changed files, the last commit's age and the pull request with its checks; the card's `↵ Workspace` is the head's click, which opens that checkout's Workspace, main's included.
 The issue chip opens the Issues view with that issue's panel, the PR chip opens the pull request's row on the PRs view, unfolded, and a ⌘-click anywhere on a lane or node, the PR chip's included, opens GitHub.
 A merged worktree is dimmed with the purple merge glyph and a folder-less one reads `× 폴더 없음`; both carry the one word `정리` at the head's right, whose tooltip says what it removes, and whose click opens the existing Delete worktree dialog for it.
-Worktrees with no agent fold into one line, `에이전트 없는 워크트리 N`, and merged or folder-less worktrees whose agents only rest into another, `정리할 것 N`; a click unfolds the line in place, a line at zero is not drawn, and the facts line's `N merged → 정리` opens the checkout mode with `정리할 것` unfolded.
+Worktrees with no agent fold into one line, `에이전트 없는 워크트리 N`, and merged or folder-less worktrees whose agents only rest into another, `정리할 것 N`; a click unfolds the line in place, a line at zero is not drawn.
 On the Overview of every project, each project's main lane is ranked by its agents like any other lane, first among equals, and an idle main folds with the worktrees that have no agent.
 
 A node reads the status mark, the provider mark, the title and the age on one line, and under it the line the core makes: the question in yellow with a yellow outline when it is the operator's turn, the result after ✓ for a finished agent not yet looked at, `일하는 중 N · 물음 N · 끝남 N` for an agent waiting on its children, the progress line for a working one, and nothing, dimmed, for a resting one.
@@ -477,7 +477,10 @@ The Overview is every project on every device, a project is its Overview, and a 
 The board is the Project Overview: the sidebar's project name or its Overview child (a plain folder's one row opens its checkout instead), the Overview's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
 Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to the Overview when there is none.
 The title row carries the path back (`Overview / Project`), New agent and 새 이슈; directly under it is one line of facts, then the tiles, which show even while the project has no agent.
-The facts line holds only facts about storage: for a Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tiles, not here.
+The facts line holds only facts about storage: for a Local Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, a warning cell only while the volume is short of room, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tiles, not here.
+The disk number's tooltip lists build cache, dependencies, worktree source, the folders Hide does not know and the shared Git data, and pressing the number opens the disk cleanup sheet.
+`N merged → 정리` opens the same sheet filtered to finished checkouts; the `정리할 것` fold on Agents and the lane's own `정리` (the Delete worktree dialog) are unchanged.
+The warning cell `여유 X GB · Y GB 비울 수 있음` stands only once the measurement is back and the volume has less than 10 GB free; Y is the build cache and dependencies of finished checkouts no agent is working in, and pressing the cell opens the sheet filtered to finished checkouts.
 Opening a local Git project's Overview asks the core to measure its disk and to read its issues; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
 The Overview of every project keeps its tab row, `Tasks · Agents · Projects`: the Tasks board mixes every project's issues, Agents is the same checkout lanes or lineages over every project with the project's name above each lane head, and Projects is the list of every registered project by device.
 Its Agents tab carries the count of agents it is the operator's turn with; there is no band under the header.
@@ -582,7 +585,7 @@ The text that results is ordinary Markdown, with nothing hidden or special in it
 
 ## Projects and checkout context
 
-Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `herdr-core/src/worktrees.rs`, `herdr-core/src/disk.rs`, `herdr-core/src/worktree_cleanup.rs`, `herdr-core/src/runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
+Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `herdr-core/src/worktrees.rs`, `herdr-core/src/disk.rs`, `herdr-core/src/disk_layers.rs`, `herdr-core/src/worktree_cleanup.rs`, `herdr-core/src/runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
 
 ### Sidebar type, rows and width
 
@@ -711,15 +714,35 @@ Only a row click, the header click, the `N files` chip, and the menus' explicit 
 
 ### Disk allocation and cleanup
 
+Web owner: `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts`; core owner: `herdr-core/src/disk.rs`, `herdr-core/src/disk_layers.rs`, `herdr-core/src/worktree_cleanup.rs`.
 Allocated-on-disk sums main, linked worktree folders, and the shared Git directory once; nested roots belong to the longest matching root, hard links share one inode allocation, and descendant symlinks are not followed.
-An incomplete measurement has no total; the UI separates the confirmed subtotal from unavailable target measurements, and allocated blocks are not a promise of reclaimable space.
-Cleanup opens a review sheet with separate Available and Excluded groups, exact branch and folder, allocated size or failure, and a target-specific exclusion reason.
-Nothing is preselected, and Remove is disabled until a user explicitly checks an eligible folder.
-Main/current, dirty/untracked, live-pane-use, locked, nested, detached, unknown, and not-confirmed-merged targets are excluded; only clean, unused linked worktrees merged into local main can be removed, without force.
-An ordinary merge is proven by Git ancestry; a squash merge requires the exact GitHub pull request head commit to equal the reviewed worktree HEAD and its merge commit to already be an ancestor of local main.
-Removal moves the folder into the repository's Git directory and has `git worktree remove` drop its registration, so every build cache a checkout owns goes with it and is deleted in the background, and nothing outside the folder is touched.
-Confirm rechecks current Git and Herdr state before each target and refuses changed state with a Review-again path.
-Completion lists individual removed/refused outcomes, and repeating the same completed intent does not repeat removal; Review and Cancel perform no filesystem mutations.
+Each checkout is measured under its own limit of one million entries and 30 seconds, so a checkout that exceeds it or cannot be read is the only row that has no size; the reason is in the diagnostic log.
+An incomplete measurement has no total, and allocated blocks are not a promise of reclaimable space: the result states the volume's free space before and after beside the allocated total.
+Remote device projects are neither measured nor cleaned.
+
+Ignored folders fall into layers in this order: a folder git tracks is source, a folder holding a valid `CACHEDIR.TAG` is build cache, a folder Hide's ecosystem table names beside its marker file is build cache or dependencies, and every other ignored path is Other.
+The table covers Cargo, Node, Python, Gradle and Maven, Swift, Dart, Elixir, .NET and Composer, and applies only to ignored folders; a symlink, a folder holding another git repository and a folder holding tracked files are never removed.
+Other has no checkbox and its folders are never removed, because Hide cannot tell whether what a tool made there can be rebuilt.
+
+The sheet is one large dialog: a table with a row per checkout and columns Build cache, Dependencies, Worktree, Other and a total.
+Main leads, the rest follow by size, and checkouts under 1 GB fold into `작은 체크아웃 N · X GB`; a row that is still being measured is a skeleton with a disabled checkbox, and a row that could not be measured is dimmed with no size and cannot be chosen.
+The filter is All, Finished, Resting and Working, each with its count: Finished is a linked checkout the Overview already calls done that nothing is using, Working is a checkout something is using, and Resting is the rest.
+Checkboxes sit on each cell, on each row (its build cache and dependencies, never its worktree), on each column head and at the top left, and they reach only the rows the filter shows; a group that is partly chosen shows the middle bar, and a cell that cannot be chosen is skipped by every group.
+Choosing a worktree cell shows the same row's cache cells as included: they cannot be chosen apart and are not counted twice, and they leave with the worktree folder.
+A checkout is in use while an agent there is working, a terminal pane in it runs a process that is not a shell, or a server listens on a port opened from inside it; a pane that is merely open does not block a cache.
+A worktree cell can be chosen only for a linked checkout that is merged into local main, clean, has no open pane, is not the checkout in front, is not locked and holds no nested git repository; otherwise it is disabled and its tooltip says which.
+When Hide cannot read what is in use, the sheet says so above the table with a retry and every checkbox is disabled; no banner or alert appears.
+
+The bottom line counts the cells chosen and their total, says in red which worktree is deleted with its folder and that dependencies come back on the next install, and `정리` runs at once for caches and dependencies alone.
+With a worktree chosen a confirmation step names the worktrees and offers `워크트리 N개와 캐시 정리` and `돌아가기`, neither focused, and going back deletes nothing and keeps the choice.
+Cleanup deletes cache and dependency folders permanently, with no trash, and removes worktrees without force, keeping the branch.
+Each cell is checked again when `정리` is pressed and again per folder: a cell that became in use, a worktree that changed and a folder that gained tracked files are skipped with their reason and the rest go on.
+A folder is moved into the repository's Git directory (`hide-removed`) and disappears from the checkout at once; the cleanup thread then deletes it, and the sheet reads `비우는 중 · N/M`, keeps going when the sheet is closed and shows its progress or result when opened again.
+Only one cleanup runs in a daemon, and pressing the same confirmation twice removes each folder once.
+When the cleanup ends the result reads `여유 A → B GB`, the allocated total and the room actually gained, and each cell as removed, skipped or failed with its reason; `다시 검토` measures again and `닫기` closes the sheet.
+The disk number, its tooltip and the warning cell then read the new measurement.
+Every removed, skipped and failed cell leaves one diagnostic line with its kind, checkout, layer, bytes and reason code and no file contents.
+Hover, filter and checkbox changes are local: they dispatch no core event and start no disk work, opening the sheet sends one review event and `정리` one confirm event.
 
 ### Adding a project
 
