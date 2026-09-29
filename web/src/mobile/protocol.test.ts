@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { headerLine, macNameOf, notificationRow, openKey, parseFragment, replyProblem, rowsProblem, staleTags, toBase64Url, type AgentGroup, type PhoneAgent } from "./protocol";
+import { boxDrawingRow, headerLine, macNameOf, notificationRow, openKey, parseFragment, replyProblem, rowsProblem, staleTags, toBase64Url, type AgentGroup, type PhoneAgent } from "./protocol";
 
 const CREDENTIAL = "a".repeat(64);
 
@@ -99,5 +99,16 @@ describe("rowsProblem", () => {
     expect(rowsProblem("ok")).toBeNull();
     expect(rowsProblem("gone")).toBe("이 pane은 더 이상 열려 있지 않아요.");
     expect(rowsProblem("device_unreachable")).toBe("이 에이전트의 기기가 연결돼 있지 않아요.");
+  });
+});
+
+describe("boxDrawingRow", () => {
+  it("is a row of box-drawing characters and spaces only", () => {
+    expect(boxDrawingRow("─".repeat(200))).toBe(true);
+    expect(boxDrawingRow("  ╭────╮  ")).toBe(true);
+    expect(boxDrawingRow("│ ❯ ")).toBe(false);
+    expect(boxDrawingRow("── 3 files ──")).toBe(false);
+    expect(boxDrawingRow("")).toBe(false);
+    expect(boxDrawingRow("    ")).toBe(false);
   });
 });

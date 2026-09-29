@@ -1,7 +1,9 @@
 // One agent's detail on the phone (PRD mobile-companion B24-B28, D-18): the
 // row's head, the pane's recent rows read-only in the terminal's colours with
-// the newest at the bottom, a pull to the top for older rows, and the quick
-// keys and one-line reply every agent has, whatever its group.
+// the newest at the bottom, wrapped at the phone's width because the pane is as
+// wide as the desktop (a box-drawn rule is clipped to one line instead), a pull
+// to the top for older rows, and the quick keys and one-line reply every agent
+// has, whatever its group.
 
 import { AnsiUp } from "ansi_up";
 import { ArrowLeftIcon } from "lucide-react";
@@ -9,19 +11,25 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { AgentHead, Place } from "./parts";
 import { loadMore, onReplyResult, sendKey, sendReply } from "./connection";
-import { MAX_REPLY_CHARS, QUICK_KEYS, UNREACHABLE_TEXT, rowsProblem } from "./protocol";
+import { MAX_REPLY_CHARS, QUICK_KEYS, UNREACHABLE_TEXT, boxDrawingRow, rowsProblem } from "./protocol";
 import { agentOf, usePhone } from "./store";
 
 const PULL_EDGE = 48;
 
-function useAnsi() {
-  return useMemo(() => {
-    const ansi = new AnsiUp();
-    ansi.use_classes = true;
-    // Read-only rows: an OSC 8 link stays text, nothing on the page navigates away.
-    ansi.url_allowlist = Object.create(null) as Record<string, number>;
-    return ansi;
-  }, []);
+type AnsiRow = { html: string; box: boolean };
+
+/** One read's rows as HTML; a fresh converter, so no colour carries over from the last read. */
+function ansiRows(text: string): AnsiRow[] {
+  const ansi = new AnsiUp();
+  ansi.use_classes = true;
+  // Read-only rows: an OSC 8 link stays text, nothing on the page navigates away.
+  ansi.url_allowlist = Object.create(null) as Record<string, number>;
+  const rows = text.split("\n");
+  if (rows.at(-1) === "") rows.pop();
+  return rows.map((row) => {
+    const html = ansi.ansi_to_html(row);
+    return { html, box: boxDrawingRow(html.replace(/<[^>]*>/g, "")) };
+  });
 }
 
 export function Detail({ onBack }: { onBack: () => void }) {
@@ -72,8 +80,7 @@ export function Detail({ onBack }: { onBack: () => void }) {
 }
 
 function Scrollback({ text, more, lines, loading }: { text: string; more: boolean; lines: number; loading: boolean }) {
-  const ansi = useAnsi();
-  const html = useMemo(() => ansi.ansi_to_html(text), [ansi, text]);
+  const rows = useMemo(() => ansiRows(text), [text]);
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const heightBefore = useRef(0);
@@ -87,7 +94,7 @@ function Scrollback({ text, more, lines, loading }: { text: string; more: boolea
     else if (lines > linesBefore.current) element.scrollTop += element.scrollHeight - heightBefore.current;
     heightBefore.current = element.scrollHeight;
     linesBefore.current = lines;
-  }, [html, lines]);
+  }, [rows, lines]);
   return (
     <div
       ref={scroller}
@@ -102,12 +109,17 @@ function Scrollback({ text, more, lines, loading }: { text: string; more: boolea
     >
       {more ? <p className="pb-sm text-center text-body text-muted-foreground">위로 당기면 더 불러와요</p> : null}
       {loading ? <p className="text-body text-muted-foreground">불러오는 중…</p> : null}
-      <pre
-        aria-label="터미널 최근 출력"
-        className="phone-ansi m-none whitespace-pre font-mono text-body leading-normal text-foreground"
-        // ansi_up escapes the text; it adds only its own colour spans.
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <pre aria-label="터미널 최근 출력" className="phone-ansi m-none font-mono text-body leading-normal text-foreground">
+        {rows.map((row, index) => (
+          <span
+            key={index}
+            className={`block overflow-hidden ${row.box ? "whitespace-pre" : "whitespace-pre-wrap wrap-anywhere"}`}
+            // ansi_up escapes the text; it adds only its own colour spans. A blank row keeps its line,
+            // and a row's trailing padding in a background colour stops at the page's margin.
+            dangerouslySetInnerHTML={{ __html: row.html || " " }}
+          />
+        ))}
+      </pre>
     </div>
   );
 }
