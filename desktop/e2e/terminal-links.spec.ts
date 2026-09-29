@@ -157,10 +157,15 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   test.info().attach("scratch", { body: scratch });
 
   ({ app } = await launch(run.env));
+  // The window is the size a CI screen allows (macOS keeps it within the
+  // screen), and the shell is zoomed out so its layout is wide enough that an
+  // open View sits beside the pane rather than over it (UI_BEHAVIOR, Narrow windows).
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 681));
   const page = await shellPage(app);
   // Counted from the reload on, so the socket it opens is heard.
   const sent = countSent(page);
   await withProbe(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.7));
   await enterWorkspace(page, "fixture");
   const dialogs: string[] = [];
   page.on("dialog", (dialog) => {
