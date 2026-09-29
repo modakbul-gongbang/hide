@@ -1778,6 +1778,7 @@ mod tests {
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         };
         let agent = project_agents(payload(json!([{
             "pane_id": "pane",
@@ -1892,6 +1893,7 @@ mod tests {
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         }];
         let mut agents = project_agents(payload(json!([
             {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},

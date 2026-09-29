@@ -301,9 +301,50 @@ impl Runtime {
         changed
     }
 
-    pub(crate) fn cleanup_current_path(&self) -> Option<String> {
-        self.focused_local_checkout()
-            .map(|(_, checkout)| checkout.path.clone())
+    /// What the cleanup worker needs to know about a local Git project's
+    /// checkouts, copied under the lock so the worker reads nothing of the
+    /// runtime while it inspects the disk and Herdr.
+    fn cleanup_input(&self, workspace_id: &str) -> Option<live::cleanup::ReviewInput> {
+        let workspace = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.id == workspace_id
+                    && workspace.remote_target_id.is_none()
+                    && workspace.is_git
+            })?;
+        let agent_panes: HashSet<&str> = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .map(|agent| agent.pane_id.as_str())
+            .collect();
+        Some(live::cleanup::ReviewInput {
+            workspace_id: workspace.id.clone(),
+            root: PathBuf::from(&workspace.path),
+            current: self
+                .focused_local_checkout()
+                .filter(|(focused, _)| focused.id == workspace.id)
+                .map(|(_, checkout)| PathBuf::from(&checkout.path)),
+            checkouts: workspace
+                .checkouts
+                .iter()
+                .map(|checkout| live::cleanup::CheckoutFacts {
+                    path: PathBuf::from(&checkout.path),
+                    agent_working: checkout.agent_summary.working,
+                    terminal_panes: checkout
+                        .tabs
+                        .iter()
+                        .flat_map(|tab| tab.panes.iter())
+                        .map(|pane| pane.id.clone())
+                        .filter(|id| !agent_panes.contains(id.as_str()))
+                        .collect(),
+                })
+                .collect(),
+        })
     }
 
     pub(crate) fn ingest_cleanup(&mut self, answer: live::cleanup::CleanupSnapshot) -> bool {
@@ -327,7 +368,7 @@ impl Runtime {
         true
     }
 
-    pub(super) fn review_cleanup(&mut self) -> bool {
+    pub(super) fn review_cleanup(&mut self, workspace_id: &str) -> bool {
         if self
             .cleanup
             .as_ref()
@@ -335,23 +376,31 @@ impl Runtime {
         {
             return false;
         }
-        let Some((workspace, checkout)) = self.focused_local_checkout() else {
+        let Some(input) = self.cleanup_input(workspace_id) else {
+            crate::diagnostic!(serde_json::json!({
+                "component": "cleanup",
+                "kind": "review.not_local_git",
+                "workspace_id": workspace_id,
+            }));
             return false;
         };
-        let root = workspace.path.clone();
-        let current = checkout.path.clone();
         self.next_cleanup_id = self.next_cleanup_id.wrapping_add(1).max(1);
         let mut review = live::cleanup::CleanupSnapshot {
             id: self.next_cleanup_id,
-            repository_root: root,
+            workspace_id: workspace_id.to_owned(),
+            repository_root: input.root.to_string_lossy().into_owned(),
             phase: "loading".into(),
             ..Default::default()
         };
         self.cleanup = Some(review.clone());
-        let started = self.live.clone().ok_or_else(|| "A live Herdr connection is required to verify worktree usage. Connect and review again.".into())
-            .and_then(|context| live::cleanup::spawn(context, review.clone(), None, current));
+        // The sizes the sheet shows come from the reader the facts line uses;
+        // reviewing again measures again.
+        self.measure_project_disk(workspace_id);
+        let started = self.live.clone().ok_or_else(|| "A live Herdr connection is required to verify what is in use. Connect and review again.".into())
+            .and_then(|context| live::cleanup::spawn_review(context, review.id, input));
         if let Err(message) = started {
             review.phase = "failed".into();
+            review.usage_error = Some(message.clone());
             review.message = Some(message);
             self.cleanup = Some(review);
         }
@@ -360,11 +409,9 @@ impl Runtime {
     }
 
     pub(super) fn confirm_cleanup(&mut self, payload: CleanupConfirmPayload) -> bool {
-        let Some(review) = self
-            .cleanup
-            .clone()
-            .filter(|r| r.id == payload.id && r.phase == "review")
-        else {
+        let Some(review) = self.cleanup.clone().filter(|r| {
+            r.id == payload.id && r.phase == "review" && r.usage_error.is_none() && r.usage_ready
+        }) else {
             return false;
         };
         let paths: Vec<_> = payload
@@ -374,7 +421,7 @@ impl Runtime {
                 review
                     .rows
                     .iter()
-                    .any(|row| row.path == *path && row.exclusion.is_none())
+                    .any(|row| row.path == *path && row.exclusion.is_none() && row.in_use.is_none())
             })
             .collect::<HashSet<_>>()
             .into_iter()
@@ -382,7 +429,7 @@ impl Runtime {
         if paths.is_empty() {
             return false;
         }
-        let Some(current) = self.cleanup_current_path() else {
+        let Some(input) = self.cleanup_input(&review.workspace_id) else {
             return false;
         };
         self.cleanup.as_mut().unwrap().phase = "removing".into();
@@ -393,7 +440,7 @@ impl Runtime {
                 "The Herdr connection is unavailable. Reconnect and review again.".into()
             })
             .and_then(|context| {
-                live::cleanup::spawn(context, review.clone(), Some(paths), current)
+                live::cleanup::spawn_confirm(context, review.clone(), input, paths)
             });
         if let Err(message) = started {
             let active = self.cleanup.as_mut().unwrap();
@@ -559,6 +606,11 @@ impl Runtime {
             );
             let named = self.disk_project.as_deref() == Some(workspace.path.as_str());
             workspace.disk = project_disk(self.worktree_catalog.project(&workspace.path), named);
+            workspace.cleanup = self
+                .cleanup
+                .as_ref()
+                .filter(|review| review.workspace_id == workspace.id)
+                .cloned();
         }
         crate::project_context::sort_projects(
             &mut self.snapshot.navigator.workspaces,
@@ -585,13 +637,6 @@ impl Runtime {
             .filter(|workspace| workspace.remote_target_id.is_none())
             .and_then(|workspace| self.worktree_catalog.project(&workspace.path))
             .cloned();
-        if let Some(project) = self.snapshot.git_worktrees.as_mut() {
-            project.cleanup = self
-                .cleanup
-                .as_ref()
-                .filter(|review| review.repository_root == project.root_path)
-                .cloned();
-        }
         self.refresh_card();
         before_catalog != self.worktree_catalog
             || before_navigator != self.snapshot.navigator

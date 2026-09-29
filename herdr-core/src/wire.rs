@@ -1203,6 +1203,40 @@ pub(crate) struct PaneProcessGroup {
     pub(crate) shell_pid: Option<u32>,
     pub(crate) foreground_process_group_id: Option<u32>,
     pub(crate) foreground_pids: Vec<u32>,
+    /// The foreground processes' names, in the order of `foreground_pids`.
+    pub(crate) foreground_names: Vec<String>,
+}
+
+impl PaneProcessGroup {
+    /// Herdr's condition for `agent.start`: the foreground group is the
+    /// shell's own and holds nothing but the shell.
+    pub(crate) fn shell_holds_terminal(&self) -> bool {
+        match self.shell_pid {
+            Some(shell) if shell > 1 => {
+                self.foreground_process_group_id == Some(shell)
+                    && self.foreground_pids.iter().all(|pid| *pid == shell)
+            }
+            _ => false,
+        }
+    }
+
+    /// The first foreground process that is not the pane's shell.
+    pub(crate) fn foreground_program(&self) -> Option<&str> {
+        self.foreground_pids
+            .iter()
+            .zip(&self.foreground_names)
+            .find(|(pid, _)| Some(**pid) != self.shell_pid)
+            .map(|(_, name)| name.as_str())
+    }
+}
+
+fn process_name(process: &res::PaneProcessInfoProcess) -> String {
+    let argv0 = process.argv0.as_deref().unwrap_or_default().trim();
+    if argv0.is_empty() {
+        process.name.trim().to_owned()
+    } else {
+        argv0.rsplit('/').next().unwrap_or_default().to_owned()
+    }
 }
 
 pub(crate) fn tab_rename_params(tab_id: &str, label: &str) -> Result<Value, String> {
@@ -1252,6 +1286,11 @@ pub(crate) fn pane_process_group(value: Value) -> Result<PaneProcessGroup, Strin
                 .foreground_processes
                 .iter()
                 .map(|process| process.pid)
+                .collect(),
+            foreground_names: process_info
+                .foreground_processes
+                .iter()
+                .map(process_name)
                 .collect(),
         }),
         _ => Err(missing.into()),
@@ -1632,6 +1671,26 @@ pub(crate) fn checked_response_fixture(id: &Value, result: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_program_holding_the_terminal_is_named_apart_from_the_shell() {
+        let group = |foreground: u32, processes: serde_json::Value| {
+            super::pane_process_group(json!({"type": "pane_process_info", "process_info": {
+                "pane_id": "w1:p1", "shell_pid": 42, "foreground_process_group_id": foreground,
+                "foreground_processes": processes
+            }}))
+            .unwrap()
+        };
+        let idle = group(42, json!([{"pid": 42, "name": "zsh"}]));
+        assert!(idle.shell_holds_terminal());
+        let building = group(
+            77,
+            json!([{"pid": 77, "name": "cargo", "argv0": "/usr/bin/cargo"}, {"pid": 78, "name": "rustc"}]),
+        );
+        assert!(!building.shell_holds_terminal());
+        assert_eq!(building.foreground_program(), Some("cargo"));
+        assert_eq!(building.foreground_names, ["cargo", "rustc"]);
+    }
     #[test]
     fn process_names_select_the_group_leader_then_last_and_prefer_argv0() {
         let mut value = serde_json::json!({"type":"pane_process_info", "process_info": {

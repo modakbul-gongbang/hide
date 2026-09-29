@@ -56,6 +56,12 @@ impl Default for PortsReader {
     }
 }
 
+/// The listeners right now, for a decision that cannot use the last sample.
+/// Runs `lsof`, so only a worker thread may call it.
+pub(crate) fn read_now() -> ListeningPortsSnapshot {
+    read()
+}
+
 fn read() -> ListeningPortsSnapshot {
     let listeners = match listening_sockets() {
         Ok(listeners) => listeners,

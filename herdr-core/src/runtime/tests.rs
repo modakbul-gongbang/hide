@@ -560,6 +560,7 @@ fn workspace(
         inactive_checkouts: Default::default(),
         removal: Default::default(),
         disk: Default::default(),
+        cleanup: None,
     }
 }
 

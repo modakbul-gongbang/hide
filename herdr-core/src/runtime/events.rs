@@ -699,8 +699,15 @@ pub(super) struct ChangesSelectPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct CleanupReviewPayload {
+    pub(super) workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CleanupConfirmPayload {
     pub(super) id: u64,
+    /// Worktrees to remove with everything in them.
+    #[serde(default)]
     pub(super) paths: Vec<String>,
 }
 
@@ -1165,7 +1172,7 @@ pub(super) enum Event {
     /// the selected checkout, and a removal changes the whole worktree list.
     OverviewOpenSection(OverviewOpenSectionPayload),
     AgentStartInCheckout(AgentStartInCheckoutPayload),
-    CleanupReview,
+    CleanupReview(CleanupReviewPayload),
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
     CardRefresh,
@@ -1345,7 +1352,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "task_agent_retry" => decode!(TaskAgentRetryPayload, TaskAgentRetry),
         "remove_worktree" => decode!(RemoveWorktreePayload, RemoveWorktree),
         "github_request" => decode!(GithubRequestPayload, GithubRequest),
-        "cleanup_review" => Ok(Event::CleanupReview),
+        "cleanup_review" => decode!(CleanupReviewPayload, CleanupReview),
         "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
         "cleanup_dismiss" => Ok(Event::CleanupDismiss),
         "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
@@ -3052,7 +3059,7 @@ impl Runtime {
                 }
                 first || payload.refresh
             }
-            Event::CleanupReview => self.review_cleanup(),
+            Event::CleanupReview(payload) => self.review_cleanup(&payload.workspace_id),
             Event::CleanupConfirm(payload) => self.confirm_cleanup(payload),
             Event::CleanupDismiss => {
                 if self.cleanup.as_ref().is_none_or(|r| r.phase == "removing") {

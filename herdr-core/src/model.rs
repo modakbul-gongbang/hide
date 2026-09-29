@@ -883,6 +883,9 @@ pub struct WorkspaceSnapshot {
     /// exactly its keys.
     #[serde(default, skip_serializing_if = "ProjectDiskSnapshot::is_empty")]
     pub disk: ProjectDiskSnapshot,
+    /// The disk cleanup review or run of this project, while there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
 }
 
 /// A Git project's allocated disk: every worktree and the shared Git
@@ -3041,7 +3044,6 @@ pub struct ProjectWorktreesSnapshot {
     pub github: GithubStatusSnapshot,
     pub pull_requests: Vec<PullRequestSnapshot>,
     pub pull_request_window: String,
-    pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
     pub shared_git_path: Option<String>,
     pub shared_git_disk: DiskUsageSnapshot,
     pub disk_total_bytes: Option<u64>,

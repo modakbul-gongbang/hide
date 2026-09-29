@@ -95,6 +95,7 @@ impl Default for DiskReader {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn read(request: &DiskRequest) -> Vec<DiskUsageSnapshot> {
     read_with(request, |_| {})
 }

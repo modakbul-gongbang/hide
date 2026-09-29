@@ -1526,6 +1526,7 @@ fn removing_registration_converges_without_git_or_repeat_publication() {
 fn cleanup_review_without_live_state_is_visible_and_never_deletes() {
     let mut runtime = runtime();
     runtime.ingest_session(Ok(context_payload()));
+    runtime.snapshot.navigator.workspaces[0].is_git = true;
     let project = runtime.snapshot.navigator.workspaces[0].clone();
     runtime.focus_checkout(&project.id, &project.checkouts[0].id);
     let root = runtime.focused_local_checkout().unwrap().0.path.clone();
@@ -1538,18 +1539,95 @@ fn cleanup_review_without_live_state_is_visible_and_never_deletes() {
         },
         0,
     );
-    runtime.dispatch_json(br#"{"schema_version":2,"kind":"cleanup_review","payload":{}}"#);
-    let snapshot = serde_json::to_value(runtime.snapshot()).unwrap();
-    assert_eq!(snapshot["git_worktrees"]["cleanup"]["phase"], "failed");
+    let event = |kind: &str, payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": kind, "payload": payload
+        }))
+        .unwrap()
+    };
+    runtime.dispatch_json(&event(
+        "cleanup_review",
+        serde_json::json!({"workspace_id": project.id}),
+    ));
+    let cleanup = |runtime: &Runtime| {
+        serde_json::to_value(&runtime.snapshot().navigator.workspaces[0].cleanup).unwrap()
+    };
+    let shown = cleanup(&runtime);
+    assert_eq!(shown["phase"], "failed");
+    assert_eq!(shown["workspace_id"], project.id.as_str());
+    for field in ["message", "usage_error"] {
+        assert!(
+            shown[field]
+                .as_str()
+                .unwrap()
+                .contains("live Herdr connection"),
+            "{field}"
+        );
+    }
+    // A review of something that is not a local Git project starts nothing.
+    assert!(!runtime.dispatch_json(&event(
+        "cleanup_review",
+        serde_json::json!({"workspace_id": "gone"}),
+    )));
+    runtime.dispatch_json(&event("cleanup_dismiss", serde_json::json!({})));
+    assert!(cleanup(&runtime).is_null());
+}
+
+/// B19, B23. A confirmation reaches the worker only from a review nothing
+/// blocks: a worktree with a reason, a row in use, or a review whose in-use
+/// read failed selects nothing, and one accepted confirmation leaves no
+/// second one to repeat it.
+#[test]
+fn a_cleanup_confirmation_only_selects_what_the_review_allows_and_runs_once() {
+    use crate::live::cleanup::{CleanupRow, CleanupSnapshot, InUse};
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    runtime.snapshot.navigator.workspaces[0].is_git = true;
+    let workspace_id = runtime.snapshot.navigator.workspaces[0].id.clone();
+    let row = |path: &str| CleanupRow {
+        path: path.to_owned(),
+        ..Default::default()
+    };
+    let mut blocked = row("/w/blocked");
+    blocked.exclusion = Some("not merged".into());
+    blocked.exclusion_code = Some("not_merged");
+    let mut busy = row("/w/busy");
+    busy.in_use = Some(InUse {
+        code: "port",
+        name: None,
+        port: Some(5173),
+    });
+    let review = |usage_error: Option<&str>| CleanupSnapshot {
+        id: 7,
+        workspace_id: workspace_id.clone(),
+        phase: "review".into(),
+        usage_ready: true,
+        usage_error: usage_error.map(str::to_owned),
+        rows: vec![row("/w/free"), blocked.clone(), busy.clone()],
+        ..Default::default()
+    };
+    let confirm = |paths: &[&str]| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "cleanup_confirm",
+            "payload": {"id": 7, "paths": paths}
+        }))
+        .unwrap()
+    };
+    runtime.cleanup = Some(review(Some("Listening ports could not be read")));
     assert!(
-        snapshot["git_worktrees"]["cleanup"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("live Herdr connection")
+        !runtime.dispatch_json(&confirm(&["/w/free"])),
+        "an unread usage selects nothing"
     );
-    runtime.dispatch_json(br#"{"schema_version":2,"kind":"cleanup_dismiss","payload":{}}"#);
+    runtime.cleanup = Some(review(None));
+    assert!(!runtime.dispatch_json(&confirm(&["/w/blocked", "/w/busy", "/w/elsewhere"])));
+    assert_eq!(runtime.cleanup.as_ref().unwrap().phase, "review");
+    // No Herdr here, so the worker cannot start; what matters is that the
+    // accepted confirmation moved the phase away from `review` at once.
+    assert!(runtime.dispatch_json(&confirm(&["/w/free", "/w/free"])));
+    assert_ne!(runtime.cleanup.as_ref().unwrap().phase, "review");
     assert!(
-        serde_json::to_value(runtime.snapshot()).unwrap()["git_worktrees"]["cleanup"].is_null()
+        !runtime.dispatch_json(&confirm(&["/w/free"])),
+        "the same intent does not run twice"
     );
 }
 

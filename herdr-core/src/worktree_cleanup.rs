@@ -1,18 +1,51 @@
-//! Reviewed, non-force removal of clean linked worktrees merged into local main.
-//! All inspection and filesystem effects run on the existing action-worker path.
+//! Reviewed cleanup of a project's disk: the build caches and dependencies a
+//! tool makes again, and clean linked worktrees merged into local main.
+//! All inspection and filesystem effects run on the existing action-worker
+//! path, never under the runtime lock.
 use super::{LiveContext, control_request};
-use crate::{disk, github, model::DiskUsageSnapshot, worktrees::git};
+use crate::model::ListeningPortSnapshot;
+use crate::{disk, github, worktrees::git};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CleanupSnapshot {
     pub id: u64,
+    pub workspace_id: String,
     pub repository_root: String,
     pub phase: String,
     pub main_head: Option<String>,
     pub rows: Vec<CleanupRow>,
     pub message: Option<String>,
+    /// Why "in use" could not be read (no Herdr connection, a pane or port
+    /// read failed). While it stands nothing may be chosen.
+    pub usage_error: Option<String>,
+    /// The in-use reads are in, so build caches and dependencies may be chosen
+    /// while worktree eligibility is still being checked.
+    pub usage_ready: bool,
+    pub progress: Option<CleanupProgress>,
+    pub cell_results: Vec<CellResult>,
+    /// The project volume's free bytes when the review read them, before the
+    /// removal started, and after the removed folders were deleted.
+    pub free_bytes: Option<u64>,
+    pub free_before: Option<u64>,
+    pub free_after: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct CleanupProgress {
+    pub done: usize,
+    pub total: usize,
+}
+
+/// Why a checkout cannot be emptied while it is being worked in.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct InUse {
+    /// `agent_working`, `process` or `port`.
+    pub code: &'static str,
+    pub name: Option<String>,
+    pub port: Option<u16>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -20,10 +53,169 @@ pub struct CleanupRow {
     pub path: String,
     pub branch: Option<String>,
     pub head: Option<String>,
+    pub is_main: bool,
+    /// The reason the worktree may not be removed, in words for the log; the
+    /// shell reads `exclusion_code`.
     pub exclusion: Option<String>,
-    pub disk: DiskUsageSnapshot,
+    pub exclusion_code: Option<&'static str>,
+    pub exclusion_count: Option<u32>,
+    pub in_use: Option<InUse>,
     pub result: Option<String>,
     pub message: Option<String>,
+}
+
+/// What became of one chosen build-cache or dependency cell.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CellResult {
+    pub path: String,
+    pub layer: &'static str,
+    /// `removed`, `skipped` or `failed`.
+    pub outcome: &'static str,
+    pub bytes: u64,
+    pub folders: usize,
+    pub reason_code: Option<&'static str>,
+    pub reason: Option<String>,
+}
+
+/// What the runtime knows about one checkout, copied under the lock for the
+/// worker's in-use read.
+#[derive(Clone, Debug)]
+pub(crate) struct CheckoutFacts {
+    pub path: PathBuf,
+    /// Agents of the checkout whose activity is Working.
+    pub agent_working: usize,
+    /// Panes that are not an agent's; their foreground process is read.
+    pub terminal_panes: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ReviewInput {
+    pub workspace_id: String,
+    pub root: PathBuf,
+    /// The checkout the operator is looking at, when it is in this project.
+    pub current: Option<PathBuf>,
+    pub checkouts: Vec<CheckoutFacts>,
+}
+
+/// How many terminal panes one review asks Herdr about. A project past it
+/// cannot be judged, and says so instead of guessing.
+const PANE_READ_LIMIT: usize = 256;
+
+pub(crate) type InUseMap = HashMap<PathBuf, InUse>;
+
+/// Which checkouts are being worked in: an agent is Working, a program other
+/// than a shell holds a terminal pane of the checkout, or a process started
+/// inside it listens on a port. `process` answers a pane's program, and any
+/// read that fails fails the whole answer: an unread checkout is not idle.
+pub(crate) fn read_in_use(
+    checkouts: &[CheckoutFacts],
+    ports: Result<Vec<ListeningPortSnapshot>, String>,
+    mut process: impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<InUseMap, String> {
+    let ports = ports?;
+    let mut in_use = InUseMap::new();
+    let mut reads = 0usize;
+    for checkout in checkouts {
+        let path = std::fs::canonicalize(&checkout.path).unwrap_or_else(|_| checkout.path.clone());
+        if checkout.agent_working > 0 {
+            in_use.insert(
+                checkout.path.clone(),
+                InUse {
+                    code: "agent_working",
+                    name: None,
+                    port: None,
+                },
+            );
+            continue;
+        }
+        if let Some(port) = ports
+            .iter()
+            .filter(|listener| Path::new(&listener.cwd).starts_with(&path))
+            .map(|listener| listener.port)
+            .min()
+        {
+            in_use.insert(
+                checkout.path.clone(),
+                InUse {
+                    code: "port",
+                    name: None,
+                    port: Some(port),
+                },
+            );
+            continue;
+        }
+        for pane in &checkout.terminal_panes {
+            reads += 1;
+            if reads > PANE_READ_LIMIT {
+                return Err(format!(
+                    "More than {PANE_READ_LIMIT} terminal panes are open, too many to check for running programs"
+                ));
+            }
+            if let Some(name) = process(pane)? {
+                in_use.insert(
+                    checkout.path.clone(),
+                    InUse {
+                        code: "process",
+                        name: Some(name),
+                        port: None,
+                    },
+                );
+                break;
+            }
+        }
+    }
+    Ok(in_use)
+}
+
+/// The in-use read against the live Herdr and the machine's listening ports.
+fn live_in_use(context: &LiveContext, checkouts: &[CheckoutFacts]) -> Result<InUseMap, String> {
+    let ports = crate::ports::read_now();
+    let ports = match ports.unavailable_reason {
+        Some(reason) => Err(format!("Listening ports could not be read: {reason}")),
+        None => Ok(ports.entries),
+    };
+    read_in_use(checkouts, ports, |pane| {
+        let value = control_request(
+            context.api_connector.as_ref(),
+            "pane.process_info",
+            crate::wire::pane_process_info_params(pane)?,
+        )?;
+        let group = crate::wire::pane_process_group(value)?;
+        if group.foreground_pids.is_empty() || group.shell_holds_terminal() {
+            return Ok(None);
+        }
+        Ok(Some(
+            group
+                .foreground_program()
+                .or_else(|| group.foreground_names.first().map(String::as_str))
+                .unwrap_or("a program")
+                .to_owned(),
+        ))
+    })
+}
+
+/// A worktree that may not be removed, and why.
+struct Exclusion {
+    code: &'static str,
+    count: Option<u32>,
+    message: String,
+}
+
+impl Exclusion {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            count: None,
+            message: message.into(),
+        }
+    }
+}
+
+/// A Git or filesystem read that failed leaves the worktree unverified.
+impl From<String> for Exclusion {
+    fn from(message: String) -> Self {
+        Self::new("unverified", message)
+    }
 }
 
 /// The review's rows: Git's registration with the reason each one is not a
@@ -32,20 +224,28 @@ fn listed(root: &Path) -> Result<Vec<CleanupRow>, String> {
     Ok(hide_host::worktrees::registered(root)?
         .into_iter()
         .enumerate()
-        .map(|(index, registered)| CleanupRow {
-            exclusion: if index == 0 {
-                Some("Main checkout".into())
+        .map(|(index, registered)| {
+            let (code, message) = if index == 0 {
+                (Some("main"), Some("Main checkout"))
             } else if registered.locked {
-                Some("Worktree is locked. Unlock it separately before reviewing again.".into())
+                (
+                    Some("locked"),
+                    Some("Worktree is locked. Unlock it separately before reviewing again."),
+                )
             } else if registered.unavailable {
-                Some("Worktree is unavailable".into())
+                (Some("unavailable"), Some("Worktree is unavailable"))
             } else {
-                None
-            },
-            path: registered.path,
-            branch: registered.branch,
-            head: registered.head,
-            ..Default::default()
+                (None, None)
+            };
+            CleanupRow {
+                exclusion: message.map(Into::into),
+                exclusion_code: code,
+                is_main: index == 0,
+                path: registered.path,
+                branch: registered.branch,
+                head: registered.head,
+                ..Default::default()
+            }
         })
         .collect())
 }
@@ -95,96 +295,125 @@ fn verified_merge(
     branch: &str,
     head: &str,
     merged_proofs: &mut impl FnMut(&str) -> Result<Vec<github::MergedPullRequestProof>, String>,
-) -> Result<(), String> {
+) -> Result<(), Exclusion> {
+    let unverified = |message: &str| Exclusion::new("merge_unverified", message);
     let range = format!("{main}..{head}");
     let count = git(root, &["rev-list", "--count", &range, "--"])?;
     match count.trim().parse::<u64>() {
         Ok(0) => return Ok(()),
-        Err(_) => return Err("Merge status could not be verified".into()),
+        Err(_) => return Err(unverified("Merge status could not be verified")),
         Ok(_) => {}
     }
 
     let proofs = merged_proofs(branch)?;
     let Some(proof) = proofs.iter().find(|proof| proof.head_oid == head) else {
-        return Err(
-            "Not merged into local main, and no merged pull request exactly matches this worktree HEAD"
-                .into(),
-        );
+        return Err(Exclusion::new(
+            "not_merged",
+            "Not merged into local main, and no merged pull request exactly matches this worktree HEAD",
+        ));
     };
-    let merge_oid = proof
-        .merge_oid
-        .as_deref()
-        .ok_or("The matching merged pull request has no merge commit identity")?;
+    let merge_oid = proof.merge_oid.as_deref().ok_or_else(|| {
+        unverified("The matching merged pull request has no merge commit identity")
+    })?;
     git(root, &["merge-base", "--is-ancestor", merge_oid, main]).map_err(|_| {
-        String::from(
+        unverified(
             "The matching pull request is merged on GitHub but its merge commit is not in local main. Update main and review again.",
         )
     })?;
     Ok(())
 }
 
+/// The registered worktrees with the reason each may not be removed. `only`
+/// limits the checks to those paths, so a confirmation rereads what it is
+/// about to remove and nothing else.
 fn inspect(
     root: &Path,
-    current: &Path,
-    usage: Result<Vec<PathBuf>, String>,
+    current: Option<&Path>,
+    panes: Result<Vec<PathBuf>, String>,
+    in_use: &InUseMap,
+    only: Option<&[String]>,
 ) -> Result<CleanupSnapshot, String> {
-    inspect_with_merge_proofs(root, current, usage, |branch| {
+    inspect_with_merge_proofs(root, current, panes, in_use, only, |branch| {
         github::merged_pull_request_proofs(root, branch)
     })
 }
 
 fn inspect_with_merge_proofs(
     root: &Path,
-    current: &Path,
-    usage: Result<Vec<PathBuf>, String>,
+    current: Option<&Path>,
+    panes: Result<Vec<PathBuf>, String>,
+    in_use: &InUseMap,
+    only: Option<&[String]>,
     mut merged_proofs: impl FnMut(&str) -> Result<Vec<github::MergedPullRequestProof>, String>,
 ) -> Result<CleanupSnapshot, String> {
     let mut rows = listed(root)?;
     let main_head = git(root, &["rev-parse", "--verify", "refs/heads/main^{commit}"])
         .map(|v| v.trim().to_owned());
-    let canonical_current =
-        std::fs::canonicalize(current).map_err(|_| "The current checkout cannot be verified.")?;
+    let canonical_current = current.and_then(|current| std::fs::canonicalize(current).ok());
     let paths: Vec<PathBuf> = rows.iter().map(|r| PathBuf::from(&r.path)).collect();
     for row in &mut rows {
-        if row.exclusion.is_some() {
+        row.in_use = in_use.get(Path::new(&row.path)).cloned();
+        if row.exclusion.is_some() || only.is_some_and(|only| !only.contains(&row.path)) {
             continue;
         }
-        let checked = (|| -> Result<(), String> {
+        let checked = (|| -> Result<(), Exclusion> {
             let path = Path::new(&row.path);
-            let canonical =
-                std::fs::canonicalize(path).map_err(|_| "Folder is missing or unreadable")?;
+            let canonical = std::fs::canonicalize(path)
+                .map_err(|_| Exclusion::new("missing", "Folder is missing or unreadable"))?;
             if canonical != path {
-                return Err("Folder is an alias. Refresh authoritative worktree paths.".into());
+                return Err(Exclusion::new(
+                    "alias",
+                    "Folder is an alias. Refresh authoritative worktree paths.",
+                ));
             }
-            if canonical == canonical_current {
-                return Err("Current checkout".into());
+            if canonical_current.as_ref() == Some(&canonical) {
+                return Err(Exclusion::new("current", "Current checkout"));
             }
             // Removing an ancestor would also remove another checkout's files.
             if paths
                 .iter()
                 .any(|other| other != path && other.starts_with(path))
             {
-                return Err("Contains another registered worktree".into());
+                return Err(Exclusion::new(
+                    "contains_worktree",
+                    "Contains another registered worktree",
+                ));
             }
-            let usage = usage.as_ref().map_err(Clone::clone)?;
-            if usage.iter().any(|cwd| cwd.starts_with(&canonical)) {
-                return Err(
-                    "In use by a live pane or agent. Close or move it, then review again.".into(),
-                );
+            if row.in_use.is_some() {
+                return Err(Exclusion::new(
+                    "in_use",
+                    "In use: an agent is working or a program is running here.",
+                ));
             }
-            let main = main_head.as_ref().map_err(|_| "Local main is unavailable. Fetching or another base cannot establish eligibility.")?;
-            let head = row.head.as_ref().ok_or("Worktree HEAD is unknown")?;
+            let panes = panes.as_ref().map_err(Clone::clone)?;
+            if panes.iter().any(|cwd| cwd.starts_with(&canonical)) {
+                return Err(Exclusion::new(
+                    "pane_open",
+                    "In use by a live pane or agent. Close or move it, then review again.",
+                ));
+            }
+            let main = main_head.as_ref().map_err(|_| Exclusion::new("main_unavailable", "Local main is unavailable. Fetching or another base cannot establish eligibility."))?;
+            let head = row
+                .head
+                .as_ref()
+                .ok_or_else(|| Exclusion::new("unverified", "Worktree HEAD is unknown"))?;
             if row.branch.is_none() {
-                return Err("Detached HEAD. Review this worktree separately.".into());
+                return Err(Exclusion::new(
+                    "detached",
+                    "Detached HEAD. Review this worktree separately.",
+                ));
             }
-            if !git(path, &["status", "--porcelain=v1", "--untracked-files=all"])?
-                .trim()
-                .is_empty()
-            {
-                return Err(
-                    "Uncommitted or untracked files. Commit or move them, then review again."
-                        .into(),
-                );
+            let changed = git(path, &["status", "--porcelain=v1", "--untracked-files=all"])?
+                .lines()
+                .count();
+            if changed > 0 {
+                return Err(Exclusion {
+                    code: "dirty",
+                    count: Some(u32::try_from(changed).unwrap_or(u32::MAX)),
+                    message:
+                        "Uncommitted or untracked files. Commit or move them, then review again."
+                            .into(),
+                });
             }
             verified_merge(
                 root,
@@ -192,15 +421,29 @@ fn inspect_with_merge_proofs(
                 row.branch.as_deref().expect("branch checked above"),
                 head,
                 &mut merged_proofs,
-            )
+            )?;
+            // Removing the worktree deletes its ignored folders too, and a
+            // repository cloned into one is lost with it.
+            match hide_host::worktrees::ignored_repository(path)? {
+                Some(folder) => Err(Exclusion::new(
+                    "nested_repository",
+                    format!("The ignored folder {folder} holds its own Git repository"),
+                )),
+                None => Ok(()),
+            }
         })();
-        row.exclusion = checked.err();
+        if let Err(exclusion) = checked {
+            row.exclusion = Some(exclusion.message);
+            row.exclusion_code = Some(exclusion.code);
+            row.exclusion_count = exclusion.count;
+        }
     }
     Ok(CleanupSnapshot {
         repository_root: root.to_string_lossy().into_owned(),
         main_head: main_head.ok(),
         rows,
         phase: "review".into(),
+        usage_ready: true,
         ..Default::default()
     })
 }
@@ -213,6 +456,8 @@ fn confirm(
 ) -> CleanupSnapshot {
     let mut result = review.clone();
     result.phase = "complete".into();
+    // What confirmation rereads is read once, before anything is removed.
+    let mut fresh: Option<Result<CleanupSnapshot, String>> = None;
     for row in &mut result.rows {
         if !selected.contains(&row.path) || row.result.as_deref() == Some("removed") {
             continue;
@@ -221,7 +466,7 @@ fn confirm(
             if let Some(reason) = &row.exclusion {
                 return Err(format!("Excluded: {reason}"));
             }
-            let fresh = refresh()?;
+            let fresh = fresh.get_or_insert_with(&mut refresh).clone()?;
             let Some(now) = fresh.rows.iter().find(|r| r.path == row.path) else {
                 if !Path::new(&row.path)
                     .try_exists()
@@ -268,74 +513,117 @@ fn confirm(
 
 use hide_host::worktrees::remove_worktree;
 
-pub fn spawn(
+/// Hands a snapshot to the runtime, which keeps it only while its id is the
+/// live one.
+fn publish(context: &LiveContext, snapshot: CleanupSnapshot) {
+    if let Some(runtime) = context.runtime.upgrade() {
+        if let Ok(mut guard) = runtime.lock() {
+            guard.ingest_cleanup(snapshot);
+        }
+        context.notifier.notify();
+    }
+}
+
+/// The review worker: reads what is in use and publishes the rows with it at
+/// once, so build caches can be chosen, then checks each worktree's
+/// eligibility (Git, and GitHub for a squash merge) and publishes the answer.
+pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result<(), String> {
+    std::thread::Builder::new()
+        .name("hide-worktree-cleanup".into())
+        .spawn(move || {
+            let base = CleanupSnapshot {
+                id,
+                workspace_id: input.workspace_id.clone(),
+                repository_root: input.root.to_string_lossy().into_owned(),
+                free_bytes: disk::volume_free_bytes(&input.root),
+                ..Default::default()
+            };
+            let usage = live_in_use(&context, &input.checkouts);
+            let (in_use, usage_error) = match usage {
+                Ok(map) => (map, None),
+                Err(message) => (InUseMap::new(), Some(message)),
+            };
+            match listed(&input.root) {
+                Ok(mut rows) => {
+                    for row in &mut rows {
+                        row.in_use = in_use.get(Path::new(&row.path)).cloned();
+                    }
+                    publish(
+                        &context,
+                        CleanupSnapshot {
+                            phase: "loading".into(),
+                            rows,
+                            usage_ready: usage_error.is_none(),
+                            usage_error: usage_error.clone(),
+                            ..base.clone()
+                        },
+                    );
+                }
+                Err(message) => {
+                    publish(
+                        &context,
+                        CleanupSnapshot {
+                            phase: "failed".into(),
+                            message: Some(message),
+                            ..base
+                        },
+                    );
+                    return;
+                }
+            }
+            // Without the in-use reads a worktree's eligibility cannot be
+            // decided, so each one is unverified and none can be chosen.
+            let panes = match &usage_error {
+                None => pane_paths(&context),
+                Some(message) => Err(message.clone()),
+            };
+            let answer = match inspect(&input.root, input.current.as_deref(), panes, &in_use, None)
+            {
+                Ok(value) => CleanupSnapshot {
+                    id,
+                    workspace_id: input.workspace_id.clone(),
+                    usage_error,
+                    free_bytes: base.free_bytes,
+                    ..value
+                },
+                Err(message) => CleanupSnapshot {
+                    phase: "failed".into(),
+                    message: Some(message),
+                    usage_error,
+                    ..base
+                },
+            };
+            publish(&context, answer);
+        })
+        .map(|_| ())
+        .map_err(|e| format!("Cleanup worker could not start: {e}"))
+}
+
+pub fn spawn_confirm(
     context: LiveContext,
     review: CleanupSnapshot,
-    selected: Option<Vec<String>>,
-    _current: String,
+    input: ReviewInput,
+    selected: Vec<String>,
 ) -> Result<(), String> {
     std::thread::Builder::new()
         .name("hide-worktree-cleanup".into())
         .spawn(move || {
             let root = PathBuf::from(&review.repository_root);
             let refresh = || {
-                // Copy focus only. Git and filesystem reads begin after this guard drops.
-                let focused = context
-                    .runtime
-                    .upgrade()
-                    .and_then(|runtime| {
-                        runtime
-                            .lock()
-                            .ok()
-                            .and_then(|guard| guard.cleanup_current_path())
-                    })
-                    .ok_or("Current checkout is unavailable. Reopen Overview and review again.")?;
-                inspect(&root, Path::new(&focused), pane_paths(&context))
+                let in_use = live_in_use(&context, &input.checkouts)?;
+                inspect(
+                    &root,
+                    input.current.as_deref(),
+                    pane_paths(&context),
+                    &in_use,
+                    Some(&selected),
+                )
             };
-            let mut answer = if let Some(selected) = selected {
-                confirm(&review, &selected, refresh, |path| {
-                    remove_worktree(&root, Path::new(path), false)
-                })
-            } else {
-                match refresh() {
-                    Ok(mut value) => {
-                        let shared = git(
-                            &root,
-                            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-                        )
-                        .ok()
-                        .map(|v| PathBuf::from(v.trim()));
-                        let mut paths: Vec<_> =
-                            value.rows.iter().map(|r| PathBuf::from(&r.path)).collect();
-                        paths.extend(shared);
-                        let measured = disk::read(&disk::DiskRequest {
-                            paths,
-                            generation: review.id,
-                            ..Default::default()
-                        });
-                        for row in &mut value.rows {
-                            row.disk = measured
-                                .iter()
-                                .find(|d| d.path.as_deref() == Some(&row.path))
-                                .cloned()
-                                .unwrap_or_default();
-                        }
-                        value
-                    }
-                    Err(message) => CleanupSnapshot {
-                        phase: "failed".into(),
-                        message: Some(message),
-                        ..review.clone()
-                    },
-                }
-            };
+            let mut answer = confirm(&review, &selected, refresh, |path| {
+                remove_worktree(&root, Path::new(path), false)
+            });
             answer.id = review.id;
-            if let Some(runtime) = context.runtime.upgrade() {
-                if let Ok(mut guard) = runtime.lock() {
-                    guard.ingest_cleanup(answer);
-                }
-                context.notifier.notify();
-            }
+            publish(&context, answer);
         })
         .map(|_| ())
         .map_err(|e| format!("Cleanup worker could not start: {e}"))
@@ -407,15 +695,30 @@ mod tests {
             path
         }
         fn review(&self, current: &Path, usage: Result<Vec<PathBuf>, String>) -> CleanupSnapshot {
-            inspect_with_merge_proofs(&self.main, current, usage, |_| Ok(Vec::new())).unwrap()
+            inspect_with_merge_proofs(
+                &self.main,
+                Some(current),
+                usage,
+                &InUseMap::new(),
+                None,
+                |_| Ok(Vec::new()),
+            )
+            .unwrap()
         }
         fn review_with_proofs(
             &self,
             current: &Path,
             proofs: Vec<github::MergedPullRequestProof>,
         ) -> CleanupSnapshot {
-            inspect_with_merge_proofs(&self.main, current, Ok(Vec::new()), |_| Ok(proofs.clone()))
-                .unwrap()
+            inspect_with_merge_proofs(
+                &self.main,
+                Some(current),
+                Ok(Vec::new()),
+                &InUseMap::new(),
+                None,
+                |_| Ok(proofs.clone()),
+            )
+            .unwrap()
         }
     }
     impl Drop for Fixture {
@@ -742,9 +1045,14 @@ mod tests {
             .unwrap();
         assert_eq!(row.exclusion, None);
 
-        let unavailable = inspect_with_merge_proofs(&f.main, &f.main, Ok(Vec::new()), |_| {
-            Err("GitHub merge proof is unavailable".into())
-        })
+        let unavailable = inspect_with_merge_proofs(
+            &f.main,
+            Some(&f.main),
+            Ok(Vec::new()),
+            &InUseMap::new(),
+            None,
+            |_| Err("GitHub merge proof is unavailable".into()),
+        )
         .unwrap();
         assert!(
             unavailable
@@ -963,5 +1271,135 @@ mod tests {
             std::fs::read_to_string(f.main.join("tracked")).unwrap(),
             "keep"
         );
+    }
+
+    fn facts(path: &str, working: usize, panes: &[&str]) -> CheckoutFacts {
+        CheckoutFacts {
+            path: PathBuf::from(path),
+            agent_working: working,
+            terminal_panes: panes.iter().map(|pane| (*pane).to_owned()).collect(),
+        }
+    }
+
+    fn listener(port: u16, cwd: &str) -> ListeningPortSnapshot {
+        ListeningPortSnapshot {
+            port,
+            cwd: cwd.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_checkout_is_in_use_by_a_working_agent_a_running_program_or_its_own_server() {
+        let checkouts = [
+            facts("/fixture/agent", 1, &["p-agent"]),
+            facts("/fixture/build", 0, &["p-idle", "p-cargo"]),
+            facts("/fixture/server", 0, &[]),
+            facts("/fixture/idle", 0, &["p-idle"]),
+            // A neighbour whose name only starts the same way is not this checkout.
+            facts("/fixture/idle-two", 0, &[]),
+        ];
+        let in_use = read_in_use(
+            &checkouts,
+            Ok(vec![
+                listener(5173, "/fixture/server/web"),
+                listener(8080, "/fixture/idle-two-staging"),
+            ]),
+            |pane| {
+                assert_ne!(pane, "p-agent", "a checkout already known busy is not read");
+                Ok((pane == "p-cargo").then(|| "cargo".to_owned()))
+            },
+        )
+        .unwrap();
+        assert_eq!(in_use[Path::new("/fixture/agent")].code, "agent_working");
+        let build = &in_use[Path::new("/fixture/build")];
+        assert_eq!(
+            (build.code, build.name.as_deref()),
+            ("process", Some("cargo"))
+        );
+        let server = &in_use[Path::new("/fixture/server")];
+        assert_eq!((server.code, server.port), ("port", Some(5173)));
+        assert!(!in_use.contains_key(Path::new("/fixture/idle")));
+        assert!(!in_use.contains_key(Path::new("/fixture/idle-two")));
+    }
+
+    #[test]
+    fn an_unreadable_pane_or_port_list_fails_the_whole_answer_instead_of_reading_idle() {
+        let checkouts = [facts("/fixture/a", 0, &["p1"])];
+        assert!(read_in_use(&checkouts, Err("lsof is missing".into()), |_| Ok(None)).is_err());
+        assert!(
+            read_in_use(&checkouts, Ok(Vec::new()), |_| Err(
+                "pane.process_info failed".into()
+            ))
+            .is_err()
+        );
+        let many: Vec<_> = (0..=PANE_READ_LIMIT).map(|n| format!("p{n}")).collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        let error = read_in_use(&[facts("/fixture/b", 0, &many)], Ok(Vec::new()), |_| {
+            Ok(None)
+        })
+        .unwrap_err();
+        assert!(error.contains("too many"), "{error}");
+    }
+
+    #[test]
+    fn every_reason_a_worktree_cannot_be_removed_carries_a_code_and_a_count_where_one_helps() {
+        let f = Fixture::new();
+        let clean = f.add("clean");
+        let dirty = f.add("dirty");
+        let busy = f.add("busy");
+        let nested = f.add("nested");
+        let ahead = f.add("ahead");
+        let locked = f.add("locked");
+        let current = f.add("current");
+        std::fs::write(dirty.join("tracked"), "changed").unwrap();
+        std::fs::write(dirty.join("new"), "untracked").unwrap();
+        std::fs::create_dir_all(nested.join("target/clone/.git")).unwrap();
+        commit(&ahead, "Unmerged");
+        git(&f.main, &["worktree", "lock", locked.to_str().unwrap()]).unwrap();
+        let mut in_use = InUseMap::new();
+        in_use.insert(
+            busy.clone(),
+            InUse {
+                code: "process",
+                name: Some("cargo".into()),
+                port: None,
+            },
+        );
+        let review = inspect_with_merge_proofs(
+            &f.main,
+            Some(&current),
+            Ok(Vec::new()),
+            &in_use,
+            None,
+            |_| Ok(Vec::new()),
+        )
+        .unwrap();
+        let row = |path: &Path| {
+            review
+                .rows
+                .iter()
+                .find(|r| Path::new(&r.path) == path)
+                .unwrap()
+        };
+        assert_eq!(row(&clean).exclusion_code, None);
+        assert!(row(&f.main).is_main);
+        for (path, code) in [
+            (&f.main, "main"),
+            (&dirty, "dirty"),
+            (&busy, "in_use"),
+            (&nested, "nested_repository"),
+            (&ahead, "not_merged"),
+            (&locked, "locked"),
+            (&current, "current"),
+        ] {
+            assert_eq!(row(path).exclusion_code, Some(code), "{}", path.display());
+        }
+        assert_eq!(row(&dirty).exclusion_count, Some(2));
+        assert_eq!(
+            row(&busy).in_use.as_ref().unwrap().name.as_deref(),
+            Some("cargo")
+        );
+        assert_eq!(row(&f.main).in_use, None, "an idle main carries no reason");
+        assert!(review.usage_ready);
     }
 }
