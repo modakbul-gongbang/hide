@@ -12,8 +12,12 @@ use super::*;
 use crate::host_access::HostCallError;
 use hide_host::home::HomeSynced;
 
-/// Where one device's Home links stand: the project set last sent to its
-/// helper and whether that sync is still running.
+/// Where one device's Home links stand. `requested` is the project set last
+/// sent to its helper, by a start or a background sync, whatever it answered;
+/// `None` until the first sync since launch, so the first registration change
+/// is synced rather than taken as already done. `in_flight` holds back a second
+/// background sync while one runs; a start's sync does not wait for it, because
+/// the helper runs syncs of one Home one after the other (`hide_host::home`).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HomeLinkState {
     requested: Option<Vec<String>>,
@@ -114,9 +118,10 @@ impl Runtime {
             agent_choice::agent_arguments(model.as_deref(), &[]),
         );
         let projects = self.home_projects(device);
-        let state = self.home_links.entry(device.to_owned()).or_default();
-        state.requested = Some(projects.clone());
-        state.in_flight = true;
+        self.home_links
+            .entry(device.to_owned())
+            .or_default()
+            .requested = Some(projects.clone());
         let request = live::HomeStartRequest {
             id,
             device_id: device.to_owned(),
@@ -124,7 +129,7 @@ impl Runtime {
             host,
         };
         if let Err(message) = live::spawn_home_start(target, request) {
-            self.finish_home_sync(device);
+            self.forget_home_sync(device);
             return self.ingest_task_operation_result(id, Err(message));
         }
         true
@@ -139,7 +144,9 @@ impl Runtime {
         projects: &[String],
         synced: Result<HomeSynced, HostCallError>,
     ) -> Option<live::CheckoutTabRequest> {
-        self.finish_home_sync(device);
+        if synced.is_err() {
+            self.forget_home_sync(device);
+        }
         let operation = self.snapshot.task_operation.as_ref()?;
         if operation.id != id || operation.phase != "working" {
             return None;
@@ -311,28 +318,28 @@ impl Runtime {
             if state.in_flight || state.requested.as_ref() == Some(&projects) {
                 continue;
             }
-            // The first look after launch adopts the current set: links are
-            // brought in step on a change or the next Home start, never by
-            // launching Hide.
-            let Some(before) = state.requested.replace(projects.clone()) else {
-                continue;
-            };
+            // Nothing is recorded as sent until it is: a device whose helper
+            // is not ready is tried again on the next registration change.
             let host = match self.device_channel(&device) {
                 Ok(host) => host,
                 Err(message) => {
                     crate::diagnostic!(serde_json::json!({
                         "component": "home", "kind": "home.link_sync_deferred",
-                        "target": device, "message": message,
-                        "projects": projects.len(), "before": before.len(),
+                        "target": device, "message": message, "projects": projects.len(),
                     }));
                     continue;
                 }
             };
-            self.home_links.entry(device.clone()).or_default().in_flight = true;
+            let state = self.home_links.entry(device.clone()).or_default();
+            state.requested = Some(projects.clone());
+            state.in_flight = true;
             if let Err(message) =
                 live::spawn_home_link_sync(context.clone(), device.clone(), projects, host)
             {
-                self.finish_home_sync(&device);
+                if let Some(state) = self.home_links.get_mut(&device) {
+                    state.in_flight = false;
+                }
+                self.forget_home_sync(&device);
                 self.log_home_sync_failure(&device, "home.sync_failed", &message);
             }
         }
@@ -345,23 +352,28 @@ impl Runtime {
         projects: &[String],
         synced: Result<HomeSynced, HostCallError>,
     ) {
-        self.finish_home_sync(device);
-        match synced {
-            Ok(synced) => self.log_home_sync(device, projects, &synced),
-            Err(error) => {
-                // Sent again on the next change or Home start.
-                if let Some(state) = self.home_links.get_mut(device) {
-                    state.requested = None;
-                }
-                self.log_home_sync_failure(device, "home.sync_failed", &error.to_string());
-            }
-        }
-        self.request_home_link_syncs();
-    }
-
-    fn finish_home_sync(&mut self, device: &str) {
         if let Some(state) = self.home_links.get_mut(device) {
             state.in_flight = false;
+        }
+        match synced {
+            // A registration that changed while this sync ran is caught up now.
+            Ok(synced) => {
+                self.log_home_sync(device, projects, &synced);
+                self.request_home_link_syncs();
+            }
+            // The failed set stays `requested`, so it is not sent again until
+            // the registrations change or a Home start brings it in step.
+            Err(error) => {
+                self.log_home_sync_failure(device, "home.sync_failed", &error.to_string())
+            }
+        }
+    }
+
+    /// A sync that did not run or did not finish leaves the links unknown: the
+    /// next registration change sends them again.
+    fn forget_home_sync(&mut self, device: &str) {
+        if let Some(state) = self.home_links.get_mut(device) {
+            state.requested = None;
         }
     }
 

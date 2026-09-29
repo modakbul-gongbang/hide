@@ -115,6 +115,30 @@ fn a_rerun_with_the_same_projects_changes_nothing() {
 }
 
 #[test]
+fn syncs_racing_on_one_home_all_succeed_and_the_marker_lists_every_link() {
+    let account = Account::new();
+    let projects: Vec<String> = (0..8).map(|n| account.project(&format!("p{n}"))).collect();
+    let home = account.home.clone();
+    let workers: Vec<_> = (0..6)
+        .map(|_| {
+            let home = home.clone();
+            let projects = projects.clone();
+            std::thread::spawn(move || sync(&home, &projects))
+        })
+        .collect();
+    for worker in workers {
+        let synced = worker.join().unwrap().expect("every racing sync converges");
+        assert_eq!(synced.links.len(), projects.len());
+    }
+    let marker: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(account.hide().join(MARKER_FILE)).unwrap()).unwrap();
+    assert_eq!(marker["links"].as_object().unwrap().len(), projects.len());
+    let again = account.sync(&projects.iter().map(String::as_str).collect::<Vec<_>>());
+    assert!(!again.created);
+    assert!(again.skipped.is_empty(), "{:?}", again.skipped);
+}
+
+#[test]
 fn removing_a_project_drops_only_its_link() {
     let account = Account::new();
     let alpha = account.project("alpha");

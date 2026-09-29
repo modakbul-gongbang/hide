@@ -9,6 +9,11 @@
 //! is still a symlink to the recorded target, and a folder, file or link the
 //! operator put there is never touched, only forgotten. The core calls this in
 //! process for this Mac and `Call::HomeSync` on a device's helper.
+//!
+//! Two syncs of one account's Home run one after the other: a start's and a
+//! registration change's in one process, or two helpers of two Macs on one
+//! device. Each holds an exclusive lock on the account's home folder, so each
+//! reads the marker the one before it wrote.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -111,6 +116,7 @@ fn reserved(name: &str) -> bool {
 /// the checks before the first write: a folder that is not Hide's Home, an
 /// unreadable marker, or more than [`MAX_LINKS`] projects.
 pub fn sync(user_home: &Path, projects: &[String]) -> HostResult<HomeSynced> {
+    let _lock = SyncLock::take(user_home)?;
     let home_path = user_home.join(HOME_DIR_NAME);
     let existing = read_marker(&home_path)?;
 
@@ -432,6 +438,36 @@ fn link_claude_file(home: &Path) -> HostResult<()> {
             make_link(Path::new(AGENTS_FILE), &entry, CLAUDE_FILE)
         }
         _ => Ok(()),
+    }
+}
+
+/// An exclusive `flock` on the account's home folder, released when dropped
+/// (closing the descriptor ends the lock).
+struct SyncLock(#[allow(dead_code)] std::fs::File);
+
+impl SyncLock {
+    #[cfg(unix)]
+    fn take(user_home: &Path) -> HostResult<Self> {
+        use std::os::fd::AsRawFd;
+        let folder = std::fs::File::open(user_home)
+            .map_err(|error| io_error(&error, "The home folder could not be opened"))?;
+        loop {
+            // flock only reads the descriptor, which `folder` keeps open for the call.
+            if unsafe { libc::flock(folder.as_raw_fd(), libc::LOCK_EX) } == 0 {
+                return Ok(Self(folder));
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(io_error(&error, "Hide's Home could not be locked"));
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn take(user_home: &Path) -> HostResult<Self> {
+        let folder = std::fs::File::open(user_home)
+            .map_err(|error| io_error(&error, "The home folder could not be opened"))?;
+        Ok(Self(folder))
     }
 }
 

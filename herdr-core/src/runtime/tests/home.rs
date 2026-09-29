@@ -415,6 +415,39 @@ fn home_links_follow_registrations_once_home_exists() {
     assert!(Path::new(&machine.projects[1]).is_dir());
 }
 
+/// B19 after a relaunch: a Home made in an earlier run links the first project
+/// registered in this one, with no Home start in between.
+#[test]
+fn the_first_registration_after_launch_is_linked_into_an_existing_home() {
+    let machine = machine();
+    let herdr = herdr("home-relaunch");
+    // The earlier run's Home, with the first project linked.
+    let earlier = hide_host::home::sync(&machine.user_home, &machine.projects[..1]).unwrap();
+    let shared = local_runtime(&herdr, &machine.user_home);
+    {
+        let mut runtime = shared.lock().unwrap();
+        let registrations = &mut runtime.snapshot.ui_state.workspace_registrations;
+        registrations.push(registration(
+            &machine.projects[0],
+            workspace::LOCAL_DEVICE_ID,
+        ));
+        registrations.push(WorkspaceRegistration {
+            pinned: true,
+            home: true,
+            ..registration(&earlier.home, workspace::LOCAL_DEVICE_ID)
+        });
+        registrations.push(registration(
+            &machine.projects[1],
+            workspace::LOCAL_DEVICE_ID,
+        ));
+        runtime.persist_ui_state();
+    }
+    let home = machine.user_home.join("hide");
+    wait_for("the new project's link", || {
+        home.join("app-play").is_symlink() && home.join("app-work").is_symlink()
+    });
+}
+
 /// B21, D-03: a `~/hide` that is not Hide's is left as it is, and the start
 /// that asked is refused with the reason, under its own request id.
 #[test]
