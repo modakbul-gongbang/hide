@@ -955,6 +955,10 @@ pub(super) struct AiSettingsPayload {
     /// starts child processes, so it runs only while somebody is looking.
     #[serde(default)]
     pub(super) observing: Option<bool>,
+    /// True while a start surface shows its model menu (PRD home-device-rail
+    /// D-18): the catalog is read, the Settings-only hook diagnosis is not.
+    #[serde(default)]
+    pub(super) start_observing: Option<bool>,
     /// The provider the operator chose.
     #[serde(default)]
     pub(super) provider: Option<String>,

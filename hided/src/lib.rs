@@ -351,6 +351,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         },
         version: VERSION,
         demand: Arc::new(demand::ObservationDemand::default()),
+        start_demand: Arc::new(demand::ObservationDemand::default()),
         daemon_info: Arc::new(serde_json::json!({
             "version": VERSION,
             "schema_version": SCHEMA_VERSION,

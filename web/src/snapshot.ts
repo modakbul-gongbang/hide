@@ -201,6 +201,16 @@ export type IssueSettings = {
   closes_instruction: boolean;
 };
 
+/**
+ * The agent kind and each kind's model the last start chose (`ui_state.agent_start`,
+ * PRD home-device-rail D-18): every start surface preselects them. Null kind and no
+ * model mean the CLI's own default.
+ */
+export type AgentStartChoice = {
+  kind: "claude" | "codex" | null;
+  models: Partial<Record<"claude" | "codex", string>>;
+};
+
 /** A label as the issue's source colours it (`TaskLabel`); `color` is six hex digits. */
 export type IssueLabel = { name: string; color: string | null };
 
@@ -399,6 +409,8 @@ export type Workspace = {
   registered: boolean;
   temporary: boolean;
   pinned: boolean;
+  /** The device's Hide Home (`~/hide`, PRD home-device-rail D-01): drawn as the Home row, never in the Projects list. */
+  is_home?: boolean;
   last_activity_unix_ms?: number | null;
   /** What `Remove project…` would close, counted by the core (D-10). */
   removal?: { pane_count: number; running_agent_count: number };
@@ -502,6 +514,8 @@ export type WorkspaceRegistration = {
   path: string;
   device_id: string;
   pinned: boolean;
+  /** This registration is the device's Home (`~/hide`). */
+  home?: boolean;
 };
 
 export type PaneFind = {
@@ -830,6 +844,8 @@ export type TaskOperation = {
   /** `starting`, `started`, `failed` or `unknown`; null when no agent was chosen. */
   agent_phase: string | null;
   agent_message: string | null;
+  /** The id the start surface sent (`agent_start_in_checkout.request_id`), so each surface reads only its own answer. */
+  request_id?: string | null;
 };
 
 /**
@@ -984,6 +1000,7 @@ export type SnapshotRest = {
     /** Each local project's chosen issue source (`github` or `local`) by path; absent is the default. */
     project_issue_sources?: Record<string, string>;
     issue_settings?: IssueSettings;
+    agent_start?: AgentStartChoice;
     [key: string]: unknown;
   };
   status?: {
@@ -997,7 +1014,7 @@ export type SnapshotRest = {
     tab_rename?: { request_id: string; tab_id: string; label: string; phase: "pending" | "succeeded" | "failed" } | null;
     pane_focus_request?: PaneFocusRequest | null;
     /** The core's most recent failure; the shell logs its detail (B5). */
-    last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number } | null;
+    last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number; request_id?: string | null } | null;
   };
   recent_closed?: RecentClosed;
   explorer_operation?: ExplorerOperation | null;

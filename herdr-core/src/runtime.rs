@@ -1069,6 +1069,8 @@ pub struct Runtime {
     /// True while the Background AI group is on screen, which is the only
     /// time the provider probe runs.
     ai_observing: bool,
+    /// A start surface shows its model menu; reads the catalog only.
+    ai_start_observing: bool,
     /// What the providers last answered. Held beside the snapshot so a
     /// changed choice can restamp the rows without asking again.
     background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
@@ -1517,6 +1519,7 @@ impl Runtime {
             ai_settings: None,
             pending_ai_settings_save: None,
             ai_observing: false,
+            ai_start_observing: false,
             background_ai_providers: Vec::new(),
             usage_window_visible: false,
             usage_popover_open: false,

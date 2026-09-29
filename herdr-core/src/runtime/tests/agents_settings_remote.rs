@@ -592,6 +592,31 @@ fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
     );
 }
 
+/// PRD home-device-rail D-18: a start surface's model menu reads the provider
+/// catalog while it shows, without the Settings tab's hook diagnosis, and the
+/// two demands stop independently.
+#[test]
+fn a_start_surface_reads_the_catalog_without_the_settings_diagnosis() {
+    let mut runtime = runtime();
+    let event = |payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "ai_settings", "payload": payload
+        }))
+        .expect("the event encodes")
+    };
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"start_observing": true}))));
+    assert!(runtime.ai_request().observing);
+    assert!(!runtime.settings_observed());
+
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"observing": true}))));
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"start_observing": false}))));
+    assert!(runtime.ai_request().observing, "Settings is still looking");
+    assert!(runtime.settings_observed());
+
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"observing": false}))));
+    assert!(!runtime.ai_request().observing);
+}
+
 #[test]
 fn an_unreadable_choice_and_a_failed_write_are_stated_rather_than_dropped() {
     let mut runtime = runtime();
