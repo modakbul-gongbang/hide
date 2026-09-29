@@ -40,7 +40,39 @@ impl Runtime {
                 }
             }
         }
+        self.judge_device_pane_children(target, &mut session);
         session
+    }
+
+    /// What each device agent pane's header says about the work it
+    /// delegated, judged by the same function as a local pane's, from the
+    /// pane's hook tokens and the device's own kit (PRD device-parity D-21,
+    /// B14). A device whose kit Hide has not read yet leaves the cause
+    /// unknown rather than guessing it.
+    fn judge_device_pane_children(&self, target: &str, session: &mut RemoteSessionSnapshot) {
+        let declined = self
+            .device_kit_declined(target)
+            .is_some_and(|declined| declined.installed_nothing());
+        let kit = self.kit_state(target);
+        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
+            crate::agent_hooks::device_hook_status(declined, &kit, runtime)
+        };
+        let agents = &session.agents;
+        let tokens = &session.pane_hook_tokens;
+        for pane in session
+            .workspaces
+            .iter_mut()
+            .flat_map(|project| project.checkouts.iter_mut())
+            .flat_map(|checkout| checkout.tabs.iter_mut())
+            .flat_map(|tab| tab.panes.iter_mut())
+        {
+            pane.children = crate::sidebar::project_pane_children(
+                agents,
+                &pane.id,
+                tokens.get(&pane.id).copied().unwrap_or_default(),
+                &status_of,
+            );
+        }
     }
 
     /// Recomputes a device's published session and catalog state from what
@@ -60,23 +92,28 @@ impl Runtime {
         if !dropped_moves.is_empty() {
             self.report_dropped_tab_moves(dropped_moves);
         }
-        let Some(status) = self
+        let Some(index) = self
             .snapshot
             .status
             .remote
-            .iter_mut()
-            .find(|status| status.target_id == target)
+            .iter()
+            .position(|status| status.target_id == target)
         else {
             return false;
         };
+        let status = &mut self.snapshot.status.remote[index];
         let mut changed = false;
         if status.catalog != catalog {
             status.catalog = catalog;
             changed = true;
         }
         if status.session.as_ref() != Some(&session) {
-            status.session = Some(session);
-            changed = true;
+            let before = status.session.replace(session);
+            // Rows regrouped from Herdr's raw session carry no lineage, which
+            // only the pass across every machine derives; a subtree close
+            // waits on it, so the session is never published without it.
+            self.refresh_agent_lineage();
+            changed |= self.snapshot.status.remote[index].session != before;
         }
         if changed {
             self.prune_device_view_bookmarks(target);

@@ -900,6 +900,7 @@ fn a_device_file_tab_joins_the_device_strip_and_survives_session_syncs() {
             focused_tab_id: None,
             focused_pane_id: None,
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         };
         runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
             target_id: DEVICE.to_owned(),
@@ -1188,6 +1189,7 @@ fn a_closed_device_file_reopens_only_on_its_device_and_leaves_this_machines_clos
             agent_count: 0,
             test: None,
             host: Default::default(),
+            kit: Default::default(),
         });
         assert_eq!(runtime.snapshot.recent_closed.count, 1);
         assert_eq!(

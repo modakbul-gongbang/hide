@@ -152,8 +152,8 @@ export const PaneView = memo(function PaneView({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    return attachTerminal(paneId, host, dispatch, useShellStore.getState().rest?.ui_state?.pane_text_scales?.[paneId] ?? 1);
-  }, [paneId, dispatch]);
+    return attachTerminal(paneId, host, dispatch, actions, useShellStore.getState().rest?.ui_state?.pane_text_scales?.[paneId] ?? 1);
+  }, [paneId, dispatch, actions]);
 
   // After every self-contained snapshot the core may have restarted, so the
   // pane asks for a full frame rather than trusting what it has drawn. The

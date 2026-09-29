@@ -47,6 +47,11 @@ pub struct CoreOptions {
     /// Absent keeps them in memory for the session only, as a test core does.
     #[serde(default)]
     pub local_issues_path: Option<String>,
+    /// The running app bundle's `Contents/Resources`, whose parts the install
+    /// kit puts on this Mac (PRD device-parity D-19). Absent for a daemon
+    /// outside the app, which installs nothing and says why.
+    #[serde(default)]
+    pub kit_dir: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -575,6 +580,70 @@ pub struct DeviceSnapshot {
     pub test: Option<DeviceTestSnapshot>,
     /// Where file and Git work for this device runs, and whether it may.
     pub host: DeviceHostSnapshot,
+    /// What Hide's install kit has put on this machine (PRD device-parity
+    /// B7): the same parts, in the same order, on This Mac and on every
+    /// device.
+    pub kit: KitSnapshot,
+}
+
+/// One machine's install kit as Settings shows it (PRD device-parity B7, B8).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct KitSnapshot {
+    /// Why the kit does not run on this machine at all: a daemon outside the
+    /// app, a device with no consent or an unsupported platform. The parts
+    /// are then empty and no Reinstall is offered.
+    pub unavailable: Option<String>,
+    /// An install is running for this machine; Reinstall shows its progress.
+    pub busy: bool,
+    /// Every part, in the kit's own order; empty until the machine was first
+    /// checked.
+    pub components: Vec<KitComponentSnapshot>,
+    /// Whether any part is outdated, missing, removed or failed, which is
+    /// the only time the row offers Reinstall.
+    pub offers_reinstall: bool,
+    /// Another registered device that reaches the same account on the same
+    /// machine, by its label; removing this device then leaves the kit there
+    /// for it.
+    pub shares_account_with: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct KitComponentSnapshot {
+    pub id: hide_kit::ComponentId,
+    pub label: String,
+    pub state: hide_kit::ComponentState,
+    pub reason: Option<String>,
+    pub location: Option<String>,
+}
+
+impl KitSnapshot {
+    pub fn from_report(report: &hide_kit::KitReport) -> Self {
+        let components = report
+            .components
+            .iter()
+            .map(|part| KitComponentSnapshot {
+                id: part.id,
+                label: part.id.label().to_owned(),
+                state: part.state,
+                reason: part.reason.clone(),
+                location: part.location.clone(),
+            })
+            .collect::<Vec<_>>();
+        Self {
+            unavailable: None,
+            busy: false,
+            offers_reinstall: components.iter().any(|part| part.state.needs_attention()),
+            components,
+            shares_account_with: None,
+        }
+    }
+
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            unavailable: Some(reason.into()),
+            ..Self::default()
+        }
+    }
 }
 
 /// A device's file host as the operator reads it in Settings and wherever a
@@ -1433,20 +1502,6 @@ pub struct PaneChildrenSnapshot {
     pub representative: Option<AgentChipSnapshot>,
     /// In-process subagents, summarised and never added to the chip count.
     pub subagents: SubagentCountsSnapshot,
-}
-
-impl PaneChildrenSnapshot {
-    /// The permanent answer for a pane on another machine.
-    pub fn remote() -> Self {
-        let reason = hide_agent_hooks::diagnosis::UninstrumentedReason::RemoteHost;
-        Self {
-            instrumented: false,
-            uninstrumented_reason: Some(reason.message().to_owned()),
-            uninstrumented_label: Some(reason.accessibility_label().to_owned()),
-            uninstrumented_code: Some(reason.code().to_owned()),
-            ..Self::default()
-        }
-    }
 }
 
 /// One agent in a line of them: a pane header chip, a breadcrumb step's
@@ -3320,32 +3375,15 @@ pub struct BackgroundAiProviderSnapshot {
 /// D-48).
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AgentHooksSnapshot {
-    /// One row per runtime Hide has an adapter for, in the crate's own order.
-    /// A runtime that is not on this Mac is still a row, because "not here"
-    /// and "not installed" are different answers.
-    pub runtimes: Vec<AgentHookRuntimeSnapshot>,
-    /// Panes running a session that started before the hook was installed.
-    /// They are the ones a restart would fix, and they are the reason the
-    /// screen exists: the hook can be installed and a pane still uninstrumented.
+    /// Each machine's hook parts are its kit rows (`DeviceSnapshot.kit`,
+    /// PRD device-parity B27); this section keeps what only the panes say.
+    ///
     pub sessions_predating_install: Vec<AgentHookPaneSnapshot>,
     /// The sentence describing the last hook report Herdr did not take, when
     /// the most recent report failed. It is what separates "installed but
     /// every report is refused" from the restart advice above: with it on
     /// screen, a restart is not the fix and the sentence says what is.
     pub last_report_failure: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct AgentHookRuntimeSnapshot {
-    pub id: String,
-    pub label: String,
-    /// The configuration file this row describes, so the operator can look.
-    pub path: String,
-    pub headline: String,
-    pub installed: bool,
-    /// Whether the operator can be offered an install for this runtime. Hide
-    /// never reinstalls on its own after the first run (PRD B28, D-31).
-    pub offers_install: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -3470,6 +3508,11 @@ pub struct RemoteSessionSnapshot {
     pub focused_tab_id: Option<String>,
     pub focused_pane_id: Option<String>,
     pub pane_layouts: Vec<RemotePaneLayoutSnapshot>,
+    /// Each device pane's Hide hook tokens, by its remote pane id. The core
+    /// judges a device pane's children from them and the device's kit
+    /// (`Runtime::derive_device_session`), so they are not sent to the shell.
+    #[serde(skip)]
+    pub pane_hook_tokens: BTreeMap<String, crate::agent_hooks::PaneHookTokens>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -4167,6 +4210,40 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "pane_find_route", &find_routes);
         checked.insert("pane_find_route");
+
+        let kit_parts = hide_kit::ComponentId::ALL;
+        for variant in kit_parts {
+            match variant {
+                hide_kit::ComponentId::Cli
+                | hide_kit::ComponentId::ClaudeCodeHook
+                | hide_kit::ComponentId::CodexHook
+                | hide_kit::ComponentId::Labels
+                | hide_kit::ComponentId::Hcoord => {}
+            }
+        }
+        assert_wire(&contract, "kit_component_id", &kit_parts);
+        checked.insert("kit_component_id");
+
+        let kit_states = [
+            hide_kit::ComponentState::Installed,
+            hide_kit::ComponentState::Outdated,
+            hide_kit::ComponentState::NotInstalled,
+            hide_kit::ComponentState::Removed,
+            hide_kit::ComponentState::Failed,
+            hide_kit::ComponentState::Absent,
+        ];
+        for variant in kit_states {
+            match variant {
+                hide_kit::ComponentState::Installed
+                | hide_kit::ComponentState::Outdated
+                | hide_kit::ComponentState::NotInstalled
+                | hide_kit::ComponentState::Removed
+                | hide_kit::ComponentState::Failed
+                | hide_kit::ComponentState::Absent => {}
+            }
+        }
+        assert_wire(&contract, "kit_component_state", &kit_states);
+        checked.insert("kit_component_state");
 
         let unchecked = contract
             .keys()

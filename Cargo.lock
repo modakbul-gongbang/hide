@@ -1232,6 +1232,7 @@ dependencies = [
  "hide-ai",
  "hide-herdr-client",
  "hide-host",
+ "hide-kit",
  "hide-memory",
  "hide-project",
  "hide-session",
@@ -1305,6 +1306,7 @@ dependencies = [
  "base64 0.23.1",
  "cap-std",
  "hide-herdr-client",
+ "hide-kit",
  "hide-project",
  "ignore",
  "libc",
@@ -1313,6 +1315,19 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "trash",
+]
+
+[[package]]
+name = "hide-kit"
+version = "0.1.0"
+dependencies = [
+ "hide-agent-hooks",
+ "hide-herdr-client",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]
@@ -1365,6 +1380,7 @@ dependencies = [
  "hex",
  "hide-herdr-client",
  "hide-host",
+ "hide-kit",
  "hide-session",
  "http-body-util",
  "hyper",

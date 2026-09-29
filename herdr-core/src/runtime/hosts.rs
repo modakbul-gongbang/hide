@@ -17,7 +17,8 @@ use super::*;
 use crate::host_access::HostChannel;
 use crate::model::{DeviceHostSnapshot, HostConsent};
 use crate::remote::host::{
-    self, EstablishError, Established, HOST_CONSENT_CONTRACT, HelperPackages,
+    self, EstablishError, Established, HOST_CONSENT_CARRIED_FROM, HOST_CONSENT_CONTRACT,
+    HelperPackages,
 };
 
 /// The daemon may open a pane-scoped return route only while the same
@@ -105,11 +106,38 @@ impl Runtime {
     }
 
     /// Whether a consent still covers what this build would do: the same
-    /// contract, the same install root and the same command folder.
+    /// contract, the same install root and the same command folder. A
+    /// contract-2 consent for the same folders counts, because the operator
+    /// chose to carry it to the whole kit on its next connection (D-13).
     fn consent_current(&self, consent: &HostConsent) -> bool {
-        consent.contract == HOST_CONSENT_CONTRACT
+        (consent.contract == HOST_CONSENT_CONTRACT || consent.contract == HOST_CONSENT_CARRIED_FROM)
             && consent.helper_root == self.host_helper_root
             && consent.cli_dir.as_deref() == Some(self.host_cli_dir.as_str())
+    }
+
+    /// Rewrites a contract-2 consent to this build's contract, keeping the
+    /// identity it was bound to, before the connection it covers starts.
+    fn carry_consent_forward(&mut self, device_id: &str) {
+        let Some(consent) = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter_mut()
+            .find(|registration| registration.id == device_id)
+            .and_then(|registration| registration.host_consent.as_mut())
+            .filter(|consent| consent.contract == HOST_CONSENT_CARRIED_FROM)
+        else {
+            return;
+        };
+        consent.contract = HOST_CONSENT_CONTRACT;
+        self.persist_current_ui_state();
+        crate::diagnostic!(serde_json::json!({
+            "component": "remote_host",
+            "kind": "host.consent_upgraded",
+            "target": device_id,
+            "from": HOST_CONSENT_CARRIED_FROM,
+            "contract": HOST_CONSENT_CONTRACT,
+        }));
     }
 
     /// A fresh consent in this build's scope, unbound until the first
@@ -176,6 +204,7 @@ impl Runtime {
                 }
             }
             self.set_host_phase(device_id, HostPhase::NotAllowed);
+            self.forget_device_kit_work(device_id);
             // A save held for the helper to become ready would otherwise go
             // out on its own if consent is given again later (B52).
             self.release_held_saves(
@@ -200,6 +229,16 @@ impl Runtime {
             return false;
         }
         let generation = self.advance_host_generation(device_id);
+        if self.device_kit_removing(device_id) {
+            self.set_host_phase(
+                device_id,
+                HostPhase::Unavailable(
+                    "Hide is still taking its kit off this device; it connects when that is done"
+                        .to_owned(),
+                ),
+            );
+            return self.refresh_device_snapshots();
+        }
         let Some(consent) = registration.host_consent.clone() else {
             self.set_host_phase(device_id, HostPhase::NotAllowed);
             return self.refresh_device_snapshots();
@@ -208,6 +247,7 @@ impl Runtime {
             self.set_host_phase(device_id, HostPhase::NotAllowed);
             return self.refresh_device_snapshots();
         }
+        self.carry_consent_forward(device_id);
         let Some(client) = self
             .remote_connections
             .get(device_id)
@@ -333,7 +373,7 @@ impl Runtime {
                     "installed": established.installed,
                     "platform": format!("{} {}", established.hello.os, established.hello.arch),
                     "consent_bound": bound_now,
-                    "cli": established.cli.diagnostic(),
+                    "upload": established.upload,
                 }));
                 self.set_host_phase(
                     device_id,
@@ -350,6 +390,9 @@ impl Runtime {
                 // bring its View tabs back.
                 self.restore_front_when_ready();
                 self.home_helper_ready(device_id);
+                // Every connection brings the device's kit up to this build
+                // without asking (B10, B13, B19).
+                self.queue_device_kit(device_id, super::KitJob::Apply(hide_kit::Scope::Automatic));
             }
             Err(error) => {
                 let message = error.to_string();
@@ -372,6 +415,7 @@ impl Runtime {
                 };
                 self.set_host_phase(device_id, phase);
                 self.refresh_device_catalog(device_id);
+                self.clear_kit_busy(device_id);
             }
         }
         self.refresh_device_snapshots();
@@ -426,6 +470,8 @@ impl Runtime {
         self.close_device_host(device_id, "device removed");
         self.device_hosts.remove(device_id);
         self.forget_device_catalog(device_id);
+        self.device_kit_pending.remove(device_id);
+        self.kit_states.remove(device_id);
     }
 
     /// Where a device's file or Git work runs, or the sentence that says

@@ -458,6 +458,7 @@ pub(crate) fn group(
         focused_tab_id: raw.focused_tab_id.clone(),
         focused_pane_id: raw.focused_pane_id.clone(),
         pane_layouts: raw.pane_layouts.clone(),
+        pane_hook_tokens: raw.pane_hook_tokens.clone(),
     }
 }
 

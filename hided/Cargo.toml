@@ -15,6 +15,7 @@ path = "src/bin/hide.rs"
 [dependencies]
 herdr-core = { path = "../herdr-core" }
 hide-host = { path = "../hide-host" }
+hide-kit = { path = "../hide-kit" }
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-session = { path = "../hide-session" }
 axum = { version = "=0.8.9", features = ["ws"] }

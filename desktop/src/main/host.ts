@@ -14,7 +14,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, PICK_FOLDER_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import {
   loginPathCommand,
@@ -33,11 +33,11 @@ import {
 } from "./cli";
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
-import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure } from "./hcoord";
 import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
+import { openRoute, probe, probeRequest } from "./localPath";
 import { revealablePath } from "./reveal";
 
 declare const __HIDE_BACKGROUND__: string;
@@ -84,6 +84,17 @@ function mtimeMs(file: string): number | null {
 export class DesktopHost {
   private state: HostState = { kind: "connecting" };
   private window: BrowserWindow | null = null;
+  /**
+   * The status page load still in flight. The window takes one navigation at
+   * a time, so every render waits for it: a shell load started while the
+   * status page is still navigating (a daemon that answers at once, as on a
+   * relaunch) lands but is rejected with an empty code and leaves the
+   * renderer's navigation tracking pending, and a hash set before the page
+   * commits is lost. Electron settles the load when its window is destroyed.
+   */
+  private statusLoad: Promise<unknown> | null = null;
+  /** Whether a render already waits for `statusLoad`; it renders whatever state is current then. */
+  private renderWaits = false;
   private readonly runner = new ChildRunner();
   /** Every CLI child runs through this chain, so the runner's cap of one is never crossed. */
   private cliChain: Promise<unknown> = Promise.resolve();
@@ -116,8 +127,9 @@ export class DesktopHost {
     );
     this.listenReveal();
     this.listenPickFolder();
+    this.listenLocalPaths();
     this.openWindow();
-    void this.prepareHcoord().finally(() => this.discover("launch"));
+    void this.discover("launch");
   }
 
   /** A second launch or a Dock click: bring the window back, and look again when nothing is attached. */
@@ -192,6 +204,60 @@ export class DesktopHost {
       const folder = picked.canceled ? null : (picked.filePaths[0] ?? null);
       this.log.event("pick_folder.answered", { picked: folder !== null });
       return folder;
+    });
+  }
+
+  /**
+   * Terminal links on this Mac: a probe answers which of the named paths
+   * exist and what they are, and an open hands one to macOS, in its default
+   * application or as a Finder window, or revealed in Finder when opening
+   * would run it (`localPath.ts`). Only this window's page on the daemon
+   * origin is heard; a probe is not logged, since it runs on hover, and an
+   * open logs its route and never the path.
+   */
+  private listenLocalPaths(): void {
+    ipcMain.handle(PROBE_PATHS_CHANNEL, async (event: IpcMainInvokeEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("probe_paths.refused", { reason: "sender" });
+        return [];
+      }
+      const paths = probeRequest(reported);
+      if (paths === null) {
+        this.log.event("probe_paths.refused", { reason: "paths" });
+        return [];
+      }
+      return probe(paths);
+    });
+    ipcMain.on(OPEN_PATH_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("open_path.refused", { reason: "sender" });
+        return;
+      }
+      const target = revealablePath(reported);
+      if (target === null) {
+        this.log.event("open_path.refused", { reason: "path" });
+        return;
+      }
+      void openRoute(target).then(async (route) => {
+        if (route.action === "refuse") {
+          this.log.event("open_path.refused", { reason: route.reason });
+          return;
+        }
+        if (route.action === "reveal") shell.showItemInFolder(target);
+        else {
+          // Judged a moment ago; a link swapped in since is refused, not followed.
+          if ((await fs.promises.realpath(target).catch(() => null)) !== target) {
+            this.log.event("open_path.refused", { reason: "not_physical" });
+            return;
+          }
+          const failure = await shell.openPath(target);
+          if (failure) {
+            this.log.event("open_path.failed", { kind: route.kind });
+            return;
+          }
+        }
+        this.log.event(`open_path.${route.action}`, { kind: route.kind, reason: route.reason });
+      }).catch(() => this.log.event("open_path.failed", {}));
     });
   }
 
@@ -334,35 +400,6 @@ export class DesktopHost {
     else if (result.outcome === "start_failed") this.log.event("herdr.server_start_failed", { attempt, pid: result.pid, detail: result.detail, elapsed_ms: result.elapsedMs });
   }
 
-  /**
-   * Converges the packaged coordinator independently of hided. A refusal is
-   * logged and the window continues, because no coordinator failure can own
-   * the desktop host's lifecycle.
-   */
-  private async prepareHcoord(): Promise<void> {
-    const resources = this.bundledDir();
-    if (resources === null) return;
-    try {
-      const bundle = bundledHcoord(resources, process.execPath);
-      installHcoordShim(this.env.home, bundle);
-      const result = parseHcoordEnsure(await this.runChild(
-        bundle.executable,
-        [bundle.cli, "daemon", "ensure", "--json"],
-        20_000,
-        hcoordEnvironment(this.env.inherited, this.env.home, bundle),
-      ));
-      if (!result.ok) {
-        this.log.event("hcoord.prepare_failed", { detail: result.reason });
-      } else if (result.manualStop) {
-        this.log.event("hcoord.manual_stop", { changed: false });
-      } else {
-        this.log.event("hcoord.ready", { changed: result.changed, version: result.version });
-      }
-    } catch (error) {
-      this.log.event("hcoord.prepare_failed", { detail: String(error) });
-    }
-  }
-
   private runChild(file: string, args: readonly string[], timeoutMs: number, env: Record<string, string | undefined>): Promise<ChildResult> {
     const run = this.cliChain.then(() =>
       this.quitting
@@ -456,6 +493,18 @@ export class DesktopHost {
   private render(): void {
     const window = this.window;
     if (!window) return;
+    if (this.statusLoad) {
+      // A local file, so this waits a few milliseconds.
+      if (!this.renderWaits) {
+        this.renderWaits = true;
+        const rerender = () => {
+          this.renderWaits = false;
+          this.render();
+        };
+        this.statusLoad.then(rerender, rerender);
+      }
+      return;
+    }
     const state = this.state;
     if (state.kind === "attached" || state.kind === "lost") {
       this.load(window.loadURL(state.url), state.kind);
@@ -467,7 +516,13 @@ export class DesktopHost {
       this.load(window.webContents.executeJavaScript(`location.hash = ${JSON.stringify(hash)}`), state.kind);
       return;
     }
-    this.load(window.loadFile(STATUS_PAGE, { hash }), state.kind);
+    const loading = window.loadFile(STATUS_PAGE, { hash });
+    this.statusLoad = loading;
+    const settled = () => {
+      if (this.statusLoad === loading) this.statusLoad = null;
+    };
+    loading.then(settled, settled);
+    this.load(loading, state.kind);
   }
 
   private load(pending: Promise<unknown>, state: HostState["kind"]): void {

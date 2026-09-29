@@ -1,6 +1,8 @@
 // Real SSH-origin Workspace CLI acceptance. Run with an isolated sshd whose
-// port, key and known_hosts are supplied in HIDE_E2E_SSH_*; the two Herdr
-// servers, daemon, helper install and desktop profile remain private.
+// port, key and known_hosts are supplied in HIDE_E2E_SSH_* and whose sessions
+// get the private HOME desktop/e2e/device-home.ts describes, because
+// connecting installs Hide's kit there; the two Herdr servers, daemon, helper
+// install and desktop profile remain private.
 // HIDE_E2E_SSH_PID plus HIDE_E2E_SSH_CONFIG enable the stalled-handshake
 // check only for an identified, test-owned sshd listener.
 
@@ -11,12 +13,12 @@ import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
-import os from "node:os";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
+import { claudeSettings, deviceHome, hcoordLabel, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
 import { HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
 
 const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
@@ -60,7 +62,7 @@ function liveBridges(bridge: string): string[] {
 }
 
 /** The daemon's diagnostic records, which it writes to stderr and its Logs file alike. */
-function daemonEvents(log: string): { kind?: string; reason?: string; generation?: number; cli?: { state: string; link?: string; path?: string } }[] {
+function daemonEvents(log: string): { kind?: string; reason?: string; generation?: number; device_id?: string }[] {
   return fs.readFileSync(log, "utf8").split("\n").filter((line) => line.startsWith("{")).map((line) => JSON.parse(line));
 }
 
@@ -104,7 +106,7 @@ async function hookFromPane(herdr: HerdrFixture, stateDir: string, bridge: strin
     `HIDE_STATE_DIR=${quote(stateDir)}`,
     ...(bridge ? [`HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)}`] : []),
   ];
-  const command = `printf '{}' | ${variables.join(" ")} ${quote(HOOK_CLI)} hook --runtime ${runtime} --event SessionStart --memory-injection --source hide-subagents@5 > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
+  const command = `printf '{}' | ${variables.join(" ")} ${quote(HOOK_CLI)} hook --runtime ${runtime} --event SessionStart --memory-injection --source hide-subagents@6 > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
   await expect.poll(() => fs.existsSync(exit), { timeout: 30_000 }).toBe(true);
@@ -124,15 +126,11 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
   run.env.HIDE_HOST_HELPER_ROOT = helper;
   // The device's `hide` link goes here, never the account's own ~/.local/bin.
   run.env.HIDE_HOST_CLI_DIR = path.join(run.root, "remote-bin");
-  const ssh = path.join(run.env.HOME!, ".ssh");
-  fs.mkdirSync(ssh, { recursive: true });
-  fs.copyFileSync(process.env.HIDE_E2E_SSH_KNOWN_HOSTS!, path.join(ssh, "known_hosts"));
   // Two aliases for the one isolated server: a second device registers under
   // the second, with its own Herdr server, id and connections.
-  fs.writeFileSync(path.join(ssh, "config"), ["isolated-workspace", "isolated-workspace-2"].flatMap((alias) => [
-    `Host ${alias}`, "  HostName 127.0.0.1", `  Port ${process.env.HIDE_E2E_SSH_PORT}`,
-    `  User ${os.userInfo().username}`, `  IdentityFile ${process.env.HIDE_E2E_SSH_KEY}`, "  IdentityAgent none", "",
-  ]).join("\n"), { mode: 0o600 });
+  writeSshConfig(run.env.HOME!, ["isolated-workspace", "isolated-workspace-2"]);
+  const deviceAccount = deviceHome();
+  resetDeviceHome(deviceAccount, hcoordLabel(proveDeviceHome(run.env, "isolated-workspace", deviceAccount)));
   const daemonLog = path.join(run.root, "daemon.log");
   const daemonOutput = fs.openSync(daemonLog, "w");
   const daemon = spawn(path.join(path.dirname(HIDE_CLI), "hided"), [], {
@@ -172,7 +170,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       expect(remoteBeforeConnection.status).toBe(0);
       expect(remoteBeforeConnection.context).not.toContain("Hide Workspace control is available");
     }
-    const plain = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@5"], {
+    const plain = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@6"], {
       env: { ...local.env, HERDR_PANE_ID: "", HIDE_STATE_DIR: run.env.HIDE_STATE_DIR! },
       input: "{}", encoding: "utf8", timeout: 10_000,
     });
@@ -183,7 +181,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     // names that checkout.
     const noPaneEnv: NodeJS.ProcessEnv = { ...local.env, HIDE_STATE_DIR: run.env.HIDE_STATE_DIR! };
     delete noPaneEnv.HERDR_PANE_ID;
-    const plainInCheckout = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@5"], {
+    const plainInCheckout = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@6"], {
       cwd: path.join(local.root, "fixture"),
       env: noPaneEnv,
       input: "{}", encoding: "utf8", timeout: 10_000,
@@ -210,12 +208,12 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       });
     }, { port: state.port, token: state.token, socket: remote.socket });
     await expect.poll(() => liveBridges(bridge).length, { timeout: 60_000 }).toBe(1);
-    // The helper install placed `hide` beside the helper and linked it where
-    // the device's panes find it.
-    const installed = daemonEvents(daemonLog).findLast((line) => line.kind === "host.ready")?.cli;
-    expect(installed).toMatchObject({ state: "linked", link: path.join(run.env.HIDE_HOST_CLI_DIR, "hide") });
-    expect(fs.realpathSync(path.join(run.env.HIDE_HOST_CLI_DIR, "hide"))).toBe(installed!.path);
-    expect(installed!.path!.startsWith(fs.realpathSync(helper) + path.sep)).toBe(true);
+    // The connection installed Hide's kit on the device: `hide` is linked
+    // where the device's panes find it, through the helper root's `current`.
+    await expect.poll(() => daemonEvents(daemonLog).some((line) => line.kind === "apply.completed" && line.device_id === "ssh-e2e"), { timeout: 120_000 }).toBe(true);
+    const deviceCli = path.join(run.env.HIDE_HOST_CLI_DIR, "hide");
+    expect(fs.readlinkSync(deviceCli)).toBe(path.join(fs.realpathSync(helper), "current", "hide"));
+    expect(fs.realpathSync(deviceCli).startsWith(fs.realpathSync(helper) + path.sep)).toBe(true);
     const sessionReferences: string[] = [];
     for (const runtime of ["claude-code", "codex"] as const) {
       const session = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, runtime, `remote-${runtime}-hook`);
@@ -241,7 +239,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     const stressError = path.join(remote.root, "repeat-session-start.err");
     fs.writeFileSync(stressScript, [
       "#!/bin/bash", "set -euo pipefail", "for i in $(seq 1 65); do",
-      `  context=$(printf '{}' | ${quote(HOOK_CLI)} hook --runtime codex --event SessionStart --memory-injection --source hide-subagents@5 | jq -er .hookSpecificOutput.additionalContext)`,
+      `  context=$(printf '{}' | ${quote(HOOK_CLI)} hook --runtime codex --event SessionStart --memory-injection --source hide-subagents@6 | jq -er .hookSpecificOutput.additionalContext)`,
       `  reference=$(printf '%s' "$context" | sed -n "s/.*HIDE_CAP_REF='\\([^']*\\)'.*/\\1/p")`,
       "  test -n \"$reference\"",
       `  HIDE_CAP_REF="$reference" ${quote(HIDE_CLI)} workspace info >/dev/null`,
@@ -353,6 +351,11 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     await expect.poll(() => daemonEvents(daemonLog).slice(beforeRemoval).some((line) =>
       line.kind === "route.stopped" && (line as { device_id?: string }).device_id === "ssh-e2e-2"), { timeout: 30_000 }).toBe(true);
     await expect.poll(() => liveBridges(bridge).length, { timeout: 30_000 }).toBe(1);
+    // Both registrations reach this one account, so the kit stays for the survivor.
+    expect(daemonEvents(daemonLog).slice(beforeRemoval).find((line) => line.kind === "device.kit_left" && line.device_id === "ssh-e2e-2")?.reason)
+      .toBe("another registered device reaches the same account on that machine");
+    expect(fs.readlinkSync(deviceCli)).toBe(path.join(fs.realpathSync(helper), "current", "hide"));
+    expect(JSON.stringify(readSettings(claudeSettings(deviceAccount)))).toContain(path.join(fs.realpathSync(helper), "current", "hide-agent-hooks"));
     const survivor = await commandFromPane(remote, run, bridge, ["workspace", "info"], "first-info-after-removal");
     expect(survivor.status, JSON.stringify(survivor.answer)).toBe(0);
     expect(survivor.answer).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e" } } });

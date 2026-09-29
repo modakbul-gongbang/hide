@@ -1,13 +1,15 @@
 // The renderer's whole view of the host (B11): which host this is, the app
 // menu's commands in, the stored macOS pane chords out for the menu to show,
 // a folder to show in Finder, a folder the operator picks to add as a project,
-// and the pages of browser displays (issue 155).
+// the paths a terminal link names and handing one to macOS, and the pages of
+// browser displays (issue 155).
 // No Node API, no other channel. Browser pages load in their own session with no preload, so none
 // of this reaches them.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { BrowserCommand, BrowserHostEvent, BrowserSync } from "../../../web/src/host";
-import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, PICK_FOLDER_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import type { ProbedPath } from "../../../web/src/host";
+import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 
 contextBridge.exposeInMainWorld("hideHost", {
   kind: "electron",
@@ -28,6 +30,12 @@ contextBridge.exposeInMainWorld("hideHost", {
   },
   pickFolder(): Promise<string | null> {
     return ipcRenderer.invoke(PICK_FOLDER_CHANNEL) as Promise<string | null>;
+  },
+  probePaths(paths: string[]): Promise<ProbedPath[]> {
+    return ipcRenderer.invoke(PROBE_PATHS_CHANNEL, paths) as Promise<ProbedPath[]>;
+  },
+  openPath(path: string): void {
+    ipcRenderer.send(OPEN_PATH_CHANNEL, path);
   },
   browser: {
     sync(state: BrowserSync): void {

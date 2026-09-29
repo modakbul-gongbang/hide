@@ -43,10 +43,13 @@ import {
   type EditorDocumentSnapshot,
   type EditorTabSnapshot,
   type IssueSettings,
+  type KitComponentId,
   type Tab,
   type Workspace,
 } from "./snapshot";
 import { fileUrl } from "./browserViews";
+import { requestLine } from "./editor/lineRequest";
+import { owningCheckout, probePaths, type FoundPath } from "./terminalLinkProvider";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type PendingClose, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -911,8 +914,14 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: model === undefined ? { provider } : { provider, model } });
     },
 
-    installHook(runtimeId: string) {
-      dispatch({ schema_version: 2, kind: "install_agent_hooks", payload: { runtime_id: runtimeId } });
+    /** Reinstall on a machine's row repairs every part that needs it; a hook row names its one part. */
+    reinstallKit(deviceId: string, components?: KitComponentId[]) {
+      dispatch({ schema_version: 2, kind: "kit_reinstall", payload: components ? { device_id: deviceId, components } : { device_id: deviceId } });
+    },
+
+    /** A tab showing the kit opened: this Mac's parts are read once. */
+    checkKit() {
+      dispatch({ schema_version: 2, kind: "kit_check", payload: {} });
     },
 
     registerDevice(id: string, label: string, alias: string, options: { hostConsent: boolean; herdrSocketPath: string | null }) {
@@ -1837,22 +1846,63 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /**
-     * A checkout's pull request (PRD checkout-pr-glyph-card D-02, D-11): a
-     * browser display in the Workspace in front, or the default browser when
-     * the operator asked for it with ⌘, when no Workspace is in front (All
-     * projects, an Overview), or when the checkout is an SSH device's. The
-     * default browser is reached the way a page's own link is: the desktop
-     * host routes `window.open` to the system, and a browser tab opens a tab.
+     * A web address a pane or a card links to: a browser display in the
+     * Workspace in front, or the default browser when the operator asked for
+     * it with ⌘ (Ctrl off macOS) or when no Workspace is in front (All
+     * projects, an Overview). The default browser is reached the way a page's
+     * own link is: the desktop host routes `window.open` to the system, and a
+     * browser tab opens a tab.
      */
-    openPullRequest(url: string, deviceId: string, external: boolean) {
+    openLink(url: string, external: boolean) {
       // The core keeps a Workspace in front while the page shows All projects
       // or an Overview; a display opened there would land out of sight.
       const inFront = ui().screen?.kind === "workspace" ? frontViewWorkspace() : null;
-      if (external || deviceId !== "local" || !inFront) {
+      if (external || !inFront) {
         window.open(url, "_blank", "noopener,noreferrer");
         return;
       }
       this.openBrowser(url);
+    },
+
+    /** A checkout's pull request (PRD checkout-pr-glyph-card D-02, D-11): a link, and the default browser's for an SSH device's checkout. */
+    openPullRequest(url: string, deviceId: string, external: boolean) {
+      this.openLink(url, external || deviceId !== "local");
+    },
+
+    /**
+     * A path a terminal link names on this Mac (docs/ARCHITECTURE.md, A
+     * clicked path is one event). Inside a registered checkout it is one
+     * `reveal_path` naming the checkout whose physical root holds it longest,
+     * which brings that checkout forward with the file in View, at its line,
+     * or the folder in the Explorer; outside every checkout, or on ⌘ (Ctrl
+     * off macOS), the desktop host hands it to macOS.
+     */
+    openTerminalPath(found: FoundPath, line: number | null, column: number | null, external: boolean) {
+      const bridge = hostBridge();
+      if (!bridge) return diagnostic("terminal link: this host cannot open a path");
+      if (external) return bridge.openPath(found.real);
+      const checkouts = (rest()?.navigator?.workspaces ?? [])
+        .filter((workspace) => workspace.device_id === "local")
+        .flatMap((workspace) => workspace.checkouts)
+        .filter((checkout) => checkout.exists);
+      void probePaths(checkouts.map((checkout) => checkout.path), (paths) => bridge.probePaths(paths)).then((roots) => {
+        // A root the check could not answer might own the path; handing it to
+        // macOS then would open a checkout's file outside View. The failure
+        // is already logged.
+        if (checkouts.some((checkout) => !roots.has(checkout.path))) return;
+        const owner = owningCheckout(found.real, checkouts, roots);
+        if (!owner) {
+          bridge.openPath(found.real);
+          return;
+        }
+        const path = owner.checkout.path + found.real.slice(owner.root.length);
+        if (found.kind === "file" && line !== null) requestLine([path, found.real], line, column);
+        dispatch({
+          schema_version: 2,
+          kind: "reveal_path",
+          payload: { path, workspace_id: owner.checkout.workspace_id, checkout_id: owner.checkout.id, is_directory: found.kind === "directory" },
+        });
+      });
     },
 
     /** Explorer "Open in Browser" on an HTML file of this machine's checkout. */

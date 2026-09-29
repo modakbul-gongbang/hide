@@ -224,8 +224,12 @@ export function hostLog(env: Record<string, string>): { event: string; [key: str
     .map((line) => JSON.parse(line) as { event: string });
 }
 
-/** A screenshot under the run directory when one is named; nothing is written otherwise. */
+/**
+ * A screenshot under the run directory when one is named; nothing is written
+ * otherwise. Running CSS transitions are finished first, so a capture taken
+ * right after a click shows the state the click produced rather than a fade.
+ */
 export async function screenshot(page: Page, name: string): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
-  if (dir) await page.screenshot({ path: path.join(dir, `${name}.png`) });
+  if (dir) await page.screenshot({ path: path.join(dir, `${name}.png`), animations: "disabled" });
 }

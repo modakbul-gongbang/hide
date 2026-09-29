@@ -34,6 +34,7 @@ import {
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { EditorDocumentSnapshot } from "../snapshot";
 import { splitFrontmatter } from "./frontmatter";
+import { lineOffset, onLineRequest, takeLine } from "./lineRequest";
 import { languageLoader } from "./languages";
 import { markdownLive } from "./markdownLivePlugin";
 import { echoDecision, joinDocument, minimalChange, peerState, type PeerState } from "./sync";
@@ -128,6 +129,8 @@ export function CodeMirrorEditor({
   const contents = document.contents_utf8 ?? "";
   const contentsRef = useRef(contents);
   contentsRef.current = contents;
+  const pathRef = useRef(document.path);
+  pathRef.current = document.path;
   const readonly = held || document.readonly_reason !== null || document.document_kind !== "text" && document.document_kind !== "markdown";
   // The pane belongs to Live mode's markdown only; source mode and every
   // other kind keep one buffer (D-11).
@@ -230,6 +233,19 @@ export function CodeMirrorEditor({
         effects: EditorView.scrollIntoView(Math.min(place.top, limit), { y: "start" }),
       });
     }
+    // A terminal link's line (`lineRequest.ts`), taken when this view mounts
+    // for the open or when the open only brought this view forward; a line
+    // inside the frontmatter pane moves that pane.
+    const frontLines = parts ? parts.front.split("\n").length - 1 : 0;
+    const goToLine = () => {
+      const asked = takeLine(pathRef.current);
+      if (!asked) return;
+      const target = frontEditor && asked.line <= frontLines ? frontEditor : bodyEditor;
+      const offset = lineOffset(target.state.doc, target === bodyEditor ? asked.line - frontLines : asked.line, asked.column);
+      target.dispatch({ selection: { anchor: offset }, effects: EditorView.scrollIntoView(offset, { y: "center" }) });
+    };
+    goToLine();
+    const stopLines = onLineRequest(goToLine);
     // The view scrolls to its place in its first measure, which runs in the
     // frame this callback follows; a view taken down before then (a double
     // mount, a quick toggle) never showed it, so its top would overwrite the
@@ -252,6 +268,7 @@ export function CodeMirrorEditor({
     channel = joinDocument(tabId, receive, () => ({ text: combined(), pending: pending.current }));
     return () => {
       window.cancelAnimationFrame(frame);
+      stopLines();
       channel?.leave();
       carried.current = { tabId, state: { text: combined(), pending: pending.current } };
       const selection = bodyEditor.state.selection.main;

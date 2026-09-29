@@ -71,11 +71,46 @@ pub fn runtime_of(agent_kind: &str) -> Option<AgentRuntime> {
 
 /// The prefix every pane id on a remote target carries.
 ///
-/// It is the same rule the read-record ledger scopes itself by; a remote pane
-/// is uninstrumented by decision, because Hide does not write to another
-/// machine's file system (PRD D-28, D-49).
+/// It is the same rule the read-record ledger scopes itself by. A remote pane
+/// is judged against its own device's kit, never this Mac's hook files
+/// (`Runtime::derive_device_session`).
 pub fn is_remote_pane(pane_id: &str) -> bool {
     pane_id.starts_with("remote:")
+}
+
+/// A device's hook for `runtime`, in the terms the pane judgement reads,
+/// from what the device's kit last reported (PRD device-parity D-21). On a
+/// device where Hide has certainly installed nothing (`declined`: never
+/// allowed, or a platform it has no helper for) the hook is not installed;
+/// a hook the kit could not put in place, for whatever reason its
+/// row gives, is not installed either. A device whose kit Hide has not read,
+/// including one whose first read failed, answers nothing, so the cause
+/// stays unknown rather than guessed.
+pub fn device_hook_status(
+    declined: bool,
+    kit: &crate::model::KitSnapshot,
+    runtime: AgentRuntime,
+) -> Option<hide_agent_hooks::HookStatus> {
+    use hide_agent_hooks::HookStatus;
+    use hide_kit::{ComponentId, ComponentState};
+    if declined {
+        return Some(HookStatus::NotInstalled);
+    }
+    let id = match runtime {
+        AgentRuntime::ClaudeCode => ComponentId::ClaudeCodeHook,
+        AgentRuntime::Codex => ComponentId::CodexHook,
+    };
+    let part = kit.components.iter().find(|part| part.id == id)?;
+    Some(match part.state {
+        ComponentState::Installed => HookStatus::Installed {
+            version: hide_agent_hooks::HOOK_VERSION,
+        },
+        ComponentState::Outdated => HookStatus::Outdated { version: 0 },
+        ComponentState::Absent => HookStatus::RuntimeAbsent,
+        ComponentState::NotInstalled | ComponentState::Removed | ComponentState::Failed => {
+            HookStatus::NotInstalled
+        }
+    })
 }
 
 #[cfg(test)]

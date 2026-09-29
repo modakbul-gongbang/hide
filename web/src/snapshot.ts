@@ -825,6 +825,36 @@ export type Device = {
   agent_count: number;
   test: { state: string; checked_at_unix_ms: number | null; stages: DeviceTestStage[] } | null;
   host?: DeviceHost;
+  /** What Hide's install kit has put on this machine (`KitSnapshot`). */
+  kit?: Kit;
+};
+
+/** One part of the install kit (`contracts/snapshot-wire-enums.json`: `kit_component_id`). */
+export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "labels" | "hcoord";
+
+/** What a part is on its machine (`contracts/snapshot-wire-enums.json`: `kit_component_state`). */
+export type KitComponentState = "installed" | "outdated" | "not_installed" | "removed" | "failed" | "absent";
+
+export type KitComponent = {
+  id: KitComponentId;
+  label: string;
+  state: KitComponentState;
+  reason: string | null;
+  location: string | null;
+};
+
+/**
+ * A machine's install kit (PRD device-parity B7): the same parts on This Mac
+ * and every device. `unavailable` says why the kit does not run there at all;
+ * `offers_reinstall` is true only while a part needs it; `shares_account_with`
+ * names another registered device that reaches the same account there.
+ */
+export type Kit = {
+  unavailable: string | null;
+  busy: boolean;
+  components: KitComponent[];
+  offers_reinstall: boolean;
+  shares_account_with: string | null;
 };
 
 /** One pane's rectangle in a remote tab, as fractions of the tab's area (`RemotePaneLayoutFrame`). */
@@ -918,17 +948,8 @@ export type BackgroundAi = {
   unavailable_reason: string | null;
 };
 
-export type AgentHookRuntime = {
-  id: string;
-  label: string;
-  path: string;
-  headline: string;
-  installed: boolean;
-  offers_install: boolean;
-};
-
+/** Each machine's hook parts are its kit rows (`Device.kit`); this section keeps what only the panes say. */
 export type AgentHooks = {
-  runtimes: AgentHookRuntime[];
   sessions_predating_install: { pane_id: string; label: string; message: string }[];
   last_report_failure: string | null;
 };

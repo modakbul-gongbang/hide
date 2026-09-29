@@ -3452,6 +3452,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 workspace_views_path: None,
                 shortcut_import_path: None,
                 local_issues_path: None,
+                kit_dir: None,
             },
             environment::EnvironmentReport {
                 statuses: vec![],

@@ -16,14 +16,15 @@ This is the only part of the tree Hide cannot read from the session snapshot, an
 | Codex | `~/.codex/hooks.json` |
 
 One entry is appended per registered event, and nothing else in the file is touched.
-The write is atomic - a temporary file and a rename - and `serde_json`'s `preserve_order` is enabled for this crate so appending one hook does not rewrite the operator's whole file in alphabetical order.
+The write is atomic - a temporary file beside the target, created 0600, and a rename - and `serde_json`'s `preserve_order` is enabled for this crate so appending one hook does not rewrite the operator's whole file in alphabetical order.
+The file keeps its mode, a new one is created 0600, and a file that is a symlink stays one: the write lands at the file the link resolves to, so a settings file kept in a dotfiles repository is edited there.
 Entries belonging to other tools are counted before and after, and a regression test asserts they survive.
 
 Five events are registered: `SessionStart`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
 
 Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command.
-The runtime argument selects that runtime's stdout envelope; the version-5 marker makes an installation without the conditional Workspace probe outdated so Settings offers to refresh the stored commands.
+The runtime argument selects that runtime's stdout envelope; the version-6 marker makes an installation whose command is not guarded against a missing helper outdated, so the next launch or connection replaces it.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
 Nothing parses the rest of the command, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
 
@@ -33,8 +34,9 @@ On `SessionStart`, the helper writes one runtime JSON envelope whose `hookSpecif
 The same envelope adds Workspace commands only after `hide workspace bootstrap` and `hide workspace info` confirm a renderer-connected Workspace for the caller and report its actual capabilities.
 The probe does not need a pane id: the daemon binds a caller inside a Herdr pane to that pane, and any other local caller, such as a tool shell or hook inside Codex's shared app-server daemon or a plain terminal, to the registered checkout holding its cwd (`docs/ARCHITECTURE.md`, the Workspace CLI).
 The guidance names that checkout path, so a session can read which Workspace its commands reach.
-The helper uses the `hide` CLI beside its own bundled executable, or the CLI on `PATH` for an independently installed helper on an SSH device.
-The app bundle carries that CLI beside the helper; the hook does not start Hide or install a remote hook.
+The helper uses the `hide` CLI beside it in the kit folder, or the CLI on `PATH` when none is there; on a device that is the helper root's current build, whose `hide` reaches this Mac's daemon through the device's return route (PRD device-parity B15).
+The hook starts nothing and installs nothing; when the CLI does not answer within its two-second bound the session starts without Workspace guidance and the next one tries again (B26).
+A device session gets no Project Memory capsule and its `UserPromptSubmit` injects nothing: the Memory database is this Mac's and is never copied to a device, so the device's hook finds none and succeeds at once (B25).
 An ordinary Claude Code or Codex session started in a connected Herdr pane receives the same conditional guidance as a Hide-managed session when Hide's hook is installed in that runtime's configuration on that machine.
 A disconnected pane, a cwd outside every registered checkout, an unavailable renderer, or an unsupported Browser surface receives no Workspace capability claim.
 The guidance scopes every command to the caller's checkout Workspace and lists only capabilities returned by the daemon; `hide workspace info` remains the live check and `hide --help` gives the full syntax.
@@ -111,43 +113,46 @@ The Settings screen learns of it because the coordinator re-reads the diagnosis 
 `hide_agent_hooks::diagnosis` resolves one reason, in a fixed order, and the first match wins:
 
 1. `config_unreadable` - the file could not be read or parsed, so nothing was installed into it.
-2. `remote_host` - the pane is on another machine. Hide does not write to another machine's file system.
-3. `hooks_not_installed` - the runtime is here and carries no hook of Hide's.
-4. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it. A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
-5. `hook_outdated` - the session is reporting through an older hook than this Hide writes.
-6. `unknown` - genuinely unknown, and said to be.
+2. `hooks_not_installed` - the runtime is here and carries no hook of Hide's.
+3. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it. A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
+4. `hook_outdated` - the session is reporting through an older hook than this Hide writes.
+5. `unknown` - genuinely unknown, and said to be.
 
 Both the pane's own mark and the Settings diagnosis read that one function, and every projection carries the reason's stable code alongside its sentence so no surface has to recognise its own operator-facing text.
+A pane on a device is judged by the same function, against that device's hooks as its kit last reported them (`agent_hooks::device_hook_status`), with the pane's tokens carried from the device's Herdr.
+A device where Hide may not install, or whose platform this build does not carry, reads `hooks_not_installed`; a device whose kit Hide has not read yet reads `unknown`.
 
 ## Installing
 
-Hide installs once, on first run, and then leaves the operator's configuration alone.
-The claim is a marker file in `~/.hide/agent-hooks/`, created exclusively so two launches racing each other still install once.
-It deliberately does not live in the rendered UI state, which the shell echoes back and could reset, and it does not depend on any hook file: an operator who removes a hook has removed it, and the next launch does not quietly put it back.
-Only a runtime that is present and carries no hook of Hide's is installed into; an outdated hook is left for the Settings diagnosis to ask about, and a configuration file that could not be read is not written to on a guess.
+Hide's hooks are one part of its install kit (`hide-kit`; [ARCHITECTURE.md, The install kit](ARCHITECTURE.md#the-install-kit)), which installs the same set on this Mac at every launch of the installed app and on every device at every helper connection, without asking: the operator agreed to it once, by installing the app or by adding the device.
+Every entry's command is guarded, `if [ -x '<kit folder>/hide-agent-hooks' ]; then exec '<kit folder>/hide-agent-hooks' hook ...; fi`, so a session whose app or helper was moved or deleted carries on without a hook error (PRD device-parity B3).
+Version 6 is the first guarded command, so an older entry reads outdated and the next launch or connection replaces it.
+The kit folder is a path that survives a rebuild: the installed app bundle's `Contents/Resources` on this Mac, and the helper root's `current` link on a device, which each new build of the helper points at itself.
 
-Every later install is the `install_agent_hooks` event, sent from the Settings diagnosis after the operator said yes.
-The request is a set and the write rewrites the same hook group either way, so approving twice is one install.
-The write itself runs on the coordinator thread, outside every lock, and the diagnosis is read back from the file afterwards so the screen shows what the file now says rather than what was asked for.
-
-The helper ships beside the daemon that installs it, in the packaged app's `Contents/Resources/` (`desktop/scripts/package.mjs` stages `hided`, `hide`, the device helper, the pinned Herdr and the helper there together), under the name `hide_agent_hooks::HELPER_BINARY_NAME`.
-`hide_agent_hooks::helper_for` is the only thing that resolves it, and it checks the layout rather than the file name: the executable's parent must be `Resources`, its parent `Contents`, and its parent must end in `.app`.
-Anything else is refused as `HelperNotBundled`, and a bundle that shipped without the helper is refused as `HelperMissing`.
-A refused install writes nothing and reports why; an install the operator pressed for also raises `agent_hooks.install_refused` and announces it, so the press is answered on screen at once rather than on some later change.
-A standalone `hided` is not inside an application bundle, so the web shell's install is refused this way and names the installed app as the place to install from.
-
-The refusal exists because a hook command outlives the process that wrote it.
+A `hided` that is not running from an app bundle installs nothing, and This Mac's row in Settings says the installed app is where the kit comes from.
+`hide_kit::bundled_kit_dir` decides that from the layout rather than the file name: the executable's parent must be `Resources`, its parent `Contents`, and its parent must end in `.app`.
+The rule exists because a hook command outlives the process that wrote it.
 It is a path stored in the operator's own configuration file and run by every future session of that agent, so the only path worth writing is one that survives a rebuild.
 On 2026-09-10 a development build resolved the helper beside its own executable under `target/debug/deps`, which Cargo deletes on the next build, and wrote that path into both `~/.claude/settings.json` and `~/.codex/hooks.json`.
 Every Claude and Codex session on the machine then failed four hooks per turn with `No such file or directory` until the entries were taken out by hand.
-Resolving "beside the executable" was the defect; the bundle layout is the whole answer, and `a_cargo_build_directory_is_refused_instead_of_written_into_a_hook` is the test that keeps it.
+Resolving "beside the executable" was the defect; the bundle layout is the whole answer, and `only_a_daemon_inside_an_app_bundle_has_a_kit_folder` is the test that keeps it.
 
-Removal does not need the helper, and must not: it reads the configuration file and takes out the entries carrying Hide's marker.
-So a runtime whose helper has gone missing is offered a removal as well as a reinstall, which is how the operator clears entries that name a binary that is no longer there.
-The other read failures are not offered a removal, because Hide could not parse the file and does not know what removing would touch.
+The kit records what it installed in `~/.hide/kit/installed.json`.
+A hook it installed that the operator then removed is not put back by the next launch or connection: its part reads Removed and comes back only through Reinstall (D-26).
+The `~/.hide/agent-hooks/installed-once` marker from before the kit is not such a record, so a machine that has it and no Hide hook gets one (B20).
+A configuration file that could not be read is not written to on a guess: its part reads Failed with the reason, and the kit's other parts are installed anyway (B6).
+A runtime whose CLI answers with a version older than the hook needs is not installed into and its part says to update the CLI; a runtime whose home folder does not exist reads Not on this machine.
+The write itself runs off `Mutex<Runtime>` (on the kit worker for this Mac, on the helper for a device), and the diagnosis is read back from the file afterwards so the screen shows what the file now says rather than what was asked for.
+
+Settings shows each machine's hook parts under Agents and its whole kit under Devices, This Mac first and then each device.
+Reinstall, the `kit_reinstall` event, is offered only where a part is outdated, not installed, removed or failed, repairs only those parts, and leaves the ones in place untouched (B8); pressing it twice is one install.
+Project Memory's "update hooks" sends the same Reinstall for this Mac's hook parts.
+
+Removal does not need the helper, and must not: it reads the configuration file and takes out the entries carrying Hide's marker, and nothing else.
+Removing a device from Hide does that on the device while its helper is connected (D-16); the operator removes a hook on their own machine by editing the file, and the kit then leaves it removed.
 
 `hide-agent-hooks doctor [--json]` prints the same judgement in a terminal, because a broken hook shows on screen only as an uninstrumented mark and the output of that command is the evidence.
-Install and remove are deliberately not CLI subcommands: writing to the operator's configuration is the app's decision, taken with their approval, not something a stray command line performs.
+Install and remove are deliberately not CLI subcommands: writing to the operator's configuration is the kit's decision, agreed to when the app was installed or the device added, not something a stray command line performs.
 
 ## Testing
 

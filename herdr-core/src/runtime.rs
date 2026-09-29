@@ -19,6 +19,7 @@ mod events;
 mod home;
 mod hosts;
 mod issues;
+mod kit;
 mod memory;
 mod operations;
 mod project_sessions;
@@ -35,6 +36,7 @@ mod workspace_control;
 mod workspace_view;
 
 pub use hosts::WorkspaceRemoteRoute;
+pub(crate) use kit::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob};
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use agent_areas::AgentLayoutPayload;
@@ -1059,9 +1061,26 @@ pub struct Runtime {
     /// thread. `None` until that first read lands, which reads as "not known
     /// yet" rather than as "not installed".
     hook_diagnosis: Option<hide_agent_hooks::Diagnosis>,
-    /// Runtimes the operator has approved an install for, waiting for the
-    /// coordinator to do the file write off the mutex.
-    pending_hook_installs: BTreeSet<hide_agent_hooks::AgentRuntime>,
+    /// Each machine's install kit as its last check found it, keyed by
+    /// device id (`local` for this Mac); `runtime/kit.rs` owns it.
+    kit_states: BTreeMap<String, crate::model::KitSnapshot>,
+    /// The install this Mac's kit worker runs next, merged across requests.
+    local_kit_pending: Option<hide_kit::Scope>,
+    /// When this Mac's kit is next re-read while Settings is on screen.
+    local_kit_next_status: Option<Instant>,
+    /// A Settings tab asked for one read of this Mac's kit.
+    local_kit_check_requested: bool,
+    /// The kit call each device's helper runs next, merged across requests,
+    /// keyed by device id.
+    device_kit_pending: BTreeMap<String, KitJob>,
+    /// Devices whose kit worker is running; at most one per device.
+    device_kit_running: BTreeSet<String>,
+    /// The removal each removed device's kit worker runs next, holding the
+    /// helper connection it runs on.
+    device_kit_removals: BTreeMap<String, DeviceKitCall>,
+    /// Removed devices whose kit is still coming off; a new connection to
+    /// one waits for it.
+    device_kit_removing: BTreeSet<String>,
     /// The operator's background AI choice as the core holds it. `None` until
     /// the coordinator's first read lands, which reads as "not known yet"
     /// rather than as "the defaults".
@@ -1528,7 +1547,14 @@ impl Runtime {
             pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
-            pending_hook_installs: BTreeSet::new(),
+            kit_states: BTreeMap::new(),
+            local_kit_pending: None,
+            local_kit_next_status: None,
+            local_kit_check_requested: false,
+            device_kit_pending: BTreeMap::new(),
+            device_kit_running: BTreeSet::new(),
+            device_kit_removals: BTreeMap::new(),
+            device_kit_removing: BTreeSet::new(),
             ai_settings: None,
             pending_ai_settings_save: None,
             ai_observing: false,

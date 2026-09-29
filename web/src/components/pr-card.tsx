@@ -1,6 +1,7 @@
 import { ArrowUpRightIcon } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { badgeParts } from "../agentRow";
+import { opensExternally } from "../host";
 import { cn } from "../lib/utils";
 import { cardSingleValue, type CheckoutCard } from "../projects";
 import { CHECKOUT_KIND_ICON } from "./checkout-icon";
@@ -8,9 +9,9 @@ import { BadgeMarks } from "./status-badge";
 import { Badge } from "./ui/badge";
 import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./ui/tooltip";
 
-/** What a press on the card's link means: ⌘ asks for the default browser (PRD checkout-pr-glyph-card D-02). */
+/** What a press on the card's link means: ⌘ (Ctrl off macOS) asks for the default browser (PRD checkout-pr-glyph-card D-02). */
 export function pullRequestOpenExternal(event: MouseEvent): boolean {
-  return event.metaKey;
+  return opensExternally(event);
 }
 
 /**
