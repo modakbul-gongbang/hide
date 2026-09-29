@@ -476,6 +476,10 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    // The serve command writes its config before Mobile admits the new Origin.
+    // The exposed frame confirms the daemon's admission state.
+    let mut shell = renderer(&running).await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
     // The phone's credential outlives the restart and the port change (B8).
     let (_socket, hello) = phone(second_port, &credential).await;
     assert_eq!(hello["type"], "hello");
