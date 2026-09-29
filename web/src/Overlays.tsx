@@ -106,7 +106,7 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
   return (
     <AlertDialog open={pending != null} onOpenChange={(open) => { if (!open) actions.keepOpen(); }}>
       {pending?.subtree ? (
-        <ConfirmSubtreeClose actions={actions} kind={pending.kind} targetId={pending.targetId} inside={pending.subtree.inside} ids={pending.subtree.ids} />
+        <ConfirmSubtreeClose actions={actions} kind={pending.kind} targetId={pending.targetId} inside={pending.subtree.inside} />
       ) : pending ? (
         <AlertDialogContent data-confirm-close={pending.kind}>
           <AlertDialogHeader>
@@ -137,16 +137,18 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
  * While a listed descendant's activity is unknown, 모두 닫기 waits for a
  * status check the sheet itself offers, and the default is 취소.
  */
-function ConfirmSubtreeClose({ actions, kind, targetId, inside, ids }: { actions: Actions; kind: "pane" | "tab"; targetId: string | null; inside: string[]; ids: string[] }) {
-  // Re-read on every snapshot so a status check or a closed row shows here.
+function ConfirmSubtreeClose({ actions, kind, targetId, inside }: { actions: Actions; kind: "pane" | "tab"; targetId: string | null; inside: string[] }) {
+  // Live like the removal dialogs (D-20, B13): every snapshot re-derives who
+  // is listed and in what state, so a child that appears shows up, one that
+  // goes drops out, and Close all sends exactly what is on screen.
   useShellStore((s) => s.rest);
   useShellStore((s) => s.agents);
-  const subtree = subtreeOf(inside, actions.everyAgent(), ids);
+  const subtree = subtreeOf(inside, actions.everyAgent());
   const count = subtree?.rows.filter((row) => !row.target).length ?? 0;
   const targetDevice = subtree?.rows.find((row) => row.target)?.agent.device_id;
   const blocked = subtree?.unknown ?? false;
-  // Every listed descendant left while the sheet was open: there is nothing
-  // left to ask, so it closes without sending anything.
+  // Every descendant left while the sheet was open: there is nothing left
+  // to ask, so it closes without sending anything.
   const empty = subtree === null;
   useEffect(() => {
     if (empty) actions.keepOpen();
@@ -171,7 +173,7 @@ function ConfirmSubtreeClose({ actions, kind, targetId, inside, ids }: { actions
         <Button variant="secondary" onClick={() => actions.confirmClose()} data-subtree-close-only="true">
           이것만 닫기
         </Button>
-        <Button variant="destructive" disabled={blocked} onClick={() => actions.closeSubtree()} data-subtree-close-all="true" data-initial-focus={blocked ? undefined : "true"}>
+        <Button variant="destructive" disabled={blocked} onClick={() => subtree && actions.closeSubtree(subtree.ids)} data-subtree-close-all="true" data-initial-focus={blocked ? undefined : "true"}>
           모두 닫기
         </Button>
       </AlertDialogFooter>

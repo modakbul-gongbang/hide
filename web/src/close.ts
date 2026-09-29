@@ -91,19 +91,17 @@ export function subtreeState(agent: AgentRow): SubtreeState {
  * descendant of an agent there that is not itself there (D-26), from the
  * core's own close lists, which leave out a device that is not connected
  * (D-16). `agents` is every current agent row, this machine's and each
- * connected device's. `only` keeps the list to the ids a sheet already
- * showed, so one that appeared since is not added (D-20). Null when nothing
- * would be left behind, which keeps the ordinary close (B1).
+ * connected device's. Null when nothing would be left behind, which keeps
+ * the ordinary close (B1).
  */
-export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[], only?: readonly string[]): Subtree | null {
+export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[]): Subtree | null {
   const within = new Set(inside);
   const byPane = new Map(agents.map((agent) => [agent.pane_id, agent]));
-  const allowed = only ? new Set(only) : null;
   const ids: string[] = [];
   for (const agent of agents) {
     if (!within.has(agent.pane_id)) continue;
     for (const pane of agent.close_descendant_pane_ids ?? []) {
-      if (within.has(pane) || !byPane.has(pane) || ids.includes(pane) || (allowed && !allowed.has(pane))) continue;
+      if (within.has(pane) || !byPane.has(pane) || ids.includes(pane)) continue;
       ids.push(pane);
     }
   }

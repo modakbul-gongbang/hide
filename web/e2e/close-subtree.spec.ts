@@ -71,7 +71,7 @@ async function rowTops(buttons: Locator[]): Promise<number[]> {
   return [...tops];
 }
 
-test("the close sheet counts and brightens the descendants that need the operator and dims the quiet one", async ({ page }) => {
+test("the close sheet counts and brightens what needs the operator, stays live while open, and closes what it shows", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -87,7 +87,8 @@ test("the close sheet counts and brightens the descendants that need the operato
     report(herdr, quiet, { task: "로그 정리" });
 
     daemon = await startHided(herdr, "close-subtree-states");
-    const sent = countSent(page);
+    const last = new Map<string, Record<string, unknown>>();
+    const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await agentsMode(page);
@@ -117,9 +118,26 @@ test("the close sheet counts and brightens the descendants that need the operato
     // Each row says its state in words too.
     await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("aria-label", /병합 전 검증/);
     await screenshot(page, "close-subtree-states");
-    await page.keyboard.press("Escape");
-    await expect(sheet).toHaveCount(0);
+
+    // The list is live (D-20, B13): a child spawned while the sheet is open
+    // shows up, one that closes elsewhere drops out, and the title follows.
+    const late = await spawnAgent(herdr, "late", target);
+    await expect(sheet.locator(`[data-subtree-row="${late}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 5개를 닫을까요?");
+    herdr.run(["pane", "close", quiet]);
+    await expect(sheet.locator(`[data-subtree-row="${quiet}"]`)).toHaveCount(0, { timeout: 30_000 });
+    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 4개를 닫을까요?");
     expect(sent.get("close_tree") ?? 0).toBe(0);
+
+    // Enter closes exactly what the sheet shows at the press.
+    await expect(sheet.locator("[data-subtree-close-all]")).toBeFocused();
+    await page.keyboard.press("Enter");
+    expect(sent.get("close_tree")).toBe(1);
+    expect(new Set(last.get("close_tree")?.pane_ids as string[])).toEqual(new Set([working, asking, finished, late]));
+    await expect.poll(async () => {
+      const live = await livePanes(herdr);
+      return [target, working, asking, finished, late].filter((pane) => live.has(pane));
+    }, { timeout: 60_000 }).toEqual([]);
   } finally {
     daemon?.stop();
     herdr.stop();

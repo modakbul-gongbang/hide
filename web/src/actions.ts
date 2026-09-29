@@ -202,12 +202,10 @@ export function createActions(dispatch: DispatchFn) {
       return;
     }
     // An agent with live descendants outside what closes asks one sheet
-    // instead of the Stop-work one (PRD close-agent-subtree B2); the ids it
-    // shows now are all Close all will ever send (D-20).
+    // instead of the Stop-work one (PRD close-agent-subtree B2).
     const inside = panes.map((pane) => pane.id);
-    const subtree = subtreeOf(inside, everyAgent());
-    if (subtree) {
-      ui().setPendingClose({ kind, id, targetId, subtree: { inside, ids: subtree.ids } });
+    if (subtreeOf(inside, everyAgent())) {
+      ui().setPendingClose({ kind, id, targetId, subtree: { inside } });
       return;
     }
     if (decision.action === "confirm") {
@@ -1372,8 +1370,8 @@ export function createActions(dispatch: DispatchFn) {
       sendClose(pending.kind, pending.id, pending.targetId, true);
     },
 
-    /** 모두 닫기: the target and exactly the descendants the sheet showed, in one event (D-20, D-21). */
-    closeSubtree() {
+    /** 모두 닫기: the target and exactly the descendants the sheet shows at the press, in one event (D-20, D-21). */
+    closeSubtree(ids: string[]) {
       const pending = ui().pendingClose;
       if (!pending?.subtree) return;
       ui().setPendingClose(null);
@@ -1382,7 +1380,7 @@ export function createActions(dispatch: DispatchFn) {
         kind: "close_tree",
         payload: {
           target: pending.kind === "pane" ? { kind: "pane", pane_id: pending.id } : { kind: "tab", tab_id: pending.id },
-          pane_ids: pending.subtree.ids,
+          pane_ids: ids,
           confirmed: true,
         },
       });

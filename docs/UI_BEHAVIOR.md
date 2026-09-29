@@ -288,10 +288,11 @@ The sheet says in one line what `이것만 닫기` leaves: the children keep run
 Its buttons are `취소`, `이것만 닫기` and `모두 닫기`, and `모두 닫기` holds the keyboard when it opens, so Enter closes the whole subtree; Escape or `취소` sends nothing and gives focus back.
 While a descendant's status is unknown, `모두 닫기` is disabled, `취소` holds the keyboard, and a `상태 확인` in the sheet reads the status again without closing it.
 `이것만 닫기` closes the target alone as the ordinary close, with no second question; its direct children become the operator's roots and their own children stay under them.
-`모두 닫기` sends one event naming the target and exactly the descendants the sheet listed: one that appeared since is not closed, and one already gone counts as closed.
+While the sheet is open its list is live, as in the removal dialogs: a descendant that appears shows up, one that goes drops out, and the title's N and the count line follow.
+`모두 닫기` sends one event naming the target and exactly the descendants the sheet shows at the press: one that appears after the press is not closed, and one already gone counts as closed.
 The core checks each listed pane again as it arrives; if one now needs a status check, an earlier close of one is still unresolved, or the close slots cannot take them all, nothing closes and the one-line notice says why and what to do.
 A pane whose earlier close was refused is simply closed again, since asking again is the retry.
-If every listed descendant goes while the sheet is open, the sheet closes without sending anything.
+If every descendant goes while the sheet is open, the sheet closes without sending anything.
 The core closes the deepest descendants first, each pane only after every descendant below it is gone, and the target last, so no descendant ever surfaces as a root on the way; each row reads `closing…` until it goes.
 A descendant whose close is refused, times out, or loses its device keeps itself and its ancestors, the target included, open while the other branches finish; the close failure notice shows and the detail goes to the diagnostic log.
 Closing the same target again lists only what is left.

@@ -105,9 +105,20 @@ describe("subtreeOf", () => {
     expect(subtree?.counts.unknown).toBe(1);
   });
 
-  it("keeps a sheet to the descendants it showed and drops one that went away", () => {
-    const agents = family().filter((row) => row.pane_id !== "p4");
-    expect(subtreeOf(["p1"], agents, ["p2", "p4"])?.ids).toEqual(["p2"]);
+  it("follows the snapshot: a descendant that appears is listed and one whose row went is dropped", () => {
+    // p4's row is gone while p1's list still names it; p5 was just spawned by p3.
+    const agents = [
+      ...family({
+        p1: { close_descendant_pane_ids: ["p5", "p3", "p2", "p4"] },
+        p2: { close_descendant_pane_ids: ["p5", "p3"] },
+        p3: { lineage_child_pane_ids: ["p5"], close_descendant_pane_ids: ["p5"] },
+      }).filter((row) => row.pane_id !== "p4"),
+      agent("p5", { lineage_depth: 3, lineage_parent_pane_id: "p3", activity: "working" }),
+    ];
+    const subtree = subtreeOf(["p1"], agents);
+    expect(subtree?.ids).toEqual(["p5", "p3", "p2"]);
+    expect(subtree?.rows.map((row) => [row.agent.pane_id, row.depth])).toEqual([["p1", 0], ["p2", 1], ["p3", 2], ["p5", 3]]);
+    expect(subtree?.counts.working).toBe(1);
   });
 });
 

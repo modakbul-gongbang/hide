@@ -37,10 +37,11 @@ export type PendingClose =
       targetId: string | null;
       /**
        * The close of an agent that has live descendants (PRD
-       * close-agent-subtree): the panes being closed and the descendant ids
-       * the sheet showed when it opened, which is all Close all ever sends.
+       * close-agent-subtree): the panes being closed. The sheet re-derives
+       * the descendants on every snapshot, and Close all sends the ones it
+       * shows at the press (D-20).
        */
-      subtree: { inside: string[]; ids: string[] };
+      subtree: { inside: string[] };
     };
 
 /**
