@@ -1020,16 +1020,17 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /**
-     * Names a local Git Project an Overview shows for measuring its disk, and
-     * measures it again; the core refuses anything else to the log.
-     */
-    /**
      * Asks the core to read a local Git project's pull requests and issues,
      * the tasks its Tasks and Agents views draw; the core reads a project
      * once and keeps the answer, so asking again costs nothing (D-14).
      */
     readProjectTasks(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
+    },
+
+    /** Re-read a local Git project's checkout facts and pull requests when its Overview opens. */
+    refreshProjectOverview(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "overview_refresh", payload: { workspace_id: workspaceId } });
     },
 
     /**

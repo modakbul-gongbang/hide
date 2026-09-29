@@ -1031,20 +1031,23 @@ fn publish_worktrees(
     answer: crate::worktrees::WorktreeAnswer,
 ) -> Option<bool> {
     let runtime = context.runtime.upgrade()?;
-    let changed = runtime
-        .lock()
-        .ok()?
-        .ingest_worktrees(answer.catalog, answer.removals);
+    let mut guard = runtime.lock().ok()?;
+    let current = answer.observations_current && guard.worktrees_request() == answer.request;
+    let changed = guard.ingest_worktrees_answer(answer.catalog, answer.removals, current);
+    drop(guard);
     drop(runtime);
     Some(changed)
 }
 
-fn publish_github(context: &SessionSyncContext, github: crate::model::GithubSnapshot) -> bool {
+fn publish_github(context: &SessionSyncContext, answer: crate::github::GithubAnswer) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_github(github),
+        Ok(mut guard) => {
+            let current = guard.github_request() == answer.request;
+            guard.ingest_github_answer(answer.snapshot, current)
+        }
         Err(_) => return false,
     };
     drop(runtime);

@@ -779,6 +779,102 @@ fn sidebar_github_request_is_scoped_idempotent_and_does_not_move_focus() {
     assert_eq!(runtime.github_request().projects[0].generation, 1);
 }
 
+#[test]
+fn opening_a_project_overview_restarts_only_its_git_and_pr_reads() {
+    let mut initial = runtime();
+    let mut runtime = runtime();
+    let mut first = workspace(
+        "first",
+        "first",
+        "/tmp/first",
+        vec![settled_worktree(crate::model::PullRequestBadge::Open)],
+    );
+    first.is_git = true;
+    let mut second = workspace(
+        "second",
+        "second",
+        "/tmp/second",
+        vec![settled_worktree(crate::model::PullRequestBadge::Open)],
+    );
+    second.is_git = true;
+    runtime.snapshot.navigator.workspaces = vec![first, second];
+    runtime.worktree_catalog.projects = vec![crate::model::ProjectWorktreesSnapshot {
+        root_path: "/tmp/first".to_owned(),
+        default_branch: Some("main".to_owned()),
+        ..Default::default()
+    }];
+    let event = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "overview_refresh",
+        "payload": {"workspace_id": "first"}
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&event));
+    assert!(runtime.snapshot.git_worktrees_loading);
+    assert_eq!(
+        runtime
+            .worktrees_request()
+            .projects
+            .iter()
+            .map(|project| project.generation)
+            .collect::<Vec<_>>(),
+        vec![1, 0]
+    );
+    assert_eq!(runtime.github_request().projects[0].generation, 1);
+    assert!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[0]
+            .github
+            .loading
+    );
+    let first_worktrees_request = runtime.worktrees_request();
+    let first_request = runtime.github_request();
+    let previous_answer = runtime.github.clone();
+    assert!(runtime.dispatch_json(&event));
+    assert_eq!(
+        runtime
+            .worktrees_request()
+            .projects
+            .iter()
+            .map(|project| project.generation)
+            .collect::<Vec<_>>(),
+        vec![2, 0]
+    );
+    let worktrees_current = first_worktrees_request == runtime.worktrees_request();
+    assert!(!worktrees_current);
+    assert_eq!(
+        runtime.worktree_catalog.projects[0]
+            .default_branch
+            .as_deref(),
+        Some("main")
+    );
+    let previous_catalog = runtime.worktree_catalog.clone();
+    assert!(!runtime.ingest_worktrees_answer(
+        crate::model::WorktreeCatalogSnapshot::default(),
+        0,
+        worktrees_current
+    ));
+    assert_eq!(runtime.worktree_catalog, previous_catalog);
+    assert!(runtime.snapshot.git_worktrees_loading);
+    let github_current = first_request == runtime.github_request();
+    assert!(!github_current);
+    assert!(!runtime.ingest_github_answer(previous_answer, github_current));
+    assert!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[0]
+            .github
+            .loading
+    );
+
+    initial.snapshot.git_worktrees_loading = true;
+    assert!(initial.ingest_worktrees_answer(previous_catalog.clone(), 0, false));
+    assert_eq!(initial.worktree_catalog.projects[0].root_path, "/tmp/first");
+    assert_eq!(
+        initial.worktree_catalog.projects[0]
+            .default_branch
+            .as_deref(),
+        Some("main")
+    );
+    assert!(initial.snapshot.git_worktrees_loading);
+}
+
 /// Overview reads its focused project; explicit sidebar requests remain
 /// independent of the retired right-panel Git tab.
 #[test]

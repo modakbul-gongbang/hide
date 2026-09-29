@@ -1302,6 +1302,7 @@ pub struct Runtime {
     /// the Git section or explicitly refreshing GitHub advances the target
     /// project counter; equal generations reuse the cached answer indefinitely.
     github_generations: HashMap<String, u64>,
+    worktree_project_generations: HashMap<String, u64>,
     sidebar_github_projects: HashSet<String>,
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
@@ -1635,6 +1636,7 @@ impl Runtime {
             github: crate::model::GithubSnapshot::default(),
             disk_usage: Vec::new(),
             github_generations: HashMap::new(),
+            worktree_project_generations: HashMap::new(),
             sidebar_github_projects: HashSet::new(),
             disk_generation: 0,
             disk_project: None,

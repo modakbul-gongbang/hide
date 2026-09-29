@@ -91,18 +91,28 @@ struct CachedProject {
 type Cache = Arc<Mutex<HashMap<PathBuf, CachedProject>>>;
 
 pub struct GithubReader {
-    inner: BackgroundRead<GithubRequest, GithubSnapshot>,
+    inner: BackgroundRead<GithubRequest, GithubAnswer>,
+}
+
+pub struct GithubAnswer {
+    pub request: GithubRequest,
+    pub snapshot: GithubSnapshot,
 }
 
 impl GithubReader {
     pub fn new() -> Self {
         let cache: Cache = Arc::default();
         Self {
-            inner: BackgroundRead::on_change(Duration::ZERO, move |request| read(&cache, request)),
+            inner: BackgroundRead::on_change(Duration::ZERO, move |request: &GithubRequest| {
+                GithubAnswer {
+                    request: request.clone(),
+                    snapshot: read(&cache, request),
+                }
+            }),
         }
     }
 
-    pub fn read_if_due(&mut self, request: GithubRequest) -> Option<GithubSnapshot> {
+    pub fn read_if_due(&mut self, request: GithubRequest) -> Option<GithubAnswer> {
         self.inner.poll(request)
     }
 }
@@ -328,9 +338,9 @@ fn read_issues(
     // One sentinel proves overflow; ordinary gh list sorts by creation.
     let (listed, mut warning) = with_optional_projects(|include_projects| {
         let fields = if include_projects {
-            "number,title,url,state,projectItems,updatedAt"
+            "number,title,url,state,projectItems,updatedAt,createdAt"
         } else {
-            "number,title,url,state,updatedAt"
+            "number,title,url,state,updatedAt,createdAt"
         };
         let output = gh(
             Some(root),
@@ -578,6 +588,7 @@ pub(crate) fn create_issue(
         state: "OPEN".into(),
         project_status: None,
         updated_at_unix_ms: Some(now_unix_ms()),
+        created_at_unix_ms: None,
         blocked_by: Vec::new(),
     })
 }
@@ -878,7 +889,7 @@ fn issue_query(
             .repository
             .split_once('/')
             .expect("validated repository");
-        query.push_str(&format!("r{index}:repository(owner:\"{owner}\",name:\"{name}\"){{issue(number:{}){{number title url state updatedAt{projects}}}}}", valid.number));
+        query.push_str(&format!("r{index}:repository(owner:\"{owner}\",name:\"{name}\"){{issue(number:{}){{number title url state updatedAt createdAt{projects}}}}}", valid.number));
     }
     query.push('}');
     Ok(query)
@@ -2037,6 +2048,7 @@ esac"#,
             state: "OPEN".into(),
             project_status: None,
             updated_at_unix_ms: None,
+            created_at_unix_ms: None,
             blocked_by: Vec::new(),
         };
         let query = dependency_query(&[

@@ -561,6 +561,7 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
   const blocked = card.blockedBy.length > 0;
   const dimmed = card.stage === "done" || (graph !== undefined && blocked);
   const chips = card.chip !== null || card.pr !== null;
+  const createdAge = relativeActivity(task.created_at_unix_ms, Date.now());
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
     const self = event.target === event.currentTarget;
@@ -628,6 +629,11 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
           </span>
         ) : null}
         <span className="flex-1" />
+        {createdAge ? (
+          <span className="shrink-0 font-mono text-caption text-muted-foreground" data-issue-created-age="true" aria-label={`Created ${createdAge} ago`}>
+            {createdAge}
+          </span>
+        ) : null}
         {card.sourceFailure ? <SourceFailureMark text={card.sourceFailure} /> : null}
         {graph?.status ? (
           <span className="shrink-0 text-caption text-muted-foreground group-focus-within/card:hidden group-hover/card:hidden" data-card-status="true">
@@ -1051,6 +1057,7 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
   const { task } = card;
   const word = turnWord(card);
   const age = card.shown[0]?.elapsed ?? relativeActivity(card.updatedAt, now);
+  const createdAge = relativeActivity(task.created_at_unix_ms, now);
   const hasRows = card.rows.length > 0;
   const selected = page.panel === task.key;
   return (
@@ -1110,6 +1117,7 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
           ) : null}
           {card.chip ? <span className="max-w-(--home-collapsed-width) truncate">{card.chip.branch}</span> : null}
           {card.chip?.ahead != null ? <span>↑{card.chip.ahead}</span> : null}
+          {createdAge ? <span data-issue-created-age="true" aria-label={`Created ${createdAge} ago`}>{createdAge}</span> : null}
           {age ? <span className="min-w-(--size-control-compact) text-right">{age}</span> : null}
         </span>
       </div>

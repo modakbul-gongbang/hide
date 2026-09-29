@@ -145,6 +145,7 @@ export type Issue = {
   state: string;
   project_status: string | null;
   updated_at_unix_ms: number | null;
+  created_at_unix_ms: number | null;
 };
 
 /** The issue a checkout is linked to and where the link came from (`IssueLinkSnapshot`). */
@@ -168,6 +169,7 @@ export type Task = {
   open: boolean;
   /** When the source last changed it, for the backlog's order and age. */
   updated_at_unix_ms?: number | null;
+  created_at_unix_ms?: number | null;
   /** The open tasks this one waits on, possibly of another project (`TaskRefSnapshot`). */
   blocked_by?: TaskRef[];
 };
@@ -1057,6 +1059,7 @@ export type ProjectSessions = {
 };
 
 export type SnapshotRest = {
+  git_worktrees_loading?: boolean;
   navigator?: {
     focused_workspace_id?: string | null;
     focused_checkout_id?: string | null;

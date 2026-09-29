@@ -39,6 +39,8 @@ pub struct TaskSnapshot {
     pub open: bool,
     /// When the source last changed it, for the backlog's order and age.
     pub updated_at_unix_ms: Option<u64>,
+    /// Creation time from the source, absent when that source did not provide it.
+    pub created_at_unix_ms: Option<u64>,
     /// The open tasks this one waits on, which may belong to another project
     /// (PRD task-agents-views D-09, D-10); the source records them.
     pub blocked_by: Vec<TaskRefSnapshot>,
@@ -273,6 +275,7 @@ pub fn local_tasks(project_path: &str, read: LocalRead<'_>, chosen: bool) -> Pro
                         title: issue.title.clone(),
                         open: issue.open,
                         updated_at_unix_ms: Some(issue.updated_at_unix_ms),
+                        created_at_unix_ms: Some(issue.created_at_unix_ms),
                         blocked_by: Vec::new(),
                     })
                     .collect()
@@ -301,6 +304,7 @@ fn github_task(issue: &IssueSnapshot, repository: Option<&str>) -> TaskSnapshot 
         title: issue.title.clone(),
         open: issue.state == "OPEN",
         updated_at_unix_ms: issue.updated_at_unix_ms,
+        created_at_unix_ms: issue.created_at_unix_ms,
         blocked_by: issue
             .blocked_by
             .iter()
@@ -327,6 +331,7 @@ mod tests {
             state: state.into(),
             project_status: None,
             updated_at_unix_ms: None,
+            created_at_unix_ms: None,
             blocked_by: Vec::new(),
         }
     }
