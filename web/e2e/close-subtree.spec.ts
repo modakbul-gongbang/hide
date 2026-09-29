@@ -328,12 +328,16 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     await page.locator('[data-sidebar-mode="projects"]').click();
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${branch}"]`) });
-    // The fixture branch has nothing ahead of main, so the core reads it as
-    // merged and folds its row under Inactive; wait for that, then open it.
-    await page.locator('[data-inactive-checkouts][aria-expanded="false"]').click({ timeout: 30_000 });
-    await expect(feature).toBeVisible({ timeout: 30_000 });
-    await feature.locator("[data-checkout-menu]").click({ button: "right" });
-    await page.getByRole("menu", { name: `${branch} actions` }).locator('[data-menu-item="delete_worktree"]').click();
+    // The fixture branch has nothing ahead of main, so the core folds its row
+    // under Inactive whenever it reads that, which may be mid-step: opening
+    // the menu and choosing Delete is retried as one step, unfolding first.
+    await expect(async () => {
+      if (await page.getByRole("menu").isVisible()) await page.keyboard.press("Escape");
+      const folded = page.locator('[data-inactive-checkouts][aria-expanded="false"]');
+      if (await folded.isVisible()) await folded.click();
+      await feature.locator("[data-checkout-menu]").click({ button: "right", timeout: 2_000 });
+      await page.getByRole("menu", { name: `${branch} actions` }).locator('[data-menu-item="delete_worktree"]').click({ timeout: 2_000 });
+    }).toPass({ timeout: 30_000, intervals: [500] });
 
     const dialog = page.locator("[data-delete-worktree]");
     await expect(dialog.locator("[data-removal-subtree]")).toContainText("1 agent spawned from this worktree runs outside it:", { timeout: 30_000 });
