@@ -538,7 +538,12 @@ The facts line holds only facts about storage: for a Local Git project the workt
 The disk number's tooltip lists build cache, dependencies, worktree source, the folders Hide does not know and the shared Git data, and pressing the number opens the disk cleanup sheet.
 `N merged → 정리` opens the same sheet filtered to finished checkouts; the `정리할 것` fold on Agents and the lane's own `정리` (the Delete worktree dialog) are unchanged.
 The warning cell `여유 X GB · Y GB 비울 수 있음` stands only once the measurement is back and the volume has less than 10 GB free; Y is the build cache and dependencies of finished checkouts no agent is working in, and pressing the cell opens the sheet filtered to finished checkouts.
-Opening a local Git project's Overview asks the core to measure its disk and to read its issues; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
+Opening a local Git project's Overview asks the core to measure its disk and re-read that project's worktree Git facts, pull requests and issues in the background.
+The previous Git facts and pull requests stay visible while the read runs, and a small icon beside the facts line spins until both reads finish without moving the line.
+The size reads `… GB` while measurement runs and is left out, with the reason only in the diagnostic log, when a part cannot be read.
+Local checkout commits, branch switches, pulls, merges, fetches, rebases and staging changes refresh that repository's worktree facts after the Git directory becomes quiet; Hide does not fetch automatically, so `behind origin` follows the local remote ref.
+An edit confined to a working-tree file is reflected when the Overview opens again.
+Each issue card and List row shows its creation age in the same compact relative-time form used for activity, or no age when its source did not provide creation time; the backlog remains sorted by latest update.
 The Overview of every project keeps its tab row, `Tasks · Agents · Projects`: the Tasks board mixes every project's issues, Agents is the same checkout lanes or lineages over every project with the project's name above each lane head, and Projects is the list of every registered project by device.
 Its Agents tab carries the count of agents it is the operator's turn with; there is no band under the header.
 Its title row carries Add project in the desktop app and 새 이슈 (for the project in front, else the first one with a source), and its facts line the project count, the open issues once every source has answered, and, only when every project can give its part, the open pull-request and merged totals.

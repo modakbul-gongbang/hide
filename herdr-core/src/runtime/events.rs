@@ -109,6 +109,12 @@ pub(super) struct GithubRequestPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OverviewRefreshPayload {
+    pub(super) workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CreateWorkspacePayload {
     /// The device that holds the folder; this machine when absent. A
     /// device's own helper judges the folder (`Call::Registrable`).
@@ -1184,6 +1190,7 @@ pub(super) enum Event {
     TaskAgentRetry(TaskAgentRetryPayload),
     RemoveWorktree(RemoveWorktreePayload),
     GithubRequest(GithubRequestPayload),
+    OverviewRefresh(OverviewRefreshPayload),
     /// The card's refresh button, opening the delete confirmation, and a
     /// completed worktree removal. All three say "read again now" about a
     /// different set of readers, and none needs a target: the card is always
@@ -1371,6 +1378,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "task_agent_retry" => decode!(TaskAgentRetryPayload, TaskAgentRetry),
         "remove_worktree" => decode!(RemoveWorktreePayload, RemoveWorktree),
         "github_request" => decode!(GithubRequestPayload, GithubRequest),
+        "overview_refresh" => decode!(OverviewRefreshPayload, OverviewRefresh),
         "cleanup_review" => decode!(CleanupReviewPayload, CleanupReview),
         "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
         "cleanup_dismiss" => Ok(Event::CleanupDismiss),
@@ -2966,6 +2974,31 @@ impl Runtime {
                     self.apply_pull_requests();
                 }
                 first || payload.refresh
+            }
+            Event::OverviewRefresh(payload) => {
+                let project = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .find(|workspace| {
+                        workspace.id == payload.workspace_id
+                            && workspace.is_git
+                            && workspace.remote_target_id.is_none()
+                    })
+                    .map(|workspace| workspace.path.clone());
+                let Some(project) = project else {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "overview", "kind": "refresh.invalid_project",
+                        "workspace_id": payload.workspace_id
+                    }));
+                    return false;
+                };
+                self.sidebar_github_projects.insert(project.clone());
+                self.refresh_pull_requests(&project);
+                self.refresh_project_worktrees(&project);
+                self.apply_pull_requests();
+                true
             }
             Event::CleanupReview(payload) => self.review_cleanup(&payload.workspace_id),
             Event::CleanupConfirm(payload) => self.confirm_cleanup(payload),

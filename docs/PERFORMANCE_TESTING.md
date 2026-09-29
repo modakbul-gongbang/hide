@@ -262,10 +262,13 @@ Measure baseline and candidate idle/driven work separately with the same project
 
 ### Project worktrees, disk and cleanup
 
-The Overview reads nothing of its own: every group header and stat cell is derived from the worktree catalog the sidebar already reads, and opening or closing the Overview adds no Git command.
+Each opening of a local Git project's Overview requests a background worktree and pull request read for that project; closing it adds no Git command.
+The previous catalog remains visible while that read runs.
 `behind_upstream` rides the same `rev-list --left-right --count @{u}...HEAD` call that already counted unpushed commits, so a fetched-side count costs no extra process, and `created_at_unix_ms` is one `stat` of the worktree's gitdir in the same background pass off the mutex.
 The catalog pass is bounded by the worktree count; a project with many worktrees pays one status, one rev-list and one stat per worktree per change, never per tick or per agent update.
-A change is scoped to its own repository: each project carries its own freshness key (its git directory stamps and its working-tree sample), so a commit in one registered project re-reads that project alone and every other project is answered from the worker's last read; `a_commit_in_one_project_does_not_rerun_status_in_another` owns this.
+A Git HEAD, index or ref change is scoped to its own repository: the OS watcher groups a burst into one generation change, so that project alone is re-read and every other project is answered from the worker's last read.
+Idle repositories do not run Git commands or sample working-tree files; content-only edits are reflected when the Overview opens again.
+`a_commit_in_one_project_does_not_rerun_status_in_another` and `idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does` own these boundaries.
 A finished worktree removal follows the same scope: its row leaves the catalog under the lock with no Git call, the coordinator rebuilds the rows on its next wake, and the reader re-reads only the removed worktree's repository; `a_finished_removal_drops_its_row_at_once_and_an_older_read_cannot_bring_it_back` owns this.
 Every `git` the catalog runs is bounded by `GIT_DEADLINE` (15 s) and drained off-thread past the pipe buffer; a repository that outruns it reports its status unavailable and a `git.deadline_exceeded` diagnostic rather than holding the other projects' answer, which a status over evicted iCloud files once did for minutes.
 Group ordering, chips and search are pure functions of the accepted snapshot; agent status updates redraw rows and never recompute the catalog.

@@ -68,7 +68,7 @@ function fakeGh(dir: string): string {
   const bin = path.join(dir, "gh-bin");
   fs.mkdirSync(bin, { recursive: true });
   const issues = JSON.stringify([
-    { number: 2, title: "태스크 출처 어댑터", url: "https://github.com/acme/repo/issues/2", state: "OPEN", projectItems: [], updatedAt: "2026-09-26T00:00:00Z" },
+    { number: 2, title: "태스크 출처 어댑터", url: "https://github.com/acme/repo/issues/2", state: "OPEN", projectItems: [], updatedAt: "2026-09-26T00:00:00Z", createdAt: "2026-09-20T00:00:00Z" },
     { number: 3, title: "Graph 뷰", url: "https://github.com/acme/repo/issues/3", state: "OPEN", projectItems: [], updatedAt: "2026-09-25T00:00:00Z" },
     { number: 4, title: "리뷰 중인 이슈", url: "https://github.com/acme/repo/issues/4", state: "OPEN", projectItems: [], updatedAt: "2026-09-24T00:00:00Z" },
   ]);
@@ -120,7 +120,7 @@ case "$*" in
 esac
 case "$1 $2" in
   "auth status") exit 0 ;;
-  "pr list") printf '%s\\n' '${pulls}' ;;
+  "pr list") sleep 1; printf '%s\\n' '${pulls}' ;;
   "repo view") printf '%s\\n' '{"nameWithOwner":"acme/repo"}' ;;
   "issue list") printf '%s\\n' '${issues}' ;;
   "issue view")
@@ -183,6 +183,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     git(repo, ["remote", "add", "origin", origin]);
     git(repo, ["push", "-q", "origin", "main"]);
     git(repo, ["remote", "set-head", "origin", "main"]);
+    git(repo, ["branch", "--set-upstream-to=origin/main", "main"]);
     const tree = (name: string) => path.join(herdr.root, `repo-${name}`);
     git(repo, ["worktree", "add", "-b", "prd/web-overview-with-a-long-branch-name", tree("working")]);
     git(tree("working"), ["commit", "--allow-empty", "-m", "overview work"]);
@@ -236,6 +237,10 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     const overview = page.locator("[data-overview-screen]");
     await expect(overview).toBeVisible();
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
+    await expect.poll(() => sent.get("overview_refresh") ?? 0).toBe(1);
+    await expect(overview.locator('[data-overview-refreshing="true"]')).toBeVisible();
+    await expect(overview.locator('[data-overview-refreshing="true"] svg')).toHaveClass(/animate-spin/);
+    await overview.screenshot({ path: path.join(process.env.HIDE_E2E_SCREENSHOT_DIR ?? herdr.root, "overview-refreshing-stats.png") });
     await expect(overview).toHaveAttribute("data-agents-mode", "checkouts");
     const lanes = overview.locator("[data-lens-mode=checkouts] [data-lens-lane]");
     const lane = (branch: string) => overview.locator("[data-lens-lane]", { has: page.locator("[data-lens-head]", { hasText: branch }) });
@@ -266,6 +271,15 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(page.locator('[data-stat="worktrees"]')).toHaveText(/6 worktrees/, { timeout: 20_000 });
     await expect(page.locator('[data-stat="disk"]')).toHaveText(/^\d+(\.\d)? (B|KB|MB|GB)$/, { timeout: 30_000 });
     await expect(page.locator('[data-stat="merged"]')).toHaveText("1 merged → 정리", { timeout: 20_000 });
+    await expect(overview.locator('[data-overview-refreshing="true"]')).toHaveCount(0, { timeout: 20_000 });
+    // A local ref move refreshes the catalog while Overview stays open.
+    git(repo, ["switch", "-c", "behind-test"]);
+    git(repo, ["commit", "--allow-empty", "-m", "ahead on origin"]);
+    git(repo, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(repo, ["switch", "main"]);
+    await expect(overview.locator('[data-stat="behind"]')).toHaveText("main ↓1 behind origin", { timeout: 20_000 });
+    git(repo, ["update-ref", "refs/remotes/origin/main", "main"]);
+    await expect(overview.locator('[data-stat="behind"]')).toHaveCount(0, { timeout: 20_000 });
     await expect(overview.locator('[data-stat="open-prs"], [data-stat="open-issues"]')).toHaveCount(0);
     await expect(overview.locator("[data-agents-mode-item]")).toHaveCount(2);
     // New agent and 새 이슈 stay on the title row (B9).
@@ -473,6 +487,9 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(panel).toHaveAttribute("data-issue-panel", "github:acme/repo#2");
     await expect(overview.locator("[data-issues-split]")).toBeVisible();
     await expect(issueCard(2)).toHaveAttribute("data-selected", "true");
+    await expect(issueCard(2).locator('[data-issue-created-age]')).toHaveText(/^\d+d$/);
+    await expect(issueCard(3).locator('[data-issue-created-age]')).toHaveCount(0);
+    await issueCard(2).screenshot({ path: path.join(process.env.HIDE_E2E_SCREENSHOT_DIR ?? herdr.root, "overview-issue-created-age.png") });
     await expect(overview.locator("[data-tasks-mode-item]")).toHaveCount(3);
     await expect(column("working").locator("[data-overview-card]")).toHaveCount(1, { timeout: 20_000 });
     await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(1);
@@ -670,6 +687,8 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await tile("issues").locator("[data-lens-tile-button]").click();
     const list = page.locator("[data-tasks-list]");
     await expect(list.locator("[data-list-group]").first()).toHaveAttribute("data-list-group", "working");
+    await expect(list.locator('[data-issue-row="github:acme/repo#2"] [data-issue-created-age]')).toHaveText(/^\d+d$/);
+    await expect(list.locator('[data-issue-row="github:acme/repo#3"] [data-issue-created-age]')).toHaveCount(0);
     await page.locator('[data-tasks-mode-item="board"]').click();
 
     // The Sessions tile is the project's Sessions (B5).

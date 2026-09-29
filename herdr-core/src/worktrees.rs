@@ -8,9 +8,12 @@
 //! with many worktrees costs wall time on that thread and never coordinator
 //! latency.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use notify::{RecursiveMode, Watcher};
 
 use crate::model::{
     ProjectWorktreesSnapshot, UnpushedSnapshot, WorktreeCatalogSnapshot,
@@ -39,6 +42,13 @@ pub struct WorktreeRequest {
 pub struct WorktreeAnswer {
     pub catalog: WorktreeCatalogSnapshot,
     pub removals: u64,
+    /// The input this answer actually read, to keep loading visible when a
+    /// later Overview opening overtook an in-flight answer.
+    pub request: WorktreeRequest,
+    /// The Git facts observed by this read still match the reader's latest
+    /// watch state. A ref write can overtake a read without changing the
+    /// runtime's explicit request.
+    pub observations_current: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,12 +61,11 @@ pub struct WorktreeProjectRequest {
     /// repository default branch.
     pub bases: BTreeMap<String, String>,
     pub base_override: Option<String>,
+    /// An explicit read of this project, independent of other repositories.
+    pub generation: u64,
 }
 
-type FileStamps = Vec<(PathBuf, Option<std::time::SystemTime>, u64)>;
-
-/// One project's freshness key: the request that describes it, the stamps of
-/// its own git directory, and a counter its own working-tree files advance.
+/// One project's freshness key: its request and OS watch generation.
 /// Each project carries its own key so a commit in one repository re-reads
 /// that repository alone. The first version keyed the whole catalog on every
 /// project's stamps together, and a checkpoint commit anywhere re-ran
@@ -65,28 +74,183 @@ type FileStamps = Vec<(PathBuf, Option<std::time::SystemTime>, u64)>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProjectObservation {
     request: WorktreeProjectRequest,
-    stamps: FileStamps,
-    content_generation: u64,
+    git_generation: u64,
 }
 
 /// The generation, the settled removals and every project's observation.
 type ObservedRequest = (u64, u64, Vec<ProjectObservation>);
 
 /// One project's answer. `None` is a folder that is not a repository, which
-/// contributes no project entry at all. The paths are what the working-tree
-/// sampler stats between reads.
-type ProjectAnswer = (PathBuf, Option<ProjectWorktreesSnapshot>, Vec<PathBuf>);
+/// contributes no project entry at all.
+type ProjectAnswer = (PathBuf, Option<ProjectWorktreesSnapshot>);
 
-const FILE_STATS_PER_WAKE: usize = 32;
+const GIT_WATCH_CAP: usize = 64;
+const GIT_WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// One OS watcher for the local repositories in this reader. The callback
+/// records only bounded project identities; the coordinator drains them after
+/// a quiet window and lets its existing background reader do the Git work.
+/// The Explorer watcher in hided polls only the selected checkout's visible
+/// directories, so it cannot observe every registered project's Git refs
+/// without idle polling and another daemon-to-core event path.
+struct GitWatch {
+    watcher: Option<notify::RecommendedWatcher>,
+    roots: Arc<Mutex<BTreeMap<PathBuf, Vec<PathBuf>>>>,
+    pending: Arc<Mutex<BTreeMap<PathBuf, Instant>>>,
+    registered: BTreeMap<PathBuf, PathBuf>,
+    requested_roots: Vec<PathBuf>,
+}
+
+impl GitWatch {
+    fn new() -> Self {
+        let roots = Arc::new(Mutex::new(BTreeMap::<PathBuf, Vec<PathBuf>>::new()));
+        let pending = Arc::new(Mutex::new(BTreeMap::<PathBuf, Instant>::new()));
+        let callback_roots = Arc::clone(&roots);
+        let callback_pending = Arc::clone(&pending);
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            match event {
+                Ok(event) => {
+                    let roots = callback_roots
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    let mut pending = callback_pending
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    for path in &event.paths {
+                        for (common, projects) in roots.iter() {
+                            if path.strip_prefix(common).is_ok_and(git_fact_path) {
+                                for project in projects {
+                                    pending.insert(project.clone(), Instant::now());
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(error) => crate::diagnostic!(serde_json::json!({
+                    "component": "worktrees", "kind": "git_watch.failed", "message": error.to_string()
+                })),
+            }
+        });
+        let watcher = match watcher {
+            Ok(watcher) => Some(watcher),
+            Err(error) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "worktrees", "kind": "git_watch.start_failed", "message": error.to_string()
+                }));
+                None
+            }
+        };
+        Self {
+            watcher,
+            roots,
+            pending,
+            registered: BTreeMap::new(),
+            requested_roots: Vec::new(),
+        }
+    }
+
+    fn reconcile(&mut self, projects: &[WorktreeProjectRequest]) {
+        let requested_roots: Vec<_> = projects
+            .iter()
+            .map(|project| project.root_path.clone())
+            .collect();
+        if requested_roots == self.requested_roots {
+            return;
+        }
+        self.requested_roots = requested_roots;
+        let desired: BTreeMap<PathBuf, PathBuf> = projects
+            .iter()
+            .take(GIT_WATCH_CAP)
+            .filter_map(|project| {
+                crate::git_dir::discover(&project.root_path)
+                    .map(|repository| (project.root_path.clone(), repository.common_dir))
+            })
+            .collect();
+        if projects.len() > GIT_WATCH_CAP {
+            crate::diagnostic!(serde_json::json!({
+                "component": "worktrees", "kind": "git_watch.over_budget",
+                "projects": projects.len(), "cap": GIT_WATCH_CAP
+            }));
+        }
+        let Some(watcher) = self.watcher.as_mut() else {
+            return;
+        };
+        if desired == self.registered {
+            return;
+        }
+        let desired_common: BTreeSet<_> = desired.values().cloned().collect();
+        let previous_common: BTreeSet<_> = self.registered.values().cloned().collect();
+        for common in previous_common.difference(&desired_common) {
+            let _ = watcher.unwatch(common);
+        }
+        let mut registered = BTreeMap::new();
+        for (project, common) in desired {
+            if !previous_common.contains(&common)
+                && let Err(error) = watcher.watch(&common, RecursiveMode::Recursive)
+            {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "worktrees", "kind": "git_watch.project_failed",
+                    "project": project, "message": error.to_string()
+                }));
+                continue;
+            }
+            registered.insert(project, common);
+        }
+        let mut roots = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
+        for (project, common) in &registered {
+            roots
+                .entry(common.clone())
+                .or_default()
+                .push(project.clone());
+        }
+        *self.roots.lock().unwrap_or_else(|error| error.into_inner()) = roots;
+        self.registered = registered;
+        self.pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .retain(|project, _| self.registered.contains_key(project));
+    }
+
+    fn settled(&self) -> Vec<PathBuf> {
+        let now = Instant::now();
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let settled: Vec<_> = pending
+            .iter()
+            .filter(|(_, last)| now.duration_since(**last) >= GIT_WATCH_DEBOUNCE)
+            .map(|(project, _)| project.clone())
+            .collect();
+        for project in &settled {
+            pending.remove(project);
+        }
+        settled
+    }
+
+    fn has_pending(&self) -> bool {
+        !self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_empty()
+    }
+}
+
+fn git_fact_path(relative: &Path) -> bool {
+    relative.as_os_str().is_empty()
+        || matches!(
+            relative.to_str(),
+            Some("HEAD" | "index" | "packed-refs" | "FETCH_HEAD")
+        )
+        || relative.starts_with("refs")
+        || relative.starts_with("worktrees")
+}
 
 pub struct WorktreeReader {
-    inner: BackgroundRead<ObservedRequest, (u64, Vec<ProjectAnswer>)>,
-    /// Every path the last answer named, tagged with the requested root it
-    /// belongs to.
-    known_paths: Vec<(PathBuf, PathBuf)>,
-    known_stamps: BTreeMap<PathBuf, (Option<std::time::SystemTime>, u64)>,
-    scan_cursor: usize,
-    content_generations: BTreeMap<PathBuf, u64>,
+    inner: BackgroundRead<ObservedRequest, (ObservedRequest, Vec<ProjectAnswer>)>,
+    git_watch: GitWatch,
+    git_generations: BTreeMap<PathBuf, u64>,
 }
 
 impl WorktreeReader {
@@ -96,75 +260,35 @@ impl WorktreeReader {
                 let cache = std::sync::Mutex::new(ProjectCache::new());
                 move |request: &ObservedRequest| read_observed(&cache, request)
             }),
-            known_paths: Vec::new(),
-            known_stamps: BTreeMap::new(),
-            scan_cursor: 0,
-            content_generations: BTreeMap::new(),
+            git_watch: GitWatch::new(),
+            git_generations: BTreeMap::new(),
         }
     }
 
     pub fn read_if_due(&mut self, request: WorktreeRequest) -> Option<WorktreeAnswer> {
+        self.git_watch.reconcile(&request.projects);
+        for project in self.git_watch.settled() {
+            let generation = self.git_generations.entry(project).or_insert(0);
+            *generation = generation.wrapping_add(1);
+        }
         let observations = request
             .projects
             .iter()
-            .map(|project| {
-                let mut stamps = Vec::new();
-                if let Some(repository) = crate::git_dir::discover(&project.root_path) {
-                    for base in [repository.git_dir, repository.common_dir] {
-                        for name in [
-                            "HEAD",
-                            "index",
-                            "packed-refs",
-                            "refs",
-                            "worktrees",
-                            "FETCH_HEAD",
-                        ] {
-                            stat_tree(&base.join(name), &mut stamps);
-                        }
-                    }
-                }
-                ProjectObservation {
-                    request: project.clone(),
-                    stamps,
-                    content_generation: self
-                        .content_generations
-                        .get(&project.root_path)
-                        .copied()
-                        .unwrap_or(0),
-                }
+            .map(|project| ProjectObservation {
+                request: project.clone(),
+                git_generation: self
+                    .git_generations
+                    .get(&project.root_path)
+                    .copied()
+                    .unwrap_or(0),
             })
             .collect();
-        // Sample a bounded slice of the paths discovered by the worker. A
-        // complete scan is spread across wakes, so content-only edits are
-        // eventually observed without making coordinator latency grow with
-        // repository size and without spawning a subprocess.
-        let sample_count = FILE_STATS_PER_WAKE.min(self.known_paths.len());
-        for offset in 0..sample_count {
-            let index = (self.scan_cursor + offset) % self.known_paths.len();
-            let (project, path) = self.known_paths[index].clone();
-            let stamp = stamp(&path);
-            match self.known_stamps.get_mut(&path) {
-                Some(previous) if *previous != stamp => {
-                    *previous = stamp;
-                    let generation = self.content_generations.entry(project).or_insert(0);
-                    *generation = generation.wrapping_add(1);
-                }
-                Some(_) => {}
-                None => {
-                    self.known_stamps.insert(path, stamp);
-                }
-            }
-        }
-        if !self.known_paths.is_empty() {
-            self.scan_cursor = (self.scan_cursor + sample_count) % self.known_paths.len();
-        }
-        let (removals, answers) =
-            self.inner
-                .poll((request.generation, request.removals, observations))?;
+        let observed_request = (request.generation, request.removals, observations);
+        let (answered_request, answers) = self.inner.poll(observed_request.clone())?;
+        let observations_current =
+            answered_request == observed_request && !self.git_watch.has_pending();
         let mut projects: Vec<ProjectWorktreesSnapshot> = Vec::new();
-        let mut paths = Vec::new();
-        for (root, project, project_paths) in answers {
-            paths.extend(project_paths.into_iter().map(|path| (root.clone(), path)));
+        for (_, project) in answers {
             // Two registrations inside one repository describe one project.
             if let Some(project) = project
                 && !projects
@@ -174,30 +298,27 @@ impl WorktreeReader {
                 projects.push(project);
             }
         }
-        if self.known_paths != paths {
-            self.known_paths = paths;
-            self.known_stamps.clear();
-            self.scan_cursor = 0;
-        }
-        self.content_generations
+        self.git_generations
             .retain(|root, _| request.projects.iter().any(|p| &p.root_path == root));
         Some(WorktreeAnswer {
             catalog: WorktreeCatalogSnapshot { projects },
-            removals,
+            removals: answered_request.1,
+            observations_current,
+            request: WorktreeRequest {
+                projects: answered_request
+                    .2
+                    .into_iter()
+                    .map(|observation| observation.request)
+                    .collect(),
+                generation: answered_request.0,
+                removals: answered_request.1,
+            },
         })
     }
 }
 
 /// The last answer per requested root, with the observation that produced it.
-type ProjectCache = BTreeMap<
-    PathBuf,
-    (
-        u64,
-        ProjectObservation,
-        Option<ProjectWorktreesSnapshot>,
-        Vec<PathBuf>,
-    ),
->;
+type ProjectCache = BTreeMap<PathBuf, (u64, ProjectObservation, Option<ProjectWorktreesSnapshot>)>;
 
 /// The worker's read: every project whose observation moved is read again,
 /// every other one is answered from the last read. The cache lives with the
@@ -206,7 +327,7 @@ type ProjectCache = BTreeMap<
 fn read_observed(
     cache: &std::sync::Mutex<ProjectCache>,
     request: &ObservedRequest,
-) -> (u64, Vec<ProjectAnswer>) {
+) -> (ObservedRequest, Vec<ProjectAnswer>) {
     let (generation, removals, observations) = request;
     let mut cache = cache
         .lock()
@@ -216,100 +337,26 @@ fn read_observed(
         .iter()
         .map(|observation| {
             let root = observation.request.root_path.clone();
-            if let Some((cached_generation, cached, project, paths)) = cache.get(&root)
+            if let Some((cached_generation, cached, project)) = cache.get(&root)
                 && cached_generation == generation
                 && cached == observation
             {
-                return (root, project.clone(), paths.clone());
+                return (root, project.clone());
             }
-            let (project, paths) = read_project_request(&observation.request);
+            let project = read(&observation.request);
             cache.insert(
                 root.clone(),
-                (
-                    *generation,
-                    observation.clone(),
-                    project.clone(),
-                    paths.clone(),
-                ),
+                (*generation, observation.clone(), project.clone()),
             );
-            (root, project, paths)
+            (root, project)
         })
         .collect();
-    (*removals, answers)
-}
-
-/// One project's rows and the working-tree paths behind them.
-fn read_project_request(
-    project: &WorktreeProjectRequest,
-) -> (Option<ProjectWorktreesSnapshot>, Vec<PathBuf>) {
-    let Some(mut snapshot) = read(project) else {
-        return (None, Vec::new());
-    };
-    let mut paths = Vec::new();
-    for row in &mut snapshot.worktrees {
-        let root = PathBuf::from(&row.path);
-        paths.push(root.clone());
-        if !row.missing {
-            match git(
-                &root,
-                &[
-                    "ls-files",
-                    "-z",
-                    "--cached",
-                    "--others",
-                    "--exclude-standard",
-                ],
-            ) {
-                Ok(files) => {
-                    for file in files.split('\0').filter(|f| !f.is_empty()) {
-                        let path = root.join(file);
-                        for parent in path.ancestors().take_while(|p| p.starts_with(&root)) {
-                            paths.push(parent.to_owned());
-                        }
-                    }
-                }
-                Err(reason) => row.unavailable_reason = Some(reason),
-            }
-        }
-    }
-    paths.sort();
-    paths.dedup();
-    (Some(snapshot), paths)
+    ((*generation, *removals, observations.clone()), answers)
 }
 
 impl Default for WorktreeReader {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn stat_one(path: &Path, stamps: &mut Vec<(PathBuf, Option<std::time::SystemTime>, u64)>) {
-    let (modified, len) = stamp(path);
-    stamps.push((path.to_owned(), modified, len));
-}
-
-fn stamp(path: &Path) -> (Option<std::time::SystemTime>, u64) {
-    let meta = std::fs::metadata(path).ok();
-    (
-        meta.as_ref().and_then(|m| m.modified().ok()),
-        meta.map_or(0, |m| m.len()),
-    )
-}
-
-fn stat_tree(path: &Path, stamps: &mut Vec<(PathBuf, Option<std::time::SystemTime>, u64)>) {
-    stat_one(path, stamps);
-    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
-        return;
-    }
-    if let Ok(entries) = std::fs::read_dir(path) {
-        let mut paths: Vec<_> = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .collect();
-        paths.sort();
-        for child in paths {
-            stat_tree(&child, stamps);
-        }
     }
 }
 
