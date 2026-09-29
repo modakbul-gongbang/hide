@@ -5,6 +5,7 @@ Read [docs/README.md](docs/README.md) before choosing supporting documents: it s
 Do not apply superseded architecture decisions, old milestone reports, or old PRD implementation paths to current code.
 Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
 Before changing browser displays, read `docs/BROWSER_DISPLAYS.md` for who owns a page, the `file:` address boundary, and native display verification.
+Before calling a change verified, read `docs/VERIFICATION.md` for which check proves the claim, the traps that made a check prove nothing, and the native QA tools that can address a candidate app without reaching the operator's.
 
 ## Repository Layout
 
