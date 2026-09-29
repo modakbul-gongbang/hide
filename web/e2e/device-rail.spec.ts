@@ -110,9 +110,12 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect.poll(() => (sent.get("retry_connect") ?? 0) - retried).toBe(1);
     await expect(disconnected).toBeVisible();
 
-    // The Korean name truncates inside the sidebar and the rail without overflow (B46).
-    const overflow = await sidebar.evaluate((nav) => nav.scrollWidth - nav.clientWidth);
-    expect(overflow).toBeLessThanOrEqual(0);
+    // The Korean name truncates inside the rail, the header line and the content column without pushing any sideways (B46).
+    // The nav itself is not measured: its drag edge straddles its right side on purpose.
+    for (const part of ["[data-device-rail]", "[data-sidebar-title]", "[data-sidebar-content]"]) {
+      const overflow = await sidebar.locator(part).evaluate((element) => element.scrollWidth - element.clientWidth);
+      expect(overflow, part).toBeLessThanOrEqual(0);
+    }
     expect(await tile.locator("[data-rail-label]").evaluate((label) => label.scrollWidth > label.clientWidth)).toBe(true);
 
     // B4: the Inbox is a page state; the center does not change.

@@ -187,7 +187,7 @@ function searchDevices(rest: SnapshotRest): SearchDevice[] {
  */
 export function searchEntries(rest: SnapshotRest | null, screen: WorkspaceOnScreen | null = null): SearchEntry[] {
   if (!rest) return [];
-  const entries: SearchEntry[] = [START_AGENT_ENTRY, ...(screen ? workspaceCommands(rest, screen) : [])];
+  const entries: SearchEntry[] = [...(screen ? workspaceCommands(rest, screen) : []), START_AGENT_ENTRY];
   const front = frontDeviceId(rest);
   const devices = searchDevices(rest);
   for (const { device, agents, workspaces, allWorkspaces } of devices) {
@@ -236,7 +236,8 @@ export function searchEntries(rest: SnapshotRest | null, screen: WorkspaceOnScre
       }
     }
   }
-  for (const { device } of devices) {
+  // With this Mac alone there is no device to move to, so no device rows.
+  for (const { device } of devices.length > 1 ? devices : []) {
     entries.push({
       id: `device:${device.id}`,
       title: device.label,

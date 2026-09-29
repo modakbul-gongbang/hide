@@ -104,7 +104,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
 
     // ⌥T is one create_tab; the new tab is active with the core's next label.
-    const nextLabel = (await page.getByRole("button", { name: /^New tab / }).getAttribute("aria-label"))!.replace("New tab ", "");
+    const nextLabel = (await page.locator("[data-new-agent-tab]").first().getAttribute("aria-label"))!.replace("New tab ", "");
     await page.keyboard.press("Alt+KeyT");
     await expect(page.locator("[role=tab]")).toHaveCount(4);
     // The label is Herdr's: the strip shows an automatic label only until

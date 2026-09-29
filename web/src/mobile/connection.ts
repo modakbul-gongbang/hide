@@ -369,6 +369,9 @@ export function pairNow(): void {
 export function start(): void {
   const fragment = parseFragment(window.location.hash);
   window.addEventListener("online", retryNow);
+  // A socket outlives a lost network until a ping goes unanswered; the phone
+  // knows sooner, so the list and an open start sheet say so at once (B44).
+  window.addEventListener("offline", () => socket?.close());
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") retryNow();
   });

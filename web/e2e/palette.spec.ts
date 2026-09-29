@@ -51,7 +51,7 @@ test("⌘K groups agents, projects and checkouts, and the sidebar Search icon op
     await expect(page.locator("[data-palette-esc]")).toHaveText("Esc");
 
     // Agents under their project, then projects, then checkouts.
-    await expect(headings(page)).toHaveText(["fixture > AGENTS", "WORKSPACES > PROJECTS", "WORKSPACES > CHECKOUTS"]);
+    await expect(headings(page)).toHaveText(["COMMANDS", "fixture > AGENTS", "WORKSPACES > PROJECTS", "WORKSPACES > CHECKOUTS"]);
     const agents = page.locator('[data-palette-group^="agents:"]');
     await expect(agents.locator("[data-palette-row]")).toHaveCount(2);
 
@@ -115,7 +115,7 @@ test("⌘K groups agents, projects and checkouts, and the sidebar Search icon op
     await page.keyboard.press("Escape");
     await field.click();
     await expect(input).toBeFocused();
-    await expect(headings(page)).toHaveText(["WORKSPACE > COMMANDS", "fixture > AGENTS", "WORKSPACES > PROJECTS", "WORKSPACES > CHECKOUTS"]);
+    await expect(headings(page)).toHaveText(["WORKSPACE > COMMANDS", "COMMANDS", "fixture > AGENTS", "WORKSPACES > PROJECTS", "WORKSPACES > CHECKOUTS"]);
     await screenshot(page, "palette-light-default");
     // A query the agents match best brings their group above the commands'.
     await page.keyboard.type("Agent");
