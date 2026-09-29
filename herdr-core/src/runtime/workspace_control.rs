@@ -254,7 +254,15 @@ impl Runtime {
             Ok(material) => {
                 let key = (context.device_id.clone(), context.checkout_path.clone());
                 self.reconcile_view_displays();
-                self.apply_workspace_action(&key, &context, request_id, &action, material)
+                // A pane of a tab the operator is not looking at keeps the
+                // operator's fronts and only bookmarks its own tab (D-05).
+                let parked = self.parked_caller(&key, pane_id, &action);
+                let applied =
+                    self.apply_workspace_action(&key, &context, request_id, &action, material);
+                if let Ok(done) = &applied {
+                    self.note_control_view(&key, pane_id, &action, &done.view_id, parked);
+                }
+                applied
             }
             Err(refusal) => Err(refusal),
         };

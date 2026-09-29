@@ -75,6 +75,9 @@ When a connected pane selects, splits, moves, or closes a View through `hide vie
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 `hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
 An explicit local `--reveal` brings that Workspace and the opened View forward, opening its side panel if it was closed; without it, the side panel keeps its state.
+A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, adds or selects the View for its own tab's bookmark and leaves the front of every View area as the operator left it (see View bookmarks per Agent tab).
+Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front as before and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
+`hide view split`, `move` and `close` change the shared layout, so they apply at once from any tab.
 
 ### Agent areas
 
@@ -141,6 +144,25 @@ A focused divider moves with the arrow keys along its axis, one step and one cha
 No area gets narrower or shorter than its minimum, a divider stops where either neighbour would, and each side of a split keeps between 15 and 85 percent of it.
 An area whose last view leaves disappears, and its neighbour takes the space.
 When the last view closes, tools stay visible if enabled; otherwise the panel closes, with that state saved for the Workspace.
+
+### View bookmarks per Agent tab
+
+The View list, the layout, the side panel's state, pin and width, and every document's text belong to the Workspace, so they are the same whichever Agent tab is in front.
+Each Agent tab remembers, for every View area, the View that was in front while that tab was the active one, and gets it back when it is shown again.
+Showing a tab that no Agent area of the Workspace showed a moment before makes each area that still holds that tab's bookmarked View show it, in the same frame that shows the tab.
+A tab strip click, a sidebar agent or tab choice, the palette, a tab cycle, a pane in another checkout and a tab that Herdr's own focus moved to all do this; the tab's own bookmark applies to the Workspace it belongs to.
+Nothing opens, closes or splits: an area whose bookmarked View has closed or moved to another area keeps what it shows, and a tab with no bookmark changes nothing.
+A new tab, a delegated child moved to its own tab and every tab right after an update have none.
+The area in use, the keyboard and the panel's open, closed and pin state stay where they were; while the panel is closed the bookmark still applies, so opening it shows the tab's front.
+Moving focus between Agent areas that already show their tabs, or between the panes of one tab, restores nothing, so two agents side by side never swap the panel under the operator.
+When the front of a View area changes, the active tab remembers the new front.
+The View that went behind when another tab came forward stays in the strip, one click away, and choosing it is that tab's new bookmark.
+A bookmark points at a View, not at a file, so a preview View that another tab retargeted shows the new document when it returns; a pinned View is unaffected, and there is no preview View per tab.
+Bookmarks are saved with the Workspace and survive a restart, and a tab that closed or vanished loses its bookmark.
+Connected device Workspaces follow the same rules; they have one Agent area, so the visible tab changes when its Herdr's answer lands.
+The phone never shows or changes a bookmark, and no badge, mark, notice or setting shows one.
+Web owner: none, the shell draws each area's front as the snapshot names it.
+Core owner: `herdr-core/src/runtime/view_bookmarks.rs` (`track_view_bookmarks`, `parked_caller`), `herdr-core/src/view_bookmarks.rs`, tests in `herdr-core/src/runtime/tests/view_bookmarks.rs` and `web/e2e/view-bookmarks.spec.ts`.
 
 A Workspace holds at most 6 View areas, no area sits more than 3 splits deep, and at most 64 views are open at once.
 A split past the area or depth limit is refused with its reason, and an open past the view limit says so and keeps every currently open view as it was.
