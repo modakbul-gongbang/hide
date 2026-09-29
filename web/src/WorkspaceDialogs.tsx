@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { rememberedSelection, sendableModel, type AgentSelection } from "./agentPicker";
+import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
 import { AgentPicker } from "./components/agent-picker";
 import { Button } from "./components/ui/button";
@@ -242,7 +242,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
       branch: name,
       baseBranch: base || null,
       agentKind: agent.kind === "terminal" ? null : agent.kind,
-      model: sendableModel(agent, useShellStore.getState().rest?.status?.background_ai),
+      model: modelToSend(agent),
       purpose: purpose.trim() ? normalizePurpose(purpose.trim()) : null,
     });
   };

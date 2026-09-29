@@ -1,7 +1,7 @@
 import { FolderIcon, HomeIcon, ServerIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { rememberedSelection, sendableModel, type AgentSelection } from "./agentPicker";
+import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
 import { AgentPicker } from "./components/agent-picker";
 import { Button } from "./components/ui/button";
 import { useEscapeLayer } from "./components/ui/layer";
@@ -125,7 +125,7 @@ function StartPanel({ actions }: { actions: Actions }) {
       target: target.kind === "home" ? { home: true } : { checkoutPath: target.checkoutPath },
       deviceId: target.deviceId,
       provider: selection.kind,
-      model: sendableModel(selection, useShellStore.getState().rest?.status?.background_ai),
+      model: modelToSend(selection),
       prompt: text.trim() || null,
       requestId: id,
     });

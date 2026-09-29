@@ -104,7 +104,7 @@ const TWO_DEVICES = {
               inactive_checkouts: { expanded: false, checkout_ids: [] },
               checkouts: [{ id: "remote:mini:checkout:web", workspace_id: "remote:mini:workspace:web", label: "main", path: "/srv/web", tabs: [{ id: "remote:mini:tab:1", panes: [{ id: "remote:mini:pane:1" }] }] }],
             },
-            { id: "remote:mini:workspace:home", label: "hide", path: "/Users/me/hide", device_id: "mini", is_home: true, inactive_checkouts: { expanded: false, checkout_ids: [] }, checkouts: [] },
+            { id: "remote:mini:workspace:home", label: "hide", path: "/Users/example/hide", device_id: "mini", is_home: true, inactive_checkouts: { expanded: false, checkout_ids: [] }, checkouts: [] },
           ],
         },
       },

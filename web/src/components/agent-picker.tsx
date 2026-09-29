@@ -103,7 +103,7 @@ export function AgentPickerView({
         </SelectContent>
       </Select>
       {value.kind === "terminal" || catalog === null ? null : (
-        <ModelSelect kind={value.kind} catalog={catalog} disabled={disabled} model={modelToSend(value, catalog)} onChange={onModel} />
+        <ModelSelect kind={value.kind} catalog={catalog} disabled={disabled} model={modelToSend(value)} onChange={onModel} />
       )}
     </div>
   );
@@ -119,7 +119,7 @@ function ModelSelect({
   kind: ProviderKind;
   catalog: ModelCatalog;
   disabled: boolean;
-  /** The model the list still has, or null for the CLI default. */
+  /** The model a start sends, or null for the CLI default. */
   model: string | null;
   onChange: (model: string | null) => void;
 }) {
@@ -143,7 +143,7 @@ function ModelSelect({
             {id}
           </SelectItem>
         ))}
-        {/* The remembered model while the list is not there stays a selectable value, so the trigger can name it. */}
+        {/* A remembered model the list does not have stays a selectable value, so the trigger names what a start sends. */}
         {shown !== null && !models.includes(shown) ? (
           <SelectItem value={shown} data-agent-model-option={shown}>
             {shown}

@@ -47,10 +47,8 @@ export function selectionOf(catalog: StartCatalog | null, choice: StartChoice): 
   const kind = choice.kind ?? catalog?.remembered.kind ?? "claude";
   const entry = catalog?.kinds.find((candidate) => candidate.id === kind) ?? null;
   const wanted = choice.model ?? catalog?.remembered.models[kind] ?? "";
-  // A model the catalog does not list is refused by the core; fall back to the default.
-  const listed = entry !== null && entry.models.length > 0;
-  const model = listed && !entry.models.includes(wanted) ? "" : wanted;
-  return { target, kind, model, entry };
+  // A remembered model the catalog does not list is still the one sent: the CLI decides, never a quiet swap (B32).
+  return { target, kind, model: wanted, entry };
 }
 
 /** The model menu is disabled while the catalog has none; it then shows the remembered model or the default. */

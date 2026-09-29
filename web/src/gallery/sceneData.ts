@@ -363,7 +363,7 @@ function deviceWorld(content: SceneContent, workspaces: Workspace[], now: number
   });
   const miniWorkspaces = [
     remoteWorkspace("remote:mini:workspace:web", "web", {}, ["remote:mini:pane:1", "remote:mini:pane:2"]),
-    { ...remoteWorkspace("remote:mini:workspace:home", "hide", { is_home: true, is_git: false }, []), path: "/Users/mini/hide" },
+    { ...remoteWorkspace("remote:mini:workspace:home", "hide", { is_home: true, is_git: false }, []), path: "/Users/example/hide" },
   ];
   return {
     home,

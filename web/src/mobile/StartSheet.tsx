@@ -100,7 +100,7 @@ export function StartSheet() {
               className={SELECT_CLASS}
             >
               <option value="">기본값</option>
-              {models.length === 0 && selection.model ? <option value={selection.model}>{selection.model}</option> : null}
+              {selection.model && !models.includes(selection.model) ? <option value={selection.model}>{selection.model}</option> : null}
               {models.map((model) => (
                 <option key={model} value={model}>
                   {model}

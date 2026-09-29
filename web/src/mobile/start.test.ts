@@ -38,8 +38,8 @@ describe("selectionOf", () => {
     expect(selectionOf(catalog, { target: null, kind: "claude", model: "" }).model).toBe("");
   });
 
-  it("drops a model the catalog no longer lists, and a target that left it", () => {
-    expect(selectionOf(catalog, { target: "gone", kind: "claude", model: "haiku" })).toMatchObject({ model: "" });
+  it("keeps a model the catalog no longer lists, and drops a target that left it", () => {
+    expect(selectionOf(catalog, { target: "gone", kind: "claude", model: "haiku" })).toMatchObject({ model: "haiku" });
     expect(selectionOf(catalog, { target: "gone", kind: null, model: undefined }).target?.id).toBe("home:local");
   });
 

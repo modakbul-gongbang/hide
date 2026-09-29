@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { rememberedSelection, sendableModel, type AgentSelection } from "./agentPicker";
+import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
@@ -252,7 +252,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
   const submit = () => {
     if (working || !branch || agent.kind === "terminal") return;
     setRequest({ afterId: actions.taskIdNow(), at: Date.now(), newWorktree: checkout === null });
-    actions.delegatePullRequest(workspace.id, pr.number, agent.kind, sendableModel(agent, useShellStore.getState().rest?.status?.background_ai), prompt);
+    actions.delegatePullRequest(workspace.id, pr.number, agent.kind, modelToSend(agent), prompt);
   };
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>

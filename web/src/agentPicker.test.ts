@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { catalogFor, createCatalogObserver, forgetCatalogs, modelToSend, rememberedSelection, selectKind, sendableModel } from "./agentPicker";
+import { catalogFor, createCatalogObserver, forgetCatalogs, modelToSend, rememberedSelection, selectKind } from "./agentPicker";
 import type { AgentStartChoice, BackgroundAi } from "./snapshot";
 
 const START: AgentStartChoice = { kind: "codex", models: { claude: "opus", codex: "gpt-6-astra" } };
@@ -57,22 +57,14 @@ describe("the model catalog (B28)", () => {
 });
 
 describe("the model a start sends", () => {
-  const ready = { state: "ready", models: ["haiku", "opus"] } as const;
-
-  it("is the chosen one while the list has it, else the CLI default", () => {
-    expect(modelToSend({ kind: "claude", model: "opus" }, ready)).toBe("opus");
-    expect(modelToSend({ kind: "claude", model: "retired" }, ready)).toBeNull();
-    expect(modelToSend({ kind: "claude", model: null }, ready)).toBeNull();
-  });
-
-  it("is the remembered one, unchanged, while the list is not known: starting is never blocked", () => {
-    expect(modelToSend({ kind: "claude", model: "opus" }, { state: "loading" })).toBe("opus");
-    expect(modelToSend({ kind: "claude", model: "opus" }, { state: "unavailable", reason: "x" })).toBe("opus");
-    expect(sendableModel({ kind: "codex", model: "gpt-5.5" }, undefined)).toBe("gpt-5.5");
+  it("is the chosen one, listed or not, and never another in its place", () => {
+    expect(modelToSend({ kind: "claude", model: "opus" })).toBe("opus");
+    expect(modelToSend({ kind: "claude", model: "retired" })).toBe("retired");
+    expect(modelToSend({ kind: "claude", model: null })).toBeNull();
   });
 
   it("is none for a terminal", () => {
-    expect(sendableModel({ kind: "terminal", model: null }, undefined)).toBeNull();
+    expect(modelToSend({ kind: "terminal", model: null })).toBeNull();
   });
 });
 

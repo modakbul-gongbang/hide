@@ -61,21 +61,14 @@ export function forgetCatalogs() {
 }
 
 /**
- * The model a start sends: the selection's own when the list still has it,
- * the CLI default otherwise. While the list is not known the remembered
- * model is sent as it is: hide never guesses, and the CLI's refusal is what
- * the pane then shows (B32).
+ * The model a start sends: the selection's own, listed or not. The catalog is
+ * this Mac's reading and the target may be another device, so hide never
+ * swaps a model it does not list for another; the CLI decides, and its
+ * refusal is what the pane then shows (PRD home-device-rail B32).
  */
-export function modelToSend(selection: AgentSelection, catalog: ModelCatalog): string | null {
-  if (selection.kind === "terminal" || selection.model === null) return null;
-  if (catalog.state === "ready" && !catalog.models.includes(selection.model)) return null;
-  return selection.model;
-}
-
-/** The model a start surface sends for `selection`, read against the catalog as it stands now. */
-export function sendableModel(selection: AgentSelection, ai: BackgroundAi | undefined): string | null {
+export function modelToSend(selection: AgentSelection): string | null {
   if (selection.kind === "terminal") return null;
-  return modelToSend(selection, catalogFor(ai, selection.kind));
+  return selection.model;
 }
 
 /**

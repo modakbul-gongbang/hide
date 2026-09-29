@@ -542,16 +542,16 @@ mod tests {
                     {"id": "off", "label": "off", "kind": "remote", "state": "disabled"},
                 ],
                 "workspaces": [
-                    {"id": "w-home", "label": "hide", "is_home": true, "path": "/Users/x/hide",
-                     "checkouts": [{"id": "c-home", "path": "/Users/x/hide", "label": "hide"}]},
-                    {"id": "w1", "label": "herdr-ide", "is_git": true, "path": "/Users/x/projects/herdr-ide",
+                    {"id": "w-home", "label": "hide", "is_home": true, "path": "/Users/example/hide",
+                     "checkouts": [{"id": "c-home", "path": "/Users/example/hide", "label": "hide"}]},
+                    {"id": "w1", "label": "herdr-ide", "is_git": true, "path": "/Users/example/projects/herdr-ide",
                      "checkouts": [
-                        {"id": "c1", "path": "/Users/x/projects/herdr-ide", "label": "main", "branch": "main"},
-                        {"id": "c2", "path": "/Users/x/projects/herdr-ide.worktrees/a", "label": "a", "branch": "prd/a"},
+                        {"id": "c1", "path": "/Users/example/projects/herdr-ide", "label": "main", "branch": "main"},
+                        {"id": "c2", "path": "/Users/example/projects/herdr-ide.worktrees/a", "label": "a", "branch": "prd/a"},
                         {"id": "c3", "path": "/tmp/gone", "label": "gone", "branch": "gone", "exists": false},
                      ]},
-                    {"id": "w2", "label": "notes", "is_git": false, "path": "/Users/x/notes",
-                     "checkouts": [{"id": "c4", "path": "/Users/x/notes", "label": "notes"}]},
+                    {"id": "w2", "label": "notes", "is_git": false, "path": "/Users/example/notes",
+                     "checkouts": [{"id": "c4", "path": "/Users/example/notes", "label": "notes"}]},
                 ],
             },
             "status": {
@@ -648,7 +648,7 @@ mod tests {
             local["payload"],
             json!({
                 "provider": "claude", "prompt": "테스트 고쳐줘\n그리고 PR", "request_id": "r1",
-                "model": "opus", "checkout_path": "/Users/x/projects/herdr-ide.worktrees/a",
+                "model": "opus", "checkout_path": "/Users/example/projects/herdr-ide.worktrees/a",
             })
         );
         let remote = event(&request("rc1", None), &catalog).unwrap();

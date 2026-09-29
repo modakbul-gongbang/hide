@@ -32,7 +32,7 @@ function rest(over: { front?: string; connected?: boolean; miniSession?: boolean
       workspaces: [
         workspace("w-herdr", "herdr-ide", "local", [HERDR_MAIN, HERDR_TREE]),
         workspace("w-sasu", "sasu", "local", [SASU_MAIN]),
-        workspace("w-home", "hide", "local", [checkout("h1", "w-home", "/Users/me/hide")], { is_home: true }),
+        workspace("w-home", "hide", "local", [checkout("h1", "w-home", "/Users/example/hide")], { is_home: true }),
       ],
     },
     status: {

@@ -21,7 +21,7 @@ function rest(devices: string[] = ["mini", "build-box"]): SnapshotRest {
       workspace_registrations: [
         { id: "a", label: "a", path: "/a", device_id: "local", pinned: false },
         { id: "b", label: "b", path: "/b", device_id: "local", pinned: false },
-        { id: "home", label: "hide", path: "/Users/me/hide", device_id: "local", pinned: false, home: true },
+        { id: "home", label: "hide", path: "/Users/example/hide", device_id: "local", pinned: false, home: true },
         { id: "m", label: "m", path: "/m", device_id: "mini", pinned: false },
       ],
     },

@@ -7,7 +7,7 @@
 import { FileTextIcon, CircleDotIcon, RotateCcwIcon, SparklesIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { rememberedSelection, sendableModel, type AgentSelection } from "./agentPicker";
+import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
 import { AgentPicker } from "./components/agent-picker";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
@@ -268,7 +268,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
       return;
     }
     const text = prompt.trim();
-    const model = sendableModel(agent, useShellStore.getState().rest?.status?.background_ai);
+    const model = modelToSend(agent);
     if (!git) {
       const folder = workspace.checkouts[0];
       if (!folder) return;
