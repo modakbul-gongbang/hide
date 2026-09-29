@@ -242,18 +242,33 @@ export function hostLine(host: DeviceHost | undefined): { text: string; tone: "o
 }
 
 /**
- * What the operator agrees to when Hide's helper is allowed on a device
- * (PRD S5.5 B50): where it is installed, when it runs, what an update may do,
- * and what it never does. The same words back the add form and the row's Allow.
+ * What the operator agrees to when a device is added or allowed (PRD
+ * device-parity D-12, B12): every part of Hide's kit and where it goes, what
+ * keeps running, and what is never touched. The same words back the add form
+ * and the row's Allow; they are said once, and nothing asks per part.
  */
-export function helperConsentTerms(helperRoot: string | null, cliDir: string | null): string[] {
+export function kitConsentTerms(helperRoot: string | null, cliDir: string | null): string[] {
+  const root = helperRoot ?? "the helper folder in the device account's home";
   return [
-    `Hide copies its helper and the hide command into ${helperRoot ?? "the helper folder in the device account's home"} on the device, and replaces them there when this version of Hide needs newer ones.`,
-    `It links hide in ${cliDir ?? "the account's command folder"} so the device's panes can open files, diffs and pages in this Hide; a hide already there that is not Hide's own link is left alone.`,
-    "It runs only while Hide holds the SSH connection and serves file, Git and worktree work for projects registered on that device. Nothing stays resident and nothing starts at login.",
-    "It changes no hook, AI or shell settings there, and every move to the Trash or worktree removal still asks you for its target each time.",
-    "A wider permission or a different SSH identity asks again; revoking stops new work and deletes no draft or remote file.",
+    `Hide copies its helper, the hide command, its hook helper, the agent labels plugin and hcoord into ${root}, and replaces them there when this version of Hide needs newer ones.`,
+    `It links hide in ${cliDir ?? "the account's command folder"}, adds its own entries to ~/.claude/settings.json and ~/.codex/hooks.json, links the labels plugin in the device's Herdr, and installs hcoord at ~/.hcoord/bin/hcoord with the device's Node. Another tool's entries, files and plugin settings are left as they are.`,
+    "The helper runs only while Hide holds the SSH connection. The labels plugin runs under the device's Herdr, and hcoord keeps its own daemon.",
+    "Every move to the Trash or worktree removal still asks you for its target each time. A part you take away stays away until you press Reinstall.",
+    "Removing the device takes Hide's parts off it again, except hcoord, which other tools there may use. A different SSH identity asks again.",
   ];
+}
+
+/**
+ * What removing a device does to Hide's kit on it, in one line (PRD
+ * device-parity B22): with its helper connected the parts come off and hcoord
+ * stays; without one nothing on the device changes.
+ */
+export function kitRemovalLine(device: Device): string {
+  const where = device.ssh_alias ?? device.label;
+  if (device.host?.state === "ready") {
+    return `On ${where}, Hide removes its hook entries, the labels plugin link, its hide link and its helper folder; hcoord stays because other tools may use it.`;
+  }
+  return `Hide's helper is not connected to ${where}, so its kit stays there; it does not get in the way of agent sessions, and adding the device again replaces it.`;
 }
 
 /** A kit part's state as the machine rows word it (PRD device-parity B7). */

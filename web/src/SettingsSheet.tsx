@@ -53,7 +53,8 @@ import {
   deviceLine,
   deviceProblemLine,
   diagnosticsText,
-  helperConsentTerms,
+  kitConsentTerms,
+  kitRemovalLine,
   herdrLine,
   hostLine,
   kitHookMachines,
@@ -720,7 +721,13 @@ function DevicesTab({ actions }: { actions: Actions }) {
   // The removal waits for the device's drafts to be stored (B26, B44).
   const [removalBusy, setRemovalBusy] = useState(false);
   const [actedAt, setActedAt] = useState<number | null>(null);
-  const deviceError = useErrorSince(actedAt, ["device.", "remote."]);
+  const deviceError = useErrorSince(actedAt, ["device.", "remote.", "kit."]);
+  // Each machine's kit is read once when this tab opens, so a part removed
+  // by hand shows without a relaunch (B7).
+  const live = useShellStore((s) => s.connection === "live");
+  useEffect(() => {
+    if (live) actions.checkKit();
+  }, [actions, live]);
   const rows = devices ?? [];
   const localHost = rows.find((device) => device.kind !== "remote")?.host ?? null;
   const localRoot = localHost?.helper_root ?? null;
@@ -755,6 +762,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                 <>
                   <DeviceConnection device={device} facts={deviceFacts(device, status)} />
                   {device.kind === "remote" ? <DeviceHelper device={device} /> : null}
+                  <MachineKit device={device} />
                   {device.test ? <DeviceTest test={device.test} /> : null}
                 </>
               }
@@ -762,6 +770,19 @@ function DevicesTab({ actions }: { actions: Actions }) {
               <Status tone={line.tone} data-device-state={`${device.id}:${device.state}`}>
                 {line.text}
               </Status>
+              {device.kit?.offers_reinstall && !device.kit.unavailable ? (
+                <Button
+                  variant="secondary"
+                  disabled={device.kit.busy}
+                  onClick={() => {
+                    setActedAt(Date.now());
+                    actions.reinstallKit(device.id);
+                  }}
+                  data-kit-reinstall={device.id}
+                >
+                  {device.kit.busy ? "Reinstalling…" : "Reinstall"}
+                </Button>
+              ) : null}
               {focused === device.id ? (
                 <Status tone="muted">selected</Status>
               ) : (
@@ -814,7 +835,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                     </>
                   ) : (
                     <Button variant="secondary" onClick={() => setAllowing(device)} data-device-host-allow={device.id}>
-                      Allow helper…
+                      Allow and install…
                     </Button>
                   )}
                   <Button variant="ghost" onClick={() => setRemoving(device)} data-device-remove={device.id}>
@@ -833,7 +854,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
         <Dialog open onOpenChange={(next) => { if (!next) setAllowing(null); }}>
           <DialogContent data-device-host-allow-confirm={allowing.id}>
             <DialogHeader>
-              <DialogTitle>Allow Hide&apos;s helper on {allowing.label}?</DialogTitle>
+              <DialogTitle>Install Hide on {allowing.label}?</DialogTitle>
             </DialogHeader>
             <DialogBody className="space-y-sm">
               {allowing.host?.state === "identity_changed" ? (
@@ -841,7 +862,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                   {allowing.ssh_alias} now answers as a different SSH identity than the one this consent was given to. Allow only if you expect that change.
                 </p>
               ) : null}
-              <HelperTerms helperRoot={allowing.host?.helper_root ?? localRoot} cliDir={allowing.host?.cli_dir ?? localCliDir} />
+              <KitTerms helperRoot={allowing.host?.helper_root ?? localRoot} cliDir={allowing.host?.cli_dir ?? localCliDir} />
             </DialogBody>
             <DialogFooter>
               <Button variant="secondary" onClick={() => setAllowing(null)}>Not now</Button>
@@ -853,7 +874,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                   setAllowing(null);
                 }}
               >
-                Allow helper
+                Allow and install
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -865,7 +886,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
             <AlertDialogHeader>
               <AlertDialogTitle>Revoke Hide&apos;s helper on {revoking.label}?</AlertDialogTitle>
               <AlertDialogDescription>
-                Hide stops starting new file, Git and worktree work on {revoking.ssh_alias}. A save already sent is read back before its tab says anything; your drafts and the files on the device are not deleted, and neither is the installed helper.
+                Hide stops starting new file, Git and worktree work on {revoking.ssh_alias}. A save already sent is read back before its tab says anything; your drafts and the files on the device are not deleted, and neither is Hide&apos;s installed kit.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -892,6 +913,9 @@ function DevicesTab({ actions }: { actions: Actions }) {
                 Hide forgets this device's registration and closes its connection here. Files, the Herdr server and any agents running on {removing.ssh_alias} keep running untouched.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            <p className="text-body text-subtle-foreground" data-device-remove-kit={removing.id}>
+              {kitRemovalLine(removing)}
+            </p>
             {removalLines.map((line) => (
               <p key={line} className="text-body text-subtle-foreground" data-device-remove-effect="true">
                 {line}
@@ -981,13 +1005,58 @@ function DeviceHelper({ device }: { device: Device }) {
   );
 }
 
-function HelperTerms({ helperRoot, cliDir }: { helperRoot: string | null; cliDir: string | null }) {
+function KitTerms({ helperRoot, cliDir }: { helperRoot: string | null; cliDir: string | null }) {
   return (
-    <ul className="list-disc space-y-xs pl-md text-body text-subtle-foreground" data-helper-terms="true">
-      {helperConsentTerms(helperRoot, cliDir).map((term) => (
+    <ul className="list-disc space-y-xs pl-md text-body text-subtle-foreground" data-kit-terms="true">
+      {kitConsentTerms(helperRoot, cliDir).map((term) => (
         <li key={term}>{term}</li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Each part of Hide's kit on one machine, in the same form for This Mac and
+ * every device (PRD device-parity B7): a mark, the part, and where it is or
+ * why it is not. A machine whose kit does not run says why instead.
+ */
+function MachineKit({ device }: { device: Device }) {
+  const kit = device.kit;
+  if (!kit) return null;
+  if (kit.unavailable) {
+    return (
+      <div className="mt-xs" data-machine-kit={`${device.id}:unavailable`}>
+        <Note>{kit.unavailable}</Note>
+      </div>
+    );
+  }
+  if (kit.components.length === 0) {
+    return (
+      <div className="mt-xs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "unread"}`}>
+        <Status tone="pending">{kit.busy ? "Installing Hide's kit…" : "Hide's kit is checked when the device connects"}</Status>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-xs space-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
+      {kit.components.map((part) => {
+        const line = kitPartLine(part);
+        const mark = part.state === "installed" ? "✓" : part.state === "absent" ? "–" : part.state === "failed" ? "✕" : "!";
+        const markTone = line.tone === "ok" ? "text-success" : line.tone === "muted" ? "text-muted-foreground" : line.tone === "error" ? "text-destructive" : "text-warning";
+        return (
+          <div key={part.id} className="flex gap-xs text-caption" data-kit-part={`${device.id}:${part.id}:${part.state}`}>
+            <span className={markTone} aria-hidden="true">
+              {mark}
+            </span>
+            <span className="w-[var(--size-device-test-stage-col)] shrink-0 text-foreground">{part.label}</span>
+            {part.state === "installed" ? <span className="sr-only">{line.text}</span> : null}
+            <span className="min-w-0 break-words text-subtle-foreground">
+              {part.state === "installed" ? <span className="break-all font-mono">{part.location}</span> : `${line.text}${part.reason ? `: ${part.reason}` : ""}`}
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1031,13 +1100,13 @@ function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: Actions;
   }, [added]);
   const pending = submitted !== null && !added && error === null;
   const blocked = pending || !label.trim() || !alias.trim() || problem !== null || socketProblem(socket) !== null;
-  // Registering is where the helper is agreed to (PRD S5.5 B50): the terms
-  // are on the form, and the operator picks one of the two outcomes.
-  const submit = (hostConsent: boolean) => {
+  // Adding is where the whole kit is agreed to, once (PRD device-parity
+  // D-12): the terms are on the form and there is one way to add.
+  const submit = () => {
     if (blocked) return;
     const id = deviceIdFor(alias, devices.map((device) => device.id));
     setSubmitted({ id, at: Date.now() });
-    actions.registerDevice(id, label.trim(), alias.trim(), { hostConsent, herdrSocketPath: socket.trim() || null });
+    actions.registerDevice(id, label.trim(), alias.trim(), { hostConsent: true, herdrSocketPath: socket.trim() || null });
   };
   return (
     <Group title="Add device" note="Use an alias already in the daemon machine's ~/.ssh/config. Hide connects right away and shows the result on the row.">
@@ -1068,13 +1137,10 @@ function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: Actions;
           data-device-socket="true"
         />
       </Row>
-      <Row label={<span className="text-subtle-foreground">Hide's helper</span>} detail={<HelperTerms helperRoot={helperRoot} cliDir={cliDir} />} />
+      <Row label={<span className="text-subtle-foreground">What Hide installs</span>} detail={<KitTerms helperRoot={helperRoot} cliDir={cliDir} />} />
       <Row label="">
-        <Button variant="ghost" disabled={blocked} onClick={() => submit(false)} data-add-device-without-helper="true">
-          Add without files
-        </Button>
-        <Button disabled={blocked} onClick={() => submit(true)} data-add-device="true">
-          {pending ? "Adding…" : "Allow helper and add"}
+        <Button disabled={blocked} onClick={submit} data-add-device="true">
+          {pending ? "Adding…" : "Add"}
         </Button>
       </Row>
     </Group>
