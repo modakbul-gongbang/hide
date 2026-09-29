@@ -1234,3 +1234,87 @@ fn close_projection_a_failure_on_a_living_pane_still_reports_ended() {
     assert_eq!(pane.transport_state, "ended");
     assert!(pane.transport_message.is_some());
 }
+
+/// ⌘F on an agent with its own find hands the pane to that search where
+/// Herdr holds none of the pane's history (a full-screen agent), and opens
+/// Hide's find bar where it holds some (an agent drawing inline); each answer
+/// names the request that asked. Claude Code's transcript toggles on the key
+/// that opens it, so a second ⌘F inside it only starts a new search.
+#[test]
+fn find_opens_the_agents_own_search_only_where_herdr_holds_no_history() {
+    let history = Arc::new(Mutex::new(0_u64));
+    let screen = Arc::new(Mutex::new(String::from("❯ \n  ? for shortcuts\n")));
+    let herdr = {
+        let history = Arc::clone(&history);
+        let screen = Arc::clone(&screen);
+        FakeHerdr::start("agent-find", move |method, params| match method {
+            "pane.get" => serde_json::json!({"type": "pane_info", "pane": {
+                "pane_id": params["pane_id"], "terminal_id": "t", "workspace_id": "w1",
+                "tab_id": "w1:t1", "focused": true, "agent_status": "idle", "revision": 1,
+                "scroll": {"offset_from_bottom": 0,
+                           "max_offset_from_bottom": *history.lock().unwrap(),
+                           "viewport_rows": 40}
+            }}),
+            "pane.read" => serde_json::json!({"type": "pane_read", "read": {
+                "pane_id": params["pane_id"], "workspace_id": "w1", "tab_id": "w1:t1",
+                "source": params["source"], "format": "text",
+                "text": *screen.lock().unwrap(), "revision": 1, "truncated": false
+            }}),
+            "pane.send_keys" => serde_json::json!({"type": "ok"}),
+            other => panic!("unexpected {other}"),
+        })
+    };
+    let pane = "w1:p1";
+    let shared = observed_runtime(&herdr, pane);
+    shared.lock().unwrap().snapshot.navigator.agents = crate::sidebar::project_agents(
+        serde_json::from_value(serde_json::json!({
+            "agents": [{"pane_id": pane, "agent": "claude", "state_change_seq": 1}]
+        }))
+        .unwrap(),
+    )
+    .agents;
+    assert!(shared.lock().unwrap().snapshot.navigator.agents[0].own_find);
+    let open = |request_id: &str| {
+        shared.lock().unwrap().dispatch_json(
+            &serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "pane_find_open",
+                "payload": {"pane_id": pane, "request_id": request_id}
+            }))
+            .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let opened = shared.lock().unwrap().snapshot.find.opened.clone();
+            if let Some(opened) = opened.filter(|opened| opened.request_id == request_id) {
+                return opened.route;
+            }
+            assert!(Instant::now() < deadline, "{request_id} was never answered");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let sent_keys = || {
+        herdr
+            .calls()
+            .into_iter()
+            .filter(|(method, _)| method == "pane.send_keys")
+            .map(|(_, params)| params["keys"].clone())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(open("from-the-prompt"), PaneFindRoute::Agent);
+    assert_eq!(sent_keys(), vec![serde_json::json!(["ctrl+o", "/"])]);
+
+    *screen.lock().unwrap() =
+        "⏺ earlier turn\n  Showing detailed transcript · ctrl+o to toggle · n/N to navigate\n"
+            .into();
+    assert_eq!(open("inside-the-transcript"), PaneFindRoute::Agent);
+    assert_eq!(sent_keys()[1], serde_json::json!(["/"]));
+
+    *history.lock().unwrap() = 120;
+    assert_eq!(open("inline"), PaneFindRoute::Bar);
+    assert_eq!(sent_keys().len(), 2, "an inline agent hears nothing");
+    assert_eq!(
+        shared.lock().unwrap().snapshot.find.unavailable_reason,
+        None
+    );
+}

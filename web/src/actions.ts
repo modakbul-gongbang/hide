@@ -26,7 +26,7 @@ import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
-import { remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
+import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
   catalogWorkspaces,
   deviceOfCheckout,
@@ -1529,10 +1529,24 @@ export function createActions(dispatch: DispatchFn) {
       ui().openOverlay(ui().overlay === "shortcuts" ? "none" : "shortcuts");
     },
 
-    /** The focused pane's find bar; the core searches a device pane through that device's Herdr. */
+    /**
+     * ⌘F on the focused pane. An agent that searches its own conversation
+     * hands the question to the core, which opens the agent's search or
+     * answers that this pane's find bar should open (`FindBar` acts on the
+     * answer); any other pane's find bar opens now. The core searches a
+     * device pane through that device's Herdr.
+     */
     openFind() {
       if (ui().overlay === "find") {
         document.querySelector<HTMLInputElement>("[data-find-bar] input")?.focus();
+        return;
+      }
+      const paneId = useShellStore.getState().focusedPaneId;
+      const agent = paneId ? contextAgents(rest(), rest()?.navigator?.agents ?? []).find((row) => row.pane_id === paneId) : undefined;
+      if (paneId && agent?.own_find) {
+        const requestId = remoteRequestId();
+        ui().setAgentFindRequest(requestId);
+        dispatch({ schema_version: 2, kind: "pane_find_open", payload: { pane_id: paneId, request_id: requestId } });
         return;
       }
       ui().openOverlay("find");

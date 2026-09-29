@@ -6,7 +6,8 @@
 // pinned Herdr classifies by the process it started, so each pane runs a
 // tiny compiled `claude` that copies stdin to stdout. A copied /bin/cat
 // would not do: macOS kills a relocated platform binary. Like a real TUI it
-// reads the terminal raw, byte by byte with no line discipline echo, and it
+// reads the terminal raw, byte by byte with no line discipline echo and no
+// extended input processing (which would swallow ^O and ^V), and it
 // appends every byte it reads to `HIDE_E2E_INPUT_LOG`: that file is what the
 // PTY received, which is how a test tells a click's mouse report from what
 // the shell only sent (PRD S2 B20).
@@ -44,7 +45,7 @@ int main(void) {
   int log = log_path ? open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
   struct termios tio;
   if (tcgetattr(0, &tio) == 0) {
-    tio.c_lflag &= ~(ICANON | ECHO);
+    tio.c_lflag &= ~(ICANON | ECHO | IEXTEN);
     tio.c_cc[VMIN] = 1;
     tio.c_cc[VTIME] = 0;
     tcsetattr(0, TCSANOW, &tio);

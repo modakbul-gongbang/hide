@@ -352,10 +352,17 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect(page.locator("[data-shortcut-sheet]")).toHaveCount(0);
     expect(sent.get("key") ?? 0).toBe(keysBeforeSheet);
 
-    // ⌘F is intercepted from Chrome: the find bar opens instead.
+    // ⌘F is intercepted from Chrome. The focused pane is an agent with its
+    // own find and no history in Herdr, so the core is asked where the search
+    // goes and the agent's search takes it; no find bar opens.
+    const findsBefore = sent.get("pane_find_open") ?? 0;
+    const heard = () => herdr.inputLogs.map((file) => (fs.existsSync(file) ? fs.readFileSync(file, "latin1") : "")).join("");
+    const heardBefore = heard().split("\x0f/").length;
     await page.keyboard.press("Meta+KeyF");
-    await expect(page.locator("[data-find-bar]")).toBeVisible();
-    await page.keyboard.press("Escape");
+    await expect.poll(() => sent.get("pane_find_open") ?? 0).toBe(findsBefore + 1);
+    // The agent hears its keys before the typing below, which would
+    // otherwise interleave with them.
+    await expect.poll(() => heard().split("\x0f/").length, { timeout: 10_000 }).toBe(heardBefore + 1);
     await expect(page.locator("[data-find-bar]")).toHaveCount(0);
 
     // Typed text still echoes in the focused pane after all of that.

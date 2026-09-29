@@ -969,6 +969,13 @@ pub(super) struct PaneFindPayload {
     pub(super) step: i64,
 }
 
+/// ⌘F on a pane whose agent has its own find (`own_find` on its row).
+#[derive(Debug, Deserialize)]
+pub(super) struct PaneFindOpenPayload {
+    pub(super) pane_id: String,
+    pub(super) request_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct PaneTextScalePayload {
     pub(super) pane_id: String,
@@ -1127,6 +1134,7 @@ pub(super) enum Event {
     TerminalScroll(TerminalScrollPayload),
     TerminalClick(TerminalClickPayload),
     PaneFind(PaneFindPayload),
+    PaneFindOpen(PaneFindOpenPayload),
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
     ThemeSet(ThemeSetPayload),
@@ -1312,6 +1320,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
         "terminal_click" => decode!(TerminalClickPayload, TerminalClick),
         "pane_find" => decode!(PaneFindPayload, PaneFind),
+        "pane_find_open" => decode!(PaneFindOpenPayload, PaneFindOpen),
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
@@ -2970,6 +2979,9 @@ impl Runtime {
                     self.set_error("pane.find_worker_failed", message, true);
                 }
                 false
+            }
+            Event::PaneFindOpen(payload) => {
+                self.open_pane_find(payload.pane_id, payload.request_id)
             }
             Event::PaneTextScale(payload) => {
                 let current = self

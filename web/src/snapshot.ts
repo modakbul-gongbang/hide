@@ -50,6 +50,8 @@ export type AgentRow = {
   sleep?: AgentSleep;
   /** The conversation id Herdr recorded for this agent; absent when it recorded none. */
   session_id?: string | null;
+  /** The agent searches its own conversation, so ⌘F asks the core where the search goes (`pane_find_open`). */
+  own_find?: boolean;
 };
 
 /** A sleeping agent's state (`AgentSleepSnapshot`): the row and the pane draw it. */
@@ -509,7 +511,12 @@ export type PaneFind = {
   total: number;
   truncated: boolean;
   unavailable_reason: string | null;
+  /** Where the last `pane_find_open` sent the search, named by the request that asked. */
+  opened?: { request_id: string; route: PaneFindRoute };
 };
+
+/** `agent`: the agent's own search took the pane; `bar`: Hide's find bar opens (`contracts/snapshot-wire-enums.json`). */
+export type PaneFindRoute = "agent" | "bar";
 
 /** What kind of document the core decided an open file is (`files::open`). */
 export type DocumentKind = "text" | "markdown" | "image" | "pdf" | "binary";

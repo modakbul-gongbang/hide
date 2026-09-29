@@ -1311,6 +1311,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .filter(|session| session.kind == "id")
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
+        own_find: crate::agent_find::agent_find(agent_kind).is_some(),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         declared_parent_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())
             .map(str::to_owned),

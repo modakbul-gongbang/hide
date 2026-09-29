@@ -94,6 +94,7 @@ Each area has a tab bar, a New tab button and the active tab's live pane canvas;
 Only the active area's selected tab carries the accent; clicking a tab or pane activates its area and sends the keyboard to that pane.
 All shown tabs stay attached and awake, while only the active area's tab receives read and sleep-visit updates.
 Pane headers, child chips, relationship controls and pane splits remain inside each canvas; find belongs to the focused pane.
+⌘F on a full-screen Claude Code or Codex pane opens that agent's own search over its whole conversation in the pane, with the agent's own keys and count (Claude Code: type, Enter, `n`/`N`; Codex: type, Enter, Ctrl+P), and no find bar appears; any other pane, and an agent drawing inline, gets the find bar.
 
 An Agent area's tabs share its bar the way a browser's tabs do (the Pen library's `Component / Adaptive Work Tab`): each asks for the preferred width, and all shrink alike while an equal share still holds the title minimum.
 Below that every tab keeps only its marks at the icon identity width, the selected one adding its close control, and the strip scrolls once even the marks overflow.
