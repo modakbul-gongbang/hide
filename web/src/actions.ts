@@ -971,7 +971,7 @@ export function createActions(dispatch: DispatchFn) {
      */
     startHomeTab(deviceId: string) {
       const requestId = remoteRequestId();
-      ui().setHomeStart(requestId);
+      ui().setHomeStart({ requestId, deviceId, refusal: null });
       dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider: "terminal", request_id: requestId, ...deviceField(deviceId) } });
     },
 

@@ -184,26 +184,24 @@ export function Sidebar({ actions }: { actions: Actions }) {
 /**
  * The Home row's `+` starts a terminal tab in the device's Home and answers
  * with its pane under the request id it sent; that pane is opened once it is
- * listed, and a refusal (a `~/hide` that is not Hide's, a busy core) is the
- * notice the operator can act on, named by the same id (PRD home-device-rail D-13).
+ * listed, and a refusal (a `~/hide` that is not Hide's, a busy core) is shown
+ * under that Home row, where the operator opened it (PRD home-device-rail D-13, B21).
  */
 function useHomeStart() {
   const request = useUiStore((s) => s.homeStart);
   const operation = useShellStore((s) => s.rest?.task_operation);
   const error = useShellStore((s) => s.rest?.status?.last_error);
   useEffect(() => {
-    if (!request) return;
+    if (!request || request.refusal !== null) return;
     const ui = useUiStore.getState();
-    if (operation?.request_id === request && operation.pane_id && operation.phase !== "failed") {
+    const id = request.requestId;
+    if (operation?.request_id === id && operation.pane_id && operation.phase !== "failed") {
       ui.setHomeStart(null);
       ui.setFocusWhenListed(operation.pane_id);
       return;
     }
-    const refused = error?.request_id === request ? error : operation?.request_id === request && operation.phase === "failed" ? { message: operation.message ?? "Home did not open." } : null;
-    if (refused) {
-      ui.setHomeStart(null);
-      ui.setNotice({ text: refused.message, refreshable: false });
-    }
+    const refused = error?.request_id === id ? error : operation?.request_id === id && operation.phase === "failed" ? { message: operation.message ?? "Home did not open." } : null;
+    if (refused) ui.setHomeStart({ ...request, refusal: refused.message });
   }, [request, operation, error]);
 }
 
@@ -316,6 +314,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
   }, [home, agents]);
   const presentations = useMemo(() => new Map(roots.map((agent) => [agent.pane_id, foldedLineage(agent, agents, lineageWorkspaces)])), [roots, agents, lineageWorkspaces]);
   const menu = useAgentRowMenu(actions);
+  const refusal = useUiStore((s) => (s.homeStart?.deviceId === deviceId ? s.homeStart.refusal : null));
   return (
     <li data-home={deviceId}>
       <div className="group relative flex items-stretch">
@@ -327,7 +326,11 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
             "flex min-h-(--size-project-row) w-full items-center gap-sm rounded-sm pr-xs pl-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
             selected ? "bg-secondary" : "hover:bg-accent",
           )}
-          onClick={() => useUiStore.getState().setScreen({ kind: "main", deviceId })}
+          onClick={() => {
+            const ui = useUiStore.getState();
+            if (refusal !== null) ui.setHomeStart(null);
+            ui.setScreen({ kind: "main", deviceId });
+          }}
         >
           <HouseIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
           <span className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">Home</span>
@@ -355,6 +358,11 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
           </button>
         </Hint>
       </div>
+      {refusal === null ? null : (
+        <p role="alert" data-home-refusal="true" className="pr-sm pb-xs text-caption break-words text-destructive" style={{ paddingLeft: CHECKOUT_COLUMN }}>
+          {refusal}
+        </p>
+      )}
       {roots.length > 0 ? (
         <ul aria-label="Home agents" data-home-agents="true">
           {roots.map((agent) => {

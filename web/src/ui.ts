@@ -11,6 +11,8 @@ import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
 import { placementForWidth, type ToolsPlacement, type ViewFocusRequest, type ViewWorkspace } from "./viewLayout";
 
+export type HomeStart = { requestId: string; deviceId: string; refusal: string | null };
+
 export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
 
 export type SidebarMode = "agents" | "projects";
@@ -197,8 +199,12 @@ type UiStore = {
    * pick that moves to a device ends it.
    */
   inbox: boolean;
-  /** The `request_id` of the Home row's new-tab start this page sent, until its pane is opened or it is refused. */
-  homeStart: string | null;
+  /**
+   * The Home row's new-tab start this page sent: its `request_id` until its
+   * pane is opened, then, when it was refused, the reason that device's Home
+   * row shows until the next start or a click on the row (PRD home-device-rail B21).
+   */
+  homeStart: HomeStart | null;
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
   explorerSelection: string | null;
@@ -274,7 +280,7 @@ type UiStore = {
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   setInbox: (inbox: boolean) => void;
-  setHomeStart: (requestId: string | null) => void;
+  setHomeStart: (homeStart: HomeStart | null) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
