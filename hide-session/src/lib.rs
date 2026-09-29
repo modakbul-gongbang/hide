@@ -701,6 +701,83 @@ pub fn read_tail(path: &Path, maximum_bytes: u64) -> Result<String> {
         .map_or_else(String::new, |(_, rest)| rest.to_owned()))
 }
 
+/// One page of complete lines read backwards from a line boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageBefore {
+    pub contents: String,
+    /// Where `contents` begins, and where the next older page ends; 0 is the
+    /// start of the file, with nothing older.
+    pub start_offset: u64,
+    /// Where `contents` ends: the `end` asked for, or after the file's last
+    /// newline, so a line still being written is left to the cursor.
+    pub end_offset: u64,
+}
+
+/// The block a backwards scan for a line start reads at a time.
+const SCAN_BLOCK_BYTES: u64 = 64 * 1024;
+
+/// Read the complete lines that end at or before `end`, at most
+/// `maximum_bytes` of them, dropping the line the window cuts.
+///
+/// `end` must be a line boundary: 0, a previous page's `start_offset`, or
+/// `None` for the file's last newline. A line longer than the window is
+/// passed over by scanning back to its start, without keeping its bytes.
+pub fn read_page_before(path: &Path, end: Option<u64>, maximum_bytes: u64) -> Result<PageBefore> {
+    let mut file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
+    let length = file
+        .metadata()
+        .map_err(|error| SessionError::io("stat", path, error))?
+        .len();
+    let end = match end {
+        Some(end) => end.min(length),
+        None => line_start_before(&mut file, path, length)?,
+    };
+    let start = end.saturating_sub(maximum_bytes);
+    // One byte before the window, so a line that starts exactly at `start` is
+    // known to be whole.
+    let read_start = start.saturating_sub(1);
+    let mut bytes = vec![0; (end - read_start) as usize];
+    file.seek(SeekFrom::Start(read_start))
+        .map_err(|error| SessionError::io("seek", path, error))?;
+    file.read_exact(&mut bytes)
+        .map_err(|error| SessionError::io("read", path, error))?;
+    let (start_offset, bytes) = if start == 0 {
+        (0, bytes.as_slice())
+    } else {
+        // The window's last byte ends the newest line; a line starts after an
+        // earlier newline or not at all.
+        let body = &bytes[..bytes.len().saturating_sub(1)];
+        match body.iter().position(|byte| *byte == b'\n') {
+            Some(newline) => (read_start + newline as u64 + 1, &bytes[newline + 1..]),
+            None => (line_start_before(&mut file, path, start)?, &[][..]),
+        }
+    };
+    Ok(PageBefore {
+        contents: String::from_utf8_lossy(bytes).into_owned(),
+        start_offset,
+        end_offset: end,
+    })
+}
+
+/// The offset just after the last newline before `end`, or 0.
+fn line_start_before(file: &mut File, path: &Path, end: u64) -> Result<u64> {
+    let mut block_end = end;
+    let mut block = Vec::new();
+    while block_end > 0 {
+        let block_start = block_end.saturating_sub(SCAN_BLOCK_BYTES);
+        block.resize((block_end - block_start) as usize, 0);
+        file.seek(SeekFrom::Start(block_start))
+            .map_err(|error| SessionError::io("seek", path, error))?;
+        file.read_exact(&mut block)
+            .map_err(|error| SessionError::io("read", path, error))?;
+        if let Some(newline) = block.iter().rposition(|byte| *byte == b'\n') {
+            return Ok(block_start + newline as u64 + 1);
+        }
+        block_end = block_start;
+    }
+    Ok(0)
+}
+
 /// Read a whole file while enforcing a hard byte cap before and during I/O.
 pub fn read_bounded(path: &Path, maximum_bytes: u64) -> Result<String> {
     let file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
@@ -1185,6 +1262,41 @@ mod tests {
         assert_eq!(appended.contents, "three\n");
         assert_eq!(appended.start_offset, offset);
         assert!(cursor.offset() > offset);
+    }
+
+    #[test]
+    fn pages_walk_back_over_complete_lines_to_the_start() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, b"one\ntwo\nthree\npartial").unwrap();
+
+        let newest = read_page_before(&path, None, 6).unwrap();
+        assert_eq!(newest.contents, "three\n");
+        assert_eq!(newest.end_offset, 14);
+        let older = read_page_before(&path, Some(newest.start_offset), 6).unwrap();
+        assert_eq!(older.contents, "two\n");
+        let oldest = read_page_before(&path, Some(older.start_offset), 6).unwrap();
+        assert_eq!(
+            (oldest.contents.as_str(), oldest.start_offset),
+            ("one\n", 0)
+        );
+    }
+
+    #[test]
+    fn a_page_passes_over_a_line_longer_than_its_window() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        let long = "x".repeat(200_000);
+        fs::write(&path, format!("one\n{long}\nthree\n")).unwrap();
+
+        let newest = read_page_before(&path, None, 8).unwrap();
+        assert_eq!(newest.contents, "three\n");
+        let over = read_page_before(&path, Some(newest.start_offset), 8).unwrap();
+        assert_eq!((over.contents.as_str(), over.start_offset), ("", 4));
+        assert_eq!(
+            read_page_before(&path, Some(4), 8).unwrap().contents,
+            "one\n"
+        );
     }
 
     #[test]
