@@ -2062,13 +2062,16 @@ fn each_row_lists_its_live_descendants_deepest_first_and_a_leaf_lists_none() {
     let parent = listed("parent");
     assert_eq!(parent.len(), 3);
     let at = |id: &str| parent.iter().position(|pane| pane == id).unwrap();
-    assert!(at("grandchild") < at("child"), "a child closes after its own child");
+    assert!(
+        at("grandchild") < at("child"),
+        "a child closes after its own child"
+    );
     assert!(parent.contains(&"sibling".to_owned()));
     assert_eq!(listed("child"), ["grandchild"]);
     assert!(listed("grandchild").is_empty());
     assert!(listed("sibling").is_empty());
-    let wire = serde_json::to_value(rows.iter().find(|row| row.pane_id == "sibling").unwrap())
-        .unwrap();
+    let wire =
+        serde_json::to_value(rows.iter().find(|row| row.pane_id == "sibling").unwrap()).unwrap();
     assert!(
         wire.get("close_descendant_pane_ids").is_none(),
         "a row with no descendant carries no field"

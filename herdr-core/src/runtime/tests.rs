@@ -44,6 +44,8 @@ mod shortcut_import;
 mod snapshot_delta;
 #[path = "tests/terminal.rs"]
 mod terminal;
+#[path = "tests/tree_close.rs"]
+mod tree_close;
 #[path = "tests/view_areas.rs"]
 mod view_areas;
 #[path = "tests/workspace_control.rs"]

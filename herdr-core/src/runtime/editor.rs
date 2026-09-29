@@ -1148,7 +1148,11 @@ impl Runtime {
         tab: TabSnapshot,
     ) -> bool {
         let target_id = close_target_id(&target).to_owned();
-        if self.close_operations.len() >= crate::recent_closed::RECENT_CLOSED_LIMIT {
+        // A tree close already admitted keeps room for the local closes it
+        // has not started yet, so its all-or-nothing admission holds.
+        if self.close_operations.len() + self.tree_close_reserved_slots()
+            >= crate::recent_closed::RECENT_CLOSED_LIMIT
+        {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: None,
                 message: "Resolve or dismiss an earlier close before closing another item".into(),
@@ -2537,4 +2541,127 @@ pub(super) fn diff_label(path: &str, committed: bool) -> String {
         "working diff"
     };
     format!("{} ({scope})", super::workspace_view::file_label(path))
+}
+
+impl Runtime {
+    /// `close_tab` on this machine, and the same step a tree close takes for
+    /// a local tab, so both refuse and start exactly alike.
+    pub(super) fn close_local_tab(&mut self, tab_id: String, confirmed: bool) -> bool {
+        let tab = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .find(|tab| tab.id.as_deref() == Some(tab_id.as_str()))
+            .cloned();
+        let Some(tab) = tab else {
+            self.set_error(
+                "tab.unknown",
+                format!("Tab {tab_id} is not available"),
+                false,
+            );
+            return true;
+        };
+        let pane_ids = tab
+            .panes
+            .iter()
+            .map(|pane| pane.id.as_str())
+            .collect::<HashSet<_>>();
+        let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
+            pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
+        });
+        if status_unknown {
+            self.set_error(
+                "tab.close_status_unknown",
+                format!(
+                    "Tab {tab_id} has a pane whose activity status is unknown; refresh status before closing"
+                ),
+                true,
+            );
+            return true;
+        }
+        let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
+            pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
+        });
+        if requires_confirmation && !confirmed {
+            self.set_error(
+                "tab.close_confirmation_required",
+                format!(
+                    "Tab {tab_id} contains an agent that is working or needs attention; close_tab requires confirmed=true"
+                ),
+                false,
+            );
+            return true;
+        }
+        self.push_diagnostic("tab.close.requested", format!("Closing tab {tab_id}"));
+        self.start_close_capture(live::CloseCaptureTarget::Tab { tab_id }, tab)
+    }
+
+    /// `close_pane` on this machine, and the same step a tree close takes for
+    /// a local pane: a pane that is the last of its project keeps the project
+    /// registered through the close exactly as an ordinary close does.
+    pub(super) fn close_local_pane(&mut self, pane_id: String, confirmed: bool) -> bool {
+        let status_unknown = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .any(|agent| agent.pane_id == pane_id && agent.requires_close_status_check);
+        if status_unknown {
+            self.set_error(
+                "pane.close_status_unknown",
+                format!(
+                    "Pane {pane_id} has an unknown activity status; refresh status before closing"
+                ),
+                true,
+            );
+            return true;
+        }
+        let requires_confirmation = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .any(|agent| agent.pane_id == pane_id && agent.requires_close_confirmation);
+        if requires_confirmation && !confirmed {
+            self.set_error(
+                "pane.close_confirmation_required",
+                format!(
+                    "Pane {pane_id} is working or needs attention; close_pane requires confirmed=true"
+                ),
+                false,
+            );
+            return true;
+        }
+        if self.live.is_none() {
+            self.set_error(
+                "pane.control_unavailable",
+                "Pane close requires a live Herdr connection",
+                true,
+            );
+            return true;
+        }
+        let tab = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+            .cloned();
+        let Some(tab) = tab else {
+            self.set_error(
+                "pane.unknown",
+                format!("Pane {pane_id} is not available"),
+                false,
+            );
+            return true;
+        };
+        self.retain_project_before_last_pane_closes(&pane_id);
+        self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
+        self.start_close_capture(live::CloseCaptureTarget::Pane { pane_id }, tab)
+    }
 }
