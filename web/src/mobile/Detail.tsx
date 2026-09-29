@@ -1,6 +1,6 @@
 // One agent's detail on the phone (PRD mobile-companion B24-B28, D-18): the
 // row's head; the agent's conversation from its own transcript, the
-// operator's messages as ❯ blocks and the agent's text at full width, with
+// operator's messages as ❯ blocks and the agent's Markdown at full width, with
 // older messages a pull to the top away; or the pane's recent rows read-only
 // in the terminal's colours, wrapped at the phone's width because the pane is
 // as wide as the desktop (a box-drawn rule is clipped to one line instead).
@@ -10,9 +10,10 @@
 
 import { AnsiUp } from "ansi_up";
 import { ArrowLeftIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { renderMarkdown } from "./markdown";
 import { AgentHead, Place } from "./parts";
 import { loadMore, loadOlder, onReplyResult, sendKey, sendReply, setView } from "./connection";
 import {
@@ -187,7 +188,8 @@ function ConversationLog({ conversation }: { conversation: Conversation }) {
   );
 }
 
-function MessageItem({ message, timed }: { message: ConversationMessage; timed: boolean }) {
+/** Memoized: a message never changes once it arrived, so its Markdown is parsed once. */
+const MessageItem = memo(function MessageItem({ message, timed }: { message: ConversationMessage; timed: boolean }) {
   const time = timed ? (
     <time dateTime={new Date(message.at_ms).toISOString()} className="block pt-xs text-right font-mono text-body text-muted-foreground">
       {messageTime(message.at_ms)}
@@ -213,12 +215,17 @@ function MessageItem({ message, timed }: { message: ConversationMessage; timed: 
       </li>
     );
   }
+  return <AgentMessage message={message} time={time} />;
+});
+
+function AgentMessage({ message, time }: { message: ConversationMessage; time: React.ReactNode }) {
+  const body = useMemo(() => renderMarkdown(message.text), [message.text]);
   return (
     <li data-phone-message="agent">
-      <p className="whitespace-pre-wrap wrap-anywhere text-body leading-normal text-foreground">
-        {message.text}
-        {message.truncated ? <span className="text-muted-foreground"> … 길어서 여기까지 보여요</span> : null}
-      </p>
+      <div className="space-y-sm wrap-anywhere text-body leading-normal text-foreground">
+        {body}
+        {message.truncated ? <p className="text-muted-foreground">… 길어서 여기까지 보여요</p> : null}
+      </div>
       {time}
     </li>
   );

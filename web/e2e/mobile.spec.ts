@@ -379,6 +379,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const transcript = path.join(daemon.home, ".claude", "projects", "-fixture", `${SESSION}.jsonl`);
     fs.mkdirSync(path.dirname(transcript), { recursive: true });
     const turns = Array.from({ length: 70 }, (_, index) => turn(index % 2 === 0 ? "user" : "assistant", `turn ${String(index).padStart(2, "0")}`, index));
+    turns[69] = turn("assistant", "turn 69 **굵게**\n\n- 항목 하나\n- 항목 둘\n\n```\ncode line\n```", 69);
     turns.splice(66, 0, toolOutput("SECRET-TOOL-OUTPUT"), turn("user", "<system-reminder>INJECTED-CONTEXT</system-reminder>", 66));
     fs.writeFileSync(transcript, `${turns.join("\n")}\n`);
     execFileSync(herdr.bin, ["pane", "report-agent-session", one, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", SESSION], { env: herdr.env, timeout: 30_000 });
@@ -395,6 +396,12 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(conversation.locator("[data-phone-message]").last()).toContainText("turn 69");
     await expect(conversation).not.toContainText("turn 39");
     await expect(conversation.locator('[data-phone-message="you"]').first()).toContainText("turn 40");
+    // The agent's Markdown is drawn, not shown as marks.
+    const newest = conversation.locator("[data-phone-message]").last();
+    await expect(newest.locator("strong")).toHaveText("굵게");
+    await expect(newest.locator("li")).toHaveCount(2);
+    await expect(newest.locator("pre")).toHaveText("code line");
+    await expect(newest).not.toContainText("**");
     // Pulling to the top brings the older pages, down to the first turn.
     await conversation.evaluate((element) => {
       element.scrollTop = 0;
