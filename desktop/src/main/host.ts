@@ -83,6 +83,13 @@ function mtimeMs(file: string): number | null {
 export class DesktopHost {
   private state: HostState = { kind: "connecting" };
   private window: BrowserWindow | null = null;
+  /**
+   * The status page load still in flight. A shell load waits for it: started
+   * while the status page is still navigating (a daemon that answers at once,
+   * as on a relaunch), Chromium lands on the shell but rejects the load with
+   * an empty code, and the renderer's own navigation tracking stays pending.
+   */
+  private statusLoad: Promise<unknown> | null = null;
   private readonly runner = new ChildRunner();
   /** Every CLI child runs through this chain, so the runner's cap of one is never crossed. */
   private cliChain: Promise<unknown> = Promise.resolve();
@@ -428,6 +435,14 @@ export class DesktopHost {
     if (!window) return;
     const state = this.state;
     if (state.kind === "attached" || state.kind === "lost") {
+      if (this.statusLoad) {
+        // The status page is a local file, so this waits a few milliseconds; a newer state renders itself.
+        const rerender = () => {
+          if (this.state === state) this.render();
+        };
+        this.statusLoad.then(rerender, rerender);
+        return;
+      }
       this.load(window.loadURL(state.url), state.kind);
       return;
     }
@@ -437,7 +452,13 @@ export class DesktopHost {
       this.load(window.webContents.executeJavaScript(`location.hash = ${JSON.stringify(hash)}`), state.kind);
       return;
     }
-    this.load(window.loadFile(STATUS_PAGE, { hash }), state.kind);
+    const loading = window.loadFile(STATUS_PAGE, { hash });
+    this.statusLoad = loading;
+    const settled = () => {
+      if (this.statusLoad === loading) this.statusLoad = null;
+    };
+    loading.then(settled, settled);
+    this.load(loading, state.kind);
   }
 
   private load(pending: Promise<unknown>, state: HostState["kind"]): void {
