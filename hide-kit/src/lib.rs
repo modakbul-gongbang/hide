@@ -19,6 +19,7 @@
 //!   kit is not such a record (B20).
 
 mod cli;
+mod device;
 mod hcoord;
 mod hooks;
 mod labels;
@@ -33,6 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+pub use device::{CURRENT, device_target};
 pub use hcoord::{HcoordRuntime, NODE_MINIMUM, find_node};
 pub use labels::{LABELS_PLUGIN_ID, labels_home};
 pub use local::{STANDALONE_REASON, bundled_kit_dir, local_target};

@@ -58,6 +58,9 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
         drop(receiver);
         let result = read_requests(input, &sender, &output);
         drop(sender);
+        // The connection is gone: a kit step still running ends its child
+        // rather than keep the helper alive after it.
+        crate::kit::stop();
         result
     })
 }
@@ -248,6 +251,11 @@ pub fn handle(call: Call) -> HostResult<Value> {
             };
             to_value(crate::register::check(&absolute(&path)?, Path::new(&home))?)
         }
+        Call::Kit {
+            action,
+            cli_dir,
+            herdr_socket,
+        } => crate::kit::handle(action, &cli_dir, herdr_socket.as_deref()),
         Call::WorktreeRemove { removal } => {
             absolute(&removal.repository_root)?;
             absolute(&removal.checkout_path)?;
