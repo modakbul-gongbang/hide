@@ -93,6 +93,9 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
         };
         return Observed::Stale(format!("the plugin is installed from {from}"));
     }
+    if let Err(reason) = crate::record::private_state_dir(&target.home, false) {
+        return Observed::Blocked(reason);
+    }
     match payload::is_current(&packaged(target), &labels_home(&target.home)) {
         Ok(true) => Observed::Current,
         Ok(false) => Observed::Stale("an older copy of the plugin is linked".to_owned()),
@@ -101,6 +104,7 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
 }
 
 pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
+    crate::record::private_state_dir(&target.home, true)?;
     payload::sync(&packaged(target), &labels_home(&target.home))?;
     let existing = linked(target)?;
     // An operator who turned the plugin off in Herdr keeps it off.

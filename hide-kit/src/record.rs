@@ -29,8 +29,18 @@ impl Record {
     }
 }
 
+/// The folders under HOME that hold the kit's state and its copies of the
+/// labels plugin and hcoord.
+pub(crate) const STATE_PARTS: [&str; 2] = [".hide", "kit"];
+
 pub fn kit_state_dir(home: &Path) -> PathBuf {
-    home.join(".hide").join("kit")
+    home.join(STATE_PARTS[0]).join(STATE_PARTS[1])
+}
+
+/// The kit's state folder, made private when it is missing, or why the kit
+/// keeps nothing there (`crate::private_dirs`).
+pub(crate) fn private_state_dir(home: &Path, create: bool) -> Result<PathBuf, String> {
+    crate::private_dirs(home, &STATE_PARTS, create)
 }
 
 fn path(home: &Path) -> PathBuf {
@@ -71,6 +81,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
     };
     let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
     bytes.push(b'\n');
+    private_state_dir(home, true)?;
     crate::write_atomically(&path(home), &bytes, 0o600)
 }
 

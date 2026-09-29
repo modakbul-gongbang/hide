@@ -431,6 +431,50 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
 
 /// Replaces `path` with `contents` through a temporary file beside it, so a
 /// failure part way leaves the old file whole.
+/// `base` joined with `parts`, each folder checked in turn: the kit keeps
+/// code there that launchd and Herdr run as this account, so a folder that
+/// belongs to another account or that others can write to is refused rather
+/// than trusted. With `create`, a missing folder is made 0700; without it, a
+/// missing folder ends the check, since nothing below it can be there yet.
+pub(crate) fn private_dirs(base: &Path, parts: &[&str], create: bool) -> Result<PathBuf, String> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let account = unsafe { libc::geteuid() };
+    let mut folder = base.to_path_buf();
+    for part in parts {
+        folder.push(part);
+        if create {
+            match std::fs::DirBuilder::new().mode(0o700).create(&folder) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(format!(
+                        "{} could not be created: {error}",
+                        folder.display()
+                    ));
+                }
+            }
+        }
+        let metadata = match std::fs::metadata(&folder) {
+            Ok(metadata) => metadata,
+            Err(error) if !create && error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(base.join(parts.join("/")));
+            }
+            Err(error) => return Err(format!("{} could not be read: {error}", folder.display())),
+        };
+        if !metadata.is_dir() {
+            return Err(format!("{} is not a folder", folder.display()));
+        }
+        if metadata.uid() != account || metadata.mode() & 0o022 != 0 {
+            return Err(format!(
+                "{} can be changed by another account, so Hide keeps nothing it runs there",
+                folder.display()
+            ));
+        }
+    }
+    Ok(folder)
+}
+
 pub(crate) fn write_atomically(path: &Path, contents: &[u8], mode: u32) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;

@@ -492,6 +492,33 @@ fn without_a_runtime_for_hcoord_it_fails_and_an_existing_shim_is_left() {
     );
 }
 
+/// The kit keeps code that launchd and Herdr run under `~/.hide/kit`: a
+/// fresh folder is the account's alone, and one another account can write to
+/// is refused rather than run from.
+#[test]
+fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
+    let fixture = Fixture::new();
+    apply(&fixture.target, &Scope::Automatic);
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let state = kit_state_dir(&fixture.target.home);
+    assert_eq!(mode(&state), 0o700);
+    assert_eq!(mode(state.parent().unwrap()), 0o700);
+    assert_eq!(mode(&fixture.target.home.join(".hcoord/bin")), 0o700);
+
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let report = status(&fixture.target);
+    for id in [ComponentId::Labels, ComponentId::Hcoord] {
+        let part = report.components.iter().find(|part| part.id == id).unwrap();
+        assert_eq!(part.state, ComponentState::Failed, "{id:?}");
+        assert!(
+            part.reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("can be changed by another account")),
+            "{part:?}"
+        );
+    }
+}
+
 #[test]
 fn an_unreadable_record_installs_nothing_missing_on_a_guess() {
     let fixture = Fixture::new();

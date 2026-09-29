@@ -46,8 +46,11 @@ pub(crate) fn home_override() -> Option<(String, String)> {
         .map(|value| (HOME_VARIABLE.to_owned(), value))
 }
 
+/// The folders under HOME that hold the shim; hcoord's own `~/.hcoord`.
+const SHIM_PARTS: [&str; 2] = [".hcoord", "bin"];
+
 pub(crate) fn shim_path(home: &Path) -> PathBuf {
-    home.join(".hcoord").join("bin").join("hcoord")
+    home.join(SHIM_PARTS[0]).join(SHIM_PARTS[1]).join("hcoord")
 }
 
 fn packaged(target: &KitTarget) -> PathBuf {
@@ -94,6 +97,11 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
             packaged(target).display()
         ));
     }
+    if let Err(reason) = crate::private_dirs(&target.home, &SHIM_PARTS, false)
+        .and_then(|_| crate::record::private_state_dir(&target.home, false))
+    {
+        return Observed::Blocked(reason);
+    }
     let path = shim_path(&target.home);
     let found = match std::fs::read_to_string(&path) {
         Ok(found) => found,
@@ -114,13 +122,14 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
 
 pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
     let runtime = target.hcoord.as_ref().map_err(Clone::clone)?;
+    crate::record::private_state_dir(&target.home, true)?;
     payload::sync(&packaged(target), &copy_home(&target.home))?;
-    let path = shim_path(&target.home);
-    if let Some(folder) = path.parent() {
-        std::fs::create_dir_all(folder)
-            .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
-    }
-    crate::write_atomically(&path, shim(&target.home, runtime).as_bytes(), 0o700)
+    crate::private_dirs(&target.home, &SHIM_PARTS, true)?;
+    crate::write_atomically(
+        &shim_path(&target.home),
+        shim(&target.home, runtime).as_bytes(),
+        0o700,
+    )
 }
 
 /// Asks this build's hcoord to converge its daemon, as the desktop host did
