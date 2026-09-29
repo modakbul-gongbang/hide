@@ -65,30 +65,33 @@ export function Detail({ onBack }: { onBack: () => void }) {
   return (
     <main className="flex h-full flex-col" data-phone-detail={detail ? `${detail.key.device_id}|${detail.key.pane_id}` : ""}>
       <header className="phone-safe-top shrink-0 border-b border-border bg-card px-lg pb-md">
-        <div className="flex items-center justify-between pt-sm">
-          <button type="button" onClick={onBack} className="-ml-sm flex min-h-(--size-touch-target) items-center gap-xs px-sm text-title text-foreground" data-phone-back="true">
-            <ArrowLeftIcon aria-hidden="true" className="size-(--size-icon-lg)" />
-            목록
-          </button>
-          {agent ? <span className="font-mono text-body text-muted-foreground">{agent.elapsed}</span> : null}
+        {/* ← 목록, 대화 | 터미널 in the middle, and the elapsed time share one row, so the switch costs no height. */}
+        <div className="flex items-center gap-sm pt-sm">
+          <div className="flex min-w-0 flex-1 basis-0">
+            <button type="button" onClick={onBack} className="-ml-sm flex min-h-(--size-touch-target) items-center gap-xs px-sm text-title text-foreground" data-phone-back="true">
+              <ArrowLeftIcon aria-hidden="true" className="size-(--size-icon-lg)" />
+              목록
+            </button>
+          </div>
+          {hasConversation && detail ? (
+            <Tabs value={detail.view} onValueChange={(value) => setView(value as DetailView)} className="shrink-0">
+              <TabsList>
+                <TabsTrigger value="conversation" className="h-(--size-touch-target) px-md text-title" data-phone-view="conversation">
+                  대화
+                </TabsTrigger>
+                <TabsTrigger value="terminal" className="h-(--size-touch-target) px-md text-title" data-phone-view="terminal">
+                  터미널
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          ) : null}
+          <span className="min-w-0 flex-1 basis-0 text-right font-mono text-body text-muted-foreground">{agent?.elapsed}</span>
         </div>
         {agent ? (
           <div className="mt-xs flex flex-col gap-xs">
             <AgentHead agent={agent} large />
             <Place agent={agent} />
           </div>
-        ) : null}
-        {hasConversation && detail ? (
-          <Tabs value={detail.view} onValueChange={(value) => setView(value as DetailView)} className="mt-md">
-            <TabsList className="w-full">
-              <TabsTrigger value="conversation" className="h-(--size-touch-target) flex-1 text-title" data-phone-view="conversation">
-                대화
-              </TabsTrigger>
-              <TabsTrigger value="terminal" className="h-(--size-touch-target) flex-1 text-title" data-phone-view="terminal">
-                터미널
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
         ) : null}
       </header>
       {unreachable && !connected ? (
