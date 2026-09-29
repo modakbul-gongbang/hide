@@ -14,6 +14,7 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Files one checkout's index holds; past it the index is reported truncated.
 pub const INDEX_CAP: usize = 50_000;
@@ -35,9 +36,8 @@ pub struct Walked {
 pub fn walk(root_dir: &Dir, root: &Path) -> Walked {
     // Keep only the verified root handle open across siblings. A wide tree
     // must not consume one descriptor for every pending directory.
-    let (global, _) = GitignoreBuilder::new(root).build_global();
-    let exclude = ignore_file(root_dir, root, ".git/info/exclude");
-    let mut stack = vec![(PathBuf::new(), exclude.into_iter().collect::<Vec<_>>())];
+    let base = IgnoreRules::new(root).with_file(root_dir, root, ".git/info/exclude");
+    let mut stack = vec![(PathBuf::new(), base)];
     let mut paths = Vec::new();
     let mut truncated = false;
     let mut directories = 0usize;
@@ -59,13 +59,9 @@ pub fn walk(root_dir: &Dir, root: &Path) -> Walked {
             }
         };
         let absolute_dir = root.join(&relative_dir);
-        let mut rules = inherited;
-        if let Some(matcher) = ignore_file(&dir, &absolute_dir, ".gitignore") {
-            rules.push(matcher);
-        }
-        if let Some(matcher) = ignore_file(&dir, &absolute_dir, ".ignore") {
-            rules.push(matcher);
-        }
+        let rules = inherited
+            .with_file(&dir, &absolute_dir, ".gitignore")
+            .with_file(&dir, &absolute_dir, ".ignore");
         let Ok(entries) = dir.entries() else {
             truncated = true;
             continue;
@@ -85,7 +81,7 @@ pub fn walk(root_dir: &Dir, root: &Path) -> Walked {
                 truncated = true;
                 continue;
             };
-            if ignored(&rules, &global, &absolute, kind.is_dir()) {
+            if rules.ignores(&absolute, kind.is_dir()) {
                 continue;
             }
             if kind.is_dir() {
@@ -135,15 +131,54 @@ fn ignore_file(dir: &Dir, base: &Path, name: &str) -> Option<Gitignore> {
     builder.build().ok()
 }
 
-fn ignored(rules: &[Gitignore], global: &Gitignore, path: &Path, is_dir: bool) -> bool {
-    for matcher in rules.iter().rev().chain(std::iter::once(global)) {
-        match matcher.matched(path, is_dir) {
-            Match::Ignore(_) => return true,
-            Match::Whitelist(_) => return false,
-            Match::None => {}
+/// The ignore rules that apply at one folder of a checkout: the ones its
+/// ancestors contributed, then its own, and last the global excludes file.
+/// The nearest rule that names a path decides it, as Git does.
+#[derive(Clone)]
+pub struct IgnoreRules {
+    rules: Vec<Gitignore>,
+    global: Arc<Gitignore>,
+}
+
+impl IgnoreRules {
+    /// The rules of a checkout whose real path is `root`: the global excludes
+    /// file, anchored there. Add the checkout's own files with
+    /// [`IgnoreRules::with_file`].
+    pub fn new(root: &Path) -> Self {
+        let (global, _) = GitignoreBuilder::new(root).build_global();
+        Self {
+            rules: Vec::new(),
+            global: Arc::new(global),
         }
     }
-    false
+
+    /// These rules plus the ignore file `name` inside `dir`, anchored at
+    /// `base`. A file that is missing, not a regular file, or over 1 MiB adds
+    /// nothing; the read cannot leave `dir`.
+    pub fn with_file(&self, dir: &Dir, base: &Path, name: &str) -> Self {
+        let mut next = self.clone();
+        if let Some(matcher) = ignore_file(dir, base, name) {
+            next.rules.push(matcher);
+        }
+        next
+    }
+
+    /// Whether the rules ignore `path`, an absolute path under the checkout.
+    pub fn ignores(&self, path: &Path, is_dir: bool) -> bool {
+        for matcher in self
+            .rules
+            .iter()
+            .rev()
+            .chain(std::iter::once(self.global.as_ref()))
+        {
+            match matcher.matched(path, is_dir) {
+                Match::Ignore(_) => return true,
+                Match::Whitelist(_) => return false,
+                Match::None => {}
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]

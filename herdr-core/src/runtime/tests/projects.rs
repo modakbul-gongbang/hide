@@ -658,19 +658,51 @@ fn a_named_project_overview_measures_its_whole_disk() {
     );
     assert!(disk_of(&runtime, "workspace-1").measuring);
 
+    assert_eq!(request.shared_git, [PathBuf::from("/repo/.git")]);
+
     let usage = |path: &str, bytes: u64| DiskUsageSnapshot {
         path: Some(path.to_owned()),
         total_bytes: Some(bytes),
         ..DiskUsageSnapshot::default()
     };
+    // A checkout row carries its layers; the shared Git directory does not.
+    let layered = |path: &str, cache: u64, deps: u64, other: u64, source: u64| {
+        let cell = |bytes| crate::disk_layers::LayerCell {
+            bytes,
+            folders: usize::from(bytes > 0),
+            largest_name: None,
+        };
+        DiskUsageSnapshot {
+            volume_free_bytes: Some(7),
+            layers: Some(crate::disk_layers::DiskLayers {
+                build_cache: cell(cache),
+                dependencies: cell(deps),
+                other: cell(other),
+                source_bytes: source,
+            }),
+            ..usage(path, cache + deps + other + source)
+        }
+    };
     assert!(runtime.ingest_disk_usage(vec![
-        usage("/repo", 100),
-        usage("/repo.worktrees/feature", 20),
+        layered("/repo", 60, 10, 5, 25),
+        layered("/repo.worktrees/feature", 12, 3, 0, 5),
         usage("/repo/.git", 3),
     ]));
     let disk = disk_of(&runtime, "workspace-1");
     assert_eq!(disk.total_bytes, Some(123));
     assert!(!disk.measuring);
+    assert_eq!(disk.free_bytes, Some(7));
+    assert_eq!(
+        disk.layers,
+        Some(crate::model::ProjectDiskLayersSnapshot {
+            build_cache: 72,
+            dependencies: 13,
+            source: 30,
+            other: 5,
+            shared_git: 3,
+        }),
+        "the layers are the checkouts' sums and add up to the total"
+    );
 
     let generation = runtime.disk_request().generation;
     assert!(!runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "workspace-2"}))));

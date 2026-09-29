@@ -283,7 +283,10 @@ List rows use the existing lazy-loading and search keyboard patterns.
 Disk reuses `DiskReader` (`herdr-core/src/disk.rs`), triggered by opening Git/Overview or explicit refresh, with one inflight read and coalesced pending input.
 The filesystem walk counts `st_blocks * 512`, partitions nested checkout/shared-Git roots by longest ownership, and deduplicates `(device, inode)` across components.
 It counts a symlink's own allocation without following it and rejects alias roots rather than escaping the declared boundary.
-It is bounded to thirty seconds and one million visited/pending entries per request; failed or incomplete components have no total and remain visible beside a confirmed subtotal.
+Each checkout root has its own bound of thirty seconds and one million visited/pending entries; a root that runs out or cannot be read has no total and remains visible beside a confirmed subtotal, and never takes another root's answer with it.
+Each finished root is handed to the coordinator as soon as it is measured, laid over the previous answer, so a large project fills row by row; the whole answer replaces the partial ones when the read ends.
+The same walk sorts a checkout's blocks by layer (`herdr-core/src/disk_layers.rs`): the ignore rules (`hide_host::index::IgnoreRules`, the rules the file index uses, global excludes file included) name the candidate folders, and a signed `CACHEDIR.TAG` or a known ecosystem's marker file in the same parent vouches for a build cache or dependency folder; a candidate holding another repository, a link, or no proof is `other`.
+Nothing here runs a `git` process or reads a file beyond a directory listing, the `.gitignore` of each source folder and one tag per candidate, and the free space of the volume comes from one `statvfs` per read.
 This is allocated disk accounting, not physical reclaim estimation for APFS clones.
 Opening or refreshing replaces the measurement; no timer, hover or per-row subprocess measures disk.
 

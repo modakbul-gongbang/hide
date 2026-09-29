@@ -39,10 +39,38 @@ fn project_disk(
 ) -> crate::model::ProjectDiskSnapshot {
     let total_bytes = project.and_then(|project| project.disk_total_bytes);
     let unavailable_reason = project.and_then(|project| project.disk_unavailable_reason.clone());
+    let free_bytes = project.and_then(|project| {
+        project
+            .worktrees
+            .iter()
+            .map(|worktree| &worktree.disk)
+            .chain(std::iter::once(&project.shared_git_disk))
+            .find_map(|disk| disk.volume_free_bytes)
+    });
+    // The layers are the sum of every checkout, so one checkout without them
+    // leaves the project without a layer breakdown rather than a low one.
+    let layers = project
+        .filter(|_| total_bytes.is_some())
+        .and_then(|project| {
+            let mut sum = crate::model::ProjectDiskLayersSnapshot {
+                shared_git: project.shared_git_disk.total_bytes?,
+                ..Default::default()
+            };
+            for worktree in &project.worktrees {
+                let layers = worktree.disk.layers.as_ref()?;
+                sum.build_cache += layers.build_cache.bytes;
+                sum.dependencies += layers.dependencies.bytes;
+                sum.other += layers.other.bytes;
+                sum.source += layers.source_bytes;
+            }
+            Some(sum)
+        });
     crate::model::ProjectDiskSnapshot {
         measuring: named && total_bytes.is_none() && unavailable_reason.is_none(),
         total_bytes,
         unavailable_reason,
+        free_bytes,
+        layers,
     }
 }
 
@@ -1797,6 +1825,7 @@ impl Runtime {
     }
 
     pub fn disk_request(&self) -> crate::disk::DiskRequest {
+        let mut shared_git = Vec::new();
         let mut paths = if self.snapshot.ui_state.right_panel_visible
             && matches!(
                 self.snapshot.ui_state.right_panel_section,
@@ -1817,6 +1846,7 @@ impl Runtime {
                         .collect();
                     if let Some(shared) = &project.shared_git_path {
                         paths.push(PathBuf::from(shared));
+                        shared_git.push(PathBuf::from(shared));
                     }
                     Some(paths)
                 })
@@ -1833,12 +1863,18 @@ impl Runtime {
             .and_then(|path| self.worktree_catalog.project(path))
         {
             paths.extend(project.worktrees.iter().map(|w| PathBuf::from(&w.path)));
-            paths.extend(project.shared_git_path.as_ref().map(PathBuf::from));
+            if let Some(shared) = project.shared_git_path.as_ref().map(PathBuf::from) {
+                shared_git.push(shared.clone());
+                paths.push(shared);
+            }
             paths.sort();
             paths.dedup();
+            shared_git.sort();
+            shared_git.dedup();
         }
         crate::disk::DiskRequest {
             paths,
+            shared_git,
             generation: self.disk_generation,
         }
     }

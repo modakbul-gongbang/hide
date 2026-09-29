@@ -668,7 +668,7 @@ fn git_within(cwd: &Path, arguments: &[&str], deadline: Duration) -> Result<Stri
 
 /// The first ignored folder of the worktree that holds a Git repository of
 /// its own, relative to the worktree.
-fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
+pub fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
     let listed = git(
         worktree,
         &[

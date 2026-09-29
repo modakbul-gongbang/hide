@@ -895,6 +895,23 @@ pub struct ProjectDiskSnapshot {
     pub total_bytes: Option<u64>,
     pub unavailable_reason: Option<String>,
     pub measuring: bool,
+    /// Free space of the project's volume when it was measured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free_bytes: Option<u64>,
+    /// The total by layer, once every part is measured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layers: Option<ProjectDiskLayersSnapshot>,
+}
+
+/// A project's allocated bytes by layer: the sum over its checkouts, and the
+/// shared Git directory on its own.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectDiskLayersSnapshot {
+    pub build_cache: u64,
+    pub dependencies: u64,
+    pub source: u64,
+    pub other: u64,
+    pub shared_git: u64,
 }
 
 impl ProjectDiskSnapshot {
@@ -3069,6 +3086,17 @@ pub struct DiskUsageSnapshot {
     pub largest_child_name: Option<String>,
     pub largest_child_bytes: Option<u64>,
     pub unavailable_reason: Option<String>,
+    /// What a checkout holds by layer, for a measured checkout row. Absent
+    /// for the shared Git directory and for a measurement that failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layers: Option<crate::disk_layers::DiskLayers>,
+    /// Free space of the volume the measured path sits on, in bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_free_bytes: Option<u64>,
+    /// The folders behind the layer cells. The core keeps them so a cleanup
+    /// can move them; the wire never carries a path.
+    #[serde(skip)]
+    pub folders: Vec<crate::disk_layers::LayerFolder>,
 }
 
 /// The right panel's summary card for the selected checkout.

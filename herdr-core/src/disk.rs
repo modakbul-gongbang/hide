@@ -1,33 +1,91 @@
 //! Worktree disk usage, measured sequentially on the existing background worker.
 //! Git and Overview share this lane; opening or explicit refresh requests a measurement.
+//!
+//! A checkout is measured in layers (`disk_layers`): the walk sorts each
+//! allocated block into source, a build-cache or dependency folder a tool
+//! makes again, or an ignored folder nothing vouches for.
 
-use std::path::PathBuf;
+use std::collections::{BTreeMap, HashSet};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use hide_host::index::IgnoreRules;
+
+use crate::disk_layers::{FolderTally, Layer, Siblings, Tally, base_rules, layer_of, rules_in};
 use crate::model::DiskUsageSnapshot;
 use crate::reader::BackgroundRead;
+
+/// One checkout's share of a request: entries it may visit, and how long.
+const ENTRY_LIMIT: usize = 1_000_000;
+const TIME_LIMIT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DiskRequest {
     /// Checkout roots and the shared Git directory, partitioned without overlap.
     pub paths: Vec<PathBuf>,
+    /// The entries of `paths` that are a shared Git directory: measured as one
+    /// size, never sorted into layers.
+    pub shared_git: Vec<PathBuf>,
     /// Bumped on section opening and explicit refresh.
     pub generation: u64,
 }
 
 pub struct DiskReader {
     inner: BackgroundRead<DiskRequest, Vec<DiskUsageSnapshot>>,
+    /// Rows the running read has finished, handed out as they arrive.
+    finished: Arc<Mutex<Vec<DiskUsageSnapshot>>>,
+    /// The last answer with the rows finished since laid over it.
+    current: Vec<DiskUsageSnapshot>,
 }
 
 impl DiskReader {
     pub fn new() -> Self {
+        let finished = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&finished);
         Self {
-            inner: BackgroundRead::on_change(Duration::ZERO, read),
+            inner: BackgroundRead::on_change(Duration::ZERO, move |request| {
+                read_with(request, |row| {
+                    sink.lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(row.clone());
+                })
+            }),
+            finished,
+            current: Vec::new(),
         }
     }
 
+    /// The whole answer when a read finishes; while one runs, the previous
+    /// answer with each checkout laid over it as soon as it is measured, so a
+    /// slow project fills row by row (a partial answer never removes a row).
     pub fn read_if_due(&mut self, request: DiskRequest) -> Option<Vec<DiskUsageSnapshot>> {
-        self.inner.poll(request)
+        if let Some(answer) = self.inner.poll(request) {
+            self.finished
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clear();
+            self.current = answer.clone();
+            return Some(answer);
+        }
+        let arrived = std::mem::take(
+            &mut *self
+                .finished
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        if arrived.is_empty() {
+            return None;
+        }
+        for row in arrived {
+            match self.current.iter_mut().find(|held| held.path == row.path) {
+                Some(held) => *held = row,
+                None => self.current.push(row),
+            }
+        }
+        Some(self.current.clone())
     }
 }
 
@@ -38,8 +96,48 @@ impl Default for DiskReader {
 }
 
 pub(crate) fn read(request: &DiskRequest) -> Vec<DiskUsageSnapshot> {
-    use std::collections::{BTreeMap, HashSet};
-    use std::os::unix::fs::MetadataExt;
+    read_with(request, |_| {})
+}
+
+/// Bytes free to an unprivileged writer on the volume holding `path`.
+// The block count is 32-bit on macOS and 64-bit elsewhere.
+#[allow(clippy::useless_conversion)]
+pub(crate) fn volume_free_bytes(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `c_path` is a NUL-terminated path and `stat` is a valid out pointer.
+    let status = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
+    if status != 0 {
+        return None;
+    }
+    // SAFETY: statvfs returned 0, so it filled the struct.
+    let stat = unsafe { stat.assume_init() };
+    u64::from(stat.f_bavail).checked_mul(stat.f_frsize)
+}
+
+/// Where a walked entry is counted.
+#[derive(Clone, Copy)]
+enum Bucket {
+    Source,
+    /// The top ignored folder at this index of the tally.
+    Folder(usize),
+}
+
+struct Item {
+    path: PathBuf,
+    bucket: Bucket,
+    /// The ignore rules of the folder above; a folder adds its own `.gitignore`.
+    rules: Option<Rc<IgnoreRules>>,
+}
+
+/// Measures every requested root, calling `finished` with each as it is done.
+/// Each root has its own entry and time limit; one that runs out is the only
+/// one without a total.
+pub(crate) fn read_with(
+    request: &DiskRequest,
+    mut finished: impl FnMut(&DiskUsageSnapshot),
+) -> Vec<DiskUsageSnapshot> {
     // The deepest explicitly requested root owns its subtree. Shared Git and
     // nested linked worktrees are therefore excluded from the main component.
     // One inode set also counts hard links once across sibling components.
@@ -57,90 +155,21 @@ pub(crate) fn read(request: &DiskRequest) -> Vec<DiskUsageSnapshot> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|t| t.as_millis() as u64);
+    let free = request
+        .paths
+        .first()
+        .and_then(|path| volume_free_bytes(path));
     let mut result = Vec::new();
-    let started = std::time::Instant::now();
-    let mut visited = 0usize;
-    const ENTRY_LIMIT: usize = 1_000_000;
     for root in &roots {
-        let mut bytes = 0u64;
-        let mut children = BTreeMap::<String, u64>::new();
-        let mut stack = vec![root.clone()];
-        let mut failure = None;
-        // Reject alias roots rather than following a symlink outside the
-        // declared measurement boundary. Descendant links count their own
-        // allocated blocks and are never traversed.
-        if std::fs::canonicalize(root).is_ok_and(|canonical| canonical != *root) {
-            failure = Some(
-                "The measurement root is an alias. Refresh with the canonical checkout path."
-                    .into(),
-            );
-            stack.clear();
-        }
-        while let Some(path) = stack.pop() {
-            visited += 1;
-            if visited > ENTRY_LIMIT || started.elapsed() > Duration::from_secs(30) {
-                failure = Some("Measurement exceeded its 30 second / one million entry limit. This component is unavailable; measure again after reducing the folder size.".into());
-                break;
-            }
-            if path != *root && root_set.contains(&path) {
-                continue;
-            }
-            let metadata = match std::fs::symlink_metadata(&path) {
-                Ok(value) => value,
-                Err(error) => {
-                    failure = Some(format!("Disk measurement incomplete: {error}"));
-                    break;
-                }
-            };
-            if !seen.insert((metadata.dev(), metadata.ino())) {
-                continue;
-            }
-            let allocated = metadata.blocks().saturating_mul(512);
-            bytes = bytes.saturating_add(allocated);
-            if let Ok(relative) = path.strip_prefix(root)
-                && let Some(name) = relative.components().next()
-            {
-                *children
-                    .entry(name.as_os_str().to_string_lossy().into_owned())
-                    .or_default() += allocated;
-            }
-            if metadata.is_dir() {
-                match std::fs::read_dir(&path) {
-                    Ok(entries) => {
-                        let mut descendants = Vec::new();
-                        for entry in entries {
-                            if descendants.len() + stack.len() + visited >= ENTRY_LIMIT {
-                                failure = Some(
-                                    "Measurement exceeded its one million entry limit.".into(),
-                                );
-                                break;
-                            }
-                            match entry {
-                                Ok(entry) => descendants.push(entry.path()),
-                                Err(error) => {
-                                    failure = Some(format!("Disk measurement incomplete: {error}"));
-                                }
-                            }
-                        }
-                        descendants.sort();
-                        stack.extend(descendants.into_iter().rev());
-                    }
-                    Err(error) => {
-                        failure = Some(format!("Disk measurement incomplete: {error}"));
-                        break;
-                    }
-                }
-            }
-        }
-        let largest = children.into_iter().max_by_key(|(_, size)| *size);
-        result.push(DiskUsageSnapshot {
-            path: Some(root.to_string_lossy().into_owned()),
-            total_bytes: failure.is_none().then_some(bytes),
-            largest_child_name: largest.as_ref().map(|(name, _)| name.clone()),
-            largest_child_bytes: largest.map(|(_, size)| size),
-            unavailable_reason: failure,
+        let layered = !request.shared_git.contains(root);
+        let row = measure_root(root, &root_set, &mut seen, layered);
+        let row = DiskUsageSnapshot {
             measured_at_unix_ms: measured_at,
-        });
+            volume_free_bytes: free,
+            ..row
+        };
+        finished(&row);
+        result.push(row);
     }
     // Preserve caller order for stable identities and unchanged snapshot reuse.
     result.sort_by_key(|row| {
@@ -150,6 +179,185 @@ pub(crate) fn read(request: &DiskRequest) -> Vec<DiskUsageSnapshot> {
             .position(|p| Some(p.to_string_lossy().as_ref()) == row.path.as_deref())
     });
     result
+}
+
+fn measure_root(
+    root: &PathBuf,
+    root_set: &HashSet<PathBuf>,
+    seen: &mut HashSet<(u64, u64)>,
+    layered: bool,
+) -> DiskUsageSnapshot {
+    let started = std::time::Instant::now();
+    let mut visited = 0usize;
+    let mut bytes = 0u64;
+    let mut children = BTreeMap::<String, u64>::new();
+    let mut tally = Tally::default();
+    let mut failure = None;
+    let base = layered.then(|| Rc::new(base_rules(root, exclude_dir(root).as_deref())));
+    let mut stack = vec![Item {
+        path: root.clone(),
+        bucket: Bucket::Source,
+        rules: base,
+    }];
+    // Reject alias roots rather than following a symlink outside the
+    // declared measurement boundary. Descendant links count their own
+    // allocated blocks and are never traversed.
+    if std::fs::canonicalize(root).is_ok_and(|canonical| canonical != *root) {
+        failure = Some(
+            "The measurement root is an alias. Refresh with the canonical checkout path.".into(),
+        );
+        stack.clear();
+    }
+    while let Some(item) = stack.pop() {
+        let Item {
+            path,
+            bucket,
+            rules,
+        } = item;
+        visited += 1;
+        if visited > ENTRY_LIMIT || started.elapsed() > TIME_LIMIT {
+            failure = Some("Measurement exceeded its 30 second / one million entry limit. This component is unavailable; measure again after reducing the folder size.".into());
+            break;
+        }
+        if path != *root && root_set.contains(&path) {
+            continue;
+        }
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(value) => value,
+            Err(error) => {
+                failure = Some(format!("Disk measurement incomplete: {error}"));
+                break;
+            }
+        };
+        if !seen.insert((metadata.dev(), metadata.ino())) {
+            continue;
+        }
+        let allocated = metadata.blocks().saturating_mul(512);
+        bytes = bytes.saturating_add(allocated);
+        match bucket {
+            Bucket::Source => tally.source_bytes = tally.source_bytes.saturating_add(allocated),
+            Bucket::Folder(index) => {
+                let folder = &mut tally.folders[index];
+                folder.bytes = folder.bytes.saturating_add(allocated);
+                if path.file_name().is_some_and(|name| name == ".git") {
+                    folder.repository = true;
+                }
+            }
+        }
+        if let Ok(relative) = path.strip_prefix(root)
+            && let Some(name) = relative.components().next()
+        {
+            *children
+                .entry(name.as_os_str().to_string_lossy().into_owned())
+                .or_default() += allocated;
+        }
+        if metadata.is_dir() {
+            match std::fs::read_dir(&path) {
+                Ok(entries) => {
+                    let mut descendants = Vec::new();
+                    for entry in entries {
+                        if descendants.len() + stack.len() + visited >= ENTRY_LIMIT {
+                            failure =
+                                Some("Measurement exceeded its one million entry limit.".into());
+                            break;
+                        }
+                        match entry {
+                            Ok(entry) => descendants.push((entry.path(), entry.file_type().ok())),
+                            Err(error) => {
+                                failure = Some(format!("Disk measurement incomplete: {error}"));
+                            }
+                        }
+                    }
+                    descendants.sort_by(|a, b| a.0.cmp(&b.0));
+                    // Inside a counted folder nothing is sorted again.
+                    let sorted = match (bucket, rules) {
+                        (Bucket::Source, Some(rules)) => {
+                            let here = Rc::new(rules_in(&rules, &path));
+                            let siblings =
+                                Siblings::new(descendants.iter().filter_map(|(child, _)| {
+                                    child.file_name().map(|n| n.to_string_lossy().into_owned())
+                                }));
+                            Some((here, siblings))
+                        }
+                        _ => None,
+                    };
+                    for (child, kind) in descendants.into_iter().rev() {
+                        let (bucket, rules) = match (&sorted, bucket) {
+                            (Some((rules, siblings)), Bucket::Source) => {
+                                let bucket = sort_child(&child, kind, rules, siblings, &mut tally);
+                                (bucket, Some(Rc::clone(rules)))
+                            }
+                            _ => (bucket, None),
+                        };
+                        stack.push(Item {
+                            path: child,
+                            bucket,
+                            rules,
+                        });
+                    }
+                }
+                Err(error) => {
+                    failure = Some(format!("Disk measurement incomplete: {error}"));
+                    break;
+                }
+            }
+        }
+    }
+    let largest = children.into_iter().max_by_key(|(_, size)| *size);
+    let (layers, folders) = if failure.is_none() && layered {
+        let (layers, folders) = tally.finish(root);
+        (Some(layers), folders)
+    } else {
+        (None, Vec::new())
+    };
+    DiskUsageSnapshot {
+        path: Some(root.to_string_lossy().into_owned()),
+        total_bytes: failure.is_none().then_some(bytes),
+        largest_child_name: largest.as_ref().map(|(name, _)| name.clone()),
+        largest_child_bytes: largest.map(|(_, size)| size),
+        unavailable_reason: failure,
+        layers,
+        folders,
+        ..Default::default()
+    }
+}
+
+/// Where one child of a source folder is counted: source, or a new top
+/// ignored folder of the tally.
+fn sort_child(
+    child: &Path,
+    kind: Option<std::fs::FileType>,
+    rules: &IgnoreRules,
+    siblings: &Siblings,
+    tally: &mut Tally,
+) -> Bucket {
+    if child.file_name().is_some_and(|name| name == ".git") {
+        return Bucket::Source;
+    }
+    let is_dir = kind.is_some_and(|kind| kind.is_dir());
+    if !rules.ignores(child, is_dir) {
+        return Bucket::Source;
+    }
+    // A link, a file, or a folder nothing vouches for is `other`; only a
+    // real folder can be a layer.
+    let layer: Option<Layer> = if is_dir {
+        layer_of(child, siblings)
+    } else {
+        None
+    };
+    tally.folders.push(FolderTally {
+        path: child.to_path_buf(),
+        layer,
+        bytes: 0,
+        repository: false,
+    });
+    Bucket::Folder(tally.folders.len() - 1)
+}
+
+/// The shared Git directory's `info` folder, where `exclude` lives.
+fn exclude_dir(root: &Path) -> Option<PathBuf> {
+    let repository = crate::git_dir::discover(root)?;
+    Some(repository.common_dir.join("info"))
 }
 
 #[cfg(test)]
@@ -179,6 +387,7 @@ mod tests {
         let measurements = read(&DiskRequest {
             paths: vec![root.clone(), root.join("linked"), root.join(".git")],
             generation: 0,
+            ..Default::default()
         });
         let total: u64 = measurements.iter().map(|d| d.total_bytes.unwrap()).sum();
         std::fs::remove_dir_all(root).unwrap();
@@ -212,6 +421,7 @@ mod tests {
         let values = read(&DiskRequest {
             paths: vec![root.clone(), root.join("linked")],
             generation: 0,
+            ..Default::default()
         });
         assert_eq!(
             values.iter().map(|v| v.total_bytes.unwrap()).sum::<u64>(),
@@ -230,6 +440,7 @@ mod tests {
         let alias = read(&DiskRequest {
             paths: vec![root.join("escape")],
             generation: 0,
+            ..Default::default()
         });
         assert_eq!(alias[0].total_bytes, None);
         assert!(alias[0].unavailable_reason.is_some());
@@ -245,6 +456,7 @@ mod tests {
         let rows = read(&DiskRequest {
             paths: vec![root.clone(), root.join("missing")],
             generation: 0,
+            ..Default::default()
         });
         assert!(rows[0].total_bytes.is_some());
         assert!(rows[1].total_bytes.is_none());
@@ -269,11 +481,178 @@ mod tests {
         std::fs::canonicalize(root).unwrap()
     }
 
+    fn write(path: &Path, bytes: usize) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, vec![7; bytes]).unwrap();
+    }
+
+    fn allocated(paths: &[PathBuf]) -> u64 {
+        use std::os::unix::fs::MetadataExt;
+        paths
+            .iter()
+            .map(|p| std::fs::symlink_metadata(p).unwrap().blocks() * 512)
+            .sum()
+    }
+
+    fn layered_checkout(root: &Path) {
+        write(&root.join("Cargo.toml"), 100);
+        write(&root.join("src/main.rs"), 5000);
+        write(
+            &root.join(".gitignore"),
+            b"target/\n/agents/\n/dist/\n".len(),
+        );
+        std::fs::write(root.join(".gitignore"), "target/\n/agents/\n/dist/\n").unwrap();
+        write(&root.join("target/debug/big"), 40_000);
+        std::fs::write(
+            root.join("target/CACHEDIR.TAG"),
+            "Signature: 8a477f597d28d172789f06886806bc55\n",
+        )
+        .unwrap();
+        write(&root.join("web/package.json"), 100);
+        std::fs::write(root.join("web/.gitignore"), "node_modules\ndist\n").unwrap();
+        write(&root.join("web/node_modules/dep/index.js"), 20_000);
+        write(&root.join("web/dist/app.js"), 9_000);
+        write(&root.join("agents/runs/log"), 30_000);
+        write(&root.join("dist/handmade"), 6_000);
+    }
+
+    #[test]
+    fn a_checkout_is_sorted_into_source_two_layers_and_the_rest() {
+        let root = fixture("layers");
+        layered_checkout(&root);
+        let rows = read(&DiskRequest {
+            paths: vec![root.clone()],
+            ..Default::default()
+        });
+        let row = &rows[0];
+        let layers = row.layers.as_ref().expect("a checkout row has layers");
+        // Everything below a vouched folder, the folder itself included.
+        let build_cache = allocated(&[
+            root.join("target"),
+            root.join("target/debug"),
+            root.join("target/debug/big"),
+            root.join("target/CACHEDIR.TAG"),
+            root.join("web/dist"),
+            root.join("web/dist/app.js"),
+        ]);
+        let dependencies = allocated(&[
+            root.join("web/node_modules"),
+            root.join("web/node_modules/dep"),
+            root.join("web/node_modules/dep/index.js"),
+        ]);
+        // `/dist` has no package.json beside it, and `agents` has no rule.
+        let other = allocated(&[
+            root.join("agents"),
+            root.join("agents/runs"),
+            root.join("agents/runs/log"),
+            root.join("dist"),
+            root.join("dist/handmade"),
+        ]);
+        assert_eq!(layers.build_cache.bytes, build_cache);
+        assert_eq!(layers.build_cache.folders, 2);
+        assert_eq!(layers.build_cache.largest_name.as_deref(), Some("target"));
+        assert_eq!(layers.dependencies.bytes, dependencies);
+        assert_eq!(
+            layers.dependencies.largest_name.as_deref(),
+            Some("web/node_modules")
+        );
+        assert_eq!(layers.other.bytes, other);
+        assert_eq!(layers.other.folders, 2);
+        assert_eq!(layers.other.largest_name.as_deref(), Some("agents"));
+        let total = row.total_bytes.unwrap();
+        assert_eq!(
+            layers.build_cache.bytes
+                + layers.dependencies.bytes
+                + layers.other.bytes
+                + layers.source_bytes,
+            total,
+            "every allocated block is in exactly one place"
+        );
+        assert!(
+            layers.source_bytes >= allocated(&[root.join("src/main.rs"), root.join("Cargo.toml")])
+        );
+        let mut kept: Vec<_> = row.folders.iter().map(|f| f.path.clone()).collect();
+        kept.sort();
+        assert_eq!(
+            kept,
+            vec![
+                root.join("target"),
+                root.join("web/dist"),
+                root.join("web/node_modules")
+            ]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_holding_another_repository_is_not_a_layer() {
+        let root = fixture("repository");
+        write(&root.join("pyproject.toml"), 100);
+        std::fs::write(root.join(".gitignore"), ".venv\n").unwrap();
+        write(&root.join(".venv/lib/x.py"), 10_000);
+        write(&root.join(".venv/src/pkg/.git/HEAD"), 100);
+        let rows = read(&DiskRequest {
+            paths: vec![root.clone()],
+            ..Default::default()
+        });
+        let layers = rows[0].layers.as_ref().unwrap();
+        assert_eq!(layers.dependencies.folders, 0);
+        assert_eq!(layers.other.folders, 1);
+        assert!(rows[0].folders.is_empty(), "nothing to remove is kept");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_shared_git_directory_has_a_size_and_no_layers() {
+        let root = fixture("shared-git");
+        write(&root.join("wt/Cargo.toml"), 100);
+        write(&root.join("common/objects/pack"), 20_000);
+        let rows = read(&DiskRequest {
+            paths: vec![root.join("wt"), root.join("common")],
+            shared_git: vec![root.join("common")],
+            ..Default::default()
+        });
+        assert!(rows[0].layers.is_some());
+        assert!(rows[1].layers.is_none());
+        assert!(rows[1].total_bytes.is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn each_root_is_reported_as_it_finishes_and_a_failed_one_only_loses_itself() {
+        let root = fixture("progress");
+        write(&root.join("a/file"), 4096);
+        let mut order = Vec::new();
+        let rows = read_with(
+            &DiskRequest {
+                paths: vec![root.join("a"), root.join("missing")],
+                ..Default::default()
+            },
+            |row| order.push((row.path.clone().unwrap(), row.total_bytes.is_some())),
+        );
+        assert_eq!(order.len(), 2);
+        assert_eq!(order.iter().filter(|(_, measured)| *measured).count(), 1);
+        assert!(rows[0].layers.is_some() && rows[1].layers.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_measurement_carries_the_free_space_of_its_volume() {
+        let root = fixture("free");
+        let rows = read(&DiskRequest {
+            paths: vec![root.clone()],
+            ..Default::default()
+        });
+        assert!(rows[0].volume_free_bytes.is_some_and(|free| free > 0));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn an_unreadable_request_measures_nothing() {
         let measured = read(&DiskRequest {
             paths: vec![PathBuf::from("/definitely/not/here/hide-test")],
             generation: 0,
+            ..Default::default()
         });
         let measured = &measured[0];
         assert_eq!(measured.total_bytes, None);

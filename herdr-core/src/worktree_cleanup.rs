@@ -311,6 +311,7 @@ pub fn spawn(
                         let measured = disk::read(&disk::DiskRequest {
                             paths,
                             generation: review.id,
+                            ..Default::default()
                         });
                         for row in &mut value.rows {
                             row.disk = measured
