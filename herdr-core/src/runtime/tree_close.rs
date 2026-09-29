@@ -311,7 +311,7 @@ impl Runtime {
             return self.refuse_tree_close(
                 &then,
                 "tree_close.unresolved_close",
-                "An earlier close or pane operation in one of these tabs is unresolved; check its status or dismiss it, then close again. Nothing was closed.".to_owned(),
+                "An earlier close or pane operation that holds one of these tabs is unresolved; resolve it where it is shown, then close again. Nothing was closed.".to_owned(),
                 true,
             );
         }
@@ -973,7 +973,11 @@ impl Runtime {
             .iter()
             .filter(|(_, operation)| {
                 matches!(operation.phase.as_str(), "failed" | "refused")
-                    && operation.replacement_tab_id.is_none()
+                    // A replacement shell that may already exist keeps its
+                    // own Retry, which reuses it, rather than making another.
+                    && !(operation.request.context.replacement_shell
+                        && (operation.replacement_effect_started
+                            || operation.replacement_tab_id.is_some()))
                     && nodes
                         .iter()
                         .any(|node| node.device.is_none() && node.id == operation.target_id)
