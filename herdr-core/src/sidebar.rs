@@ -1045,7 +1045,6 @@ pub fn project_pane_children(
     let status = runtime.and_then(status_of);
     let instrumentation = hide_agent_hooks::diagnosis::instrumentation(
         hide_agent_hooks::diagnosis::PaneObservation {
-            remote: crate::agent_hooks::is_remote_pane(pane_id),
             runtime,
             token_version: tokens.version,
             working: tokens.working,

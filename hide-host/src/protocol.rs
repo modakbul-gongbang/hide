@@ -16,7 +16,9 @@ use crate::root::RootIdentity;
 /// helper that reports another version and installs the one it carries.
 /// 9: `changes` takes the View displays' `diffs` and answers each (PRD S7
 /// A5); a helper on 8 would ignore them and answer none.
-pub const PROTOCOL_VERSION: u32 = 9;
+/// 10: `kit` installs, judges and removes the device's install kit (PRD
+/// device-parity); a helper on 9 would refuse it as an unknown operation.
+pub const PROTOCOL_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -153,6 +155,43 @@ pub enum Call {
     WorktreeRemove {
         removal: crate::worktrees::ConfirmedRemoval,
     },
+    /// The device's install kit (`hide_host::kit`): the helper acts on the
+    /// helper root it runs from, never on a folder the request names.
+    /// `cli_dir` is where the consent allows the `hide` link, and
+    /// `herdr_socket` the registration's Herdr socket; both may start with
+    /// `~/`.
+    Kit {
+        action: KitAction,
+        cli_dir: String,
+        herdr_socket: Option<String>,
+    },
+}
+
+/// What a `kit` request does. `apply` and `reinstall` answer a
+/// `hide_kit::KitReport`, `status` answers one without changing anything, and
+/// `remove` answers a [`KitRemoved`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum KitAction {
+    /// The connection pass: install what was never installed and replace
+    /// what is outdated.
+    Apply,
+    /// The operator's Reinstall of these parts.
+    Reinstall {
+        components: Vec<hide_kit::ComponentId>,
+    },
+    Status,
+    /// The device is being removed from Hide: Hide's parts come off, then
+    /// the helper root.
+    Remove,
+}
+
+/// What removing the kit from a device did.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct KitRemoved {
+    pub kit: hide_kit::RemoveReport,
+    /// The helper root and every build under it.
+    pub helper_root: hide_kit::RemoveOutcome,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

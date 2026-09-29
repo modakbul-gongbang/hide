@@ -1,0 +1,112 @@
+// This Mac's install kit from a real app bundle (PRD device-parity B1, B2,
+// B7, B10): the bundle's own daemon, started with a private HOME, installs
+// every part there at launch and writes nothing when it launches again.
+// HIDE_E2E_APP names a packaged hide.app (`pnpm --dir desktop package`),
+// never the operator's /Applications copy; the window is this checkout's
+// desktop host, attached to that daemon. HCOORD_HOME inside the private HOME
+// gives the kit's hcoord daemon a LaunchAgent label of its own.
+
+import { expect, type ElectronApplication } from "@playwright/test";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { startHerdr } from "../../web/e2e/herdr-fixture";
+import { enterWorkspace } from "../../web/e2e/wire";
+import {
+  bootoutTestLabel, claudeSettings, codexHooks, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL, readSettings, seedAgentFiles,
+} from "./device-home";
+import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
+
+test.describe.configure({ timeout: 300_000 });
+test.skip(!process.env.HIDE_E2E_APP, "a packaged hide.app is required");
+
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "labels", "hcoord"];
+const LABELS_ID = "hide.agent-context-labels";
+
+type Applied = { kind?: string; device_id?: string; components?: { id: string; state: string; reason: string | null }[] };
+
+function applied(log: string): Applied[] {
+  return fs.readFileSync(log, "utf8").split("\n").filter((line) => line.startsWith("{"))
+    .map((line) => JSON.parse(line) as Applied)
+    .filter((line) => line.kind === "apply.completed" && line.device_id === "local");
+}
+
+test("the app's daemon installs this Mac's kit into its HOME at launch and changes nothing the next time", async () => {
+  const bundle = fs.realpathSync(process.env.HIDE_E2E_APP!);
+  if (bundle.startsWith("/Applications/")) throw new Error("HIDE_E2E_APP must name a build, never the operator's installed app");
+  const resources = path.join(bundle, "Contents", "Resources");
+  const local = await startHerdr({ agents: false });
+  // A short label keeps hcoord's socket under the private HOME within the Unix path limit.
+  const run = isolate(local, "lk");
+  const home = run.env.HOME!;
+  run.env.HCOORD_HOME = path.join(home, ".hcoord");
+  const label = hcoordLabel(run.env.HCOORD_HOME);
+  const operatorDaemon = launchdPid(OPERATOR_HCOORD_LABEL);
+  const original = seedAgentFiles(home);
+  const daemonLog = path.join(run.root, "daemon.log");
+  const startDaemon = (): ChildProcess => {
+    const output = fs.openSync(daemonLog, "a");
+    const child = spawn(path.join(resources, "hided"), [], { env: run.env, stdio: ["ignore", output, output] });
+    fs.closeSync(output);
+    return child;
+  };
+  fs.writeFileSync(daemonLog, "");
+  let daemon = startDaemon();
+  let app: ElectronApplication | undefined;
+  try {
+    await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
+    // B1: the first launch installs every part, asking nothing.
+    await expect.poll(() => applied(daemonLog).length, { timeout: 120_000 }).toBeGreaterThan(0);
+    expect(applied(daemonLog)[0]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
+    expect(fs.readlinkSync(path.join(home, ".local", "bin", "hide"))).toBe(path.join(resources, "hide"));
+    for (const [file, before] of [[claudeSettings(home), original.claude], [codexHooks(home), original.codex]] as const) {
+      const now = readSettings(file);
+      expect(JSON.stringify(now.hooks)).toContain(path.join(resources, "hide-agent-hooks"));
+      expect(now.hooks.SessionStart).toEqual(expect.arrayContaining(before.hooks.SessionStart!));
+      expect({ ...now, hooks: undefined }).toEqual({ ...before, hooks: undefined });
+    }
+    const plugins = spawnSync(local.bin, ["plugin", "list", "--json"], { env: local.env, encoding: "utf8", timeout: 10_000 });
+    expect(plugins.stdout).toContain(LABELS_ID);
+    expect(plugins.stdout).toContain(path.join(home, ".hide", "kit", "plugins", "agent-context-labels"));
+    const shim = fs.readFileSync(path.join(home, ".hcoord", "bin", "hcoord"), "utf8");
+    expect(shim).toContain("ELECTRON_RUN_AS_NODE='1'");
+    expect(shim).toContain(path.join(bundle, "Contents", "MacOS"));
+    expect(launchdPid(label)).not.toBeNull();
+    expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operatorDaemon);
+
+    app = await relaunch(run.env);
+    const page = await shellPage(app);
+    await enterWorkspace(page, "fixture");
+    await page.locator("[data-open-settings]").click();
+    await expect(page.locator('[data-settings="true"]')).toBeVisible();
+    await page.locator('[data-settings-tab="devices"]').click();
+    for (const id of PARTS) await expect(page.locator(`[data-kit-part="local:${id}:installed"]`)).toBeVisible();
+    await expect(page.locator('[data-kit-reinstall="local"]')).toHaveCount(0);
+    await screenshot(page, "this-mac-kit-installed");
+    await page.locator('[data-settings-tab="agents"]').click();
+    await expect(page.locator('[data-settings-tab="agents"]')).toHaveAttribute("data-state", "active");
+    await screenshot(page, "this-mac-hooks");
+    await app.close();
+    app = undefined;
+
+    // B10, engineering rule 11: the next launch finds every part current and writes nothing.
+    const written = [claudeSettings(home), codexHooks(home)].map((file) => fs.statSync(file).mtimeMs);
+    expect(run.hide(["stop"]).status).toBe(0);
+    await expect.poll(() => daemon.exitCode !== null || daemon.signalCode !== null, { timeout: 30_000 }).toBe(true);
+    daemon = startDaemon();
+    await expect.poll(() => applied(daemonLog).length, { timeout: 120_000 }).toBe(2);
+    expect(applied(daemonLog)[1]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
+    expect([claudeSettings(home), codexHooks(home)].map((file) => fs.statSync(file).mtimeMs)).toEqual(written);
+    expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operatorDaemon);
+  } catch (error) {
+    console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
+    console.log(fs.readFileSync(daemonLog, "utf8"));
+    throw error;
+  } finally {
+    await app?.close().catch(() => undefined);
+    run.cleanup();
+    if (daemon.exitCode === null) daemon.kill("SIGTERM");
+    bootoutTestLabel(label);
+    local.stop();
+  }
+});

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
-import type { AiProvider, Device, DeviceHost } from "./snapshot";
+import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, kitConsentTerms, kitRemovalLine, herdrLine, hostLine, kitHookMachines, kitPartLine, kitPartNeedsReinstall, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
+import type { AiProvider, Device, DeviceHost, KitComponent } from "./snapshot";
 
 const device = (patch: Partial<Device>): Device => ({
   id: "studio",
@@ -198,10 +198,12 @@ describe("settings rules", () => {
     expect(hostLine(host({ consent: "this_machine" })).tone).toBe("local");
   });
 
-  it("names the install root and command folder in the consent and refuses a relative device socket", () => {
-    const terms = helperConsentTerms("/opt/hide", "/opt/bin");
-    expect(terms[0]).toContain("/opt/hide");
-    expect(terms[1]).toContain("/opt/bin");
+  it("names every kit part and where it goes in the one consent, and refuses a relative device socket", () => {
+    const terms = kitConsentTerms("/opt/hide", "/opt/bin").join(" ");
+    for (const named of ["/opt/hide", "/opt/bin", "hook helper", "labels plugin", "hcoord", "~/.claude/settings.json", "~/.codex/hooks.json", "~/.hcoord/bin/hcoord"]) {
+      expect(terms).toContain(named);
+    }
+    expect(terms).not.toContain("changes no hook");
     expect(socketProblem("")).toBeNull();
     expect(socketProblem("/tmp/herdr.sock")).toBeNull();
     expect(socketProblem("herdr.sock")).not.toBeNull();
@@ -219,5 +221,37 @@ describe("unstoredDeviceDrafts (S5.5 B26, B44)", () => {
     ];
     expect(unstoredDeviceDrafts("mac", tabs, new Set(["t2", "t3"]))).toEqual(["/r/b.txt"]);
     expect(unstoredDeviceDrafts("mac", tabs, new Set())).toEqual([]);
+  });
+});
+
+describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
+  const part = (id: KitComponent["id"], state: KitComponent["state"]): KitComponent => ({ id, label: id, state, reason: null, location: null });
+  const kit = (components: KitComponent[], unavailable: string | null = null) => ({ unavailable, busy: false, components, offers_reinstall: false, shares_account_with: null });
+
+  it("offers Reinstall only for a part a reinstall would change", () => {
+    const offered = (["installed", "outdated", "not_installed", "removed", "failed", "absent"] as const).filter((state) => kitPartNeedsReinstall(part("cli", state)));
+    expect(offered).toEqual(["outdated", "not_installed", "removed", "failed"]);
+    expect(kitPartLine(part("labels", "removed"))).toEqual({ text: "Removed", tone: "warn" });
+    expect(kitPartLine(part("labels", "absent")).tone).toBe("muted");
+  });
+
+  it("lists This Mac first and then each device, with only their hook parts", () => {
+    const local = device({ id: "local", label: "mini", kind: "local", state: "ready", ssh_alias: null, kit: kit([part("cli", "installed"), part("claude_code_hook", "installed"), part("codex_hook", "absent")]) });
+    const studio = device({ kit: kit([], "Allow the helper to install Hide on Studio") });
+    const unchecked = device({ id: "box", label: "Box" });
+    const machines = kitHookMachines([local, studio, unchecked]);
+    expect(machines.map((machine) => machine.device.id)).toEqual(["local", "studio", "box"]);
+    expect(machines[0]?.parts.map((row) => row.id)).toEqual(["claude_code_hook", "codex_hook"]);
+    expect(machines[1]).toMatchObject({ parts: [], unavailable: "Allow the helper to install Hide on Studio" });
+    expect(machines[2]).toMatchObject({ parts: [], unavailable: null });
+  });
+
+  it("says in one line what removing a device takes off it and what stays (B22, B24)", () => {
+    const connected = device({ host: { state: "ready" } as DeviceHost });
+    expect(kitRemovalLine(connected)).toMatch(/removes its hook entries, the labels plugin link, its hide link and its helper folder; hcoord stays/);
+    const offline = device({ host: { state: "unavailable" } as DeviceHost });
+    expect(kitRemovalLine(offline)).toMatch(/not connected .* its kit stays there/);
+    const shared = device({ host: { state: "ready" } as DeviceHost, kit: { ...kit([]), shares_account_with: "Studio, second Herdr" } });
+    expect(kitRemovalLine(shared)).toMatch(/^Studio, second Herdr reaches the same account on .*, so Hide's kit stays there for it\.$/);
   });
 });

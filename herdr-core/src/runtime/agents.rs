@@ -1206,19 +1206,6 @@ impl Runtime {
         }
         self.snapshot.navigator.agents = agents;
         let hooks = crate::model::AgentHooksSnapshot {
-            runtimes: self
-                .hook_diagnosis
-                .iter()
-                .flat_map(|diagnosis| diagnosis.runtimes.iter())
-                .map(|row| crate::model::AgentHookRuntimeSnapshot {
-                    id: row.runtime.id().to_owned(),
-                    label: row.label.clone(),
-                    path: row.path.clone(),
-                    headline: row.headline(),
-                    installed: matches!(row.status, hide_agent_hooks::HookStatus::Installed { .. }),
-                    offers_install: row.offers_install(),
-                })
-                .collect(),
             sessions_predating_install: predating,
             last_report_failure: self
                 .hook_diagnosis
@@ -1333,26 +1320,6 @@ impl Runtime {
                 );
             }
         }
-        true
-    }
-
-    /// Takes the hook-install judgement the coordinator read off the lock.
-    /// Queues an install the operator approved, or says why it cannot.
-    ///
-    /// The write itself happens on the coordinator thread: it is file I/O,
-    /// and nothing that touches the disk runs under this mutex.
-    pub(super) fn request_agent_hook_install(&mut self, runtime_id: &str) -> bool {
-        let Some(runtime) = hide_agent_hooks::AgentRuntime::from_id(runtime_id) else {
-            self.set_error(
-                "agent_hooks.unknown_runtime",
-                format!("Hide has no agent hook adapter for {runtime_id}"),
-                false,
-            );
-            return true;
-        };
-        // Approving twice is one install: the request is a set, and the
-        // install itself rewrites the same hook group either way.
-        self.pending_hook_installs.insert(runtime);
         true
     }
 
@@ -1513,13 +1480,6 @@ impl Runtime {
         }
         self.snapshot.status.background_ai.provider = settings.provider.as_str().to_owned();
         self.snapshot.status.background_ai.providers = providers;
-    }
-
-    /// Hands the queued installs to the caller that can perform them.
-    pub(crate) fn take_agent_hook_installs(&mut self) -> Vec<hide_agent_hooks::AgentRuntime> {
-        std::mem::take(&mut self.pending_hook_installs)
-            .into_iter()
-            .collect()
     }
 
     pub(crate) fn ingest_hook_diagnosis(&mut self, diagnosis: hide_agent_hooks::Diagnosis) -> bool {

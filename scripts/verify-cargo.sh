@@ -37,10 +37,10 @@ case "${1:-}" in
     release)
         # The binaries the packaged app ships; release hided embeds web/dist,
         # so `pnpm --dir web build` runs first (desktop/scripts/package.mjs).
-        exec cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
+        exec cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks -p agent-context-labels --bin hide-agent-context-labels
         ;;
     cli)
-        exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
+        exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks -p agent-context-labels --bin hide-agent-context-labels
         ;;
     *)
         printf 'usage: %s test [cargo test arguments...]|lint|release|cli\n' "$0" >&2

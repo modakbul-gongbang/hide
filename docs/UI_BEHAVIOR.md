@@ -954,6 +954,19 @@ An Overview agent row reuses the same agent identity and state presentation as t
 The header wash marks the pane Hide is showing, while the outer primary indicator marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
+## Settings: each machine's install kit
+
+Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, the agent labels plugin, hcoord), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
+Installed is ✓, not on this machine is –, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology.
+Reinstall sits on a machine's row only while one of its parts needs it, repairs only those parts, and reads Reinstalling… while the machine's kit work runs (B8); nothing else on the screen reacts, and the detail of every install goes to the diagnostic log (B18).
+A machine whose kit does not run says why in that place instead of its parts: a daemon outside the installed app, a device not allowed yet, a device that must be allowed again, or a platform this build does not carry (B11, B17, B21).
+A device not read yet reads that its kit is checked when it connects; the tab reads every machine once when it opens.
+The add form has one Add button and lists, once, what the kit puts on the device and where (B12); a device registered earlier without the helper offers Allow and install on its row, with the same list.
+Removing a device asks once, names in one line what comes off that device and that hcoord stays, or, when its helper is not connected, that the kit stays there; no button is focused when the confirmation opens (B22).
+When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
+
+Settings > Agents lists the hook parts of every machine, This Mac first and then each device in the Devices order, with Reinstall on a part that needs it and nowhere else (B27).
+
 ## Mobile companion
 
 ### Settings > Mobile

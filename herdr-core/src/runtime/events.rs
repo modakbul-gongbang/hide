@@ -944,15 +944,20 @@ pub(super) struct RetryConnectPayload {
     pub(super) target_id: String,
 }
 
-/// One runtime the operator asked Hide to install its hook into.
-///
-/// It exists because Hide installs once on first run and then leaves the
-/// operator's configuration alone; every later install is this event, sent
-/// from the Settings diagnosis after they said yes (PRD B28, D-31).
+/// The operator pressed Reinstall (PRD device-parity B8): on a machine's
+/// row, which repairs every part of it that needs it, or on one hook row,
+/// which names that part. `device_id` is `local` for this Mac.
 #[derive(Debug, Deserialize)]
-pub(super) struct InstallAgentHooksPayload {
-    pub(super) runtime_id: String,
+pub(super) struct KitReinstallPayload {
+    pub(super) device_id: String,
+    #[serde(default)]
+    pub(super) components: Option<Vec<hide_kit::ComponentId>>,
 }
+
+/// A Settings tab that shows the kit opened: this Mac's parts are read again
+/// once, so a part removed by hand shows as removed.
+#[derive(Debug, Deserialize)]
+pub(super) struct KitCheckPayload {}
 
 /// One Background AI settings event, carrying whatever it is about.
 ///
@@ -1152,7 +1157,8 @@ pub(super) enum Event {
     RetryConnect(RetryConnectPayload),
     CloneRepository(CloneRepositoryPayload),
     CancelRepositoryClone(CancelRepositoryClonePayload),
-    InstallAgentHooks(InstallAgentHooksPayload),
+    KitReinstall(KitReinstallPayload),
+    KitCheck(KitCheckPayload),
     AiSettings(AiSettingsPayload),
     TerminalResize(TerminalResizePayload),
     TerminalViewport(TerminalResizePayload),
@@ -1339,7 +1345,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
-        "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
+        "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
+        "kit_check" => decode!(KitCheckPayload, KitCheck),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_viewport" => decode!(TerminalResizePayload, TerminalViewport),
@@ -1577,9 +1584,10 @@ impl Runtime {
                 self.request_terminal_control(&pane_id);
                 true
             }
-            Event::InstallAgentHooks(payload) => {
-                self.request_agent_hook_install(&payload.runtime_id)
+            Event::KitReinstall(payload) => {
+                self.request_kit_reinstall(&payload.device_id, payload.components.as_deref())
             }
+            Event::KitCheck(_) => self.request_kit_check(),
             Event::AiSettings(payload) => self.apply_ai_settings(payload),
             Event::RetryConnect(payload) => self.retry_remote_device(&payload.target_id),
             Event::CloneRepository(payload) => {
@@ -2135,23 +2143,32 @@ impl Runtime {
                     );
                     return true;
                 }
-                let before = self.snapshot.ui_state.device_registrations.len();
-                self.snapshot
+                let Some(registration) = self
+                    .snapshot
                     .ui_state
                     .device_registrations
-                    .retain(|device| device.id != payload.device_id);
-                if before == self.snapshot.ui_state.device_registrations.len() {
+                    .iter()
+                    .find(|device| device.id == payload.device_id)
+                    .cloned()
+                else {
                     self.set_error(
                         "device.unknown",
                         format!("Device {} is not registered", payload.device_id),
                         false,
                     );
                     return true;
-                }
+                };
+                self.snapshot
+                    .ui_state
+                    .device_registrations
+                    .retain(|device| device.id != payload.device_id);
+                // Hide's kit comes off the device on its own helper
+                // connection, which the disconnect below leaves open for it.
+                let kit_removal = self.queue_device_kit_removal(&registration);
                 self.disconnect_remote_device(&payload.device_id);
                 // Removing a device removes Hide's own record of it: its
                 // project registrations, expanded folders and file tabs. Its
-                // host, panes, agents and folders are not touched.
+                // panes, agents and folders are not touched.
                 let scope = format!("remote:{}:", payload.device_id);
                 let registrations = self.snapshot.ui_state.workspace_registrations.len();
                 self.snapshot
@@ -2179,8 +2196,12 @@ impl Runtime {
                 self.push_diagnostic(
                     "device.unregistered",
                     format!(
-                        "Unregistered device {} without touching its host; forgot {registrations} project registrations and closed {tabs} file tabs",
-                        payload.device_id
+                        "Unregistered device {}; forgot {registrations} project registrations and closed {tabs} file tabs; {}",
+                        payload.device_id,
+                        match kit_removal {
+                            Ok(()) => "Hide's kit is coming off the device".to_owned(),
+                            Err(reason) => format!("Hide's kit stays on the device because {reason}"),
+                        }
                     ),
                 );
                 true

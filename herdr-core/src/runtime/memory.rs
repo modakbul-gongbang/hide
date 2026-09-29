@@ -554,21 +554,11 @@ impl Runtime {
 
     pub(super) fn apply_memory_action(&mut self, payload: events::MemoryActionPayload) -> bool {
         if payload.action == "update_hooks" {
-            let runtimes = self
-                .hook_diagnosis
-                .as_ref()
-                .map(|diagnosis| {
-                    diagnosis
-                        .runtimes
-                        .iter()
-                        .filter(|row| {
-                            row.memory_compatibility.supports_injection() && row.offers_install()
-                        })
-                        .map(|row| row.runtime)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            if runtimes.is_empty() {
+            // Memory's "update hooks" is the kit's Reinstall of this Mac's
+            // hook parts; the kit owns every hook write (PRD device-parity
+            // D-27).
+            let parts = self.local_hook_parts_to_repair();
+            if parts.is_empty() {
                 self.set_error(
                     "memory.hook_update_unavailable",
                     "No supported local agent hook update is available",
@@ -576,9 +566,7 @@ impl Runtime {
                 );
                 return true;
             }
-            for runtime in runtimes {
-                self.pending_hook_installs.insert(runtime);
-            }
+            self.queue_kit_reinstall(crate::workspace::LOCAL_DEVICE_ID, parts);
             self.memory_enable_after_hook_update = true;
             self.snapshot.sessions.analysis = MemoryAnalysisSnapshot {
                 state: "hooks_need_update".to_owned(),

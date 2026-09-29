@@ -606,6 +606,7 @@ fn a_device_workspace_restores_when_its_visible_tab_changes() {
             focused_tab_id: Some("remote-tab-1".to_owned()),
             focused_pane_id: None,
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

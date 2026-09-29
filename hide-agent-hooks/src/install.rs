@@ -9,10 +9,9 @@
 //! - a removal takes only the entries carrying Hide's marker (PRD D-57);
 //! - installing twice converges instead of duplicating (PRD B25).
 
-use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::io::{ErrorKind, Write};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -40,17 +39,6 @@ pub enum InstallFailure {
     /// Hide's entry points at a helper that is no longer on disk, so the hook
     /// runs nothing. Reinstalling from the running app repairs it.
     HelperMissing { path: String, helper: String },
-    /// The executable asking for the install is not inside an application
-    /// bundle, so there is no durable path to write into the hook.
-    ///
-    /// This is a refusal, not a failure to try. A hook command is a path
-    /// stored in the operator's own configuration and run by every future
-    /// session of that agent; a development build's executable lives under
-    /// `target/debug/deps`, which Cargo deletes on the next rebuild. Writing
-    /// it would leave every session on the machine running a command that no
-    /// longer exists, which is what happened on 2026-09-10 (engineering
-    /// rule 4: an invalid state is surfaced, never written through).
-    HelperNotBundled { executable: String },
 }
 
 impl InstallFailure {
@@ -68,10 +56,6 @@ impl InstallFailure {
             Self::HelperMissing { helper, .. } => {
                 format!("the installed hook points at {helper}, which is missing")
             }
-            Self::HelperNotBundled { executable } => format!(
-                "{executable} is not inside an application bundle, so Hide has no lasting path \
-                 for the hook to run; install hooks from the installed app"
-            ),
         }
     }
 }
@@ -114,73 +98,6 @@ pub struct RemoveOutcome {
 const HOOKS_KEY: &str = "hooks";
 
 /// Judges one runtime without changing anything.
-/// Claims the one automatic install this machine gets, and reports whether
-/// this call is the one that got it.
-///
-/// Hide installs its hooks once, on first run, and then leaves the operator's
-/// configuration alone; an operator who removes a hook has removed it, and
-/// the next launch must not quietly put it back (PRD B25, D-31). The claim is
-/// a marker file created exclusively, so two launches racing each other still
-/// install once, and it lives in Hide's own directory rather than in the
-/// rendered UI state, which the shell echoes back and could reset.
-pub fn claim_first_run(home: &Path) -> io::Result<bool> {
-    let path = crate::counters::state_directory(home)
-        .parent()
-        .expect("the counter directory is always nested")
-        .join("installed-once");
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-/// Where the hook helper lives for the executable that is running.
-///
-/// A hook command outlives the process that wrote it: it is a path kept in
-/// the operator's own configuration file and run by every future session of
-/// that agent. So the only path worth writing is one that survives a
-/// rebuild, and inside this project that means the bundle's own
-/// `Contents/Resources`, where the daemon and the helper ship side by side.
-/// A development build's executable sits under `target/debug/deps`, which
-/// Cargo removes on the next build; installing from there once left every
-/// Claude and Codex session on the machine failing four hooks per turn.
-///
-/// So this refuses rather than resolving something plausible. The layout is
-/// checked, not the file name: `<name>.app/Contents/Resources/<executable>`.
-pub fn helper_for(executable: &Path) -> Result<PathBuf, InstallFailure> {
-    let refuse = || InstallFailure::HelperNotBundled {
-        executable: executable.display().to_string(),
-    };
-    let resources = executable.parent().ok_or_else(refuse)?;
-    if resources.file_name() != Some(OsStr::new("Resources")) {
-        return Err(refuse());
-    }
-    let contents = resources.parent().ok_or_else(refuse)?;
-    if contents.file_name() != Some(OsStr::new("Contents")) {
-        return Err(refuse());
-    }
-    let bundle = contents.parent().ok_or_else(refuse)?;
-    if bundle.extension() != Some(OsStr::new("app")) {
-        return Err(refuse());
-    }
-    let helper = resources.join(crate::runtime::HELPER_BINARY_NAME);
-    if !helper.is_file() {
-        return Err(InstallFailure::HelperMissing {
-            path: bundle.display().to_string(),
-            helper: helper.display().to_string(),
-        });
-    }
-    Ok(helper)
-}
-
 pub fn status(runtime: AgentRuntime, home: &Path) -> HookStatus {
     if !runtime.home_directory(home).is_dir() {
         return HookStatus::RuntimeAbsent;
@@ -317,10 +234,18 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
 }
 
 /// The entry Hide writes: one command hook, carrying its own marker.
+///
+/// The command runs the helper only while it is there. A hook outlives the
+/// bundle or helper folder that wrote it: the app is moved to the Trash, a
+/// device is removed while it is offline, a helper folder is cleaned by hand.
+/// A bare path would then fail every one of the agent's turns with `No such
+/// file or directory`, which is what happened on 2026-09-10; guarded, a
+/// missing helper is a hook that does nothing and succeeds (PRD
+/// device-parity D-11, B3).
 fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
+    let quoted = shell_quote(&helper.display().to_string());
     let command = format!(
-        "{} hook --runtime {} --event {} --memory-injection --source {}",
-        shell_quote(&helper.display().to_string()),
+        "if [ -x {quoted} ]; then exec {quoted} hook --runtime {} --event {} --memory-injection --source {}; fi",
         runtime.id(),
         event.name(),
         hook_source_id()
@@ -372,11 +297,35 @@ fn installed_helper(hooks: &Map<String, Value>) -> Option<String> {
         .find_map(parse_quoted_helper)
 }
 
-/// Reads the leading `'…'` back out of a command Hide wrote.
+/// Reads the helper path back out of a command Hide wrote: the first
+/// single-quoted word, which is the path in both the guarded command and the
+/// bare one versions before 6 wrote. Quotes inside the path are written as
+/// `'\''`, and read back the same way.
 fn parse_quoted_helper(command: &str) -> Option<String> {
-    let rest = command.strip_prefix('\'')?;
-    let end = rest.find('\'')?;
-    Some(rest[..end].to_owned())
+    let start = command.find('\'')? + 1;
+    let mut path = String::new();
+    let mut rest = &command[start..];
+    loop {
+        let end = rest.find('\'')?;
+        path.push_str(&rest[..end]);
+        rest = &rest[end + 1..];
+        match rest.strip_prefix("\\''") {
+            Some(after) => {
+                path.push('\'');
+                rest = after;
+            }
+            None => return Some(path),
+        }
+    }
+}
+
+/// The helper Hide's entries in `runtime`'s file name, when there are any.
+/// The kit compares it with the helper it would install, so an entry left by
+/// an app at another path is replaced rather than taken as current.
+pub fn installed_helper_path(runtime: AgentRuntime, home: &Path) -> Option<String> {
+    let document = read_document(&runtime.config_path(home)).ok()??;
+    let hooks = hooks_object(&document, &runtime.config_path(home)).ok()??;
+    installed_helper(hooks)
 }
 
 fn read_document(path: &Path) -> Result<Option<Value>, InstallFailure> {
@@ -456,29 +405,56 @@ fn event_array_mut<'a>(
         })
 }
 
-/// Writes through a temporary file in the same directory, so a failure part
-/// way through leaves the operator's original file intact.
+/// Writes through a temporary file beside the file it replaces, so a failure
+/// part way through leaves the operator's original file intact. The file
+/// keeps its permission bits, because a settings file kept at 0600 can hold
+/// tokens, and a new one is 0600. A settings file that is a link, as a
+/// dotfile manager makes it, is written where the link leads, so the link
+/// stays the operator's.
 fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let failure = |detail: String| InstallFailure::NotWritable {
         path: path.display().to_string(),
         detail,
     };
-    let parent = path
+    let target = match fs::canonicalize(path) {
+        Ok(real) => real,
+        Err(error) if error.kind() == ErrorKind::NotFound => path.to_path_buf(),
+        Err(error) => return Err(failure(error.to_string())),
+    };
+    let mode = match fs::metadata(&target) {
+        Ok(metadata) => metadata.permissions().mode() & 0o7777,
+        Err(error) if error.kind() == ErrorKind::NotFound => 0o600,
+        Err(error) => return Err(failure(error.to_string())),
+    };
+    let parent = target
         .parent()
         .ok_or_else(|| failure("the path has no parent directory".to_owned()))?;
     fs::create_dir_all(parent).map_err(|error| failure(error.to_string()))?;
     let mut serialized =
         serde_json::to_string_pretty(document).map_err(|error| failure(error.to_string()))?;
     serialized.push('\n');
-    let temporary: PathBuf = path.with_extension("hide-tmp");
-    {
-        let mut file = fs::File::create(&temporary).map_err(|error| failure(error.to_string()))?;
-        file.write_all(serialized.as_bytes())
-            .map_err(|error| failure(error.to_string()))?;
-        file.sync_all()
-            .map_err(|error| failure(error.to_string()))?;
-    }
-    fs::rename(&temporary, path).map_err(|error| {
+    let temporary = parent.join(format!(
+        ".{}.hide-{}",
+        target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("settings"),
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&temporary);
+    let written = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.write_all(serialized.as_bytes())?;
+        file.set_permissions(fs::Permissions::from_mode(mode))?;
+        file.sync_all()?;
+        fs::rename(&temporary, &target)
+    })();
+    written.map_err(|error| {
         let _ = fs::remove_file(&temporary);
         failure(error.to_string())
     })
@@ -486,100 +462,9 @@ fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
-
-    #[test]
-    fn the_automatic_install_is_claimed_once_and_a_removed_hook_stays_removed() {
-        let fixture = Fixture::new("first-run");
-        assert!(
-            claim_first_run(fixture.home()).unwrap(),
-            "the first launch on this machine installs"
-        );
-        assert!(
-            !claim_first_run(fixture.home()).unwrap(),
-            "every later launch leaves the operator's configuration alone"
-        );
-        // The claim does not depend on any hook file, so removing one does
-        // not hand the next launch a fresh install (PRD D-31).
-        for runtime in AgentRuntime::ALL {
-            let _ = fs::remove_file(runtime.config_path(fixture.home()));
-        }
-        assert!(!claim_first_run(fixture.home()).unwrap());
-    }
-
-    #[test]
-    fn a_cargo_build_directory_is_refused_instead_of_written_into_a_hook() {
-        let fixture = Fixture::new("not-bundled");
-        // The exact shape that reached two of the operator's configuration
-        // files on 2026-09-10. Cargo deletes this directory on the next
-        // build, so every session afterwards ran a command that was gone.
-        let deps = fixture.home().join("target/debug/deps");
-        fs::create_dir_all(&deps).unwrap();
-        let executable = deps.join("hided");
-        fs::write(&executable, b"binary").unwrap();
-        fs::write(deps.join(crate::runtime::HELPER_BINARY_NAME), b"binary").unwrap();
-
-        // The helper sitting right beside it is not enough: it is the
-        // directory that does not survive, not the file that is missing.
-        let refusal = helper_for(&executable).expect_err("a build directory is refused");
-        assert!(
-            matches!(refusal, InstallFailure::HelperNotBundled { .. }),
-            "got {refusal:?}"
-        );
-        assert!(
-            refusal
-                .message()
-                .contains("not inside an application bundle"),
-            "the operator is told why: {}",
-            refusal.message()
-        );
-    }
-
-    #[test]
-    fn only_the_bundles_own_resources_directory_resolves_the_helper() {
-        let fixture = Fixture::new("bundled");
-        let resources = fixture.home().join("hide.app/Contents/Resources");
-        fs::create_dir_all(&resources).unwrap();
-        let executable = resources.join("hided");
-        fs::write(&executable, b"binary").unwrap();
-
-        // A bundle that shipped without the helper is a missing file, not a
-        // wrong location, and says so.
-        let missing = helper_for(&executable).expect_err("a bundle without the helper is refused");
-        assert!(
-            matches!(missing, InstallFailure::HelperMissing { .. }),
-            "got {missing:?}"
-        );
-
-        let helper = resources.join(crate::runtime::HELPER_BINARY_NAME);
-        fs::write(&helper, b"binary").unwrap();
-        assert_eq!(helper_for(&executable).unwrap(), helper);
-
-        // A directory that merely ends in .app is not enough on its own, and
-        // neither is a Resources directory outside one, nor the bundle's
-        // Contents/MacOS, where the host executable lives without the helper.
-        for wrong in [
-            fixture.home().join("hide.app/Resources/hided"),
-            fixture.home().join("elsewhere/Contents/Resources/hided"),
-            fixture.home().join("hide.app/Contents/MacOS/hided"),
-        ] {
-            fs::create_dir_all(wrong.parent().unwrap()).unwrap();
-            fs::write(&wrong, b"binary").unwrap();
-            fs::write(
-                wrong.with_file_name(crate::runtime::HELPER_BINARY_NAME),
-                b"binary",
-            )
-            .unwrap();
-            assert!(
-                matches!(
-                    helper_for(&wrong),
-                    Err(InstallFailure::HelperNotBundled { .. })
-                ),
-                "{} is not a bundle layout",
-                wrong.display()
-            );
-        }
-    }
 
     #[test]
     fn hide_can_take_out_its_own_entries_after_the_helper_they_name_is_gone() {
@@ -718,7 +603,11 @@ mod tests {
             .unwrap();
         assert!(session_start_command.contains("--runtime codex"));
         assert!(session_start_command.contains("--memory-injection"));
-        assert!(session_start_command.contains("--source hide-subagents@5"));
+        assert!(session_start_command.contains("--source hide-subagents@6"));
+        assert!(
+            session_start_command.starts_with("if [ -x '"),
+            "the command runs the helper only while it is there"
+        );
     }
 
     #[test]
@@ -840,6 +729,112 @@ mod tests {
                 reason: InstallFailure::HelperMissing { .. }
             }
         ));
+    }
+
+    /// The command as `/bin/sh -c` runs it, which is how both runtimes run a
+    /// command hook.
+    fn run_hook_command(command: &str) -> std::process::ExitStatus {
+        std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(command)
+            .stdin(std::process::Stdio::null())
+            .status()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_hook_whose_helper_is_gone_succeeds_and_one_that_is_there_runs() {
+        let fixture = Fixture::new("guard");
+        // A quote in the folder name is the case the path reader must undo.
+        let helper = fixture
+            .home()
+            .join("it's here")
+            .join(crate::HELPER_BINARY_NAME);
+        install(AgentRuntime::Codex, fixture.home(), &helper).unwrap();
+        assert_eq!(
+            installed_helper_path(AgentRuntime::Codex, fixture.home()).as_deref(),
+            Some(helper.to_str().unwrap()),
+            "the path is read back from the guarded command"
+        );
+        let command = fixture.read(AgentRuntime::Codex)["hooks"]["Stop"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // The app was moved to the Trash: the agent's turn goes on (B3).
+        assert!(run_hook_command(&command).success());
+
+        let ran = fixture.home().join("ran");
+        fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        fs::write(
+            &helper,
+            format!("#!/bin/sh\nprintf '%s' \"$*\" > '{}'\n", ran.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(run_hook_command(&command).success());
+        let arguments = fs::read_to_string(&ran).unwrap();
+        assert!(
+            arguments.starts_with("hook --runtime codex --event Stop"),
+            "{arguments}"
+        );
+    }
+
+    /// A settings file can hold tokens, and a dotfile manager can own it as
+    /// a link: installing and removing keep its mode and its link.
+    #[test]
+    fn installing_and_removing_keep_the_files_mode_and_its_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = Fixture::new("mode-link");
+        let claude = AgentRuntime::ClaudeCode.config_path(fixture.home());
+        fixture.write(AgentRuntime::ClaudeCode, OCCUPIED);
+        fs::set_permissions(&claude, fs::Permissions::from_mode(0o600)).unwrap();
+        let dotfiles = fixture.home().join("dotfiles");
+        fs::create_dir_all(&dotfiles).unwrap();
+        let real = dotfiles.join("hooks.json");
+        fs::write(&real, OCCUPIED).unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).unwrap();
+        let codex = AgentRuntime::Codex.config_path(fixture.home());
+        std::os::unix::fs::symlink(&real, &codex).unwrap();
+
+        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
+            assert!(
+                install(runtime, fixture.home(), &helper(&fixture))
+                    .unwrap()
+                    .changed
+            );
+        }
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&claude), 0o600);
+        assert!(
+            fs::symlink_metadata(&codex)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_link(&codex).unwrap(), real);
+        assert_eq!(mode(&real), 0o640);
+        assert!(
+            fs::read_to_string(&real)
+                .unwrap()
+                .contains(crate::HELPER_BINARY_NAME)
+        );
+
+        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
+            remove(runtime, fixture.home()).unwrap();
+        }
+        assert_eq!(mode(&claude), 0o600);
+        assert!(
+            fs::symlink_metadata(&codex)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fixture.read(AgentRuntime::Codex),
+            serde_json::from_str::<Value>(OCCUPIED).unwrap()
+        );
     }
 
     #[test]

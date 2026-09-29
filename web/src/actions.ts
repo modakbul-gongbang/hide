@@ -41,6 +41,7 @@ import {
   type EditorDocumentSnapshot,
   type EditorTabSnapshot,
   type IssueSettings,
+  type KitComponentId,
   type Tab,
   type Workspace,
 } from "./snapshot";
@@ -910,8 +911,14 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: model === undefined ? { provider } : { provider, model } });
     },
 
-    installHook(runtimeId: string) {
-      dispatch({ schema_version: 2, kind: "install_agent_hooks", payload: { runtime_id: runtimeId } });
+    /** Reinstall on a machine's row repairs every part that needs it; a hook row names its one part. */
+    reinstallKit(deviceId: string, components?: KitComponentId[]) {
+      dispatch({ schema_version: 2, kind: "kit_reinstall", payload: components ? { device_id: deviceId, components } : { device_id: deviceId } });
+    },
+
+    /** A tab showing the kit opened: this Mac's parts are read once. */
+    checkKit() {
+      dispatch({ schema_version: 2, kind: "kit_check", payload: {} });
     },
 
     registerDevice(id: string, label: string, alias: string, options: { hostConsent: boolean; herdrSocketPath: string | null }) {

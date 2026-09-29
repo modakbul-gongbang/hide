@@ -103,6 +103,7 @@ fn session(workspaces: Vec<WorkspaceSnapshot>) -> RemoteSessionSnapshot {
         focused_tab_id: None,
         focused_pane_id: None,
         pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
     }
 }
 
@@ -955,6 +956,7 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         agent_count: 0,
         test: None,
         host: Default::default(),
+        kit: Default::default(),
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: TARGET.to_owned(),
@@ -1230,6 +1232,188 @@ fn a_device_pane_carries_its_children_and_its_path_to_the_parent() {
             .collect::<Vec<_>>(),
         [parent.as_str(), child.as_str()]
     );
+}
+
+/// A device's session is regrouped whenever its facts, worktrees or kit
+/// change, and the regrouped rows come from Herdr's raw session, which has no
+/// lineage; the rows published after it keep the lineage a subtree close
+/// waits on (`close_descendant_pane_ids`).
+#[test]
+fn regrouping_a_device_session_keeps_its_agents_lineage() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let mut raw = session(vec![herdr_workspace(
+        TARGET,
+        "w1",
+        &t.main,
+        &[("t1", &t.main), ("t2", &t.main)],
+    )]);
+    let parent = format!("remote:{TARGET}:pane:t1");
+    let child = format!("remote:{TARGET}:pane:t2");
+    raw.agents = crate::sidebar::project_agents(
+        serde_json::from_value(serde_json::json!({"agents": [
+            {"pane_id": parent, "agent": "claude", "agent_status": "working", "state_change_seq": 1},
+            {"pane_id": child, "agent": "claude", "agent_status": "working", "state_change_seq": 1}
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    raw.agents[1].declared_parent_pane_id = Some("t1".to_owned());
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    let descendants = |runtime: &Runtime| {
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == parent)
+            .map(|agent| agent.close_descendant_pane_ids.clone())
+            .unwrap()
+    };
+    assert_eq!(descendants(&runtime), vec![child.clone()]);
+
+    runtime.ingest_kit_report(
+        TARGET,
+        &hide_kit::KitReport {
+            components: vec![hide_kit::ComponentReport {
+                id: hide_kit::ComponentId::ClaudeCodeHook,
+                state: hide_kit::ComponentState::Installed,
+                reason: None,
+                location: None,
+            }],
+        },
+    );
+    assert_eq!(descendants(&runtime), vec![child]);
+}
+
+/// PRD device-parity B14, D-21: a device's agent pane is judged by the same
+/// function as a local one, from its own hook tokens and its device's kit:
+/// counts once the device's hook is in place, "not installed" while Hide may
+/// not install there, and never the old fixed "remote host" answer.
+#[test]
+fn a_device_agent_pane_is_judged_against_its_own_kit() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let mut raw = session(vec![herdr_workspace(
+        TARGET,
+        "w1",
+        &t.main,
+        &[("t1", &t.main)],
+    )]);
+    let pane_id = format!("remote:{TARGET}:pane:t1");
+    raw.agents = crate::sidebar::project_agents(
+        serde_json::from_value(serde_json::json!({"agents": [{
+            "pane_id": pane_id, "agent": "claude", "agent_status": "working",
+            "state_change_seq": 1
+        }]}))
+        .unwrap(),
+    )
+    .agents;
+    raw.pane_hook_tokens.insert(
+        pane_id.clone(),
+        crate::agent_hooks::PaneHookTokens {
+            version: Some(hide_agent_hooks::HOOK_VERSION),
+            working: Some(2),
+            done: Some(1),
+            blocked: None,
+        },
+    );
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    let children = |runtime: &Runtime| {
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes)
+            .find(|pane| pane.id == pane_id)
+            .and_then(|pane| pane.children.clone())
+            .expect("an agent pane has a children answer")
+    };
+
+    // Not registered with consent: Hide installs nothing there.
+    let before = children(&runtime);
+    assert!(!before.instrumented);
+    assert_eq!(
+        before.uninstrumented_code.as_deref(),
+        Some(hide_agent_hooks::diagnosis::UninstrumentedReason::HooksNotInstalled.code())
+    );
+
+    let consent = runtime.new_host_consent();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: TARGET.to_owned(),
+            label: TARGET.to_owned(),
+            ssh_alias: Some(TARGET.to_owned()),
+            herdr_socket_path: None,
+            host_consent: Some(consent),
+        });
+    // Allowed, but the first read of its kit failed: the cause is unknown,
+    // not a missing hook.
+    runtime.ingest_device_kit_answer(
+        TARGET,
+        crate::runtime::DeviceKitAnswer::Report(Err("the helper connection closed".to_owned())),
+    );
+    let unread = children(&runtime);
+    assert!(!unread.instrumented);
+    assert_eq!(
+        unread.uninstrumented_code.as_deref(),
+        Some(hide_agent_hooks::diagnosis::UninstrumentedReason::Unknown.code())
+    );
+
+    runtime.ingest_kit_report(
+        TARGET,
+        &hide_kit::KitReport {
+            components: vec![hide_kit::ComponentReport {
+                id: hide_kit::ComponentId::ClaudeCodeHook,
+                state: hide_kit::ComponentState::Installed,
+                reason: None,
+                location: None,
+            }],
+        },
+    );
+    let after = children(&runtime);
+    assert!(after.instrumented, "{after:?}");
+    assert_eq!(after.uninstrumented_code, None);
+    assert_eq!(
+        (after.subagents.working, after.subagents.done),
+        (Some(2), Some(1))
+    );
+
+    // A consent from an older build asks again, but does not unsay the hook
+    // the device's kit last reported in place.
+    runtime.snapshot.ui_state.device_registrations[0]
+        .host_consent
+        .as_mut()
+        .unwrap()
+        .contract = 1;
+    runtime.refresh_device_catalog(TARGET);
+    assert!(children(&runtime).instrumented);
 }
 
 /// Records what a device's Herdr is asked, one connection per request.

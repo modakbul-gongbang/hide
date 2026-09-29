@@ -16,6 +16,7 @@ pub mod document;
 pub mod error;
 pub mod git;
 pub mod index;
+pub mod kit;
 pub mod list;
 pub mod mutate;
 pub mod pane_peer;

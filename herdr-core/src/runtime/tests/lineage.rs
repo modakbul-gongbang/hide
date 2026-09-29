@@ -46,6 +46,7 @@ fn remote_lineage_session(agents: Vec<SidebarAgentSnapshot>) -> RemoteSessionSna
         focused_tab_id: None,
         focused_pane_id: None,
         pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
     }
 }
 
@@ -281,6 +282,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
+        kit_dir: None,
     };
     let restarted = Runtime::new(
         options,
@@ -1511,7 +1513,14 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
     .expect("session payload")));
 
     // Before anything has been read, the screen has nothing to claim.
-    assert!(runtime.snapshot.status.agent_hooks.runtimes.is_empty());
+    assert!(
+        runtime
+            .snapshot
+            .status
+            .agent_hooks
+            .sessions_predating_install
+            .is_empty()
+    );
 
     assert!(runtime.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {
         runtimes: vec![
@@ -1542,19 +1551,6 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
     }));
 
     let hooks = &runtime.snapshot.status.agent_hooks;
-    assert_eq!(
-        hooks
-            .runtimes
-            .iter()
-            .map(|row| (row.id.as_str(), row.headline.as_str(), row.offers_install))
-            .collect::<Vec<_>>(),
-        vec![
-            ("claude-code", "Installed (v5)", false),
-            ("codex", "Not installed", true),
-        ],
-        "a runtime that is fine is not offered a reinstall (PRD B28)"
-    );
-    assert_eq!(hooks.runtimes[0].path, "/fixture/.claude/settings.json");
 
     // The hook is installed and one pane still carries none of its tokens,
     // so that session started first and a restart is what fixes it.
@@ -1613,54 +1609,107 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
     );
 }
 
-// PRD B28, D-31: Hide installs on approval, never on its own initiative, and
-// an approval it cannot act on says so rather than being dropped.
+// PRD device-parity B8: Reinstall repairs only the parts that need it, a
+// second press after the repair is the same intent already met, and a
+// machine Hide cannot act on says why rather than being dropped.
 #[test]
-fn an_approved_install_is_queued_once_and_an_unknown_runtime_is_reported() {
+fn a_reinstall_queues_only_the_parts_that_need_it() {
     let mut runtime = runtime();
-    let install = |runtime_id: &str| {
+    let reinstall = |device_id: &str| {
         serde_json::to_vec(&serde_json::json!({
-            "schema_version": 2, "kind": "install_agent_hooks",
-            "payload": {"runtime_id": runtime_id}
+            "schema_version": 2, "kind": "kit_reinstall",
+            "payload": {"device_id": device_id}
         }))
         .unwrap()
     };
-
-    assert!(
-        runtime.take_agent_hook_installs().is_empty(),
-        "nothing is installed until the operator asks"
+    let part = |id, state| hide_kit::ComponentReport {
+        id,
+        state,
+        reason: None,
+        location: None,
+    };
+    runtime.ingest_kit_report(
+        "local",
+        &hide_kit::KitReport {
+            components: vec![
+                part(
+                    hide_kit::ComponentId::Cli,
+                    hide_kit::ComponentState::Installed,
+                ),
+                part(
+                    hide_kit::ComponentId::ClaudeCodeHook,
+                    hide_kit::ComponentState::Removed,
+                ),
+                part(
+                    hide_kit::ComponentId::CodexHook,
+                    hide_kit::ComponentState::Absent,
+                ),
+                part(
+                    hide_kit::ComponentId::Labels,
+                    hide_kit::ComponentState::Failed,
+                ),
+                part(
+                    hide_kit::ComponentId::Hcoord,
+                    hide_kit::ComponentState::Installed,
+                ),
+            ],
+        },
     );
+    let local = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .navigator
+            .devices
+            .iter()
+            .find(|device| device.id == "local")
+            .unwrap()
+            .kit
+            .clone()
+    };
+    assert!(local(&runtime).offers_reinstall);
+    assert!(!local(&runtime).busy);
 
-    assert!(runtime.dispatch_json(&install("claude-code")));
-    // Approving twice is one install: the queue is a set and the write itself
-    // rewrites the same hook group either way (engineering rule 11).
-    assert!(runtime.dispatch_json(&install("claude-code")));
-    assert!(runtime.dispatch_json(&install("codex")));
+    assert!(runtime.dispatch_json(&reinstall("local")));
+    assert!(runtime.dispatch_json(&reinstall("local")));
+    assert!(local(&runtime).busy, "the row shows the install running");
     assert_eq!(
-        runtime.take_agent_hook_installs(),
-        vec![
-            hide_agent_hooks::AgentRuntime::ClaudeCode,
-            hide_agent_hooks::AgentRuntime::Codex
-        ]
-    );
-    assert!(
-        runtime.take_agent_hook_installs().is_empty(),
-        "a taken request is not performed twice"
+        runtime.take_local_kit_job(std::time::Instant::now()),
+        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::Reinstall(
+            vec![
+                hide_kit::ComponentId::ClaudeCodeHook,
+                hide_kit::ComponentId::Labels,
+            ]
+        ))),
+        "two presses are one install of the two parts that need it"
     );
 
-    assert!(runtime.dispatch_json(&install("emacs")));
-    assert!(
-        runtime.take_agent_hook_installs().is_empty(),
-        "a runtime Hide has no adapter for installs nothing"
+    runtime.ingest_kit_report(
+        "local",
+        &hide_kit::KitReport {
+            components: vec![part(
+                hide_kit::ComponentId::Cli,
+                hide_kit::ComponentState::Installed,
+            )],
+        },
     );
+    assert!(!local(&runtime).busy);
+    assert!(!local(&runtime).offers_reinstall);
+    assert!(
+        !runtime.dispatch_json(&reinstall("local")),
+        "nothing is left to repair"
+    );
+    assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
+
+    runtime.set_local_kit_unavailable(hide_kit::STANDALONE_REASON);
+    assert!(runtime.dispatch_json(&reinstall("local")));
     let error = runtime
         .snapshot
         .status
         .last_error
         .as_ref()
         .expect("the refusal is visible rather than silent");
-    assert_eq!(error.kind, "agent_hooks.unknown_runtime");
-    assert!(error.message.contains("emacs"), "got {}", error.message);
+    assert_eq!(error.kind, "kit.unavailable");
+    assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
 }
 
 // PRD B34, B35, D-32, D-55, D-60: Overview says who is working here, and an
@@ -1964,9 +2013,8 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
     // A pane with no agent says nothing at all.
     assert!(pane("w1:p6").children.is_none());
 
-    // The Settings diagnosis names both runtimes and the pane a restart fixes.
+    // The Settings diagnosis names the pane a restart fixes.
     let hooks = &runtime.snapshot.status.agent_hooks;
-    assert_eq!(hooks.runtimes.len(), 2);
     assert_eq!(
         hooks
             .sessions_predating_install
