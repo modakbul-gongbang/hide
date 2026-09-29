@@ -492,7 +492,7 @@ A finished clone goes through the same local `create_workspace` event Browse fol
 A created worktree's pane is focused with one `focus_pane` once the snapshot lists it, because only a focus request is tracked until Herdr confirms it; a late focus event for the pane left behind cannot undo the move.
 A dialog or sheet returns keyboard focus to a terminal through `focusTerminal` on the core's focused pane (`restoreFocus`), never by re-focusing the textarea that held it, which would be reported as the operator moving there.
 
-The device switcher sits at the bottom of the sidebar (`web/src/DevicePicker.tsx`) and sends `focus_device`.
+The device rail on the sidebar's left (`web/src/components/device-rail.tsx`), shown while a remote device is registered, sends `focus_device` for a device tile and keeps the Inbox as page state beside it.
 Selecting an SSH device makes it the context (`web/src/remote.ts`, the remote Agent area in `web/src/WorkspaceScreen.tsx`): the sidebar lists that host's Herdr workspaces and agents and the canvas draws its visible tab from `status.remote[].session`, the projection the core already builds over SSH with every id scoped to the target (`remote:<target>:pane:…`).
 The web follows the host's own focus rather than keeping a selection, because the core attaches exactly the panes of that host's focused tab; a pane is placed by the rectangle Herdr reports for it, and there is no divider because a remote pane's size is its host's.
 Keystrokes, scroll and viewport go out with the scoped pane id, which the core writes to that host's terminal session; focus, split, zoom, close pane, new tab, tab focus and close tab go out as `remote_control` with the device as `target_id` and a fresh `request_id`, and the core checks every id against that host's session before anything is sent, so a stale or local id is refused rather than retargeted.
@@ -910,6 +910,7 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Close focused View or pane | ⌘W | ⌥W (moved) | ⌘W |
 | Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | ⌘⇧T |
 | Add project | ⌘⇧N | none (a browser tab has no folder picker, so it offers no Add project) | ⌘⇧N |
+| Start agent (the start panel) | - | none (Chrome keeps ⌘N); ⌘K `에이전트 시작…` opens it | ⌘N, also File › Start agent |
 | Next / previous recent panel (Recent Panels) | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
 | Next / previous recent project (Recent Projects) | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
 | Search, Open file, Toggle side panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
