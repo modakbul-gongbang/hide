@@ -2133,6 +2133,13 @@ impl Runtime {
             }
         };
         let prompt = payload.agent_kind.as_ref().and(payload.prompt.clone());
+        if let Some(message) = prompt
+            .as_deref()
+            .and_then(|prompt| live::prompt_argument(prompt).err())
+        {
+            self.set_error("worktree.create_invalid_prompt", message, false);
+            return true;
+        }
         let id = match self.begin_task_operation(
             "worktree_create",
             Some(payload.repository_root.clone()),
@@ -2407,6 +2414,20 @@ impl Runtime {
                 }
             };
         let prompt = agent_kind.as_ref().and(payload.prompt.clone());
+        // A prompt the agent's command line cannot carry is refused before a
+        // tab or Home sync, so nothing is left behind.
+        if let Some(message) = prompt
+            .as_deref()
+            .and_then(|prompt| live::prompt_argument(prompt).err())
+        {
+            self.set_request_error(
+                "agent_start.invalid_prompt",
+                message,
+                false,
+                request_id.as_deref(),
+            );
+            return true;
+        }
         let device = payload
             .device_id
             .clone()

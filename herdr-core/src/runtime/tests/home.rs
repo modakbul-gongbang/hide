@@ -632,3 +632,37 @@ fn a_start_naming_no_place_or_two_is_refused() {
         assert!(runtime.snapshot.task_operation.is_none());
     }
 }
+
+/// A first prompt the agent's command line cannot carry is refused when the
+/// start arrives, before a tab opens or Home is synced, so nothing is left
+/// behind and the surface keeps the text with the reason.
+#[test]
+fn a_prompt_the_command_line_cannot_carry_is_refused_before_anything_opens() {
+    let machine = machine();
+    let herdr = herdr("home-bad-prompt");
+    let shared = local_runtime(&herdr, &machine.user_home);
+    let long = "a".repeat(300 * 1024);
+    for (request_id, payload) in [
+        (
+            "bell",
+            json!({"provider": "claude", "home": true, "prompt": "fix\u{7}it"}),
+        ),
+        (
+            "long",
+            json!({"provider": "codex", "checkout_path": &machine.projects[0], "prompt": long}),
+        ),
+    ] {
+        let mut payload = payload;
+        payload["request_id"] = json!(request_id);
+        dispatch(&shared, payload);
+        let runtime = shared.lock().unwrap();
+        let error = runtime.snapshot.status.last_error.as_ref().unwrap();
+        assert_eq!(
+            (error.kind.as_str(), error.request_id.as_deref()),
+            ("agent_start.invalid_prompt", Some(request_id))
+        );
+        assert!(runtime.snapshot.task_operation.is_none());
+    }
+    assert!(!machine.user_home.join("hide").exists());
+    assert!(herdr.calls().is_empty(), "{:?}", herdr.calls());
+}

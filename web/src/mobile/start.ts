@@ -79,6 +79,7 @@ export function startFailure(reason: string | null): string {
     case "too_long":
       return `할 일은 ${MAX_START_CHARS.toLocaleString("ko-KR")}자까지 적을 수 있어요.`;
     case "control_characters":
+    case "agent_start.invalid_prompt":
       return "할 일에 보낼 수 없는 문자가 있어요.";
     case "unknown_target":
     case "overview.unknown_checkout":

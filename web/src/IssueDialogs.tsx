@@ -226,7 +226,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const [request, setRequest] = useState<{ afterId: number; branch: string; at: number } | null>(null);
   const operation = useShellStore((s) => s.rest?.task_operation);
   const created = taskFor(operation, request ? { kind: "worktree_create", afterId: request.afterId, deviceId: workspace.device_id, repositoryRoot: workspace.path, branch: request.branch } : null);
-  const refused = useErrorSince(request?.at ?? null, ["worktree.create", "task_operation."]);
+  const refused = useErrorSince(request?.at ?? null, ["worktree.create", "task_operation.", "agent_start."]);
   const working = request !== null && refused === null && (created === null || created.phase === "working");
 
   // The body is read once per dialog; a GitHub issue's comes from `gh`.

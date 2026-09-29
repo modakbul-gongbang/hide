@@ -937,18 +937,21 @@ fn launch_with_prompt(
     launch_agent(connector, local, id, pane_id, kind, args).into()
 }
 
-/// The longest first prompt, in bytes once encoded, that a start carries. The
-/// argument travels on the agent's command line, which the OS caps near 1 MB
-/// with the environment included; 300 KB was observed arriving whole through
-/// the pinned Herdr.
-const MAX_PROMPT_BYTES: usize = 256 * 1024;
+/// The longest first prompt, in bytes once encoded, that a start carries.
+/// Herdr types the command into the pane's shell, and the slowest shell
+/// measured bounds it: through the pinned Herdr, macOS bash took 27 s to take
+/// a 76 KB command and did not finish 300 KB within 60 s, where zsh took 5 s;
+/// 64 KB stays well inside the 120 s start wait on either.
+const MAX_PROMPT_BYTES: usize = 64 * 1024;
 
 /// The first prompt as one argument Herdr can type into the pane's shell,
 /// which refuses a line break or a tab in an argument. Each line break becomes
 /// U+2028 (LINE SEPARATOR), which Herdr passes through and the model reads as
 /// a line break, and a tab four spaces; any other control character is refused
-/// rather than dropped, and so is a prompt over [`MAX_PROMPT_BYTES`].
-fn prompt_argument(prompt: &str) -> Result<String, String> {
+/// rather than dropped, and so is a prompt over [`MAX_PROMPT_BYTES`]. Every
+/// start event checks its prompt with this before anything is created, so a
+/// refused prompt leaves no tab or worktree behind; the worker encodes it.
+pub(crate) fn prompt_argument(prompt: &str) -> Result<String, String> {
     let mut argument = String::with_capacity(prompt.len());
     let mut chars = prompt.chars().peekable();
     while let Some(c) = chars.next() {
@@ -2940,7 +2943,7 @@ mod tests {
         let TaskAgentOutcome::Failed(message) = outcome else {
             panic!("expected a failed start, got {outcome:?}");
         };
-        assert!(message.contains("256 KB"), "{message}");
+        assert!(message.contains("64 KB"), "{message}");
         assert!(requests_of(&server).is_empty());
     }
 
