@@ -255,6 +255,12 @@ pub fn handle(call: Call) -> HostResult<Value> {
                     "HOME is not set, so Hide's Home folder has no place to live",
                 )
             })?;
+            if !Path::new(&home).is_absolute() {
+                return Err(HostError::new(
+                    ErrorCode::Unsupported,
+                    "HOME is not an absolute path, so Hide's Home folder has no place to live",
+                ));
+            }
             to_value(crate::home::sync(Path::new(&home), &projects)?)
         }
         Call::WorktreeRemove { removal } => {

@@ -319,6 +319,15 @@ fn candidates(projects: &[String], skipped: &mut Vec<HomeSkip>) -> HostResult<BT
             });
             continue;
         }
+        // A control character would be written into AGENTS.md as a line of
+        // its own, and Herdr cannot pass it to the agent as a root.
+        if project.chars().any(char::is_control) {
+            skipped.push(HomeSkip {
+                target: project.clone(),
+                reason: "control_character".to_owned(),
+            });
+            continue;
+        }
         found.insert(path.components().collect::<PathBuf>());
     }
     if found.len() > MAX_LINKS {

@@ -168,6 +168,20 @@ fn a_project_named_like_homes_own_files_takes_another_name() {
 }
 
 #[test]
+fn a_project_whose_path_has_a_control_character_is_skipped_and_kept_out_of_the_guide() {
+    let account = Account::new();
+    let plain = account.project("plain");
+    let odd = account.project("line\nbreak");
+    let synced = account.sync(&[&plain, &odd]);
+    assert_eq!(names(&synced), [("plain", plain.as_str())]);
+    assert_eq!(synced.skipped.len(), 1);
+    assert_eq!(synced.skipped[0].target, odd);
+    assert_eq!(synced.skipped[0].reason, "control_character");
+    let guide = std::fs::read_to_string(account.hide().join("AGENTS.md")).unwrap();
+    assert!(!guide.contains("break"), "{guide}");
+}
+
+#[test]
 fn a_parent_suffix_too_long_for_the_disk_falls_back_to_the_folder_name() {
     let account = Account::new();
     // `app-` and 252 more bytes is one past the 255 a file name may take.
@@ -491,6 +505,10 @@ fn home_sync_round_trips_through_the_helper() {
 
     let refused = ask_helper(None, &[]);
     assert_eq!(refused["error"]["code"], "unsupported");
+    // A relative HOME would put Home under whatever folder the helper runs in.
+    let relative = ask_helper(Some(Path::new("relative-home")), &[]);
+    assert_eq!(relative["error"]["code"], "unsupported");
+    assert!(!Path::new("relative-home").exists());
 }
 
 /// One `home_sync` request answered by `hide-host-helper serve`, whose HOME is
