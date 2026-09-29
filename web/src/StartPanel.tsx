@@ -19,8 +19,12 @@ import { useUiStore } from "./ui";
 // new agent's first prompt; Enter or 시작 sends one `agent_start_in_checkout`
 // and the panel then follows only the answer that carries its request id.
 
-/** How long a start may go unanswered before the panel says so, so it never waits for ever. */
-const ANSWER_TIMEOUT_MS = 30_000;
+/**
+ * How long a start may go unanswered before the panel says so, so it never
+ * waits for ever: longer than a device's Home sync (30 s) plus opening its
+ * tab, so a slow start is not reported as lost while it still runs.
+ */
+const ANSWER_TIMEOUT_MS = 90_000;
 
 /**
  * Follows the answer to the request the panel sent, whether or not the panel
@@ -105,8 +109,9 @@ function StartPanel({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const screen = useUiStore((s) => s.screen);
   const inbox = useUiStore((s) => s.inbox);
+  const overSettings = useStartPanel((s) => s.overSettings);
   // What is in front is read again on every open; the panel itself lives only while open.
-  const targets = useMemo(() => startTargets(rest, screen, inbox), [rest, screen, inbox]);
+  const targets = useMemo(() => startTargets(rest, screen, inbox, overSettings), [rest, screen, inbox, overSettings]);
   const target = resolveTarget(targets, chosen);
   const [selection, setSelection] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const surface = useRef<HTMLDivElement>(null);

@@ -19,8 +19,10 @@ use super::projection::LOCAL_DEVICE;
 
 /// The agent kinds a phone may start; `terminal` is a desktop-only start.
 pub const KINDS: [&str; 2] = ["claude", "codex"];
-/// How long a start may wait for the core's creation receipt.
-pub const ANSWER_LIMIT: Duration = Duration::from_secs(30);
+/// How long a start may wait for the core's creation receipt: longer than a
+/// device's Home sync (30 s) plus opening its tab, so a slow start is not
+/// reported as lost while it still runs.
+pub const ANSWER_LIMIT: Duration = Duration::from_secs(90);
 /// How many start request ids per phone are remembered to refuse a repeat.
 const REMEMBERED_STARTS: usize = 64;
 /// How many answers the follower keeps for waiting requests.
@@ -433,7 +435,7 @@ impl Desk {
         phone_id: &str,
         request: Request<'_>,
         catalog: &Catalog,
-        mut answers: tokio::sync::watch::Receiver<Answers>,
+        answers: tokio::sync::watch::Receiver<Answers>,
         limit: Duration,
         dispatch: impl FnOnce(Vec<u8>) -> Result<(), String> + Send + 'static,
     ) -> Value {
@@ -445,6 +447,11 @@ impl Desk {
         };
         match self.claim(phone_id, request_id) {
             Claim::Fresh => {}
+            // The first start may have landed after its wait ended: a repeat
+            // waits for that answer again and never dispatches a second start.
+            Claim::Seen(Some(answer)) if answer["reason"] == "timeout" => {
+                return self.follow(phone_id, request_id, answers, limit).await;
+            }
             Claim::Seen(Some(answer)) => return answer,
             Claim::Seen(None) => return self.repeat(phone_id, request_id, limit).await,
         }
@@ -459,6 +466,19 @@ impl Desk {
             self.settle(phone_id, request_id, None);
             return reply(false, Some("unavailable"));
         }
+        self.follow(phone_id, request_id, answers, limit).await
+    }
+
+    /// Waits for the core's answer to `request_id` for at most `limit`, and
+    /// settles the id with the frame the phone gets.
+    async fn follow(
+        &self,
+        phone_id: &str,
+        request_id: &str,
+        mut answers: tokio::sync::watch::Receiver<Answers>,
+        limit: Duration,
+    ) -> Value {
+        let reply = |ok: bool, reason: Option<&str>| json!({"type": "start_result", "request_id": request_id, "ok": ok, "reason": reason});
         let deadline = tokio::time::Instant::now() + limit;
         let answer = loop {
             let found = answers
@@ -916,10 +936,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_silent_core_times_out_and_the_id_stays_spent() {
+    async fn a_silent_core_times_out_and_a_repeat_waits_for_the_late_answer() {
         let desk = Desk::default();
         let catalog = Catalog::of(&rest());
-        let (_sender, receiver) = channel();
+        let (sender, receiver) = channel();
         let (count, dispatch) = counter();
         let first = desk
             .start(
@@ -940,12 +960,33 @@ mod tests {
                 "p",
                 request("c1", None),
                 &catalog,
-                receiver,
+                receiver.clone(),
                 Duration::from_millis(30),
                 dispatch(),
             )
             .await;
         assert_eq!(second, first);
+        // The first start lands late: a repeat now gets its answer, still
+        // without a second dispatch.
+        sender.send_replace(Arc::new(vec![(
+            "r1".to_owned(),
+            Answer::Started {
+                device_id: "local".into(),
+                pane_id: "w1:p9".into(),
+            },
+        )]));
+        let third = desk
+            .start(
+                "p",
+                request("c1", None),
+                &catalog,
+                receiver,
+                Duration::from_millis(30),
+                dispatch(),
+            )
+            .await;
+        assert_eq!(third["ok"], true, "{third}");
+        assert_eq!(third["pane_id"], "w1:p9");
         assert_eq!(
             count.load(Ordering::SeqCst),
             1,
