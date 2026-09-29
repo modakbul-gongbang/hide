@@ -330,7 +330,9 @@ impl Diagnosis {
 
 const RUNTIME_VERSION_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 
-fn runtime_compatibility(runtime: AgentRuntime, home: &Path) -> MemoryCompatibility {
+/// Whether the runtime installed under `home` is new enough for the hook Hide
+/// writes, read from its `--version` within a short bound.
+pub fn runtime_compatibility(runtime: AgentRuntime, home: &Path) -> MemoryCompatibility {
     let minimum = minimum_memory_version(runtime);
     let Some(binary) = resolve_runtime_binary(runtime, home) else {
         return MemoryCompatibility::UpdateRequired {
@@ -520,7 +522,7 @@ mod tests {
             current_version: HOOK_VERSION,
             memory_compatibility: compatible(AgentRuntime::Codex, Path::new("/tmp")),
         };
-        assert_eq!(row.headline(), "Update required (v2, current v5)");
+        assert_eq!(row.headline(), "Update required (v2, current v6)");
         assert!(row.offers_install());
     }
 
@@ -621,7 +623,7 @@ mod tests {
                 minimum_version: "2.1.278".to_owned(),
             },
         };
-        assert_eq!(supported.headline(), "Installed (v5)");
+        assert_eq!(supported.headline(), "Installed (v6)");
         assert_eq!(unsupported.headline(), "Update required");
         assert!(!unsupported.offers_install());
     }

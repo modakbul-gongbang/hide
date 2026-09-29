@@ -104,7 +104,7 @@ async function hookFromPane(herdr: HerdrFixture, stateDir: string, bridge: strin
     `HIDE_STATE_DIR=${quote(stateDir)}`,
     ...(bridge ? [`HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)}`] : []),
   ];
-  const command = `printf '{}' | ${variables.join(" ")} ${quote(HOOK_CLI)} hook --runtime ${runtime} --event SessionStart --memory-injection --source hide-subagents@5 > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
+  const command = `printf '{}' | ${variables.join(" ")} ${quote(HOOK_CLI)} hook --runtime ${runtime} --event SessionStart --memory-injection --source hide-subagents@6 > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
   await expect.poll(() => fs.existsSync(exit), { timeout: 30_000 }).toBe(true);
@@ -172,7 +172,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       expect(remoteBeforeConnection.status).toBe(0);
       expect(remoteBeforeConnection.context).not.toContain("Hide Workspace control is available");
     }
-    const plain = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@5"], {
+    const plain = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@6"], {
       env: { ...local.env, HERDR_PANE_ID: "", HIDE_STATE_DIR: run.env.HIDE_STATE_DIR! },
       input: "{}", encoding: "utf8", timeout: 10_000,
     });
@@ -183,7 +183,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     // names that checkout.
     const noPaneEnv: NodeJS.ProcessEnv = { ...local.env, HIDE_STATE_DIR: run.env.HIDE_STATE_DIR! };
     delete noPaneEnv.HERDR_PANE_ID;
-    const plainInCheckout = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@5"], {
+    const plainInCheckout = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@6"], {
       cwd: path.join(local.root, "fixture"),
       env: noPaneEnv,
       input: "{}", encoding: "utf8", timeout: 10_000,
@@ -241,7 +241,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     const stressError = path.join(remote.root, "repeat-session-start.err");
     fs.writeFileSync(stressScript, [
       "#!/bin/bash", "set -euo pipefail", "for i in $(seq 1 65); do",
-      `  context=$(printf '{}' | ${quote(HOOK_CLI)} hook --runtime codex --event SessionStart --memory-injection --source hide-subagents@5 | jq -er .hookSpecificOutput.additionalContext)`,
+      `  context=$(printf '{}' | ${quote(HOOK_CLI)} hook --runtime codex --event SessionStart --memory-injection --source hide-subagents@6 | jq -er .hookSpecificOutput.additionalContext)`,
       `  reference=$(printf '%s' "$context" | sed -n "s/.*HIDE_CAP_REF='\\([^']*\\)'.*/\\1/p")`,
       "  test -n \"$reference\"",
       `  HIDE_CAP_REF="$reference" ${quote(HIDE_CLI)} workspace info >/dev/null`,

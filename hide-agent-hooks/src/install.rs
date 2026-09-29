@@ -317,10 +317,18 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
 }
 
 /// The entry Hide writes: one command hook, carrying its own marker.
+///
+/// The command runs the helper only while it is there. A hook outlives the
+/// bundle or helper folder that wrote it: the app is moved to the Trash, a
+/// device is removed while it is offline, a helper folder is cleaned by hand.
+/// A bare path would then fail every one of the agent's turns with `No such
+/// file or directory`, which is what happened on 2026-09-10; guarded, a
+/// missing helper is a hook that does nothing and succeeds (PRD
+/// device-parity D-11, B3).
 fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
+    let quoted = shell_quote(&helper.display().to_string());
     let command = format!(
-        "{} hook --runtime {} --event {} --memory-injection --source {}",
-        shell_quote(&helper.display().to_string()),
+        "if [ -x {quoted} ]; then exec {quoted} hook --runtime {} --event {} --memory-injection --source {}; fi",
         runtime.id(),
         event.name(),
         hook_source_id()
@@ -372,11 +380,35 @@ fn installed_helper(hooks: &Map<String, Value>) -> Option<String> {
         .find_map(parse_quoted_helper)
 }
 
-/// Reads the leading `'…'` back out of a command Hide wrote.
+/// Reads the helper path back out of a command Hide wrote: the first
+/// single-quoted word, which is the path in both the guarded command and the
+/// bare one versions before 6 wrote. Quotes inside the path are written as
+/// `'\''`, and read back the same way.
 fn parse_quoted_helper(command: &str) -> Option<String> {
-    let rest = command.strip_prefix('\'')?;
-    let end = rest.find('\'')?;
-    Some(rest[..end].to_owned())
+    let start = command.find('\'')? + 1;
+    let mut path = String::new();
+    let mut rest = &command[start..];
+    loop {
+        let end = rest.find('\'')?;
+        path.push_str(&rest[..end]);
+        rest = &rest[end + 1..];
+        match rest.strip_prefix("\\''") {
+            Some(after) => {
+                path.push('\'');
+                rest = after;
+            }
+            None => return Some(path),
+        }
+    }
+}
+
+/// The helper Hide's entries in `runtime`'s file name, when there are any.
+/// The kit compares it with the helper it would install, so an entry left by
+/// an app at another path is replaced rather than taken as current.
+pub fn installed_helper_path(runtime: AgentRuntime, home: &Path) -> Option<String> {
+    let document = read_document(&runtime.config_path(home)).ok()??;
+    let hooks = hooks_object(&document, &runtime.config_path(home)).ok()??;
+    installed_helper(hooks)
 }
 
 fn read_document(path: &Path) -> Result<Option<Value>, InstallFailure> {
@@ -718,7 +750,11 @@ mod tests {
             .unwrap();
         assert!(session_start_command.contains("--runtime codex"));
         assert!(session_start_command.contains("--memory-injection"));
-        assert!(session_start_command.contains("--source hide-subagents@5"));
+        assert!(session_start_command.contains("--source hide-subagents@6"));
+        assert!(
+            session_start_command.starts_with("if [ -x '"),
+            "the command runs the helper only while it is there"
+        );
     }
 
     #[test]
@@ -840,6 +876,56 @@ mod tests {
                 reason: InstallFailure::HelperMissing { .. }
             }
         ));
+    }
+
+    /// The command as `/bin/sh -c` runs it, which is how both runtimes run a
+    /// command hook.
+    fn run_hook_command(command: &str) -> std::process::ExitStatus {
+        std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(command)
+            .stdin(std::process::Stdio::null())
+            .status()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_hook_whose_helper_is_gone_succeeds_and_one_that_is_there_runs() {
+        let fixture = Fixture::new("guard");
+        // A quote in the folder name is the case the path reader must undo.
+        let helper = fixture
+            .home()
+            .join("it's here")
+            .join(crate::HELPER_BINARY_NAME);
+        install(AgentRuntime::Codex, fixture.home(), &helper).unwrap();
+        assert_eq!(
+            installed_helper_path(AgentRuntime::Codex, fixture.home()).as_deref(),
+            Some(helper.to_str().unwrap()),
+            "the path is read back from the guarded command"
+        );
+        let command = fixture.read(AgentRuntime::Codex)["hooks"]["Stop"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // The app was moved to the Trash: the agent's turn goes on (B3).
+        assert!(run_hook_command(&command).success());
+
+        let ran = fixture.home().join("ran");
+        fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        fs::write(
+            &helper,
+            format!("#!/bin/sh\nprintf '%s' \"$*\" > '{}'\n", ran.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(run_hook_command(&command).success());
+        let arguments = fs::read_to_string(&ran).unwrap();
+        assert!(
+            arguments.starts_with("hook --runtime codex --event Stop"),
+            "{arguments}"
+        );
     }
 
     #[test]
