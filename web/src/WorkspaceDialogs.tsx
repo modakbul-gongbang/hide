@@ -14,6 +14,8 @@ import { Input } from "./components/ui/input";
 import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Note, Status } from "./components/settings-rows";
+import { SubtreeList } from "./components/subtree-list";
+import { subtreeOf, type Subtree } from "./close";
 import { NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
 import { PrDelegateDialog, PrLinkDialog, PrNewIssueDialog } from "./PrDialogs";
 import type { Checkout, Workspace } from "./snapshot";
@@ -129,6 +131,47 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
 }
 
 /**
+ * The agents outside what a removal takes, spawned from the agents inside
+ * it (PRD close-agent-subtree D-34): re-read on every snapshot, so a status
+ * check or an agent that closed shows at once. Null when there are none,
+ * which leaves the dialog as it was.
+ */
+function useOutsideSubtree(actions: Actions, inside: string[]): Subtree | null {
+  useShellStore((s) => s.rest);
+  useShellStore((s) => s.agents);
+  return subtreeOf(inside, actions.everyAgent());
+}
+
+function agentsWord(count: number): string {
+  return count === 1 ? "1 agent" : `${count} agents`;
+}
+
+/**
+ * The part of a removal dialog that names the agents outside it: the list
+ * and, while one of them is unknown, the status check the subtree choice
+ * waits for (D-37).
+ */
+function OutsideAgents({ actions, subtree, what, targetDevice }: { actions: Actions; subtree: Subtree; what: string; targetDevice: string | undefined }) {
+  const outside = subtree.ids.length;
+  return (
+    <div className="flex min-w-0 flex-col gap-xs" data-removal-subtree="true">
+      <p className="break-words text-body text-subtle-foreground">
+        {agentsWord(outside)} spawned from this {what} {outside === 1 ? "runs" : "run"} outside it:
+      </p>
+      <SubtreeList subtree={subtree} targetDevice={targetDevice} words="en" />
+      {subtree.unknown ? (
+        <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-subtree-blocked="true">
+          <span className="min-w-0 break-words">An agent outside has an unknown status; check it before closing them too.</span>
+          <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-subtree-check-status="true">
+            Check status
+          </Button>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * `Remove project…` on any device: the panes the core counted close first,
  * then only the registration goes. The row leaving the registrations is the
  * answer; a refusal or a close that failed is the core's error. A row Herdr
@@ -142,6 +185,17 @@ function RemoveProjectDialog({ actions, workspace, listed, onClose }: { actions:
   const removed = at !== null && (workspace.registered ? !registered : !listed);
   const working = at !== null && !removed && refused === null;
   const panes = workspace.removal?.pane_count ?? 0;
+  const inside = workspace.checkouts.flatMap((checkout) => checkout.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id)));
+  const subtree = useOutsideSubtree(actions, inside);
+  // What the operator chose, so Try again repeats it on what is left (B22).
+  const [withOutside, setWithOutside] = useState(false);
+  const remove = (outside: boolean) => {
+    setWithOutside(outside);
+    setAt(Date.now());
+    actions.removeWorkspace(workspace.id, outside ? (subtree?.ids ?? []) : []);
+  };
+  const offering = at === null || (refused !== null && !removed);
+  const closingOutside = working && withOutside && subtree !== null;
   return (
     <AlertDialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <AlertDialogContent data-remove-project={workspace.id}>
@@ -158,9 +212,10 @@ function RemoveProjectDialog({ actions, workspace, listed, onClose }: { actions:
             ))}
           </ul>
         ) : null}
+        {subtree && (offering || closingOutside) ? <OutsideAgents actions={actions} subtree={subtree} what="project" targetDevice={workspace.device_id} /> : null}
         {working ? (
-          <Status tone="pending" data-remove-phase="closing">
-            {panes > 0 ? "Closing the project's panes…" : "Removing the registration…"}
+          <Status tone="pending" data-remove-phase={closingOutside ? "closing_outside" : "closing"}>
+            {closingOutside ? `Closing ${agentsWord(subtree.ids.length)} outside, then the project's panes…` : panes > 0 ? "Closing the project's panes…" : "Removing the registration…"}
           </Status>
         ) : null}
         {refused ? (
@@ -180,15 +235,17 @@ function RemoveProjectDialog({ actions, workspace, listed, onClose }: { actions:
           {/* A refusal is retried from the same button (S5.5 B45). Plain
               Button, not AlertDialogAction: Radix closes on an Action's
               click, but this one has to stay open through the async removal. */}
-          {at === null || (refused !== null && !removed) ? (
-            <Button
-              variant="destructive"
-              onClick={() => {
-                setAt(Date.now());
-                actions.removeWorkspace(workspace.id);
-              }}
-              data-remove-confirm="true"
-            >
+          {offering && subtree ? (
+            <>
+              <Button variant="secondary" onClick={() => remove(false)} data-remove-confirm="only">
+                Remove only this project
+              </Button>
+              <Button variant="destructive" disabled={subtree.unknown} onClick={() => remove(true)} data-remove-confirm="with-outside">
+                Close {agentsWord(subtree.ids.length)} outside, then remove
+              </Button>
+            </>
+          ) : offering ? (
+            <Button variant="destructive" onClick={() => remove(withOutside)} data-remove-confirm="true">
               {refused !== null ? "Try again" : panes === 1 ? "Close 1 pane and remove" : panes > 1 ? `Close ${panes} panes and remove` : "Remove project"}
             </Button>
           ) : null}
@@ -411,11 +468,16 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
   const choosing = !!row && !!gate && !gate.blocked_reason && !inFlight && !finished;
   const branch = row?.branch ?? checkout.branch;
   const needsDiscard = !!gate?.discard_label;
-  const confirm = () => {
+  const inside = checkout.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id));
+  const subtree = useOutsideSubtree(actions, inside);
+  const [withOutside, setWithOutside] = useState(false);
+  const closingOutside = inFlight && withOutside && subtree !== null && (removal === null || removal.phase === "closing");
+  const confirm = (outside: boolean) => {
     const afterId = useShellStore.getState().rest?.worktree_removal?.id ?? 0;
+    setWithOutside(outside);
     setRequest({ afterId, at: Date.now() });
     useUiStore.getState().setWatchedRemoval({ deviceId, path: checkout.path, afterId });
-    actions.removeWorktree(deviceId, checkout.path, deleteBranch && !!gate?.can_delete_branch, discard && needsDiscard);
+    actions.removeWorktree(deviceId, checkout.path, deleteBranch && !!gate?.can_delete_branch, discard && needsDiscard, outside ? (subtree?.ids ?? []) : []);
   };
   const hide = () => {
     // A removal the operator stopped watching still reports its end through
@@ -479,9 +541,14 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
             ) : null}
           </>
         ) : null}
+        {subtree && (choosing || closingOutside) ? <OutsideAgents actions={actions} subtree={subtree} what="worktree" targetDevice={deviceId} /> : null}
         {inFlight ? (
-          <Status tone="pending" data-delete-phase={removal?.phase ?? "requested"}>
-            {removal?.phase === "removing" ? "Rechecking and removing the folder…" : `Closing ${paneCount} pane${paneCount === 1 ? "" : "s"}…`}
+          <Status tone="pending" data-delete-phase={closingOutside ? "closing_outside" : (removal?.phase ?? "requested")}>
+            {removal?.phase === "removing"
+              ? "Rechecking and removing the folder…"
+              : closingOutside
+                ? `Closing ${agentsWord(subtree.ids.length)} outside, then ${paneCount} pane${paneCount === 1 ? "" : "s"}…`
+                : `Closing ${paneCount} pane${paneCount === 1 ? "" : "s"}…`}
           </Status>
         ) : null}
         {finished ? (
@@ -495,8 +562,17 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
           </Button>
           {/* Plain Button, not AlertDialogAction: it has to stay open through
               the async removal instead of closing on the first click. */}
-          {choosing && gate ? (
-            <Button variant="destructive" disabled={needsDiscard && !discard} onClick={confirm} data-delete-confirm="true">
+          {choosing && gate && subtree ? (
+            <>
+              <Button variant="secondary" disabled={needsDiscard && !discard} onClick={() => confirm(false)} data-delete-confirm="only">
+                Delete only this worktree
+              </Button>
+              <Button variant="destructive" disabled={(needsDiscard && !discard) || subtree.unknown} onClick={() => confirm(true)} data-delete-confirm="with-outside">
+                Close {agentsWord(subtree.ids.length)} outside, then delete
+              </Button>
+            </>
+          ) : choosing && gate ? (
+            <Button variant="destructive" disabled={needsDiscard && !discard} onClick={() => confirm(false)} data-delete-confirm="true">
               {gate.button_label || "Delete worktree"}
             </Button>
           ) : null}

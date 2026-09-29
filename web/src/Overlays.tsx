@@ -17,6 +17,8 @@ import { visibleWindow, type CycleItem } from "./recent";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { displayMark } from "./ViewAreas";
 import { AgentMark } from "./AgentMark";
+import { subtreeOf, subtreeTitle } from "./close";
+import { SubtreeList } from "./components/subtree-list";
 import { knownProvider } from "./workspace";
 
 /**
@@ -94,12 +96,18 @@ function KindMark({ item }: { item: CycleItem }) {
   return displayMark({ kind: item.kind, label: item.title });
 }
 
-/** The consequence sheet: Keep open, or stop the work and close. */
+/**
+ * The consequence sheet: Keep open, or stop the work and close. A target
+ * with live descendants outside what closes gets the subtree sheet instead
+ * (PRD close-agent-subtree B2).
+ */
 export function ConfirmClose({ actions }: { actions: Actions }) {
   const pending = useUiStore((s) => s.pendingClose);
   return (
     <AlertDialog open={pending != null} onOpenChange={(open) => { if (!open) actions.keepOpen(); }}>
-      {pending ? (
+      {pending?.subtree ? (
+        <ConfirmSubtreeClose actions={actions} kind={pending.kind} targetId={pending.targetId} inside={pending.subtree.inside} ids={pending.subtree.ids} />
+      ) : pending ? (
         <AlertDialogContent data-confirm-close={pending.kind}>
           <AlertDialogHeader>
             <AlertDialogTitle>{pending.title}</AlertDialogTitle>
@@ -119,6 +127,49 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
         </AlertDialogContent>
       ) : null}
     </AlertDialog>
+  );
+}
+
+/**
+ * The close of an agent with descendants (D-07, D-17, D-18, D-19): one list
+ * of what closes with it, drawn live from the rows the sheet showed when it
+ * opened, and 취소 / 이것만 닫기 / 모두 닫기 with 모두 닫기 the Enter default.
+ * While a listed descendant's activity is unknown, 모두 닫기 waits for a
+ * status check the sheet itself offers, and the default is 취소.
+ */
+function ConfirmSubtreeClose({ actions, kind, targetId, inside, ids }: { actions: Actions; kind: "pane" | "tab"; targetId: string | null; inside: string[]; ids: string[] }) {
+  // Re-read on every snapshot so a status check or a closed row shows here.
+  useShellStore((s) => s.rest);
+  useShellStore((s) => s.agents);
+  const subtree = subtreeOf(inside, actions.everyAgent(), ids);
+  const count = subtree?.rows.filter((row) => !row.target).length ?? 0;
+  const targetDevice = subtree?.rows.find((row) => row.target)?.agent.device_id;
+  const blocked = subtree?.unknown ?? false;
+  return (
+    <AlertDialogContent data-confirm-close={kind} data-confirm-subtree="true" initialFocus={blocked ? "cancel" : "action"}>
+      <AlertDialogHeader>
+        <AlertDialogTitle>{subtreeTitle(kind, count)}</AlertDialogTitle>
+        <AlertDialogDescription data-subtree-consequence="true">이것만 닫기: 자식은 계속 실행되고 내 목록으로 올라옵니다.</AlertDialogDescription>
+      </AlertDialogHeader>
+      {subtree ? <SubtreeList subtree={subtree} targetDevice={targetDevice ?? (targetId ?? undefined)} /> : null}
+      {blocked ? (
+        <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-subtree-blocked="true">
+          <span className="min-w-0 break-words">상태를 모르는 자식이 있어 모두 닫기 전에 상태를 확인해야 합니다.</span>
+          <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-subtree-check-status="true">
+            상태 확인
+          </Button>
+        </p>
+      ) : null}
+      <AlertDialogFooter>
+        <AlertDialogCancel data-subtree-cancel="true">취소</AlertDialogCancel>
+        <Button variant="secondary" onClick={() => actions.confirmClose()} data-subtree-close-only="true">
+          이것만 닫기
+        </Button>
+        <Button variant="destructive" disabled={blocked} onClick={() => actions.closeSubtree()} data-subtree-close-all="true" data-initial-focus={blocked ? undefined : "true"}>
+          모두 닫기
+        </Button>
+      </AlertDialogFooter>
+    </AlertDialogContent>
   );
 }
 

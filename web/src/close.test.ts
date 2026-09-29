@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { closeDecision } from "./close";
+import { agentClosing, closeDecision, subtreeOf } from "./close";
 import type { AgentRow, PaneRow } from "./snapshot";
 
 function pane(id: string, extra: Partial<PaneRow> = {}): PaneRow {
@@ -61,5 +61,64 @@ describe("closeDecision", () => {
       [],
     );
     expect(decision).toMatchObject({ action: "confirm", affected: ["p2", "p3"] });
+  });
+});
+
+// p1 spawned p2 and p4; p2 spawned p3. Close lists come from the core,
+// deepest first, so a test states them as the core would publish them.
+function family(extra: Record<string, Partial<AgentRow>> = {}): AgentRow[] {
+  return [
+    agent("p1", { lineage_depth: 0, lineage_child_pane_ids: ["p2", "p4"], close_descendant_pane_ids: ["p3", "p2", "p4"], ...extra.p1 }),
+    agent("p2", { lineage_depth: 1, lineage_parent_pane_id: "p1", lineage_child_pane_ids: ["p3"], close_descendant_pane_ids: ["p3"], ...extra.p2 }),
+    agent("p3", { lineage_depth: 2, lineage_parent_pane_id: "p2", ...extra.p3 }),
+    agent("p4", { lineage_depth: 1, lineage_parent_pane_id: "p1", activity: "idle", group: "idle", ...extra.p4 }),
+  ];
+}
+
+describe("subtreeOf", () => {
+  it("leaves the ordinary close alone for an agent with no descendants", () => {
+    expect(subtreeOf(["p3"], family())).toBeNull();
+    expect(subtreeOf(["p9"], family())).toBeNull();
+  });
+
+  it("lists the target then its descendants in tree order, the target not counted", () => {
+    const subtree = subtreeOf(["p1"], family({ p2: { activity: "working" }, p3: { demand: "question" } }));
+    expect(subtree?.ids).toEqual(["p3", "p2", "p4"]);
+    expect(subtree?.rows.map((row) => [row.agent.pane_id, row.depth, row.target, row.state])).toEqual([
+      ["p1", 0, true, "quiet"],
+      ["p2", 1, false, "working"],
+      ["p3", 2, false, "waiting"],
+      ["p4", 1, false, "quiet"],
+    ]);
+    expect(subtree?.counts).toEqual({ working: 1, waiting: 1, unread: 0, unknown: 0 });
+    expect(subtree?.unknown).toBe(false);
+  });
+
+  it("counts a tab's descendants as the union outside the tab", () => {
+    const subtree = subtreeOf(["p1", "p2"], family());
+    expect(subtree?.ids).toEqual(["p3", "p4"]);
+  });
+
+  it("marks the choice blocked while a descendant's status is unknown", () => {
+    const subtree = subtreeOf(["p1"], family({ p4: { requires_close_status_check: true } }));
+    expect(subtree?.unknown).toBe(true);
+    expect(subtree?.counts.unknown).toBe(1);
+  });
+
+  it("keeps a sheet to the descendants it showed and drops one that went away", () => {
+    const agents = family().filter((row) => row.pane_id !== "p4");
+    expect(subtreeOf(["p1"], agents, ["p2", "p4"])?.ids).toEqual(["p2"]);
+  });
+});
+
+describe("agentClosing", () => {
+  const op = (kind: string, target_id: string, phase: string) => ({ id: `${kind}:${target_id}`, kind, target_id, scope_id: "s", phase, stage: "", message: null, retryable: false });
+
+  it("says closing while a tree close or a pane close still names the pane", () => {
+    expect(agentClosing([op("tree.close", "p2", "waiting")], "p2")).toBe(true);
+    expect(agentClosing([op("pane.close", "p2", "awaiting_topology")], "p2")).toBe(true);
+    expect(agentClosing([op("tree.close", "p2", "failed")], "p2")).toBe(false);
+    expect(agentClosing([op("tree.close", "p3", "closing")], "p2")).toBe(false);
+    expect(agentClosing(undefined, "p2")).toBe(false);
   });
 });

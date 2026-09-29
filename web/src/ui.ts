@@ -20,15 +20,28 @@ export type SidebarMode = "agents" | "projects";
  * panel where the core's `right_panel_section` says it does (D-13). */
 export const SIDEBAR_MODES: readonly SidebarMode[] = ["projects", "agents"];
 
-export type PendingClose = {
-  kind: "pane" | "tab";
-  id: string;
-  /** The SSH device the pane or tab is on, or null for this machine. */
-  targetId: string | null;
-  title: string;
-  consequence: string;
-  affected: string[];
-};
+export type PendingClose =
+  | {
+      kind: "pane" | "tab";
+      id: string;
+      /** The SSH device the pane or tab is on, or null for this machine. */
+      targetId: string | null;
+      title: string;
+      consequence: string;
+      affected: string[];
+      subtree?: undefined;
+    }
+  | {
+      kind: "pane" | "tab";
+      id: string;
+      targetId: string | null;
+      /**
+       * The close of an agent that has live descendants (PRD
+       * close-agent-subtree): the panes being closed and the descendant ids
+       * the sheet showed when it opened, which is all Close all ever sends.
+       */
+      subtree: { inside: string[]; ids: string[] };
+    };
 
 /**
  * The scope the center shows, picked in the sidebar (PRD S6 D-02): All
