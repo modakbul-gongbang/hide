@@ -85,6 +85,7 @@ test("lineage a Herdr restart dropped comes back while the daemon keeps running,
   await coordinator.until(() => fake.pane("local", "child-pane").tokens?.parent_pane === "parent-pane", "the child's parent_pane token was not written back");
   assert.deepEqual(fake.pane("local", "child-pane").tokens, { parent_pane: "parent-pane" });
   assert.equal(fake.pane("local", "parent-pane").tokens, undefined, "a root gets no lineage token");
+  await coordinator.until(() => coordinator.ledger().events.some((entry) => entry.type === "lineage.reconciled"), "the reconciliation was not recorded");
   const reconciled = coordinator.ledger().events.filter((entry) => entry.type === "lineage.reconciled");
   assert.deepEqual(reconciled.map((entry) => entry.detail), [{ scanned: 1, filled: 1, failed: 0 }]);
 
