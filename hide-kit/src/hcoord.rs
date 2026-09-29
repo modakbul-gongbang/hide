@@ -81,7 +81,19 @@ fn shim(home: &Path, runtime: &HcoordRuntime) -> String {
     )
 }
 
+/// hcoord starts its daemon through launchd only
+/// (`plugins/hcoord/src/hcoord/platform.ts`), so on any other system the
+/// kit has nothing it can keep running there.
+fn unsupported_system(os: &str) -> Option<String> {
+    (os != "macos").then(|| {
+        "hcoord keeps its daemon running only on macOS, so Hide installs it on Macs".to_owned()
+    })
+}
+
 pub(crate) fn observe(target: &KitTarget) -> Observed {
+    if let Some(reason) = unsupported_system(std::env::consts::OS) {
+        return Observed::Absent(reason);
+    }
     let runtime = match &target.hcoord {
         Ok(runtime) => runtime,
         Err(reason) => return Observed::Blocked(reason.clone()),
@@ -274,6 +286,19 @@ mod tests {
             program_in_shim("#!/bin/sh\nexec /usr/bin/node /x \"$@\"\n"),
             Some(PathBuf::from("/usr/bin/node"))
         );
+    }
+
+    /// A Linux device reads hcoord as not on that machine, which offers no
+    /// Reinstall, rather than as a failure no Reinstall can fix.
+    #[test]
+    fn hcoord_is_not_on_a_system_its_daemon_cannot_run_on() {
+        assert_eq!(unsupported_system("macos"), None);
+        for os in ["linux", "freebsd"] {
+            assert!(
+                unsupported_system(os).is_some_and(|reason| reason.contains("only on macOS")),
+                "{os}"
+            );
+        }
     }
 
     #[test]
