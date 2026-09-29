@@ -80,8 +80,11 @@ A `file:` page that moves to a file outside the checkouts keeps showing it in it
 
 ## The page and its limits
 
-Pages run in persistent session partitions separated by Workspace and by web versus file preview, apart from the shell's own session, with a sandboxed renderer, context isolation, no Node, and no preload, so nothing in a page reaches the `hideHost` bridge or the daemon's token.
-This separation keeps localhost cookies of a local page, an SSH device, and a remote HTML preview from crossing those boundaries even when their host names are equal.
+Web pages in every Workspace share one persistent session for logins, cookies, origin storage and zoom.
+Remote loopback pages use a persistent session per device, and HTML file previews keep a separate session per Workspace; none uses the shell's session.
+This keeps localhost cookies of this Mac, each SSH device, and remote HTML previews apart even when their host names are equal.
+Pages run in a sandboxed renderer with context isolation, no Node and no preload, so nothing in a page reaches the `hideHost` bridge or the daemon's token.
+Existing Workspace-specific web sessions are not copied into the shared session, so an upgrade may require one new login per site.
 A page gets no permission but writing the clipboard, because a prompt it would raise has nowhere to show; a download follows Chromium's default and is logged as `browser.download`.
 A page may navigate to `http`, `https`, `file` and `about:blank`; a `mailto:` link goes to the default mail app, and anything else is refused and logged with its scheme only.
 
@@ -99,7 +102,7 @@ While a page holds the keyboard, the text-size commands zoom the page instead of
 The desktop app routes them by command, not by key, so a rebound text-size chord zooms the page too: an app-menu command for Larger, Smaller or Reset text that arrives while a page holds the keyboard steps that page through Chrome's zoom levels (25% to 500%) or back to 100%, and the page keeps the keyboard (`BrowserViews.zoomFocused`).
 Chrome's second zoom-in chord, ⌘+ (⌘⇧= on a US keyboard), reaches no menu item, so the host zooms the focused page on that key before the page or the menu sees it, unless the operator bound that chord to a command.
 With the shell holding the keyboard the same commands size the focused terminal or document text as before.
-Chromium keeps one zoom level per host within a page's session partition, so pages of the same host in a Workspace zoom together.
+Chromium keeps one zoom level per host within a page's session partition, so web pages of the same host in different Workspaces zoom together.
 The shell's own zoom, which places every page on its slot, is a separate session and never moves with a page's zoom.
 
 A trackpad pinch magnifies the page up to 3x without reflowing it, as in Chrome.

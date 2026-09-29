@@ -3,6 +3,7 @@
 // are input like any other, so every field is bounded here and a message
 // that fails is dropped whole (issue 155).
 
+import { createHash } from "node:crypto";
 import type { BrowserCommand, BrowserPlacement, BrowserRect, BrowserSync } from "../../../web/src/host";
 
 /** A Workspace holds at most this many displays (`MAX_VIEW_DISPLAYS`). */
@@ -84,6 +85,28 @@ export function loadable(url: string): boolean {
   }
 }
 
+/** Web logins are shared across Workspaces; file previews and each remote device's loopback stay separate. */
+export function browserPartition(workspace: string, url: string): string {
+  const separator = workspace.indexOf("\u0000");
+  if (separator < 1) throw new Error("Browser Workspace key is missing its device");
+  const device = workspace.slice(0, separator);
+  const address = new URL(url);
+  if (address.protocol === "file:") {
+    return `persist:hide-browser-file-${createHash("sha256").update(workspace).digest("hex").slice(0, 32)}`;
+  }
+  if (device !== "local" && isLoopbackHost(address.hostname)) {
+    return `persist:hide-browser-loopback-${createHash("sha256").update(device).digest("hex").slice(0, 32)}`;
+  }
+  return "persist:hide-browser-web";
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  const mapped = /^\[::(?:(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4}))\]$/.exec(host);
+  const embeddedLoopback = mapped ? Number.parseInt(mapped[1]!, 16) >> 8 === 127 : false;
+  return host === "localhost" || host === "0.0.0.0" || host === "[::1]" || /^127\./.test(host) || embeddedLoopback;
+}
+
 /** Route a remote page's absolute loopback requests through its owned View.
  * An unsupported local address is refused instead of reaching this Mac. */
 export function remoteRequest(route: { url: string; source_url: string }, raw: string): { redirectURL?: string; cancel?: boolean } {
@@ -92,10 +115,7 @@ export function remoteRequest(route: { url: string; source_url: string }, raw: s
     const local = new URL(route.url);
     const source = new URL(route.source_url);
     if (source.protocol === "file:") return address.origin === local.origin && address.protocol === local.protocol ? {} : { cancel: true };
-    const host = address.hostname.toLowerCase().replace(/\.$/, "");
-    const mapped = /^\[::(?:(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4}))\]$/.exec(host);
-    const embeddedLoopback = mapped ? Number.parseInt(mapped[1]!, 16) >> 8 === 127 : false;
-    const loopback = host === "localhost" || host === "0.0.0.0" || host === "[::1]" || /^127\./.test(host) || embeddedLoopback;
+    const loopback = isLoopbackHost(address.hostname);
     if (route.url === route.source_url) return loopback ? { cancel: true } : {};
     if (address.origin === local.origin || (address.protocol === "ws:" && local.protocol === "http:" && address.host === local.host) || (address.protocol === "wss:" && local.protocol === "https:" && address.host === local.host)) return {};
     if (!loopback) return {};

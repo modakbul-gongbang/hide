@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadable, MAX_SYNCED_DISPLAYS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
+import { browserPartition, loadable, MAX_SYNCED_DISPLAYS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
 
 const rect = { x: 0, y: 40, width: 800, height: 600 };
 const display = { id: "d1", url: "https://a.test/", load: 3, rect, visible: true };
@@ -41,6 +41,25 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
   it("loads only the web, a local file, or a blank page", () => {
     for (const url of ["https://a.test/", "http://localhost:3000/", "file:///Users/example/a.html", "about:blank"]) expect(loadable(url), url).toBe(true);
     for (const url of ["javascript:alert(1)", "data:text/html,x", "chrome://settings", "about:config", "not a url"]) expect(loadable(url), url).toBe(false);
+  });
+
+  it("shares web login storage across Workspaces while keeping remote localhost and file previews separate", () => {
+    const localA = "local\u0000/a";
+    const localB = "local\u0000/b";
+    const remoteA = "ssh-a\u0000/a";
+    const remoteB = "ssh-a\u0000/b";
+    const otherDevice = "ssh-b\u0000/a";
+    const web = browserPartition(localA, "https://example.com/");
+    expect(browserPartition(localB, "https://example.com/")).toBe(web);
+    expect(browserPartition(remoteA, "https://example.com/")).toBe(web);
+    expect(browserPartition(localA, "http://localhost:3000/")).toBe(web);
+    const remoteLoopback = browserPartition(remoteA, "http://localhost:3000/");
+    expect(browserPartition(remoteB, "http://127.0.0.1:3000/")).toBe(remoteLoopback);
+    expect(browserPartition(remoteB, "http://[::ffff:127.0.0.1]:3000/")).toBe(remoteLoopback);
+    expect(browserPartition(otherDevice, "http://localhost:3000/")).not.toBe(remoteLoopback);
+    expect(remoteLoopback).not.toBe(web);
+    expect(browserPartition(localA, "file:///a/report.html")).not.toBe(web);
+    expect(browserPartition(localB, "file:///b/report.html")).not.toBe(browserPartition(localA, "file:///a/report.html"));
   });
 
   it("keeps absolute remote loopback requests on the View's SSH route", () => {
