@@ -33,7 +33,6 @@ import {
 } from "./cli";
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
-import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure } from "./hcoord";
 import { chooseHerdr, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, type ChildResult } from "./spawn";
@@ -114,7 +113,7 @@ export class DesktopHost {
     this.listenReveal();
     this.listenPickFolder();
     this.openWindow();
-    void this.prepareHcoord().finally(() => this.discover("launch"));
+    void this.discover("launch");
   }
 
   /** A second launch or a Dock click: bring the window back, and look again when nothing is attached. */
@@ -298,35 +297,6 @@ export class DesktopHost {
     const inheritedPath = this.env.path || "/usr/bin:/bin:/usr/sbin:/sbin";
     const searchPath = [...new Set([...inheritedPath.split(":"), ...wellKnownDirs(this.env.home)].filter(Boolean))].join(":");
     return { ...this.env.inherited, PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
-  }
-
-  /**
-   * Converges the packaged coordinator independently of hided. A refusal is
-   * logged and the window continues, because no coordinator failure can own
-   * the desktop host's lifecycle.
-   */
-  private async prepareHcoord(): Promise<void> {
-    const resources = this.bundledDir();
-    if (resources === null) return;
-    try {
-      const bundle = bundledHcoord(resources, process.execPath);
-      installHcoordShim(this.env.home, bundle);
-      const result = parseHcoordEnsure(await this.runChild(
-        bundle.executable,
-        [bundle.cli, "daemon", "ensure", "--json"],
-        20_000,
-        hcoordEnvironment(this.env.inherited, this.env.home, bundle),
-      ));
-      if (!result.ok) {
-        this.log.event("hcoord.prepare_failed", { detail: result.reason });
-      } else if (result.manualStop) {
-        this.log.event("hcoord.manual_stop", { changed: false });
-      } else {
-        this.log.event("hcoord.ready", { changed: result.changed, version: result.version });
-      }
-    } catch (error) {
-      this.log.event("hcoord.prepare_failed", { detail: String(error) });
-    }
   }
 
   private runChild(file: string, args: readonly string[], timeoutMs: number, env: Record<string, string | undefined>): Promise<ChildResult> {
