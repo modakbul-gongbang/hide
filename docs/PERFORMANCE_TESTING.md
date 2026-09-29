@@ -298,6 +298,12 @@ The UI therefore describes a fresh eligibility check rather than a permanent unu
 A stale, missing or failed check is caller-visible and never becomes permission to delete.
 Completed intents are retained until dismissal; duplicate confirmation does no work, and retry through a fresh review excludes already removed targets.
 
+The disk cleanup names a project (`cleanup_review {workspace_id}`) and shares that one lane: one active review or run per daemon, published on the reviewed project's snapshot, never under the Runtime mutex.
+What is in use is read on the worker when the review opens and again when it is confirmed: the checkout agent summary the lock already holds, one `pane.process_info` per non-agent terminal pane of the project (capped at 256 panes; past it the read fails rather than guessing), and one `lsof` listener sample; a read that fails leaves the review with a `usage_error` and nothing selectable.
+The in-use answer is published before the slower worktree eligibility checks (Git per worktree, GitHub only for a branch not already an ancestor of main), so build caches can be chosen while those run.
+A confirmation moves each chosen folder into `<git-common-dir>/hide-removed` with one rename after judging it again from the files (still ignored, still vouched for, no link on its path, no repository inside, no tracked file from one `git ls-files -z` per checkout), then the existing trash sweep deletes and the run waits for the trash to empty before it reads the volume's free space; the confirmation is accepted once because it moves the phase from `review` to `removing` under the lock.
+Regression owners are the `live::cleanup` tests for in-use reads, exclusion codes, cell rechecks (`a_folder_that_changed_after_the_measurement_is_kept_and_named`), repeat convergence and the single `ls-files`, and `a_cleanup_confirmation_only_selects_what_the_review_allows_and_runs_once`.
+
 Regression owners include `overview_open_section_focuses_the_checkout_and_switches_the_panel_in_one_event`, `agent_start_in_checkout_reports_through_the_task_operation_slot`, `behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side`, `linked_worktrees_carry_their_creation_time_and_the_main_worktree_none`, disk filesystem fixtures and cleanup filesystem fixtures.
 Manual acceptance in the desktop app additionally covers row click versus header click versus the `N files` chip, narrow Korean/English wrapping of branch names and tasks, `…`/`?` cells, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
 

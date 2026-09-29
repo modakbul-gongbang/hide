@@ -278,7 +278,6 @@ fn has_cache_tag(folder: &Path) -> bool {
 }
 
 /// Why a folder is no longer safe to move, decided right before the move.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FolderRefusal {
     NotFound,
@@ -287,7 +286,6 @@ pub enum FolderRefusal {
     Changed,
 }
 
-#[allow(dead_code)]
 impl FolderRefusal {
     pub fn code(self) -> &'static str {
         match self {
@@ -302,7 +300,6 @@ impl FolderRefusal {
 /// checkout, reached through no link, ignored by the rules of every folder
 /// above it, and still vouched for as `layer`. `exclude_dir` is the shared
 /// Git directory's `info` folder.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn verify_folder(
     root: &Path,
     folder: &Path,

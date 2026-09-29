@@ -1166,6 +1166,57 @@ fn admin_id(checkout: &Path) -> Option<String> {
         .map(|name| name.to_string_lossy().into_owned())
 }
 
+/// Moves a folder that is not a worktree into the repository's [`TRASH`] with
+/// one rename, so it is gone from its checkout at once and [`sweep_trash`]
+/// deletes it in the background. The rename stays on one volume, so a folder
+/// on another volume than the repository's Git directory is an error and is
+/// left where it is. The entry's name has no registered worktree id, so a
+/// sweep always treats it as deletable.
+pub fn set_aside_folder(common: &Path, folder: &Path) -> Result<PathBuf, std::io::Error> {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let trash = common.join(TRASH);
+    std::fs::create_dir_all(&trash)?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let entry = trash.join(format!("{nanos}-{}-~folder{sequence}", std::process::id()));
+    std::fs::rename(folder, &entry)?;
+    Ok(entry)
+}
+
+/// Starts the deletion of everything waiting in the repository's [`TRASH`]
+/// and waits up to `wait` for it to finish, sweeping again every few seconds
+/// so a deletion that stopped is retried. Returns how many entries remain.
+pub fn drain_trash(common: &Path, wait: Duration) -> usize {
+    let trash = common.join(TRASH);
+    let until = std::time::Instant::now() + wait;
+    let mut swept = None;
+    loop {
+        if swept.is_none_or(|at: std::time::Instant| at.elapsed() >= Duration::from_secs(5)) {
+            sweep_trash(&trash);
+            swept = Some(std::time::Instant::now());
+        }
+        let remaining = std::fs::read_dir(&trash).map_or(0, Iterator::count);
+        if remaining == 0 || std::time::Instant::now() >= until {
+            return remaining;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Whether `folder` or any folder below it holds a `.git`, looked through
+/// within the same bounds a worktree removal uses.
+pub fn contains_repository(folder: &Path) -> Result<bool, String> {
+    holds_repository(
+        folder,
+        &mut WalkBudget {
+            entries: IGNORED_WALK_ENTRIES,
+            until: std::time::Instant::now() + IGNORED_WALK_TIME,
+        },
+    )
+}
+
 /// Entries of a trash folder being deleted by this process, so two sweeps
 /// never delete the same folder at once.
 static DELETING: std::sync::Mutex<std::collections::BTreeSet<PathBuf>> =

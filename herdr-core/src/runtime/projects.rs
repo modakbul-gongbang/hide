@@ -344,6 +344,14 @@ impl Runtime {
                         .collect(),
                 })
                 .collect(),
+            folders: self
+                .worktree_catalog
+                .project(&workspace.path)
+                .into_iter()
+                .flat_map(|project| &project.worktrees)
+                .filter(|worktree| !worktree.disk.folders.is_empty())
+                .map(|worktree| (PathBuf::from(&worktree.path), worktree.disk.folders.clone()))
+                .collect(),
         })
     }
 
@@ -355,10 +363,17 @@ impl Runtime {
         {
             return false;
         }
-        let removed = answer
-            .rows
-            .iter()
-            .any(|row| row.result.as_deref() == Some("removed"));
+        // What was removed is news for the catalog and the sizes once the run
+        // has finished, not on every progress step.
+        let removed = answer.phase == "complete"
+            && (answer
+                .rows
+                .iter()
+                .any(|row| row.result.as_deref() == Some("removed"))
+                || answer
+                    .cell_results
+                    .iter()
+                    .any(|cell| cell.outcome == "removed"));
         self.cleanup = Some(answer);
         if removed {
             self.refresh_worktrees();
@@ -414,7 +429,7 @@ impl Runtime {
         }) else {
             return false;
         };
-        let paths: Vec<_> = payload
+        let mut paths: Vec<_> = payload
             .paths
             .into_iter()
             .filter(|path| {
@@ -426,7 +441,29 @@ impl Runtime {
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
-        if paths.is_empty() {
+        paths.sort();
+        // A worktree goes with everything in it, so its own cells are not
+        // emptied one by one.
+        let mut cells: Vec<live::cleanup::CellChoice> = Vec::new();
+        for cell in payload.cells {
+            let Some(layer) = crate::disk_layers::Layer::from_code(&cell.layer) else {
+                continue;
+            };
+            let choice = live::cleanup::CellChoice {
+                path: cell.path,
+                layer,
+            };
+            if !paths.contains(&choice.path)
+                && !cells.contains(&choice)
+                && review
+                    .rows
+                    .iter()
+                    .any(|row| row.path == choice.path && row.in_use.is_none())
+            {
+                cells.push(choice);
+            }
+        }
+        if paths.is_empty() && cells.is_empty() {
             return false;
         }
         let Some(input) = self.cleanup_input(&review.workspace_id) else {
@@ -440,7 +477,7 @@ impl Runtime {
                 "The Herdr connection is unavailable. Reconnect and review again.".into()
             })
             .and_then(|context| {
-                live::cleanup::spawn_confirm(context, review.clone(), input, paths)
+                live::cleanup::spawn_confirm(context, review.clone(), input, paths, cells)
             });
         if let Err(message) = started {
             let active = self.cleanup.as_mut().unwrap();

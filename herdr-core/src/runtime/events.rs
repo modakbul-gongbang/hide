@@ -709,6 +709,15 @@ pub(super) struct CleanupConfirmPayload {
     /// Worktrees to remove with everything in them.
     #[serde(default)]
     pub(super) paths: Vec<String>,
+    /// Build cache and dependency cells to empty.
+    #[serde(default)]
+    pub(super) cells: Vec<CleanupCellPayload>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct CleanupCellPayload {
+    pub(super) path: String,
+    pub(super) layer: String,
 }
 
 #[derive(Debug, Deserialize)]

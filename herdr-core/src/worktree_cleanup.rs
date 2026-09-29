@@ -3,6 +3,7 @@
 //! All inspection and filesystem effects run on the existing action-worker
 //! path, never under the runtime lock.
 use super::{LiveContext, control_request};
+use crate::disk_layers::{Layer, LayerFolder, verify_folder};
 use crate::model::ListeningPortSnapshot;
 use crate::{disk, github, worktrees::git};
 use serde::Serialize;
@@ -95,6 +96,15 @@ pub(crate) struct ReviewInput {
     /// The checkout the operator is looking at, when it is in this project.
     pub current: Option<PathBuf>,
     pub checkouts: Vec<CheckoutFacts>,
+    /// The folders each checkout's layer cells were measured from.
+    pub folders: HashMap<PathBuf, Vec<LayerFolder>>,
+}
+
+/// A build cache or dependency cell the operator chose.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CellChoice {
+    pub path: String,
+    pub layer: Layer,
 }
 
 /// How many terminal panes one review asks Herdr about. A project past it
@@ -453,6 +463,7 @@ fn confirm(
     selected: &[String],
     mut refresh: impl FnMut() -> Result<CleanupSnapshot, String>,
     mut remove: impl FnMut(&str) -> Result<String, String>,
+    mut settled: impl FnMut(&CleanupRow),
 ) -> CleanupSnapshot {
     let mut result = review.clone();
     result.phase = "complete".into();
@@ -507,6 +518,7 @@ fn confirm(
                 row.message = Some(message);
             }
         }
+        settled(row);
     }
     result
 }
@@ -599,18 +611,278 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
         .map_err(|e| format!("Cleanup worker could not start: {e}"))
 }
 
+/// What emptying cells needs besides the cells themselves.
+struct CellRun<'a> {
+    id: u64,
+    workspace_id: &'a str,
+    /// The repository's shared Git directory, where removed folders wait.
+    common: &'a Path,
+    folders: &'a HashMap<PathBuf, Vec<LayerFolder>>,
+    /// Read again just now, not when the review was made. A read that failed
+    /// empties nothing.
+    in_use: Result<&'a InUseMap, &'a str>,
+}
+
+/// A folder that cannot be moved, and the code the shell reads for it.
+struct Kept {
+    code: &'static str,
+    reason: String,
+}
+
+fn cell_result(
+    path: &str,
+    layer: Layer,
+    outcome: &'static str,
+    bytes: u64,
+    folders: usize,
+    kept: Option<Kept>,
+) -> CellResult {
+    CellResult {
+        path: path.to_owned(),
+        layer: layer.code(),
+        outcome,
+        bytes,
+        folders,
+        reason_code: kept.as_ref().map(|kept| kept.code),
+        reason: kept.map(|kept| kept.reason),
+    }
+}
+
+/// Empties the chosen cells: right before each move the folder is judged
+/// again from the files, and nothing moves unless it is still ignored, still
+/// vouched for as its layer, reached through no link, holding no repository
+/// and no file Git tracks (one `git ls-files` for all of a checkout's folders).
+/// A moved folder leaves its checkout at once and is deleted afterwards;
+/// nothing here deletes. Every outcome is one result and one diagnostic.
+fn empty_cells(
+    run: &CellRun,
+    cells: &[CellChoice],
+    mut settled: impl FnMut(&CellResult),
+) -> Vec<CellResult> {
+    let mut results = Vec::new();
+    let mut checkouts: Vec<&str> = Vec::new();
+    for cell in cells {
+        if !checkouts.contains(&cell.path.as_str()) {
+            checkouts.push(&cell.path);
+        }
+    }
+    let mut record = |result: CellResult| {
+        crate::diagnostic!(serde_json::json!({
+            "component": "cleanup",
+            "kind": format!("cell.{}", result.outcome),
+            "cleanup_id": run.id,
+            "workspace_id": run.workspace_id,
+            "checkout": result.path,
+            "layer": result.layer,
+            "bytes": result.bytes,
+            "folders": result.folders,
+            "reason_code": result.reason_code,
+        }));
+        settled(&result);
+        results.push(result);
+    };
+    for checkout in checkouts {
+        let root = PathBuf::from(checkout);
+        let chosen: Vec<Layer> = cells
+            .iter()
+            .filter(|cell| cell.path == checkout)
+            .map(|cell| cell.layer)
+            .collect();
+        let blocked = match run.in_use {
+            Err(message) => Some(Kept {
+                code: "unverified",
+                reason: message.to_owned(),
+            }),
+            Ok(in_use) if in_use.contains_key(&root) => Some(Kept {
+                code: "in_use",
+                reason: "The checkout became busy after the review".into(),
+            }),
+            Ok(_) => None,
+        };
+        if let Some(blocked) = blocked {
+            for layer in chosen {
+                record(cell_result(
+                    checkout,
+                    layer,
+                    "skipped",
+                    0,
+                    0,
+                    Some(Kept {
+                        code: blocked.code,
+                        reason: blocked.reason.clone(),
+                    }),
+                ));
+            }
+            continue;
+        }
+        let exclude_dir = crate::git_dir::discover(&root).map(|repo| repo.common_dir.join("info"));
+        // Judge every folder of every chosen layer, then ask Git once.
+        let mut judged: Vec<(Layer, &LayerFolder, Option<Kept>)> = Vec::new();
+        for layer in &chosen {
+            for folder in run
+                .folders
+                .get(&root)
+                .into_iter()
+                .flatten()
+                .filter(|folder| folder.layer == *layer)
+            {
+                let kept = match verify_folder(&root, &folder.path, *layer, exclude_dir.as_deref())
+                {
+                    Err(refusal) => Some(Kept {
+                        code: refusal.code(),
+                        reason: format!("The folder is no longer what was measured: {refusal:?}"),
+                    }),
+                    Ok(()) => match hide_host::worktrees::contains_repository(&folder.path) {
+                        Ok(true) => Some(Kept {
+                            code: "nested_repository",
+                            reason: "The folder holds another Git repository".into(),
+                        }),
+                        Ok(false) => None,
+                        Err(message) => Some(Kept {
+                            code: "unverified",
+                            reason: message,
+                        }),
+                    },
+                };
+                judged.push((*layer, folder, kept));
+            }
+        }
+        let tracked = tracked_folders(
+            &root,
+            judged
+                .iter()
+                .filter(|(_, _, kept)| kept.is_none())
+                .map(|(_, folder, _)| folder.path.as_path()),
+        );
+        for (_, folder, kept) in &mut judged {
+            if kept.is_some() {
+                continue;
+            }
+            match &tracked {
+                Err(message) => {
+                    *kept = Some(Kept {
+                        code: "unverified",
+                        reason: message.clone(),
+                    });
+                }
+                Ok(tracked) if tracked.contains(&folder.path) => {
+                    *kept = Some(Kept {
+                        code: "tracked_files",
+                        reason: "Git tracks a file inside the folder".into(),
+                    });
+                }
+                Ok(_) => {}
+            }
+        }
+        for layer in chosen {
+            let (mut moved, mut bytes, mut failed) = (0usize, 0u64, None);
+            let mut first_kept: Option<Kept> = None;
+            let mut total = 0usize;
+            for (_, folder, kept) in judged.iter_mut().filter(|(l, _, _)| *l == layer) {
+                total += 1;
+                if let Some(kept) = kept.take() {
+                    first_kept.get_or_insert(kept);
+                    continue;
+                }
+                match hide_host::worktrees::set_aside_folder(run.common, &folder.path) {
+                    Ok(_) => {
+                        moved += 1;
+                        bytes = bytes.saturating_add(folder.bytes);
+                    }
+                    Err(error) => {
+                        failed.get_or_insert(Kept {
+                            code: "io",
+                            reason: format!("The folder could not be moved aside: {error}"),
+                        });
+                    }
+                }
+            }
+            record(match (moved, failed, first_kept, total) {
+                (_, _, _, 0) => cell_result(
+                    checkout,
+                    layer,
+                    "skipped",
+                    0,
+                    0,
+                    Some(Kept {
+                        code: "changed",
+                        reason: "No measured folder is left in this cell".into(),
+                    }),
+                ),
+                (0, Some(failure), _, _) => {
+                    cell_result(checkout, layer, "failed", 0, 0, Some(failure))
+                }
+                (0, None, kept, _) => cell_result(checkout, layer, "skipped", 0, 0, kept),
+                (moved, failure, kept, _) => {
+                    cell_result(checkout, layer, "removed", bytes, moved, failure.or(kept))
+                }
+            });
+        }
+    }
+    results
+}
+
+/// The folders among `folders` that hold a file Git tracks, from one
+/// `git ls-files` for all of them.
+fn tracked_folders<'a>(
+    root: &Path,
+    folders: impl Iterator<Item = &'a Path>,
+) -> Result<Vec<PathBuf>, String> {
+    let folders: Vec<&Path> = folders.collect();
+    if folders.is_empty() {
+        return Ok(Vec::new());
+    }
+    let specs: Vec<String> = folders
+        .iter()
+        .filter_map(|folder| folder.strip_prefix(root).ok())
+        .map(|relative| format!(":(literal){}", relative.to_string_lossy()))
+        .collect();
+    let mut arguments = vec!["ls-files", "-z", "--"];
+    arguments.extend(specs.iter().map(String::as_str));
+    let listed = git(root, &arguments)?;
+    let tracked: Vec<PathBuf> = listed
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| root.join(entry))
+        .collect();
+    Ok(folders
+        .into_iter()
+        .filter(|folder| tracked.iter().any(|file| file.starts_with(folder)))
+        .map(Path::to_path_buf)
+        .collect())
+}
+
+/// How long the removal waits for the background deletion before it reports
+/// what it has: a folder that will not go stays in the trash for the next
+/// removal's sweep.
+const DELETE_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
+
 pub fn spawn_confirm(
     context: LiveContext,
     review: CleanupSnapshot,
     input: ReviewInput,
     selected: Vec<String>,
+    cells: Vec<CellChoice>,
 ) -> Result<(), String> {
     std::thread::Builder::new()
         .name("hide-worktree-cleanup".into())
         .spawn(move || {
             let root = PathBuf::from(&review.repository_root);
+            let id = review.id;
+            let total = selected.len() + cells.len();
+            let mut done = 0usize;
+            let mut answer = CleanupSnapshot {
+                phase: "removing".into(),
+                free_before: disk::volume_free_bytes(&root),
+                progress: Some(CleanupProgress { done, total }),
+                ..review.clone()
+            };
+            publish(&context, answer.clone());
+            let fresh_usage = live_in_use(&context, &input.checkouts);
+            // Worktrees first: each is rechecked against what is on disk and
+            // in Herdr right now, and removed without force.
             let refresh = || {
-                let in_use = live_in_use(&context, &input.checkouts)?;
+                let in_use = fresh_usage.clone()?;
                 inspect(
                     &root,
                     input.current.as_deref(),
@@ -619,10 +891,55 @@ pub fn spawn_confirm(
                     Some(&selected),
                 )
             };
-            let mut answer = confirm(&review, &selected, refresh, |path| {
-                remove_worktree(&root, Path::new(path), false)
+            let confirmed = confirm(
+                &review,
+                &selected,
+                refresh,
+                |path| remove_worktree(&root, Path::new(path), false),
+                |row| {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "cleanup",
+                        "kind": format!("worktree.{}", row.result.as_deref().unwrap_or("unknown")),
+                        "cleanup_id": id,
+                        "workspace_id": review.workspace_id,
+                        "checkout": row.path,
+                        "reason_code": row.exclusion_code,
+                    }));
+                    done += 1;
+                },
+            );
+            answer.rows = confirmed.rows;
+            answer.progress = Some(CleanupProgress { done, total });
+            publish(&context, answer.clone());
+            // Cells next. A usage that could not be read now empties nothing.
+            let common = crate::git_dir::discover(&root)
+                .map(|repo| repo.common_dir)
+                .unwrap_or_else(|| root.join(".git"));
+            let run = CellRun {
+                id,
+                workspace_id: &review.workspace_id,
+                common: &common,
+                folders: &input.folders,
+                in_use: fresh_usage.as_ref().map_err(String::as_str),
+            };
+            empty_cells(&run, &cells, |result| {
+                answer.cell_results.push(result.clone());
+                done += 1;
+                answer.progress = Some(CleanupProgress { done, total });
+                publish(&context, answer.clone());
             });
-            answer.id = review.id;
+            // The folders left their checkouts at once; the volume only has
+            // its space back once they are deleted.
+            let remaining = hide_host::worktrees::drain_trash(&common, DELETE_WAIT);
+            if remaining > 0 {
+                answer.message = Some(format!(
+                    "{remaining} removed folders are still being deleted in the background"
+                ));
+            }
+            answer.phase = "complete".into();
+            answer.progress = Some(CleanupProgress { done: total, total });
+            answer.free_after = disk::volume_free_bytes(&root);
+            answer.id = id;
             publish(&context, answer);
         })
         .map(|_| ())
@@ -1119,6 +1436,7 @@ mod tests {
             &selected,
             || Ok(f.review(&f.main, Ok(Vec::new()))),
             |path| remove_worktree(&f.main, Path::new(path), false),
+            |_| {},
         );
 
         assert!(!clean.exists());
@@ -1189,6 +1507,7 @@ mod tests {
             &[],
             || panic!("cancel must not inspect"),
             |_| panic!("cancel must not delete"),
+            |_| {},
         );
         assert!(cancelled.rows.iter().all(|r| r.result.is_none()));
         assert_eq!(
@@ -1227,6 +1546,7 @@ mod tests {
                 git(&f.main, &["worktree", "remove", "--", path])
                     .map(|_| "Worktree removed".to_owned())
             },
+            |_| {},
         );
         assert!(!clean.exists());
         assert!(changed.join("new").exists());
@@ -1257,6 +1577,7 @@ mod tests {
                 git(&f.main, &["worktree", "remove", "--", path])
                     .map(|_| "Worktree removed".to_owned())
             },
+            |_| {},
         );
         assert_eq!(
             retry
@@ -1401,5 +1722,215 @@ mod tests {
         );
         assert_eq!(row(&f.main).in_use, None, "an idle main carries no reason");
         assert!(review.usage_ready);
+    }
+
+    /// A built checkout: a Rust and a Node package, each with folders a
+    /// tool makes again, all ignored, next to tracked source.
+    struct Built {
+        f: Fixture,
+        folders: HashMap<PathBuf, Vec<LayerFolder>>,
+    }
+
+    impl Built {
+        fn new() -> Self {
+            let f = Fixture::new();
+            let main = f.main.clone();
+            std::fs::write(main.join(".gitignore"), "target/\nnode_modules/\ndist/\n").unwrap();
+            std::fs::write(main.join("Cargo.toml"), "[package]\n").unwrap();
+            std::fs::write(main.join("package.json"), "{}\n").unwrap();
+            std::fs::create_dir_all(main.join("target/debug")).unwrap();
+            std::fs::write(main.join("target/debug/artifact"), vec![1u8; 20_000]).unwrap();
+            std::fs::write(
+                main.join("target/CACHEDIR.TAG"),
+                "Signature: 8a477f597d28d172789f06886806bc55\n",
+            )
+            .unwrap();
+            std::fs::create_dir_all(main.join("node_modules/dep")).unwrap();
+            std::fs::write(main.join("node_modules/dep/index.js"), vec![2u8; 8_000]).unwrap();
+            std::fs::create_dir_all(main.join("dist")).unwrap();
+            std::fs::write(main.join("dist/app.js"), vec![3u8; 4_000]).unwrap();
+            git(&main, &["add", ".gitignore", "Cargo.toml", "package.json"]).unwrap();
+            commit(&main, "Manifests");
+            let measured = disk::read(&disk::DiskRequest {
+                paths: vec![main.clone()],
+                ..Default::default()
+            });
+            let folders = HashMap::from([(main, measured[0].folders.clone())]);
+            Self { f, folders }
+        }
+
+        fn common(&self) -> PathBuf {
+            self.f.main.join(".git")
+        }
+
+        fn run(&self, in_use: Result<&InUseMap, &str>, cells: &[(Layer,)]) -> Vec<CellResult> {
+            let run = CellRun {
+                id: 1,
+                workspace_id: "w1",
+                common: &self.common(),
+                folders: &self.folders,
+                in_use,
+            };
+            let cells: Vec<_> = cells
+                .iter()
+                .map(|(layer,)| CellChoice {
+                    path: self.f.main.to_string_lossy().into_owned(),
+                    layer: *layer,
+                })
+                .collect();
+            empty_cells(&run, &cells, |_| {})
+        }
+    }
+
+    /// What a forced add leaves: a file Git tracks inside an ignored folder.
+    /// (Written without the force flag, which this file never spells.)
+    fn track_in_ignored(main: &Path, file: &str) {
+        let ignore = std::fs::read_to_string(main.join(".gitignore")).unwrap();
+        std::fs::write(main.join(".gitignore"), "").unwrap();
+        git(main, &["add", file]).unwrap();
+        std::fs::write(main.join(".gitignore"), ignore).unwrap();
+    }
+
+    fn outcome(results: &[CellResult], layer: Layer) -> (&'static str, Option<&'static str>) {
+        let result = results.iter().find(|r| r.layer == layer.code()).unwrap();
+        (result.outcome, result.reason_code)
+    }
+
+    #[test]
+    fn a_chosen_cell_leaves_its_checkout_at_once_and_the_trash_deletes_it() {
+        let built = Built::new();
+        let main = &built.f.main;
+        let results = built.run(
+            Ok(&InUseMap::new()),
+            &[(Layer::BuildCache,), (Layer::Dependencies,)],
+        );
+        let cache = results.iter().find(|r| r.layer == "build_cache").unwrap();
+        // `target` and `dist` are both build cache.
+        assert_eq!((cache.outcome, cache.folders), ("removed", 2));
+        assert!(cache.bytes >= 24_000);
+        assert_eq!(outcome(&results, Layer::Dependencies), ("removed", None));
+        for gone in ["target", "node_modules", "dist"] {
+            assert!(!main.join(gone).exists(), "{gone} left the checkout");
+        }
+        for kept in ["tracked", "Cargo.toml", "package.json", ".gitignore"] {
+            assert!(main.join(kept).exists(), "{kept} is source");
+        }
+        assert_eq!(
+            hide_host::worktrees::drain_trash(&built.common(), std::time::Duration::from_secs(30)),
+            0
+        );
+        assert_eq!(
+            std::fs::read_dir(built.common().join("hide-removed"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_checkout_that_became_busy_since_the_review_or_cannot_be_read_loses_nothing() {
+        let built = Built::new();
+        let busy = InUseMap::from([(
+            built.f.main.clone(),
+            InUse {
+                code: "agent_working",
+                name: None,
+                port: None,
+            },
+        )]);
+        let results = built.run(Ok(&busy), &[(Layer::BuildCache,)]);
+        assert_eq!(
+            outcome(&results, Layer::BuildCache),
+            ("skipped", Some("in_use"))
+        );
+        let results = built.run(Err("pane.process_info failed"), &[(Layer::Dependencies,)]);
+        assert_eq!(
+            outcome(&results, Layer::Dependencies),
+            ("skipped", Some("unverified"))
+        );
+        for kept in ["target", "node_modules", "dist"] {
+            assert!(built.f.main.join(kept).exists());
+        }
+    }
+
+    #[test]
+    fn a_folder_that_changed_after_the_measurement_is_kept_and_named() {
+        let built = Built::new();
+        let main = &built.f.main;
+        // A link swapped in for the folder: what it points at is never touched.
+        let outside = built.f.root.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("precious"), "keep").unwrap();
+        std::fs::remove_dir_all(main.join("node_modules")).unwrap();
+        std::os::unix::fs::symlink(&outside, main.join("node_modules")).unwrap();
+        // A file Git tracks appeared in an ignored folder.
+        std::fs::write(main.join("dist/keep.txt"), "tracked on purpose").unwrap();
+        track_in_ignored(main, "dist/keep.txt");
+        // Another repository was cloned into the build folder.
+        std::fs::create_dir_all(main.join("target/vendored/.git")).unwrap();
+
+        let results = built.run(
+            Ok(&InUseMap::new()),
+            &[(Layer::BuildCache,), (Layer::Dependencies,)],
+        );
+        assert_eq!(
+            outcome(&results, Layer::Dependencies),
+            ("skipped", Some("symlink"))
+        );
+        // The build-cache cell had two folders: none could move.
+        assert_eq!(outcome(&results, Layer::BuildCache).0, "skipped");
+        assert!(matches!(
+            outcome(&results, Layer::BuildCache).1,
+            Some("tracked_files" | "nested_repository")
+        ));
+        assert_eq!(
+            std::fs::read_to_string(outside.join("precious")).unwrap(),
+            "keep"
+        );
+        assert!(main.join("dist/keep.txt").exists());
+        assert!(main.join("target/vendored/.git").exists());
+    }
+
+    #[test]
+    fn one_folder_kept_does_not_stop_its_cell_and_the_reason_stays_on_the_result() {
+        let built = Built::new();
+        let main = &built.f.main;
+        std::fs::write(main.join("dist/keep.txt"), "tracked on purpose").unwrap();
+        track_in_ignored(main, "dist/keep.txt");
+        let results = built.run(Ok(&InUseMap::new()), &[(Layer::BuildCache,)]);
+        let cache = &results[0];
+        assert_eq!((cache.outcome, cache.folders), ("removed", 1));
+        assert_eq!(cache.reason_code, Some("tracked_files"));
+        assert!(!main.join("target").exists());
+        assert!(main.join("dist/keep.txt").exists());
+    }
+
+    #[test]
+    fn repeating_a_confirmed_cell_removes_nothing_a_second_time() {
+        let built = Built::new();
+        let first = built.run(Ok(&InUseMap::new()), &[(Layer::Dependencies,)]);
+        assert_eq!(outcome(&first, Layer::Dependencies), ("removed", None));
+        let again = built.run(Ok(&InUseMap::new()), &[(Layer::Dependencies,)]);
+        assert_eq!(
+            outcome(&again, Layer::Dependencies),
+            ("skipped", Some("not_found"))
+        );
+        assert_eq!(again[0].bytes, 0);
+    }
+
+    #[test]
+    fn a_checkouts_folders_are_asked_of_git_once() {
+        let built = Built::new();
+        built.run(
+            Ok(&InUseMap::new()),
+            &[(Layer::BuildCache,), (Layer::Dependencies,)],
+        );
+        let asked = hide_host::worktrees::GIT_CALLS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(cwd, command)| *cwd == built.f.main && command == "ls-files")
+            .count();
+        assert_eq!(asked, 1, "three folders, one ls-files");
     }
 }
