@@ -390,9 +390,9 @@ export class BrowserViews {
     // A hidden WebContentsView is no longer a native keyboard responder.
     // Keep the held cycle's remaining OS input in this same window: the
     // shell preserves its logical page owner and consumes release/Escape.
-    if (!visible && this.cycleInput?.page === page && this.window?.isFocused()) this.window.webContents.focus();
     page.visible = visible;
     page.view.setVisible(visible);
+    if (!visible && this.cycleInput?.page === page && this.window?.isFocused()) this.window.webContents.focus();
   }
 
   private hideAll(): void {

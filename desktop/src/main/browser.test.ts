@@ -26,6 +26,7 @@ function candidate() {
     return {
       focus: (next: boolean) => { focused = next; },
       show: (visible: boolean) => Reflect.get(subject, "show").call(subject, value, visible),
+      visibility: value.view.setVisible,
       input: (type = "keyDown", key = "Tab", control = true) => {
         const event = { preventDefault: vi.fn() };
         contents.emit("before-input-event", event, { type, key, code: key === "Control" ? "ControlLeft" : key, control, alt: false, meta: false, shift: false, isComposing: false });
@@ -47,6 +48,7 @@ describe("native held cycle delivery", () => {
     origin.input();
     origin.show(false);
     expect(shellFocus).toHaveBeenCalledOnce();
+    expect(shellFocus.mock.invocationCallOrder[0]).toBeGreaterThan(origin.visibility.mock.invocationCallOrder[0]!);
     origin.show(false);
     expect(shellFocus).toHaveBeenCalledOnce();
     origin.show(true);
