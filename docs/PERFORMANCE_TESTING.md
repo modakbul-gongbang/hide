@@ -372,6 +372,7 @@ The selected range maps UTF-16 slice boundaries onto the buffer's glyph cells, r
 Deduplication and fresh cache hits precede admission: at most 512 new unique logical paths reach the desktop host, in batches of at most 64.
 A budget overflow records `path_budget_exceeded` with unique lookup, cache-miss, limit and skipped counts, without output text or paths.
 A failed or skipped higher-precedence candidate leaves that group unresolved instead of selecting an unproven shorter spelling.
+The native host distinguishes confirmed `ENOENT`/`ENOTDIR` absence from other filesystem failures, which reject the batch and reach the existing count/reason diagnostic without paths.
 Answers retain the existing ten-second TTL and 512-entry cache cap.
 An invocation holds its own bounded answer set while the shared cache is pruned, so a cache eviction during resolution cannot change that invocation's result.
 There is no new input, render, snapshot, notification or remote-filesystem work; URL and OSC 8 routing and native path authority are unchanged.
