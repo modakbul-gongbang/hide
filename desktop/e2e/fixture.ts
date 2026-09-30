@@ -1,6 +1,6 @@
 // The desktop app against a private Herdr server and a private hided state
 // directory. Nothing here can reach the operator's daemon: the app is
-// refused a launch unless HIDE_STATE_DIR, HOME, HERDR_SOCKET_PATH and its
+// refused a launch unless HIDE_STATE_DIR, HOME, HCOORD_HOME, HERDR_SOCKET_PATH and its
 // own userData all sit under this run's temporary directory.
 
 import { _electron as electron, test as base, expect, type ElectronApplication, type Page } from "@playwright/test";
@@ -31,12 +31,16 @@ export function isolate(herdr: HerdrFixture, label: string): Isolated {
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] =>
-        entry[1] !== undefined && !entry[0].startsWith("HERDR_") && !entry[0].startsWith("HIDE_") && !entry[0].startsWith("ELECTRON_"),
+        entry[1] !== undefined && !["HERDR_", "HIDE_", "ELECTRON_", "HCOORD_", "SASU_"].some((prefix) => entry[0].startsWith(prefix)),
     ),
   );
   const env: Record<string, string> = {
     ...inherited,
     HOME: home,
+    // HOME relocates files; HCOORD_HOME also gives launchd a private label.
+    HCOORD_HOME: path.join(home, ".hcoord"),
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_STATE_HOME: path.join(home, ".local", "state"),
     HIDE_STATE_DIR: path.join(root, "state"),
     HIDE_DESKTOP_USER_DATA_DIR: path.join(root, "user-data"),
     HIDE_CLI_PATH: HIDE_CLI,
@@ -65,11 +69,12 @@ export function isolate(herdr: HerdrFixture, label: string): Isolated {
 function assertIsolated(env: Record<string, string>): void {
   // The Herdr fixture keeps its socket directly under /tmp for the path length limit.
   const roots = [fs.realpathSync(os.tmpdir()), fs.realpathSync("/tmp")];
-  for (const key of ["HOME", "HIDE_STATE_DIR", "HIDE_DESKTOP_USER_DATA_DIR", "HERDR_SOCKET_PATH"]) {
+  for (const key of ["HOME", "HCOORD_HOME", "HIDE_STATE_DIR", "HIDE_DESKTOP_USER_DATA_DIR", "HERDR_SOCKET_PATH"]) {
     const value = env[key];
     const parent = value ? fs.realpathSync(path.dirname(value)) : null;
     if (!parent || !roots.some((root) => parent.startsWith(root))) throw new Error(`${key} is not isolated under ${roots.join(" or ")}`);
   }
+  if (env.HCOORD_HOME !== path.join(env.HOME!, ".hcoord")) throw new Error("HCOORD_HOME must name this fixture's private coordinator");
 }
 
 /**

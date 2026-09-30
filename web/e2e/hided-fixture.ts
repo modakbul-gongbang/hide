@@ -45,6 +45,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     env: {
       ...env,
       HOME: home,
+      HCOORD_HOME: path.join(home, ".hcoord"),
       HIDE_STATE_DIR: path.join(dir, "hide"),
       HIDE_KEEP_ALIVE: "1",
       HIDE_PORT: port,
