@@ -28,7 +28,7 @@ export type LinkTarget =
   /** `path` as written: absolute, `~/`-relative, or relative to the pane's working folder. */
   | { kind: "path"; path: string; line: number | null; column: number | null };
 
-export type LinkCandidate = { spans: Span[]; text: string; target: LinkTarget };
+export type LinkCandidate = { spans: Span[]; text: string; target: LinkTarget; original: boolean };
 
 /**
  * Characters that end a token besides whitespace: the frames TUIs draw around
@@ -114,62 +114,60 @@ export function linkCandidates(rows: CellRow[], at: number): LinkCandidate[][] {
     for (let from = 0; from <= own; from += 1) {
       for (let to = own; to < chain.length; to += 1) {
         const pieces = chain.slice(from, to + 1);
-        const candidate = joined(rows, pieces);
-        if (candidate) group.push(candidate);
+        group.push(...joined(rows, pieces));
       }
     }
-    group.sort((a, b) => b.text.length - a.text.length);
+    group.sort((a, b) => spellingLength(b) - spellingLength(a) || b.text.length - a.text.length);
     if (group.length > 0) groups.push(group);
   }
   return groups;
 }
 
-function joined(rows: CellRow[], pieces: Run[]): LinkCandidate | null {
+/** Location text is clickable too, but precedence compares the actual path spelling. */
+function spellingLength(candidate: LinkCandidate): number {
+  return candidate.target.kind === "path" ? candidate.target.path.length : candidate.text.length;
+}
+
+function joined(rows: CellRow[], pieces: Run[]): LinkCandidate[] {
   const raw = pieces.map((piece) => piece.text).join("");
-  if (raw.length > MAX_TEXT) return null;
-  const parsed = parseToken(raw);
-  if (!parsed) return null;
+  if (raw.length > MAX_TEXT) return [];
   const breaks = pieces.slice(0, -1).map((piece, index) => (rowContinues(rows[piece.row] ?? []) ? "edge" : pieces[index + 1]!.start > 0 ? "margin" : null));
-  if (breaks.includes(null)) return null;
-  // A URL cannot be checked, so it spans rows only where the terminal wrapped it.
-  if (parsed.target.kind === "url" && breaks.includes("margin")) return null;
-  const spans = trimSpans(rows, pieces, parsed.lead, parsed.trail);
-  return spans ? { spans, text: parsed.text, target: parsed.target } : null;
+  if (breaks.includes(null)) return [];
+  return interpretations(raw).flatMap((parsed) => {
+    // URLs retain their existing parser and edge-only wrap rule.
+    if (parsed.target.kind === "url" && breaks.includes("margin")) return [];
+    const spans = trimSpans(rows, pieces, parsed.lead, parsed.trail);
+    return spans ? [{ spans, text: parsed.text, target: parsed.target, original: parsed.original }] : [];
+  });
 }
 
 /**
- * Narrows the pieces by the characters the parser dropped at either end,
- * which can be whole pieces (`Upd` + `ate(src/a.ts)`); null when nothing is
- * left. Dropped characters are ASCII punctuation and tool names, one cell each.
+ * Map UTF-16 slice boundaries back to the buffer cells that supplied them.
+ * One cell may hold a surrogate pair or a combining sequence, and null cells
+ * extend its preceding wide glyph. Never cut either kind of glyph in half.
  */
 function trimSpans(rows: CellRow[], pieces: Run[], lead: number, trail: number): Span[] | null {
-  const spans = pieces.map((piece) => ({ row: piece.row, start: piece.start, end: piece.end }));
-  const cells = (span: Span) => (rows[span.row] ?? []).slice(span.start, span.end).filter((cell) => cell !== null).length;
-  let dropLead = lead;
-  let dropTrail = trail;
-  while (spans.length > 0 && dropLead >= cells(spans[0]!)) dropLead -= cells(spans.shift()!);
-  while (spans.length > 0 && dropTrail >= cells(spans[spans.length - 1]!)) dropTrail -= cells(spans.pop()!);
-  const first = spans[0];
-  const last = spans[spans.length - 1];
-  if (!first || !last) return null;
-  first.start = advance(rows[first.row] ?? [], first.start, dropLead, 1);
-  last.end = advance(rows[last.row] ?? [], last.end, dropTrail, -1);
-  return spans.every((span) => span.start < span.end) ? spans : null;
-}
-
-/** Moves `column` over `count` characters toward `direction`, a wide glyph counting once. */
-function advance(cells: CellRow, column: number, count: number, direction: 1 | -1): number {
-  let at = column;
-  for (let left = count; left > 0; left -= 1) {
-    if (direction === 1) {
-      at += 1;
-      while (cells[at] === null) at += 1;
-    } else {
-      at -= 1;
-      while (at > 0 && cells[at] === null) at -= 1;
+  const end = pieces.reduce((length, piece) => length + piece.text.length, 0) - trail;
+  const spans: Span[] = [];
+  let offset = 0;
+  for (const piece of pieces) {
+    const cells = rows[piece.row] ?? [];
+    for (let column = piece.start; column < piece.end; column += 1) {
+      const chars = cells[column];
+      if (!chars) continue;
+      let next = column + 1;
+      while (next < piece.end && cells[next] === null) next += 1;
+      const after = offset + chars.length;
+      if ((lead > offset && lead < after) || (end > offset && end < after)) return null;
+      if (offset >= lead && after <= end) {
+        const last = spans.at(-1);
+        if (last?.row === piece.row && last.end === column) last.end = next;
+        else spans.push({ row: piece.row, start: column, end: next });
+      }
+      offset = after;
     }
   }
-  return at;
+  return spans.length > 0 ? spans : null;
 }
 
 const OPENERS = "([{<\"'`";
@@ -214,6 +212,45 @@ const LOCATION = /^(.+?)(?::(\d+)(?::(\d+))?(?:-\d+)?|#L(\d+)(?:-L?\d+)?|\((\d+)
 /** A bare file name: a name with a letter in it and an extension that starts with one. */
 const BARE_NAME = /^[\p{L}\p{N}_@+-][\p{L}\p{N}_.@+-]*\.[A-Za-z][A-Za-z0-9]{0,9}$/u;
 const DOTFILE = /^\.[A-Za-z][\w.-]*$/u;
+
+type Interpretation = { text: string; lead: number; trail: number; target: LinkTarget; original: boolean };
+
+// A finite grammar boundary, never a loop that truncates arbitrary Hangul.
+// A base particle may take one of the four listed secondary particles.
+const GRAMMAR = /[)\]}>"'`](?:에서|에게|으로|부터|까지|에|께|로|와|과|을|를|은|는|이|가|의|도|만)(?:도|만|는|은)?$/u;
+
+/** At most three spellings: original, symbol-only, and grammar/location interpretation. */
+function interpretations(token: string): Interpretation[] {
+  const symbols = strip(token);
+  const ordinary = parseTarget(symbols.text);
+  // URI schemes follow the existing parser; never probe a URL as a local path.
+  if (ordinary?.kind === "url" || uriTarget(symbols.text) !== undefined) {
+    return ordinary ? [{ ...symbols, target: ordinary, original: true }] : [];
+  }
+  const match = GRAMMAR.exec(symbols.text);
+  // Keep the closer when removing only the particle, so a literal closer in
+  // a file name can still beat the shorter, fully unwrapped path.
+  const grammarText = match ? symbols.text.slice(0, match.index + 1) : null;
+  const grammar = grammarText === null ? { text: symbols.text, lead: 0, trail: 0 } : strip(grammarText);
+  const interpreted = parseTarget(grammar.text);
+  const result: Interpretation[] = [];
+  const add = (text: string, lead: number, trail: number, target: LinkTarget | null, original: boolean) => {
+    if (!target || result.some((each) => each.text === text && JSON.stringify(each.target) === JSON.stringify(target))) return;
+    result.push({ text, lead, trail, target, original });
+  };
+  const literal = (text: string): LinkTarget | null => {
+    // A recognized path's punctuation/grammar/location may be its real name.
+    // Validation still rejects arbitrary schemes, controls and shortened paths.
+    if (!interpreted || interpreted.kind !== "path" || text.length > 1024 || text.includes("…") || /\p{Cc}/u.test(text)) return null;
+    if (/^[A-Za-z][\w+-]*:/u.test(text) && !LOCATION.test(text)) return null;
+    return { kind: "path", path: text, line: null, column: null };
+  };
+  add(token, 0, 0, literal(token), true);
+  if (symbols.text !== token) add(symbols.text, symbols.lead, symbols.trail, literal(symbols.text), false);
+  else if (grammarText !== null) add(grammarText, symbols.lead, token.length - symbols.lead - grammarText.length, literal(grammarText), false);
+  add(grammar.text, symbols.lead + grammar.lead, token.length - symbols.lead - grammar.lead - grammar.text.length, interpreted, false);
+  return result;
+}
 
 /** What a whitespace-free token links to, with how much of it the link leaves out at either end. */
 export function parseToken(token: string): { text: string; lead: number; trail: number; target: LinkTarget } | null {
