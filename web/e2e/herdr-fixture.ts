@@ -162,6 +162,25 @@ async function waitFor(predicate: () => boolean, what: string, ms = 10_000, deta
   throw new Error(`timed out waiting for ${what}${detail ? `; last seen: ${detail()}` : ""}`);
 }
 
+/** Controlled fake-agent provenance. This publishes the explicit test session,
+ * not a transcript-discovery claim; native isolation tests use raw CLI reports. */
+function declareFixtureSession(env: NodeJS.ProcessEnv, bin: string, pane: string, kind: string, sessionId: string, replacing = false): void {
+  execFileSync(bin, ["pane", "report-agent-session", pane, "--source", `herdr:${kind}`, "--agent", kind, "--agent-session-id", sessionId, "--seq", replacing ? "2" : "1", ...(replacing ? ["--session-start-source", "clear"] : [])], { env, timeout: 30_000 });
+  const hash = crypto.createHash("sha256");
+  for (const part of [kind, "id", sessionId]) {
+    const bytes = Buffer.from(part);
+    const size = Buffer.alloc(8);
+    size.writeBigUInt64BE(BigInt(bytes.length));
+    hash.update(size).update(bytes);
+  }
+  const owner = `v1:${hash.digest("hex")}`;
+  execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `label_owner=${owner}`, "--token", `status_owner=${owner}`, "--token", "label_generation=fixture", "--token", "status_generation=fixture"], { env, timeout: 30_000 });
+}
+
+export function setFixtureSession(fixture: HerdrFixture, pane: string, sessionId: string): void {
+  declareFixtureSession(fixture.env, fixture.bin, pane, "claude", sessionId, true);
+}
+
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
   const bin = herdrBinary();
   const version = execFileSync(bin, ["--version"], { encoding: "utf8" }).trim().split(/\s+/)[1];
@@ -269,20 +288,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       ]) {
         // A label fixture declares the provider's actual native reference;
         // ownerless metadata deliberately cannot title an agent.
-        const sessionId = `fixture-${pane}`;
-        execFileSync(bin, ["pane", "report-agent-session", pane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", sessionId, "--seq", "1"], { env, timeout: 30_000 });
-        const digest = crypto.createHash("sha256");
-        for (const part of ["claude", "id", sessionId]) {
-          const bytes = Buffer.from(part);
-          const size = Buffer.alloc(8);
-          size.writeBigUInt64BE(BigInt(bytes.length));
-          digest.update(size).update(bytes);
-        }
-        const owner = `v1:${digest.digest("hex")}`;
-        execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`, "--token", `label_owner=${owner}`, "--token", `status_owner=${owner}`], {
-          env,
-          timeout: 30_000,
-        });
+        declareFixtureSession(env, bin, pane, "claude", `fixture-${pane}`);
+        execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env, timeout: 30_000 });
       }
     }
     return {
@@ -295,7 +302,16 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       panes: [first, second],
       inputLogs,
       fixturePath,
-      run: (args) => herdr(env, bin, args),
+      run: (args) => {
+        const result = herdr(env, bin, args);
+        if (args[0] === "agent" && args[1] === "start") {
+          const pane = args[args.indexOf("--pane") + 1];
+          const kind = args[args.indexOf("--kind") + 1];
+          if (args.includes("--pane") && ["claude", "codex"].includes(kind!))
+            declareFixtureSession(env, bin, pane!, kind!, `fixture-${pane}`);
+        }
+        return result;
+      },
       stop,
     };
   } catch (error) {

@@ -34,7 +34,8 @@ test("native session replacement hides stale labels before the watcher publishes
   };
   const pane = herdr.panes[0];
   const report = (args: string[]) => execFileSync(herdr.bin, ["pane", ...args], { env: herdr.env, timeout: 30_000 });
-  const labels = (id: string, task: string) => report(["report-metadata", pane, "--source", "e2e", "--token", `label_owner=${owner(id)}`, "--token", `status_owner=${owner(id)}`, "--token", `task=${task}`, "--token", "progress=현재 세션 진행 중", "--token", "expected_reply=현재 세션 답변 요청", "--token", "status_question_new=?"]);
+  let publication = 0;
+  const labels = (id: string, task: string) => report(["report-metadata", pane, "--source", "e2e", "--token", `label_owner=${owner(id)}`, "--token", `status_owner=${owner(id)}`, "--token", `label_generation=fixture:${++publication}`, "--token", `status_generation=fixture:${publication}`, "--token", `task=${task}`, "--token", "progress=현재 세션 진행 중", "--token", "expected_reply=현재 세션 답변 요청", "--token", "status_question_new=?"]);
   try {
     labels(`fixture-${pane}`, "세션 A의 한글 작업");
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "fixture-agents.json"), JSON.stringify(herdr.run(["agent", "list"])));
@@ -43,6 +44,24 @@ test("native session replacement hides stale labels before the watcher publishes
     const page = launched.page;
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+    let consumedSession: string | undefined;
+    let consumedDemand: string | undefined;
+    page.on("websocket", (socket) => socket.on("framereceived", (frame) => {
+      const visit = (value: unknown): void => {
+        if (Array.isArray(value)) value.forEach(visit);
+        else if (value && typeof value === "object") {
+          const row = value as Record<string, unknown>;
+          if (row.pane_id === pane && typeof row.session_id === "string") {
+            consumedSession = row.session_id;
+            consumedDemand = typeof row.demand === "string" ? row.demand : undefined;
+          }
+          Object.values(row).forEach(visit);
+        }
+      };
+      try { visit(JSON.parse(String(frame.payload))); } catch { /* non-JSON handshake */ }
+    }));
+    await page.reload();
+
     await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
     await enterWorkspace(page, "fixture");
     await page.locator(`[data-pane-view="${pane}"]`).click({ position: { x: 30, y: 60 } });
@@ -64,11 +83,41 @@ test("native session replacement hides stale labels before the watcher publishes
     await capture("session-a");
     report(["report-agent-session", pane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", "session-b", "--seq", "2", "--session-start-source", "clear"]);
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "fixture-agents-b.json"), JSON.stringify(herdr.run(["agent", "list"])));
+    await expect.poll(() => consumedSession).toBe("session-b");
     await expect(tab).not.toContainText("세션 A의 한글 작업");
     await expect(page.getByText("세션 A의 한글 작업", { exact: true })).toHaveCount(0);
     await expect(page.getByText("현재 세션 답변 요청", { exact: true })).toHaveCount(0);
     await expect(tab).toContainText("Claude");
     await capture("session-b-unlabelled");
+    // No watcher has run: Herdr still retains the original A publication.
+    // Returning to A must not revalidate that invalidated publication.
+    await page.evaluate(() => {
+      const probe = { count: 0, observer: new MutationObserver(() => {
+        if (document.body.textContent?.includes("세션 A의 한글 작업")) probe.count++;
+      }) };
+      probe.observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+      (window as unknown as { retainedLabelProbe: typeof probe }).retainedLabelProbe = probe;
+    });
+    report(["report-agent-session", pane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", `fixture-${pane}`, "--seq", "3", "--session-start-source", "clear"]);
+    await expect.poll(() => consumedSession).toBe(`fixture-${pane}`);
+    expect(consumedDemand).toBe("none");
+    const retained = (herdr.run(["agent", "list"]) as { result: { agents: { pane_id: string; tokens: Record<string, string> }[] } }).result.agents.find((agent) => agent.pane_id === pane)!;
+    expect(retained.tokens.task).toBe("세션 A의 한글 작업");
+    expect(retained.tokens.label_generation).toBe("fixture:1");
+
+    await expect(tab).toContainText("Claude");
+    await expect(page.getByText("세션 A의 한글 작업", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("현재 세션 답변 요청", { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => {
+      const probe = (window as unknown as { retainedLabelProbe: { count: number; observer: MutationObserver } }).retainedLabelProbe;
+      probe.observer.disconnect();
+      return probe.count;
+    })).toBe(0);
+    await capture("retained-a-return-unlabelled");
+    if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "retained-publication.json"), JSON.stringify({ ...candidate, head: process.env.HIDE_QA_HEAD, pane, observedReturn: consumedSession, demand: consumedDemand, retainedGeneration: retained.tokens.label_generation, forbiddenDomObservations: 0, watcherStarted: false, nativeInput: false }));
+    labels(`fixture-${pane}`, "새 게시로 복원한 A 작업");
+    await expect(tab).toContainText("새 게시로 복원한 A 작업");
+    report(["report-agent-session", pane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", "session-b", "--seq", "4", "--session-start-source", "clear"]);
     // The current owner restores its own label through the actual metadata API.
     labels("session-b", "세션 B의 한글 작업");
     await expect(tab).toContainText("세션 B의 한글 작업");
@@ -85,7 +134,7 @@ test("native session replacement hides stale labels before the watcher publishes
     fs.mkdirSync(stateRoot, { recursive: true });
     fs.mkdirSync(transcriptRoot, { recursive: true });
     fs.writeFileSync(path.join(transcriptRoot, "session-b.jsonl"), JSON.stringify({ type: "user", sessionId: "session-b", timestamp: "2026-09-30T10:00:00Z", origin: { kind: "human" }, message: { content: "현재 세션의 작업을 복원해줘" } }) + "\n");
-    fs.writeFileSync(path.join(stateRoot, "display-state.json"), JSON.stringify({ panes: { [pane]: { session_owner: owner("session-b"), state_change_seq: 1, changed_unix_ms: 100, task: "워처가 복원한 한글 작업", progress: "검증된 세션 진행", expected_reply: "", unseen: false } } }));
+    fs.writeFileSync(path.join(stateRoot, "display-state.json"), JSON.stringify({ panes: { [pane]: { session_owner: owner("session-b"), state_change_seq: 1, changed_unix_ms: Date.now(), task: "워처가 복원한 한글 작업", progress: "검증된 세션 진행", expected_reply: "", unseen: false } } }));
     const watcherEnv = { ...herdr.env, HOME: watcherHome, HERDR_BIN_PATH: herdr.bin };
     execFileSync(watcherBin, ["set-automatic-summaries", "--enabled", "false"], { env: watcherEnv });
     const startWatcher = () => { watcher = spawn(watcherBin, ["watch"], { env: watcherEnv, stdio: "ignore" }); };
@@ -96,7 +145,7 @@ test("native session replacement hides stale labels before the watcher publishes
     await expect.poll(() => fs.readFileSync(path.join(stateRoot, "events.jsonl"), "utf8").split("watcher_started").length - 1).toBe(2);
     await expect(tab).toContainText("워처가 복원한 한글 작업");
     await capture("watcher-restarted-current");
-    report(["report-agent-session", pane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", "session-c", "--seq", "3", "--session-start-source", "clear"]);
+    report(["report-agent-session", pane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", "session-c", "--seq", "5", "--session-start-source", "clear"]);
     await expect(tab).toContainText("Claude");
     await expect(page.getByText("워처가 복원한 한글 작업", { exact: true })).toHaveCount(0);
     const log = fs.readFileSync(path.join(stateRoot, "events.jsonl"), "utf8");
@@ -139,9 +188,9 @@ print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
     const callCount = () => fs.existsSync(path.join(watcherHome, "provider-calls")) ? fs.readFileSync(path.join(watcherHome, "provider-calls"), "utf8").trim().split("\n").length : 0;
     await expect.poll(callCount, { timeout: 15_000 }).toBe(1);
     const transition = (id: string, sequence: number) => report(["report-agent-session", pane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", id, "--seq", String(sequence), "--session-start-source", "clear"]);
-    transition("session-b", 4);
+    transition("session-b", 6);
     await expect.poll(() => JSON.parse(fs.readFileSync(path.join(stateRoot, "display-state.json"), "utf8")).panes[pane].session_owner).toBe(owner("session-b"));
-    transition("session-c", 5);
+    transition("session-c", 7);
     await expect.poll(() => JSON.parse(fs.readFileSync(path.join(stateRoot, "display-state.json"), "utf8")).panes[pane].session_owner).toBe(owner("session-c"));
     await expect(tab).toContainText("Claude");
     // Waiting work cannot start while the invalidated physical child is held.

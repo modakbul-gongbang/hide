@@ -449,7 +449,8 @@ impl Display {
             || self.sort_key != other.sort_key
             || self.elapsed != other.elapsed
             || self.unseen != other.unseen
-            || self.activity_unix_ms != other.activity_unix_ms
+            || self.identity.owner != other.identity.owner
+            || self.identity.generation != other.identity.generation
     }
 }
 
@@ -459,6 +460,8 @@ impl Display {
 pub struct Identity {
     pub task: Option<String>,
     pub owner: Option<String>,
+    pub generation: Option<String>,
+    pub activity: u64,
     pub progress: Option<String>,
     pub expected_reply: Option<String>,
 }
@@ -1070,6 +1073,8 @@ struct HookStates {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct HookState {
+    #[serde(default)]
+    session_owner: Option<String>,
     attention: Option<Attention>,
     #[serde(default)]
     pending_tool_id: Option<String>,
@@ -1249,6 +1254,28 @@ fn hook_tool_id(payload: &serde_json::Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Hook ownership is proven from its own native id and transcript metadata,
+/// never from whichever session is currently visible in the pane.
+fn hook_session_owner(payload: &serde_json::Value) -> Option<String> {
+    let id = payload
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)?;
+    let path = Path::new(
+        payload
+            .get("transcript_path")
+            .and_then(serde_json::Value::as_str)?,
+    );
+    let owners: Vec<_> = [hide_session::Agent::Claude, hide_session::Agent::Codex]
+        .into_iter()
+        .filter_map(|agent| {
+            confirm_label_session(agent, path, Some(id))
+                .ok()
+                .map(|proof| proof.owner)
+        })
+        .collect();
+    (owners.len() == 1).then(|| owners[0].clone())
+}
+
 /// The hook records what it saw and returns. Rendering belongs to the watcher,
 /// which is the only writer of this plugin's display tokens.
 pub fn apply_hook_payload(
@@ -1263,11 +1290,41 @@ pub fn apply_hook_payload(
     fs::create_dir_all(&paths.root)?;
     let _lock = locked_state_file(&paths.hook_state_lock())?;
     let mut states = load_hook_states(paths);
+    let owner = hook_session_owner(payload);
+    let current_owner = load_display_states(&paths.display_state())
+        .0
+        .panes
+        .get(pane_id)
+        .and_then(|state| state.session_owner.clone());
+    if owner.is_none()
+        || current_owner
+            .as_ref()
+            .is_some_and(|current| owner.as_ref() != Some(current))
+    {
+        append_log(
+            paths,
+            "hook_discarded_session",
+            None,
+            Some(&format!(
+                "class=hook_owner_unconfirmed_or_obsolete;pane={pane_id};owner={}",
+                owner.as_deref().unwrap_or("unconfirmed")
+            )),
+        )?;
+        return Ok(HookUpdate::Ignore);
+    }
     let event = payload
         .get("hook_event_name")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let tool_id = hook_tool_id(payload);
+    if update == HookUpdate::Clear
+        && states
+            .panes
+            .get(pane_id)
+            .is_some_and(|state| state.session_owner != owner)
+    {
+        return Ok(HookUpdate::Ignore);
+    }
     if update == HookUpdate::Clear
         && matches!(event, "PostToolUse" | "PostToolUseFailure")
         && states
@@ -1286,6 +1343,7 @@ pub fn apply_hook_payload(
     states.panes.insert(
         pane_id.to_owned(),
         HookState {
+            session_owner: owner,
             attention,
             pending_tool_id: if matches!(update, HookUpdate::Set(_)) {
                 tool_id
@@ -1489,6 +1547,23 @@ impl SocketHerdr {
     }
 }
 
+#[derive(Debug)]
+struct MetadataPublicationError(&'static str);
+impl std::fmt::Display for MetadataPublicationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+impl std::error::Error for MetadataPublicationError {}
+
+fn metadata_failure(error: ApiError) -> anyhow::Error {
+    anyhow!(MetadataPublicationError(match error {
+        ApiError::Transport(_) => "metadata_transport_failed",
+        ApiError::Remote { .. } => "metadata_rejected",
+        ApiError::Malformed(_) => "metadata_response_malformed",
+    }))
+}
+
 impl HerdrTransport for SocketHerdr {
     fn panes(&self) -> Result<Vec<Pane>> {
         let value = request_with_connector(
@@ -1515,7 +1590,7 @@ impl HerdrTransport for SocketHerdr {
             self.timeout,
         )
         .map(|_| ())
-        .map_err(|error| anyhow!("pane.report_metadata failed: {error}"))
+        .map_err(metadata_failure)
     }
 
     fn report_identity(&self, pane: &Pane, identity: &Identity) -> Result<()> {
@@ -1526,7 +1601,7 @@ impl HerdrTransport for SocketHerdr {
             self.timeout,
         )
         .map(|_| ())
-        .map_err(|error| anyhow!("pane.report_metadata failed: {error}"))
+        .map_err(metadata_failure)
     }
 
     fn clear_agent_name(&self, pane: &Pane) -> Result<()> {
@@ -1572,6 +1647,8 @@ fn identity_params(pane: &Pane, identity: &Identity) -> serde_json::Value {
             "name": serde_json::Value::Null,
             "task": token(&identity.task),
             "label_owner": token(&identity.owner),
+            "label_generation": token(&identity.generation),
+            "activity": activity_token(identity.activity),
             "progress": token(&identity.progress),
             "expected_reply": token(&identity.expected_reply),
             pane.agent.other_icon_token(): serde_json::Value::Null,
@@ -1634,8 +1711,12 @@ fn metadata_params(pane: &Pane, display: &Display) -> serde_json::Value {
         serde_json::Value::String(sort_rank_token(&SORT_ORDER, display)),
     );
     tokens.insert(
-        "activity".to_owned(),
-        serde_json::Value::String(activity_token(display.activity_unix_ms)),
+        "status_generation".to_owned(),
+        display
+            .identity
+            .generation
+            .clone()
+            .map_or(serde_json::Value::Null, serde_json::Value::String),
     );
     tokens.insert(
         "elapsed".to_owned(),
@@ -1779,6 +1860,7 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     ai_settings_failure: Option<String>,
     sessions: HashMap<String, LabelSessionFence>,
     next_session_generation: u64,
+    publication_instance: String,
 }
 
 #[derive(Debug)]
@@ -1842,6 +1924,14 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             ai_settings_failure: None,
             sessions: HashMap::new(),
             next_session_generation: 0,
+            publication_instance: format!(
+                "{:x}-{:x}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos(),
+                std::process::id()
+            ),
         }
     }
 
@@ -1938,6 +2028,21 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             let _ = append_log(&self.paths, "ai_settings_changed", None, Some(&detail));
         }
         let mut processed = 0;
+        let live: HashSet<&str> = panes.iter().map(|pane| pane.id.as_str()).collect();
+        self.next_analysis_at
+            .retain(|id, _| live.contains(id.as_str()));
+        self.last_displays
+            .retain(|id, _| live.contains(id.as_str()));
+        self.reported_revisions
+            .retain(|id, _| live.contains(id.as_str()));
+        self.revisions.retain(|id, _| live.contains(id.as_str()));
+        self.state_change_seqs
+            .retain(|id, _| live.contains(id.as_str()));
+        self.legacy_summary_cleared
+            .retain(|id| live.contains(id.as_str()));
+        self.legacy_name_cleanup_attempted
+            .retain(|id| live.contains(id.as_str()));
+        // Physical in-flight workers are retired only when their outcomes arrive.
 
         // Reconcile authoritative references before accepting ANY outcome,
         // including failures and retries. The physical worker remains charged
@@ -2135,6 +2240,20 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         Ok(())
     }
 
+    fn retire_obsolete_hook(&mut self, pane: &Pane, owner: Option<&str>) -> Result<()> {
+        let _lock = locked_state_file(&self.paths.hook_state_lock())?;
+        let mut states = load_hook_states(&self.paths);
+        if states.panes.get(&pane.id).is_some_and(|hook| {
+            hook.session_owner.as_deref() != owner || hook.session_owner.is_none()
+        }) {
+            states.panes.remove(&pane.id);
+            write_state_json(&self.paths.hook_state(), &states, "hook-state")?;
+        }
+        // Use the locked current file, preserving a matching new-session hook.
+        self.hook_states = states;
+        Ok(())
+    }
+
     fn reconcile_session(&mut self, pane: &Pane) -> Result<()> {
         let reference = native_reference_token(pane);
         let result = if reference.is_some() {
@@ -2220,6 +2339,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             state.expected_reply.clear();
             state.session_owner = confirmed.as_ref().map(|proof| proof.owner.clone());
             self.reset_analysis_state(pane)?;
+            self.retire_obsolete_hook(pane, known_owner.as_deref())?;
             append_log(
                 &self.paths,
                 "label_session_reset",
@@ -2573,9 +2693,14 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             Observe,
             Retire,
         }
-        let Some(state) = self.hook_states.panes.get(&pane.id) else {
+        let Some(state) = self.hook_states.panes.get(&pane.id).filter(|hook| {
+            self.visible_state(pane).is_some_and(|current| {
+                hook.session_owner.is_some() && hook.session_owner == current.session_owner
+            })
+        }) else {
             return Ok(());
         };
+        let expected_owner = state.session_owner.clone();
         let blocked = pane.agent_status == "blocked";
         let change = match state.attention {
             Some(Attention::Question | Attention::Approval)
@@ -2596,6 +2721,9 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let Some(state) = states.panes.get_mut(&pane.id) else {
             return Ok(());
         };
+        if state.session_owner != expected_owner {
+            return Ok(());
+        }
         match change {
             Change::Observe => state.observed_blocked = true,
             Change::Retire => {
@@ -2725,7 +2853,10 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 .semantic_attention
                 .map(|attention| (attention, AttentionSource::Semantic))
         };
-        match self.hook_states.panes.get(&pane.id) {
+        match self.hook_states.panes.get(&pane.id).filter(|hook| {
+            hook.session_owner.is_some()
+                && persisted.is_some_and(|current| hook.session_owner == current.session_owner)
+        }) {
             Some(hook) => match hook.attention {
                 Some(attention) => Some((attention, AttentionSource::Hook)),
                 None => persisted
@@ -2770,7 +2901,8 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             .panes
             .get(&pane.id)
             .map_or(0, |state| state.changed_unix_ms);
-        let identity = self.identity_for(pane);
+        let mut identity = self.identity_for(pane);
+        identity.activity = activity_unix_ms;
         if interrupted {
             return Ok(Display {
                 task: self
@@ -2822,6 +2954,11 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         Identity {
             task: state.task.clone(),
             owner: native_reference_token(pane),
+            generation: self
+                .sessions
+                .get(&pane.id)
+                .map(|session| format!("{}:{:x}", self.publication_instance, session.generation)),
+            activity: 0,
             progress: non_empty(&state.progress),
             expected_reply: non_empty(&state.expected_reply),
         }
@@ -2875,6 +3012,29 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         Ok(())
     }
 
+    fn publication_failed(&self, pane: &Pane, report: &str, error: &anyhow::Error) -> Result<bool> {
+        let session = self.sessions.get(&pane.id);
+        let class = error
+            .downcast_ref::<MetadataPublicationError>()
+            .map_or("metadata_failed", |error| error.0);
+        append_log(
+            &self.paths,
+            "label_publication_failed",
+            Some(pane),
+            Some(&format!(
+                "class={class};report={report};reference={};owner={};generation={}",
+                session
+                    .and_then(|s| s.reference.as_deref())
+                    .unwrap_or("absent"),
+                session
+                    .and_then(|s| s.confirmed.as_ref())
+                    .map_or("unconfirmed", |s| s.owner.as_str()),
+                session.map_or(0, |s| s.generation),
+            )),
+        )?;
+        Err(anyhow!("label_publication_failed:{report}"))
+    }
+
     fn report_if_changed(&mut self, pane: &Pane, display: &Display) -> Result<bool> {
         let previous = self.last_displays.get(&pane.id);
         let status_changed = previous.is_none_or(|last| last.status_tokens_differ(display));
@@ -2884,11 +3044,15 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         }
         let mut reports: u64 = 0;
         if status_changed {
-            self.transport.report(pane, display)?;
+            if let Err(error) = self.transport.report(pane, display) {
+                return self.publication_failed(pane, "status", &error);
+            }
             reports += 1;
         }
         if identity_changed {
-            self.transport.report_identity(pane, &display.identity)?;
+            if let Err(error) = self.transport.report_identity(pane, &display.identity) {
+                return self.publication_failed(pane, "identity", &error);
+            }
             reports += 1;
         }
         self.last_displays.insert(pane.id.clone(), display.clone());

@@ -39,7 +39,7 @@ codex login
 ```
 
 워처는 Herdr 서버가 로그인 셸 밖에서 시작됐더라도 `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`에서 `codex`를 찾습니다.
-Codex가 없거나 로그아웃 상태거나 사용량 한도에 걸리면 워처는 기존 task를 유지하고 `analysis_provider_unavailable`을 기록한 뒤 10분 후 다시 시도합니다.
+Codex가 없거나 로그아웃 상태거나 사용량 한도에 걸리면 워처는 현재 검증된 provider/native session 소유가 일치하는 task만 유지하고 `analysis_provider_unavailable`을 기록한 뒤 10분 후 다시 시도합니다.
 Claude Code는 provider로 등록돼 있지만 `unsupported`로 보고됩니다.
 사용자 대화에 끼어들지 않고 구조화된 답을 돌려받는 계약이 없기 때문이며, README의 [Requirements](README.md#requirements)에 근거가 있습니다.
 

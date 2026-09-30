@@ -12,7 +12,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { rest, screenshot } from "./wire";
 
@@ -91,10 +91,7 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     git(repo, ["worktree", "add", "-b", BRANCH, worktree]);
     await workspaceAt(herdr, repo, "메인 정리");
     const worktreePane = await workspaceAt(herdr, worktree, "메뉴 구현");
-    execFileSync(herdr.bin, ["pane", "report-agent-session", worktreePane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", SESSION], {
-      env: herdr.env,
-      timeout: 30_000,
-    });
+    setFixtureSession(herdr, worktreePane, SESSION);
 
     daemon = await startHided(herdr, "sidebar-menus");
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: daemon.origin });

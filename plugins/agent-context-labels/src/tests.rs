@@ -820,7 +820,10 @@ fn attention_refines_the_herdr_state_instead_of_replacing_it() {
 fn a_failed_turn_is_retired_once_the_agent_runs_again() {
     let root = tempdir().unwrap();
     let paths = StatePaths::for_tests(root.path());
-    let failure = serde_json::json!({ "hook_event_name": "StopFailure" });
+    let failure = proven_hook_payload(
+        &paths,
+        serde_json::json!({ "hook_event_name": "StopFailure" }),
+    );
     assert_eq!(
         apply_hook_payload(&paths, "w1:p1", &failure).unwrap(),
         HookUpdate::Set(Attention::Error)
@@ -1344,21 +1347,27 @@ fn hook_events_map_only_runtime_attention_to_status() {
 fn hook_completion_clears_only_the_matching_pending_tool() {
     let root = tempdir().unwrap();
     let paths = StatePaths::for_tests(root.path());
-    let pending = serde_json::json!({
-        "hook_event_name": "PermissionRequest",
-        "tool_name": "Bash",
-        "tool_use_id": "tool-2"
-    });
+    let pending = proven_hook_payload(
+        &paths,
+        serde_json::json!({
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "Bash",
+            "tool_use_id": "tool-2"
+        }),
+    );
     assert_eq!(
         apply_hook_payload(&paths, "w1:p1", &pending).unwrap(),
         HookUpdate::Set(Attention::Approval)
     );
 
-    let unrelated = serde_json::json!({
-        "hook_event_name": "PostToolUse",
-        "tool_name": "Read",
-        "tool_use_id": "tool-1"
-    });
+    let unrelated = proven_hook_payload(
+        &paths,
+        serde_json::json!({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
+            "tool_use_id": "tool-1"
+        }),
+    );
     assert_eq!(
         apply_hook_payload(&paths, "w1:p1", &unrelated).unwrap(),
         HookUpdate::Ignore
@@ -1368,11 +1377,14 @@ fn hook_completion_clears_only_the_matching_pending_tool() {
         Some(Attention::Approval)
     );
 
-    let matching = serde_json::json!({
-        "hook_event_name": "PostToolUse",
-        "tool_name": "Bash",
-        "tool_use_id": "tool-2"
-    });
+    let matching = proven_hook_payload(
+        &paths,
+        serde_json::json!({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "tool-2"
+        }),
+    );
     assert_eq!(
         apply_hook_payload(&paths, "w1:p1", &matching).unwrap(),
         HookUpdate::Clear
@@ -1412,6 +1424,7 @@ fn a_cleared_hook_retires_an_older_semantic_verdict() {
     watcher.hook_states.panes.insert(
         subject.id.clone(),
         HookState {
+            session_owner: Some(fixture_session(&subject).unwrap().owner),
             attention: None,
             updated_unix_ms: 2_000,
             ..HookState::default()
@@ -1848,13 +1861,11 @@ fn the_activity_token_is_a_fixed_width_clock_two_panes_can_be_compared_on() {
     assert!(activity_token(999) < activity_token(1_000));
     assert_eq!(activity_token(0), "0000000000000");
 
-    let params = metadata_params(
+    let params = identity_params(
         &pane("w1:p1", AgentKind::Codex, "done"),
-        &Display {
-            status: StatusIcon::Done,
-            sort_key: SortKey::Done,
-            activity_unix_ms: 1_755_000_000_000,
-            ..Display::default()
+        &Identity {
+            activity: 1_755_000_000_000,
+            ..Identity::default()
         },
     );
     assert_eq!(params["tokens"]["activity"], "1755000000000");
@@ -3218,7 +3229,26 @@ fn the_second_report_carries_the_sentence_survives_a_restart_and_clears_on_work(
         .cloned()
         .unwrap()
         .1;
-    assert_eq!(republished, identity);
+    assert_ne!(
+        republished.generation, identity.generation,
+        "restart publishes a fresh instance fence"
+    );
+    assert_eq!(
+        (
+            republished.task,
+            republished.owner,
+            republished.progress,
+            republished.expected_reply,
+            republished.activity
+        ),
+        (
+            identity.task,
+            identity.owner,
+            identity.progress,
+            identity.expected_reply,
+            identity.activity
+        )
+    );
     assert_eq!(
         backend.calls(),
         1,
@@ -3284,6 +3314,8 @@ fn atomic_label_and_status_reports_clear_old_values_with_fixed_budgets() {
             Identity {
                 task: Some("현재 세션 작업 결과".into()),
                 owner: native_reference_token(&subject),
+                generation: Some(format!("fixture:{index}")),
+                activity: 100,
                 progress: Some("현재 진행".into()),
                 expected_reply: Some("현재 답변 요청".into()),
             }
@@ -3299,7 +3331,7 @@ fn atomic_label_and_status_reports_clear_old_values_with_fixed_budgets() {
         };
         for (report, expected_keys) in [
             (metadata_params(&subject, &display), 16),
-            (identity_params(&subject, &identity), 6),
+            (identity_params(&subject, &identity), 8),
         ] {
             assert_eq!(report["source"], PLUGIN_ID);
             let tokens = report["tokens"].as_object().unwrap();
@@ -3695,4 +3727,374 @@ fn starting_watcher_leaves_a_live_watcher_running() {
     let refused = exclusive_watcher_lock(&paths, Duration::from_millis(300));
 
     assert_eq!(refused.unwrap_err().to_string(), "watcher_already_running");
+}
+
+fn proven_hook_payload(paths: &StatePaths, mut payload: Value) -> Value {
+    let transcript = paths.root.join("hook-session.jsonl");
+    fs::create_dir_all(&paths.root).unwrap();
+    fs::write(
+        &transcript,
+        "{\"type\":\"user\",\"sessionId\":\"w1:p1-session\"}\n",
+    )
+    .unwrap();
+    payload["session_id"] = json!("w1:p1-session");
+    payload["transcript_path"] = json!(transcript);
+    payload
+}
+
+#[test]
+fn retired_panes_release_retry_and_transient_caches_but_charge_real_workers() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    set_automatic_summaries(&paths, false).unwrap();
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![]),
+        no_provider(),
+        FakeSessionReader,
+        paths,
+    );
+    for index in 0..40 {
+        let subject = pane(&format!("w1:p{index}"), AgentKind::Codex, "idle");
+        watcher
+            .scan_panes(std::slice::from_ref(&subject), false, false)
+            .unwrap();
+        let session = &watcher.sessions[&subject.id];
+        watcher.analysis_in_flight.insert(subject.id.clone());
+        watcher
+            .analysis_sender
+            .send(AnalysisOutcome {
+                pane_id: subject.id.clone(),
+                owner: session.confirmed.as_ref().unwrap().owner.clone(),
+                generation: session.generation,
+                turn: 1,
+                phase: AnalysisPhase::TurnEnd,
+                context_chars: 1,
+                task_input_cursor: None,
+                initial_context: false,
+                result: Err(AnalysisFailure::Provider(AiError::UsageLimited {
+                    retry_after: Some(Duration::from_secs(600)),
+                })),
+            })
+            .unwrap();
+        watcher
+            .scan_panes(std::slice::from_ref(&subject), false, false)
+            .unwrap();
+        assert!(watcher.next_analysis_at.contains_key(&subject.id));
+        watcher.pending_forced_refresh.insert(subject.id.clone());
+        watcher.waiting_analysis.insert(subject.id.clone());
+        watcher.scan_panes(&[], false, false).unwrap();
+        assert!(watcher.next_analysis_at.is_empty());
+        assert!(watcher.last_displays.is_empty());
+        assert!(watcher.reported_revisions.is_empty());
+        assert!(watcher.revisions.is_empty());
+        assert!(watcher.state_change_seqs.is_empty());
+        assert!(watcher.pending_forced_refresh.is_empty());
+        assert!(watcher.waiting_analysis.is_empty());
+        assert!(watcher.sessions.is_empty());
+    }
+    // The authoritative retirement scan cannot pretend a held worker exited.
+    let subject = pane("w1:held", AgentKind::Codex, "idle");
+    watcher
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    let session = &watcher.sessions[&subject.id];
+    let owner = session.confirmed.as_ref().unwrap().owner.clone();
+    let generation = session.generation;
+    watcher.analysis_in_flight.insert(subject.id.clone());
+    watcher.scan_panes(&[], false, false).unwrap();
+    assert_eq!(watcher.analysis_in_flight.len(), 1);
+    watcher
+        .analysis_sender
+        .send(AnalysisOutcome {
+            pane_id: subject.id,
+            owner,
+            generation,
+            turn: 1,
+            phase: AnalysisPhase::TurnEnd,
+            context_chars: 1,
+            task_input_cursor: None,
+            initial_context: false,
+            result: Err(AnalysisFailure::Worker("retired".into())),
+        })
+        .unwrap();
+    watcher.scan_panes(&[], false, false).unwrap();
+    assert!(watcher.analysis_in_flight.is_empty());
+}
+
+#[test]
+fn hooks_cannot_transfer_attention_or_clear_a_different_confirmed_session() {
+    for attention in [Attention::Question, Attention::Approval] {
+        let root = tempdir().unwrap();
+        let paths = StatePaths::for_tests(root.path());
+        set_automatic_summaries(&paths, false).unwrap();
+        let a = pane("w1:p1", AgentKind::Claude, "idle");
+        let mut watcher = Watcher::new(
+            FakeTransport::new(vec![a.clone()]),
+            no_provider(),
+            FakeSessionReader,
+            paths.clone(),
+        );
+        watcher.scan().unwrap();
+        let mut a_hook = proven_hook_payload(
+            &paths,
+            json!({"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_use_id":"a-tool"}),
+        );
+        if attention == Attention::Question {
+            a_hook["tool_name"] = json!("AskUserQuestion");
+        }
+        assert_eq!(
+            apply_hook_payload(&paths, &a.id, &a_hook).unwrap(),
+            HookUpdate::Set(attention)
+        );
+        watcher.scan().unwrap();
+        assert_eq!(
+            watcher.resolve_attention(&a),
+            Some((attention, AttentionSource::Hook))
+        );
+        let mut b = a.clone();
+        b.agent_session = Some(AgentSession::new("id", "session-b"));
+        watcher
+            .scan_panes(std::slice::from_ref(&b), false, false)
+            .unwrap();
+        assert_eq!(
+            watcher.resolve_attention(&b),
+            None,
+            "A's hook cannot become B-owned status"
+        );
+        assert_eq!(watcher.last_report().status, StatusIcon::Idle);
+        assert_eq!(
+            apply_hook_payload(&paths, &b.id, &a_hook).unwrap(),
+            HookUpdate::Ignore
+        );
+        let transcript = root.path().join("b.jsonl");
+        fs::write(
+            &transcript,
+            "{\"type\":\"user\",\"sessionId\":\"session-b\"}\n",
+        )
+        .unwrap();
+        let b_hook = json!({"session_id":"session-b","transcript_path":transcript,
+            "hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_use_id":"b-tool"});
+        assert_eq!(
+            apply_hook_payload(&paths, &b.id, &b_hook).unwrap(),
+            HookUpdate::Set(Attention::Question)
+        );
+        a_hook["hook_event_name"] = json!("PostToolUse");
+        assert_eq!(
+            apply_hook_payload(&paths, &b.id, &a_hook).unwrap(),
+            HookUpdate::Ignore
+        );
+        watcher
+            .scan_panes(std::slice::from_ref(&b), false, false)
+            .unwrap();
+        assert_eq!(
+            watcher.resolve_attention(&b),
+            Some((Attention::Question, AttentionSource::Hook))
+        );
+        watcher
+            .hook_states
+            .panes
+            .get_mut(&b.id)
+            .unwrap()
+            .session_owner = None;
+        assert_eq!(
+            watcher.resolve_attention(&b),
+            None,
+            "ownerless legacy hook state is unproven"
+        );
+        let log = fs::read_to_string(paths.log()).unwrap();
+        assert!(log.contains("hook_discarded_session"));
+        assert!(!log.contains(transcript.to_str().unwrap()));
+    }
+}
+
+struct FailingPublicationTransport {
+    identity: bool,
+}
+impl HerdrTransport for FailingPublicationTransport {
+    fn panes(&self) -> Result<Vec<Pane>> {
+        Ok(vec![])
+    }
+    fn report(&self, _: &Pane, _: &Display) -> Result<()> {
+        if self.identity {
+            Ok(())
+        } else {
+            Err(metadata_failure(ApiError::Transport(
+                "secret transport payload".into(),
+            )))
+        }
+    }
+    fn report_identity(&self, _: &Pane, _: &Identity) -> Result<()> {
+        Err(metadata_failure(ApiError::Remote {
+            code: "secret".into(),
+            message: "secret provider output".into(),
+        }))
+    }
+    fn clear_agent_name(&self, _: &Pane) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn publication_failures_correlate_session_and_stage_without_content() {
+    for identity in [false, true] {
+        let root = tempdir().unwrap();
+        let paths = StatePaths::for_tests(root.path());
+        let subject = pane("w1:p1", AgentKind::Claude, "idle");
+        let mut watcher = Watcher::new(
+            FailingPublicationTransport { identity },
+            no_provider(),
+            FakeSessionReader,
+            paths.clone(),
+        );
+        watcher.reconcile_session(&subject).unwrap();
+        watcher
+            .display_states
+            .panes
+            .get_mut(&subject.id)
+            .unwrap()
+            .task = Some("secret task text".into());
+        let display = watcher.display_for(&subject).unwrap();
+        assert!(watcher.report_if_changed(&subject, &display).is_err());
+        assert!(
+            !watcher.last_displays.contains_key(&subject.id),
+            "failure remains retryable"
+        );
+        let log = fs::read_to_string(paths.log()).unwrap();
+        let event: Value = log
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|event| event["event"] == "label_publication_failed")
+            .unwrap();
+        assert_eq!(event["pane_id"], subject.id);
+        let detail = event["detail"].as_str().unwrap();
+        assert!(detail.contains(if identity {
+            "report=identity"
+        } else {
+            "report=status"
+        }));
+        assert!(detail.contains(if identity {
+            "class=metadata_rejected"
+        } else {
+            "class=metadata_transport_failed"
+        }));
+        assert!(detail.contains(&format!(
+            "owner={}",
+            fixture_session(&subject).unwrap().owner
+        )));
+        assert!(detail.contains("generation=1"));
+        assert!(!log.contains("secret"));
+    }
+}
+
+fn held_router() -> (
+    Arc<HeldBackend>,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+    Arc<AiRouter>,
+) {
+    let (started, started_receiver) = mpsc::channel();
+    let (release, release_receiver) = mpsc::channel();
+    let backend = Arc::new(HeldBackend {
+        started,
+        release: Mutex::new(release_receiver),
+        calls: AtomicUsize::new(0),
+        active: AtomicUsize::new(0),
+        peak: AtomicUsize::new(0),
+    });
+    let router = Arc::new(AiRouter::with_sleep(
+        vec![backend.clone()],
+        RouterConfig {
+            max_in_flight: 4,
+            ..Default::default()
+        },
+        Arc::new(NoopLogSink),
+        Box::new(|_| {}),
+    ));
+    (backend, started_receiver, release, router)
+}
+
+#[test]
+fn retiring_a_real_held_worker_cannot_start_an_overlapping_replacement() {
+    let root = tempdir().unwrap();
+    let (backend, started, release, router) = held_router();
+    let a = pane("w1:p1", AgentKind::Codex, "idle");
+    let b = pane("w1:p2", AgentKind::Codex, "idle");
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![a]),
+        router,
+        FakeSessionReader,
+        StatePaths::for_tests(root.path()),
+    );
+    watcher.scan().unwrap();
+    started.recv_timeout(Duration::from_secs(5)).unwrap();
+    *watcher.transport.panes.borrow_mut() = vec![b];
+    watcher.scan().unwrap();
+    assert_eq!(watcher.analysis_in_flight.len(), 1);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    release.send(()).unwrap();
+    watcher.await_pending_analysis();
+    watcher.scan().unwrap();
+    watcher.await_pending_analysis();
+    watcher.scan().unwrap();
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("현재 세션 작업 결과")
+    );
+    assert_eq!(backend.peak.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn real_transcript_replacement_and_truncation_fence_a_held_worker() {
+    for replace in [false, true] {
+        let root = tempdir().unwrap();
+        let transcript = root.path().join("session.jsonl");
+        let record = |content: &str| {
+            format!(
+                "{}\n",
+                json!({"type":"user","sessionId":"native-a",
+            "timestamp":"2026-09-30T10:00:00Z","origin":{"kind":"human"},
+            "message":{"role":"user","content":content}})
+            )
+        };
+        fs::write(&transcript, record(&format!("old {}", "x".repeat(500)))).unwrap();
+        let mut subject = pane("w1:p1", AgentKind::Claude, "idle");
+        subject.agent_session = Some(AgentSession::new("path", transcript.to_str().unwrap()));
+        let paths = StatePaths::for_tests(&root.path().join("state"));
+        let (backend, started, release, router) = held_router();
+        let mut watcher = Watcher::new(
+            FakeTransport::new(vec![subject.clone()]),
+            router,
+            LocalSessionReader::new(root.path()),
+            paths.clone(),
+        );
+        watcher.scan().unwrap();
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let before = watcher.sessions[&subject.id].generation;
+        if replace {
+            let replacement = root.path().join("replacement.jsonl");
+            fs::write(&replacement, record("current request")).unwrap();
+            fs::rename(replacement, &transcript).unwrap();
+        } else {
+            fs::write(&transcript, record("current request")).unwrap();
+        }
+        watcher.scan().unwrap();
+        assert!(watcher.sessions[&subject.id].generation > before);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        release.send(()).unwrap();
+        watcher.await_pending_analysis();
+        watcher.scan().unwrap();
+        assert!(watcher.last_report().task.is_none());
+        watcher.await_pending_analysis();
+        watcher.scan().unwrap();
+        assert_eq!(
+            watcher.last_report().task.as_deref(),
+            Some("현재 세션 작업 결과")
+        );
+        assert_eq!(backend.peak.load(Ordering::SeqCst), 1);
+        assert!(
+            fs::read_to_string(paths.log())
+                .unwrap()
+                .contains("analysis_discarded_session")
+        );
+    }
 }

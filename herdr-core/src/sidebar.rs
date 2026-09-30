@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -1270,6 +1270,88 @@ pub fn rederive(agent: &mut SidebarAgentSnapshot) {
     derive_from_axes(agent);
 }
 
+/// Remember the publication invalidated by each observed reference change.
+/// One entry per live pane; no I/O and no history that grows with sessions.
+/// The producer rejects old workers; this fence also rejects retained metadata
+/// on A -> B -> A until a fresh publication generation arrives.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LabelPublicationGuard {
+    panes: HashMap<String, LabelPublicationFence>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct LabelPublicationFence {
+    reference: Option<String>,
+    label: (Option<String>, Option<String>),
+    status: (Option<String>, Option<String>),
+    blocked_label: Option<(Option<String>, Option<String>)>,
+    blocked_status: Option<(Option<String>, Option<String>)>,
+}
+
+impl LabelPublicationGuard {
+    pub(crate) fn apply(&mut self, payload: &mut SessionSnapshotPayload) {
+        let live: HashSet<&str> = payload
+            .agents
+            .iter()
+            .filter_map(|agent| agent.pane_id.as_deref().or(agent.id.as_deref()))
+            .chain(payload.panes.iter().map(|pane| pane.pane_id.as_str()))
+            .collect();
+        self.panes.retain(|id, _| live.contains(id.as_str()));
+        for agent in &mut payload.agents {
+            let Some(id) = agent.pane_id.as_ref().or(agent.id.as_ref()) else {
+                continue;
+            };
+            let reference = agent.agent_session.as_ref().and_then(|session| {
+                hide_session::label_reference_token(
+                    agent.agent.as_deref().unwrap_or_default(),
+                    &session.kind,
+                    &session.value,
+                )
+            });
+            let publication = |kind: &str| {
+                (
+                    agent
+                        .tokens
+                        .get(&format!("{kind}_owner"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    agent
+                        .tokens
+                        .get(&format!("{kind}_generation"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                )
+            };
+            let label = publication("label");
+            let status = publication("status");
+            let fence = self
+                .panes
+                .entry(id.clone())
+                .or_insert_with(|| LabelPublicationFence {
+                    reference: reference.clone(),
+                    label: label.clone(),
+                    status: status.clone(),
+                    ..Default::default()
+                });
+            if fence.reference != reference {
+                fence.blocked_label = Some(fence.label.clone());
+                fence.blocked_status = Some(fence.status.clone());
+                fence.reference = reference;
+            }
+            fence.label = label.clone();
+            fence.status = status.clone();
+            if fence.blocked_label.as_ref() == Some(&label) {
+                for key in ["task", "progress", "expected_reply"] {
+                    agent.tokens.remove(key);
+                }
+            }
+            if fence.blocked_status.as_ref() == Some(&status) {
+                agent.tokens.retain(|key, _| !key.starts_with("status_"));
+            }
+        }
+    }
+}
+
 fn project_agent(mut agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
     // Token guards in Herdr do not cover metadata patches. Validate at the
     // common projection boundary so a native-session change suppresses stale
@@ -2139,6 +2221,54 @@ mod tests {
         assert_eq!(row.expected_reply.as_deref(), Some("현재 답변 요청"));
         assert_eq!(row.message.as_deref(), Some("현재 답변 요청\n현재 진행"));
         assert_eq!(row.demand, "question");
+    }
+
+    #[test]
+    fn an_observed_return_cannot_revalidate_retained_publications() {
+        let owner = hide_session::label_reference_token("codex", "id", "session-a").unwrap();
+        let snapshot = |reference: &str, label_generation: &str, status_generation: &str| {
+            serde_json::from_value::<SessionSnapshotPayload>(json!({"agents":[{
+                "pane_id":"w1:p1", "agent":"codex", "agent_status":"idle", "state_change_seq":7,
+                "agent_session":{"kind":"id","value":reference},
+                "tokens":{"label_owner":owner,"status_owner":owner,
+                    "label_generation":label_generation,"status_generation":status_generation,
+                    "task":"현재 작업","progress":"현재 진행","expected_reply":"현재 답변 요청",
+                    "status_question":"?"}
+            }]}))
+            .unwrap()
+        };
+        let mut guard = LabelPublicationGuard::default();
+        let mut first = snapshot("session-a", "instance:1", "instance:1");
+        guard.apply(&mut first);
+        assert_eq!(project_agents(first).agents[0].identity_label, "현재 작업");
+        for reference in ["session-b", "session-a"] {
+            let mut retained = snapshot(reference, "instance:1", "instance:1");
+            guard.apply(&mut retained);
+            let row = project_agents(retained).agents.remove(0);
+            assert_eq!(row.identity_label, "Codex");
+            assert_eq!(
+                (row.progress, row.expected_reply, row.message),
+                (None, None, None)
+            );
+            assert_eq!(
+                (row.demand.as_str(), row.activity.as_str()),
+                ("none", "stopped")
+            );
+        }
+        // The two atomic metadata groups can arrive in either order.
+        let mut fresh_label = snapshot("session-a", "instance:3", "instance:1");
+        guard.apply(&mut fresh_label);
+        let row = project_agents(fresh_label).agents.remove(0);
+        assert_eq!(row.identity_label, "현재 작업");
+        assert_eq!(row.demand, "none");
+        let mut fresh = snapshot("session-a", "instance:3", "instance:3");
+        guard.apply(&mut fresh);
+        assert_eq!(project_agents(fresh).agents[0].demand, "question");
+        guard.apply(&mut serde_json::from_value(json!({"agents":[]})).unwrap());
+        assert!(
+            guard.panes.is_empty(),
+            "retired pane fences do not accumulate"
+        );
     }
 
     #[test]

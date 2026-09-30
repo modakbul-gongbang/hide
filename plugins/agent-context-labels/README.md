@@ -290,7 +290,7 @@ The workspace label and orchestrator name never supply an agent display title.
 Names assigned by Sasu or another orchestrator remain available for CLI targeting but never become display titles.
 Claude's `ai-title` and Codex's first human turn have no separate title role.
 
-The identity report carries `task`, `progress`, `expected_reply` and `label_owner` together, plus explicit `null` values for the retired `name` and opposite provider icon.
+The identity report carries `task`, `progress`, `expected_reply`, `label_owner` and `label_generation` together, plus the activity clock and explicit `null` values for the retired `name` and opposite provider icon.
 Its owner is a 67-character SHA-256 fingerprint of the provider and current native reference, with a version prefix and length-delimited input.
 The watcher proves the native ID from provider transcript metadata before publishing any label.
 The durable state stores that provider/native-ID owner, so a confirmed ID and a confirmed transcript path can restore the same labels after restart or reconnect without a provider call.
@@ -300,18 +300,26 @@ File replacement or truncation invalidates analysis phases and readers; labels s
 Every asynchronous result carries the owner and a monotonically advancing generation, so success, failure and retry results from an earlier A → B → A transition are discarded.
 The single physical analysis worker remains charged until it actually finishes, including while its generation is invalid.
 Hide checks `label_owner` against the native reference at its common projection boundary, so stale strings cannot reach sidebar, pane header, search, Recent Panels, lineage, or Overview while the watcher catches up.
-The status report uses a separate `status_owner` fence; native lifecycle fallback remains available without plugin ownership.
+The status report uses a separate atomic `status_owner` and `status_generation` fence; native lifecycle fallback remains available without plugin ownership.
+Local runtime and remote replica remember the invalidated publication on each observed native-reference change.
+A retained A publication cannot become visible through A → B → A; only a fresh owner/generation publication can restore its strings or semantic status.
+This memory is one entry per live pane, survives reconnect, and is released when the pane retires.
+A watcher restart gives its publication generations a fresh instance prefix without discarding proven same-session durable labels.
+Hook attention also requires matching provider/native-ID proof from the hook's `session_id` and `transcript_path`; missing proof and previous-session hook updates are ignored.
+Ownerless legacy hook attention cannot become a current session demand.
 
 ### Metadata and read budgets
 
-The status report writes exactly 16 keys, including its owner; the atomic identity report writes six.
+The status report writes exactly 16 keys, including its owner and generation; the atomic identity report writes eight.
 Both use the existing fixed `hide.agent-context-labels` metadata source, with no per-session source or key.
 The combined retained keys, including legacy tombstones and both provider icons, stay below Herdr’s 32-key limit, and every value stays within its 80-character cap.
 Null removes a previous token rather than retaining an old value.
 Native references of any length are represented by the fixed 67-character fingerprint, never a path or transcript in metadata.
 Each ownership confirmation reads at most 1 MiB and refuses a line above 256 KiB; a second proof after reading prevents analysis across a concurrent file replacement.
-Readers and discovery caches are pruned with the live pane set.
-Confirmation, reset and discarded-result diagnostics record only pane IDs, reason classes, owner fingerprints and generations, never transcript content or personal paths.
+Readers, discovery caches, retry deadlines and transient report/scheduling caches are pruned with the live pane set.
+A retired physical worker remains charged until its outcome arrives; retirement does not permit a concurrent replacement worker.
+Confirmation, reset, discarded-result and publication-failure diagnostics record only pane IDs, reason classes, owner/reference fingerprints, generations and report stages, never transcript content or personal paths.
+A failed status or identity publication leaves its report cache unadvanced so the existing scan can retry.
 `expected_reply` is cleared as soon as the agent works again, since the reply it asked for is no longer wanted.
 
 An older plugin version may have renamed a Herdr agent.

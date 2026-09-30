@@ -51,6 +51,7 @@ pub(crate) struct SessionReplica {
     /// stream carries no sequence, so this is the only position a diagnostic
     /// can name.
     pub(crate) applied_events: u64,
+    label_publications: crate::sidebar::LabelPublicationGuard,
 }
 
 /// How an event that disagrees with the replica is treated.
@@ -110,10 +111,15 @@ impl SessionReplica {
             retired_ids: VecDeque::new(),
             early_focuses: Vec::new(),
             applied_events: 0,
+            label_publications: Default::default(),
         };
         replica.validate()?;
         replica.validate_active_tabs()?;
         Ok(replica)
+    }
+
+    pub(crate) fn retain_label_publications(&mut self, previous: &Self) {
+        self.label_publications = previous.label_publications.clone();
     }
 
     pub(crate) fn project(&self) -> SessionSnapshotPayload {
@@ -266,11 +272,13 @@ impl SessionReplica {
     }
 
     pub(crate) fn project_remote(
-        &self,
+        &mut self,
         target_id: &str,
     ) -> Result<(RemoteSessionSnapshot, Vec<crate::sidebar::AgentExclusion>), SessionFetchError>
     {
-        let agent_projection = crate::sidebar::project_agents(self.project());
+        let mut payload = self.project();
+        self.label_publications.apply(&mut payload);
+        let agent_projection = crate::sidebar::project_agents(payload);
         let mut agents = agent_projection.agents;
 
         let state = &self.published_state;

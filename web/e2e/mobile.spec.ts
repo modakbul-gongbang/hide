@@ -20,7 +20,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { screenshot } from "./wire";
 
@@ -384,7 +384,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     turns[69] = turn("assistant", "turn 69 **굵게**\n\n- 항목 하나\n- 항목 둘\n\n```\ncode line\n```", 69);
     turns.splice(66, 0, toolOutput("SECRET-TOOL-OUTPUT"), turn("user", "<system-reminder>INJECTED-CONTEXT</system-reminder>", 66));
     fs.writeFileSync(transcript, `${turns.join("\n")}\n`);
-    execFileSync(herdr.bin, ["pane", "report-agent-session", one, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", SESSION], { env: herdr.env, timeout: 30_000 });
+    setFixtureSession(herdr, one, SESSION);
 
     // B24: the detail shows the head and the agent's newest 30 messages, newest at the bottom.
     const history = [...Array.from({ length: 260 }, (_, index) => `line ${String(index + 1).padStart(3, "0")}`), `wide ${"w".repeat(300)}`].join("\n");
