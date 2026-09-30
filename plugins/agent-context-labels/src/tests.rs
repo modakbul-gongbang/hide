@@ -825,7 +825,13 @@ fn a_failed_turn_is_retired_once_the_agent_runs_again() {
         serde_json::json!({ "hook_event_name": "StopFailure" }),
     );
     assert_eq!(
-        apply_hook_payload(&paths, "w1:p1", &failure).unwrap(),
+        apply_hook_payload(
+            &paths,
+            "w1:p1",
+            &failure,
+            &FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")])
+        )
+        .unwrap(),
         HookUpdate::Set(Attention::Error)
     );
 
@@ -1356,7 +1362,13 @@ fn hook_completion_clears_only_the_matching_pending_tool() {
         }),
     );
     assert_eq!(
-        apply_hook_payload(&paths, "w1:p1", &pending).unwrap(),
+        apply_hook_payload(
+            &paths,
+            "w1:p1",
+            &pending,
+            &FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")])
+        )
+        .unwrap(),
         HookUpdate::Set(Attention::Approval)
     );
 
@@ -1369,7 +1381,13 @@ fn hook_completion_clears_only_the_matching_pending_tool() {
         }),
     );
     assert_eq!(
-        apply_hook_payload(&paths, "w1:p1", &unrelated).unwrap(),
+        apply_hook_payload(
+            &paths,
+            "w1:p1",
+            &unrelated,
+            &FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")])
+        )
+        .unwrap(),
         HookUpdate::Ignore
     );
     assert_eq!(
@@ -1386,7 +1404,13 @@ fn hook_completion_clears_only_the_matching_pending_tool() {
         }),
     );
     assert_eq!(
-        apply_hook_payload(&paths, "w1:p1", &matching).unwrap(),
+        apply_hook_payload(
+            &paths,
+            "w1:p1",
+            &matching,
+            &FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")])
+        )
+        .unwrap(),
         HookUpdate::Clear
     );
     assert_eq!(load_hook_states(&paths).panes["w1:p1"].attention, None);
@@ -3483,6 +3507,7 @@ fn proven_id_path_restart_lifecycle_and_transient_absence_restore_without_reanal
     watcher.settle();
     let identity = watcher.last_report().identity.clone();
     assert!(identity.task.is_some());
+    let worker_generation = watcher.sessions[&subject.id].generation;
     subject.agent_session = Some(AgentSession::new("path", path.to_str().unwrap()));
     subject.state_change_seq += 10;
     subject.revision += 1;
@@ -3490,6 +3515,29 @@ fn proven_id_path_restart_lifecycle_and_transient_absence_restore_without_reanal
         .scan_panes(std::slice::from_ref(&subject), false, false)
         .unwrap();
     assert_eq!(watcher.last_report().task, identity.task);
+    let path_identity = watcher.last_report().identity.clone();
+    assert_ne!(path_identity.generation, identity.generation);
+    assert_eq!(watcher.sessions[&subject.id].generation, worker_generation);
+    subject.agent_session = Some(AgentSession::new("id", "same-session"));
+    watcher
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    assert_ne!(
+        watcher.last_report().identity.generation,
+        identity.generation,
+        "a consumer that skipped the path publication still receives a fresh ID publication"
+    );
+    assert_eq!(watcher.sessions[&subject.id].generation, worker_generation);
+    subject.agent_session = Some(AgentSession::new("path", path.to_str().unwrap()));
+    watcher
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    assert_ne!(
+        watcher.last_report().identity.generation,
+        path_identity.generation,
+        "path -> ID -> path is fresh even when the ID report is coalesced"
+    );
+    assert_eq!(watcher.sessions[&subject.id].generation, worker_generation);
     assert_eq!(backend.calls(), 1);
     let mut restarted = Watcher::new(
         FakeTransport::new(vec![subject.clone()]),
@@ -3822,7 +3870,7 @@ fn retired_panes_release_retry_and_transient_caches_but_charge_real_workers() {
 }
 
 #[test]
-fn hooks_cannot_transfer_attention_or_clear_a_different_confirmed_session() {
+fn hooks_accept_current_native_attention_before_reconciliation_and_reject_obsolete_events() {
     for attention in [Attention::Question, Attention::Approval] {
         let root = tempdir().unwrap();
         let paths = StatePaths::for_tests(root.path());
@@ -3835,6 +3883,7 @@ fn hooks_cannot_transfer_attention_or_clear_a_different_confirmed_session() {
             paths.clone(),
         );
         watcher.scan().unwrap();
+        let a_owner = watcher.display_states.panes[&a.id].session_owner.clone();
         let mut a_hook = proven_hook_payload(
             &paths,
             json!({"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_use_id":"a-tool"}),
@@ -3843,7 +3892,7 @@ fn hooks_cannot_transfer_attention_or_clear_a_different_confirmed_session() {
             a_hook["tool_name"] = json!("AskUserQuestion");
         }
         assert_eq!(
-            apply_hook_payload(&paths, &a.id, &a_hook).unwrap(),
+            apply_hook_payload(&paths, &a.id, &a_hook, &watcher.transport).unwrap(),
             HookUpdate::Set(attention)
         );
         watcher.scan().unwrap();
@@ -3853,19 +3902,7 @@ fn hooks_cannot_transfer_attention_or_clear_a_different_confirmed_session() {
         );
         let mut b = a.clone();
         b.agent_session = Some(AgentSession::new("id", "session-b"));
-        watcher
-            .scan_panes(std::slice::from_ref(&b), false, false)
-            .unwrap();
-        assert_eq!(
-            watcher.resolve_attention(&b),
-            None,
-            "A's hook cannot become B-owned status"
-        );
-        assert_eq!(watcher.last_report().status, StatusIcon::Idle);
-        assert_eq!(
-            apply_hook_payload(&paths, &b.id, &a_hook).unwrap(),
-            HookUpdate::Ignore
-        );
+        *watcher.transport.panes.borrow_mut() = vec![b.clone()];
         let transcript = root.path().join("b.jsonl");
         fs::write(
             &transcript,
@@ -3873,31 +3910,65 @@ fn hooks_cannot_transfer_attention_or_clear_a_different_confirmed_session() {
         )
         .unwrap();
         let b_hook = json!({"session_id":"session-b","transcript_path":transcript,
-            "hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_use_id":"b-tool"});
+            "hook_event_name":"PermissionRequest","tool_name":a_hook["tool_name"],"tool_use_id":"b-tool"});
+        // Herdr is already B, but the watcher has not replaced durable A.
         assert_eq!(
-            apply_hook_payload(&paths, &b.id, &b_hook).unwrap(),
-            HookUpdate::Set(Attention::Question)
+            load_display_states(&paths.display_state()).0.panes[&a.id].session_owner,
+            a_owner
+        );
+        assert_eq!(
+            apply_hook_payload(&paths, &b.id, &b_hook, &watcher.transport).unwrap(),
+            HookUpdate::Set(attention)
+        );
+        assert_eq!(
+            apply_hook_payload(&paths, &b.id, &a_hook, &watcher.transport).unwrap(),
+            HookUpdate::Ignore
         );
         a_hook["hook_event_name"] = json!("PostToolUse");
         assert_eq!(
-            apply_hook_payload(&paths, &b.id, &a_hook).unwrap(),
+            apply_hook_payload(&paths, &b.id, &a_hook, &watcher.transport).unwrap(),
             HookUpdate::Ignore
         );
-        watcher
-            .scan_panes(std::slice::from_ref(&b), false, false)
-            .unwrap();
+        watcher.scan().unwrap();
         assert_eq!(
             watcher.resolve_attention(&b),
-            Some((Attention::Question, AttentionSource::Hook))
+            Some((attention, AttentionSource::Hook))
+        );
+        assert_eq!(
+            watcher.last_report().status,
+            if attention == Attention::Question {
+                StatusIcon::Question
+            } else {
+                StatusIcon::Approval
+            }
+        );
+        // Returning A cannot revive a hook retired when B took ownership.
+        *watcher.transport.panes.borrow_mut() = vec![a.clone()];
+        watcher.scan().unwrap();
+        assert_eq!(watcher.resolve_attention(&a), None);
+        assert!(load_hook_states(&paths).panes.get(&a.id).is_none());
+        assert_eq!(
+            apply_hook_payload(&paths, &a.id, &b_hook, &watcher.transport).unwrap(),
+            HookUpdate::Ignore
+        );
+        a_hook["hook_event_name"] = json!("PermissionRequest");
+        assert_eq!(
+            apply_hook_payload(&paths, &a.id, &a_hook, &watcher.transport).unwrap(),
+            HookUpdate::Set(attention)
+        );
+        watcher.scan().unwrap();
+        assert_eq!(
+            watcher.resolve_attention(&a),
+            Some((attention, AttentionSource::Hook))
         );
         watcher
             .hook_states
             .panes
-            .get_mut(&b.id)
+            .get_mut(&a.id)
             .unwrap()
             .session_owner = None;
         assert_eq!(
-            watcher.resolve_attention(&b),
+            watcher.resolve_attention(&a),
             None,
             "ownerless legacy hook state is unproven"
         );
@@ -3905,6 +3976,107 @@ fn hooks_cannot_transfer_attention_or_clear_a_different_confirmed_session() {
         assert!(log.contains("hook_discarded_session"));
         assert!(!log.contains(transcript.to_str().unwrap()));
     }
+}
+
+#[test]
+fn retired_hook_attention_does_not_return_on_a_b_a() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    set_automatic_summaries(&paths, false).unwrap();
+    let a = pane("w1:p1", AgentKind::Claude, "idle");
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![a.clone()]),
+        no_provider(),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.scan().unwrap();
+    let payload = proven_hook_payload(
+        &paths,
+        json!({"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion"}),
+    );
+    apply_hook_payload(&paths, &a.id, &payload, &watcher.transport).unwrap();
+    watcher.scan().unwrap();
+    assert_eq!(
+        watcher.resolve_attention(&a),
+        Some((Attention::Question, AttentionSource::Hook))
+    );
+    let mut b = a.clone();
+    b.agent_session = Some(AgentSession::new("id", "session-b"));
+    *watcher.transport.panes.borrow_mut() = vec![b.clone()];
+    watcher.scan().unwrap();
+    assert_eq!(watcher.resolve_attention(&b), None);
+    assert!(!load_hook_states(&paths).panes.contains_key(&a.id));
+    *watcher.transport.panes.borrow_mut() = vec![a.clone()];
+    watcher.scan().unwrap();
+    assert_eq!(watcher.resolve_attention(&a), None);
+    assert!(!load_hook_states(&paths).panes.contains_key(&a.id));
+}
+
+#[test]
+fn hooks_require_current_native_proof_and_preserve_state_on_query_failure() {
+    struct Unavailable;
+    impl HerdrTransport for Unavailable {
+        fn panes(&self) -> Result<Vec<Pane>> {
+            Err(anyhow!("secret native query body"))
+        }
+        fn report(&self, _: &Pane, _: &Display) -> Result<()> {
+            unreachable!()
+        }
+        fn report_identity(&self, _: &Pane, _: &Identity) -> Result<()> {
+            unreachable!()
+        }
+        fn clear_agent_name(&self, _: &Pane) -> Result<()> {
+            unreachable!()
+        }
+    }
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let payload = proven_hook_payload(
+        &paths,
+        json!({"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion"}),
+    );
+    let mut current = pane("w1:p1", AgentKind::Claude, "idle");
+    // The path and payload ID prove the same canonical owner.
+    current.agent_session = Some(AgentSession::new(
+        "path",
+        payload["transcript_path"].as_str().unwrap(),
+    ));
+    assert_eq!(
+        apply_hook_payload(
+            &paths,
+            &current.id,
+            &payload,
+            &FakeTransport::new(vec![current.clone()])
+        )
+        .unwrap(),
+        HookUpdate::Set(Attention::Question)
+    );
+    let before = fs::read(paths.hook_state()).unwrap();
+    assert_eq!(
+        apply_hook_payload(&paths, &current.id, &payload, &Unavailable).unwrap(),
+        HookUpdate::Ignore
+    );
+    assert_eq!(
+        apply_hook_payload(&paths, &current.id, &payload, &FakeTransport::new(vec![])).unwrap(),
+        HookUpdate::Ignore
+    );
+    current.agent = AgentKind::Codex;
+    assert_eq!(
+        apply_hook_payload(
+            &paths,
+            &current.id,
+            &payload,
+            &FakeTransport::new(vec![current])
+        )
+        .unwrap(),
+        HookUpdate::Ignore
+    );
+    assert_eq!(fs::read(paths.hook_state()).unwrap(), before);
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert!(log.contains("hook_native_query_failed"));
+    assert!(!log.contains("secret native query body"));
+    assert!(!log.contains(payload["transcript_path"].as_str().unwrap()));
 }
 
 struct FailingPublicationTransport {

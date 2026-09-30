@@ -301,11 +301,16 @@ Every asynchronous result carries the owner and a monotonically advancing genera
 The single physical analysis worker remains charged until it actually finishes, including while its generation is invalid.
 Hide checks `label_owner` against the native reference at its common projection boundary, so stale strings cannot reach sidebar, pane header, search, Recent Panels, lineage, or Overview while the watcher catches up.
 The status report uses a separate atomic `status_owner` and `status_generation` fence; native lifecycle fallback remains available without plugin ownership.
-Local runtime and remote replica remember the invalidated publication on each observed native-reference change.
+Local runtime and remote replica remember the invalidated publication on each observed different concrete native reference.
+A missing or unsupported reference hides labels while preserving the last concrete-reference fence, so a consumer-only absence restores the unchanged valid publication when that reference returns.
+Raw ID/path reference changes advance a separate publication epoch even when both prove the same canonical session; the worker generation, analysis phase and cursor remain valid.
+This permits a fresh returning-path publication to recover even when the intervening ID publication was coalesced.
 A retained A publication cannot become visible through A → B → A; only a fresh owner/generation publication can restore its strings or semantic status.
 This memory is one entry per live pane, survives reconnect, and is released when the pane retires.
 A watcher restart gives its publication generations a fresh instance prefix without discarding proven same-session durable labels.
-Hook attention also requires matching provider/native-ID proof from the hook's `session_id` and `transcript_path`; missing proof and previous-session hook updates are ignored.
+Hook attention also requires matching provider/native-ID proof from the hook's `session_id` and `transcript_path`.
+The hook command checks that proof against Herdr's current native reference before recording attention, so a valid new-session hook may arrive before the watcher replaces the previous durable owner.
+Missing proof, unavailable current-reference queries and previous-session hook updates are diagnosed without personal content and ignored.
 Ownerless legacy hook attention cannot become a current session demand.
 
 ### Metadata and read budgets

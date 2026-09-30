@@ -1912,3 +1912,71 @@ fn remote_publication_fence_survives_native_return_and_replica_reconnect() {
     assert_eq!(row.identity_label, "현재 세션 작업");
     assert_eq!(row.demand, "question");
 }
+
+#[test]
+fn remote_missing_reference_restores_only_without_a_concrete_replacement() {
+    let owner = hide_session::label_reference_token("claude", "id", "native-a").unwrap();
+    let held = |reference: Option<&str>, generation: &str| {
+        wire::agents_response(json!({"type":"agent_list","agents":[{
+            "pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"claude",
+            "agent_status":"idle","terminal_id":"fixture-terminal","focused":false,"revision":0,
+            "agent_session":reference.map(|value| json!({"agent":"claude","source":"herdr:claude","kind":"id","value":value})),
+            "tokens":{"label_owner":owner,"status_owner":owner,"label_generation":generation,
+                "status_generation":generation,"task":"현재 작업","progress":"현재 진행",
+                "expected_reply":"현재 답변","status_question":"?"}
+        }]})).unwrap()
+    };
+    for replacement in [false, true] {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).unwrap();
+        replica.replace_agents(held(Some("native-a"), "writer:1"));
+        replica.refresh_published_state().unwrap();
+        assert_eq!(
+            replica.project_remote("mini").unwrap().0.agents[0].identity_label,
+            "현재 작업"
+        );
+        replica.replace_agents(held(None, "writer:1"));
+        replica.refresh_published_state().unwrap();
+        let row = replica.project_remote("mini").unwrap().0.agents.remove(0);
+        assert_eq!(
+            (row.identity_label.as_str(), row.demand.as_str()),
+            ("Claude", "none")
+        );
+        assert_eq!(
+            (row.progress, row.expected_reply, row.message),
+            (None, None, None)
+        );
+        if replacement {
+            replica.replace_agents(held(Some("native-b"), "writer:1"));
+            replica.refresh_published_state().unwrap();
+            assert_eq!(
+                replica.project_remote("mini").unwrap().0.agents[0].identity_label,
+                "Claude"
+            );
+        }
+        let mut reconnect = SessionReplica::from_snapshot(&snapshot()).unwrap();
+        reconnect.retain_label_publications(&replica);
+        reconnect.replace_agents(held(Some("native-a"), "writer:1"));
+        reconnect.refresh_published_state().unwrap();
+        let row = reconnect.project_remote("mini").unwrap().0.agents.remove(0);
+        assert_eq!(
+            row.identity_label,
+            if replacement {
+                "Claude"
+            } else {
+                "현재 작업"
+            }
+        );
+        assert_eq!(row.demand, if replacement { "none" } else { "question" });
+        if replacement {
+            reconnect.replace_agents(held(Some("native-a"), "writer:3"));
+            reconnect.refresh_published_state().unwrap();
+            assert_eq!(
+                reconnect.project_remote("mini").unwrap().0.agents[0].identity_label,
+                "현재 작업"
+            );
+        } else {
+            assert_eq!(row.progress.as_deref(), Some("현재 진행"));
+            assert_eq!(row.expected_reply.as_deref(), Some("현재 답변"));
+        }
+    }
+}

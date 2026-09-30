@@ -15,6 +15,8 @@ Tab names use core focus and the same agent row as the sidebar; process names ar
 Session label consumption validates provider/native-reference ownership before any title, progress, reply or semantic status is derived.
 The local Runtime and each remote SessionReplica hold one publication fence per live pane; a native-reference transition invalidates the previously observed atomic owner/generation pairs, including an A → B → A return before watcher publication.
 A reconnect retains the fence while a retired pane releases it, and a fresh watcher publication can restore proven same-session labels.
+A missing or unsupported reference hides the labels without retiring the last concrete reference, so a consumer-only absence can restore its unchanged valid publication.
+Equivalent ID/path references advance the producer's publication epoch without invalidating its canonical worker generation or forcing another analysis.
 This adds fixed-size comparisons and bounded per-pane state to projection, no file I/O, subprocess, timer or additional notification under the runtime mutex.
 The producer's transcript proof and physical-worker generation remain outside that lock; [status-model.md](status-model.md#task-identity) and the [plugin guide](../plugins/agent-context-labels/README.md#metadata-and-read-budgets) own their publication rules.
 

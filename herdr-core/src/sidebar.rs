@@ -1333,9 +1333,13 @@ impl LabelPublicationGuard {
                     status: status.clone(),
                     ..Default::default()
                 });
-            if fence.reference != reference {
-                fence.blocked_label = Some(fence.label.clone());
-                fence.blocked_status = Some(fence.status.clone());
+            // Missing proof hides through projection without retiring the last
+            // concrete session. Only an observed replacement invalidates it.
+            if reference.is_some() && fence.reference != reference {
+                if fence.reference.is_some() {
+                    fence.blocked_label = Some(fence.label.clone());
+                    fence.blocked_status = Some(fence.status.clone());
+                }
                 fence.reference = reference;
             }
             fence.label = label.clone();
@@ -2269,6 +2273,107 @@ mod tests {
             guard.panes.is_empty(),
             "retired pane fences do not accumulate"
         );
+    }
+
+    #[test]
+    fn a_consumer_only_missing_reference_restores_the_same_publication() {
+        let owner = hide_session::label_reference_token("claude", "id", "session-a").unwrap();
+        let snapshot = |reference: Option<&str>, generation: &str| {
+            serde_json::from_value::<SessionSnapshotPayload>(json!({"agents":[{
+                "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle",
+                "agent_session":reference.map(|value| json!({"kind":"id","value":value})),
+                "tokens":{"label_owner":owner,"status_owner":owner,
+                    "label_generation":generation,"status_generation":generation,
+                    "task":"현재 작업","progress":"현재 진행","expected_reply":"현재 답변",
+                    "status_question":"?"}
+            }]}))
+            .unwrap()
+        };
+        for replacement in [false, true] {
+            let mut guard = LabelPublicationGuard::default();
+            let mut initial_absence = snapshot(None, "writer:1");
+            guard.apply(&mut initial_absence);
+            assert_eq!(
+                project_agents(initial_absence).agents[0].identity_label,
+                "Claude"
+            );
+            let mut first = snapshot(Some("session-a"), "writer:1");
+            guard.apply(&mut first);
+            assert_eq!(project_agents(first).agents[0].identity_label, "현재 작업");
+            let mut absent = snapshot(None, "writer:1");
+            guard.apply(&mut absent);
+            let row = project_agents(absent).agents.remove(0);
+            assert_eq!(
+                (row.identity_label.as_str(), row.demand.as_str()),
+                ("Claude", "none")
+            );
+            assert_eq!(
+                (row.progress, row.expected_reply, row.message),
+                (None, None, None)
+            );
+            if replacement {
+                let mut other = snapshot(Some("session-b"), "writer:1");
+                guard.apply(&mut other);
+                assert_eq!(project_agents(other).agents[0].identity_label, "Claude");
+            }
+            let mut returned = snapshot(Some("session-a"), "writer:1");
+            guard.apply(&mut returned);
+            let row = project_agents(returned).agents.remove(0);
+            if replacement {
+                assert_eq!(
+                    (row.identity_label.as_str(), row.demand.as_str()),
+                    ("Claude", "none")
+                );
+                let mut fresh = snapshot(Some("session-a"), "writer:3");
+                guard.apply(&mut fresh);
+                assert_eq!(project_agents(fresh).agents[0].identity_label, "현재 작업");
+            } else {
+                assert_eq!(
+                    (row.identity_label.as_str(), row.demand.as_str()),
+                    ("현재 작업", "question")
+                );
+                assert_eq!(row.progress.as_deref(), Some("현재 진행"));
+                assert_eq!(row.expected_reply.as_deref(), Some("현재 답변"));
+            }
+        }
+    }
+
+    #[test]
+    fn fresh_equivalent_reference_publication_restores_after_a_coalesced_middle_report() {
+        let path = "/fixture/same-session.jsonl";
+        let owner = hide_session::label_reference_token("claude", "path", path).unwrap();
+        let snapshot = |kind: &str, value: &str, generation: &str| {
+            serde_json::from_value::<SessionSnapshotPayload>(json!({"agents":[{
+                "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle",
+                "agent_session":{"kind":kind,"value":value},
+                "tokens":{"label_owner":owner,"status_owner":owner,
+                    "label_generation":generation,"status_generation":generation,
+                    "task":"현재 작업","progress":"현재 진행","expected_reply":"현재 답변",
+                    "status_question":"?"}
+            }]}))
+            .unwrap()
+        };
+        let mut guard = LabelPublicationGuard::default();
+        let mut first = snapshot("path", path, "writer:1");
+        guard.apply(&mut first);
+        assert_eq!(project_agents(first).agents[0].identity_label, "현재 작업");
+        // The consumer observes the ID reference while retaining path tokens.
+        // The producer's equivalent ID publication is coalesced before return.
+        let mut middle = snapshot("id", "same-session", "writer:1");
+        guard.apply(&mut middle);
+        assert_eq!(project_agents(middle).agents[0].identity_label, "Claude");
+        let mut retained = snapshot("path", path, "writer:1");
+        guard.apply(&mut retained);
+        assert_eq!(project_agents(retained).agents[0].identity_label, "Claude");
+        let mut fresh = snapshot("path", path, "writer:3");
+        guard.apply(&mut fresh);
+        let row = project_agents(fresh).agents.remove(0);
+        assert_eq!(
+            (row.identity_label.as_str(), row.demand.as_str()),
+            ("현재 작업", "question")
+        );
+        assert_eq!(row.progress.as_deref(), Some("현재 진행"));
+        assert_eq!(row.expected_reply.as_deref(), Some("현재 답변"));
     }
 
     #[test]

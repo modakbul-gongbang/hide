@@ -1278,58 +1278,75 @@ fn hook_session_owner(payload: &serde_json::Value) -> Option<String> {
 
 /// The hook records what it saw and returns. Rendering belongs to the watcher,
 /// which is the only writer of this plugin's display tokens.
-pub fn apply_hook_payload(
+pub fn apply_hook_payload<T: HerdrTransport>(
     paths: &StatePaths,
     pane_id: &str,
     payload: &serde_json::Value,
+    transport: &T,
 ) -> Result<HookUpdate> {
     let update = classify_hook_payload(payload);
     if update == HookUpdate::Ignore {
         return Ok(update);
     }
-    fs::create_dir_all(&paths.root)?;
-    let _lock = locked_state_file(&paths.hook_state_lock())?;
-    let mut states = load_hook_states(paths);
     let owner = hook_session_owner(payload);
-    let current_owner = load_display_states(&paths.display_state())
-        .0
-        .panes
-        .get(pane_id)
-        .and_then(|state| state.session_owner.clone());
-    if owner.is_none()
-        || current_owner
-            .as_ref()
-            .is_some_and(|current| owner.as_ref() != Some(current))
-    {
+    // The display file can still contain A when Herdr already owns B. Check
+    // the authoritative native reference before taking the hook-state lock.
+    let current_owner = if owner.is_some() {
+        transport.panes().map(|panes| {
+            panes
+                .into_iter()
+                .find(|pane| pane.id == pane_id)
+                .and_then(|pane| {
+                    let reference = pane.agent_session.as_ref()?;
+                    match reference.kind.as_str() {
+                        "id" => native_reference_token(&pane),
+                        "path" => {
+                            let agent = match pane.agent {
+                                AgentKind::Claude => hide_session::Agent::Claude,
+                                AgentKind::Codex => hide_session::Agent::Codex,
+                            };
+                            confirm_label_session(agent, Path::new(&reference.value), None)
+                                .ok()
+                                .map(|proof| proof.owner)
+                        }
+                        _ => None,
+                    }
+                })
+        })
+    } else {
+        Ok(None)
+    };
+    let class = match current_owner {
+        Ok(current) if owner.is_some() && current == owner => None,
+        Ok(_) => Some("hook_owner_unconfirmed_or_obsolete"),
+        Err(_) => Some("hook_native_query_failed"),
+    };
+    if let Some(class) = class {
         append_log(
             paths,
             "hook_discarded_session",
             None,
             Some(&format!(
-                "class=hook_owner_unconfirmed_or_obsolete;pane={pane_id};owner={}",
+                "class={class};pane={pane_id};owner={}",
                 owner.as_deref().unwrap_or("unconfirmed")
             )),
         )?;
         return Ok(HookUpdate::Ignore);
     }
+    fs::create_dir_all(&paths.root)?;
+    let _lock = locked_state_file(&paths.hook_state_lock())?;
+    let mut states = load_hook_states(paths);
     let event = payload
         .get("hook_event_name")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let tool_id = hook_tool_id(payload);
     if update == HookUpdate::Clear
-        && states
-            .panes
-            .get(pane_id)
-            .is_some_and(|state| state.session_owner != owner)
-    {
-        return Ok(HookUpdate::Ignore);
-    }
-    if update == HookUpdate::Clear
         && matches!(event, "PostToolUse" | "PostToolUseFailure")
         && states
             .panes
             .get(pane_id)
+            .filter(|state| state.session_owner == owner)
             .and_then(|state| state.pending_tool_id.as_ref())
             .is_some_and(|pending_id| tool_id.as_ref() != Some(pending_id))
     {
@@ -1860,6 +1877,7 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     ai_settings_failure: Option<String>,
     sessions: HashMap<String, LabelSessionFence>,
     next_session_generation: u64,
+    next_publication_generation: u64,
     publication_instance: String,
 }
 
@@ -1868,6 +1886,7 @@ struct LabelSessionFence {
     reference: Option<String>,
     confirmed: Option<ConfirmedLabelSession>,
     generation: u64,
+    publication_generation: u64,
     failure: Option<String>,
 }
 
@@ -1924,6 +1943,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             ai_settings_failure: None,
             sessions: HashMap::new(),
             next_session_generation: 0,
+            next_publication_generation: 0,
             publication_instance: format!(
                 "{:x}-{:x}",
                 SystemTime::now()
@@ -2232,9 +2252,14 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             .next_session_generation
             .checked_add(1)
             .ok_or_else(|| anyhow!("label_session_generation_capacity"))?;
+        self.next_publication_generation = self
+            .next_publication_generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("label_publication_generation_capacity"))?;
         if let Some(session) = self.sessions.get_mut(&pane.id) {
             session.confirmed = None;
             session.generation = self.next_session_generation;
+            session.publication_generation = self.next_publication_generation;
         }
         self.clear_session_scheduling(pane);
         Ok(())
@@ -2284,6 +2309,15 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let reference_changed = previous.is_none_or(|before| before.reference != reference);
         let failure_changed = previous.is_none_or(|before| before.failure != failure);
         let mut generation = previous.map_or(0, |session| session.generation);
+        let mut publication_generation =
+            previous.map_or(0, |session| session.publication_generation);
+        if boundary || reference_changed {
+            self.next_publication_generation = self
+                .next_publication_generation
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("label_publication_generation_capacity"))?;
+            publication_generation = self.next_publication_generation;
+        }
         if boundary {
             self.next_session_generation = self
                 .next_session_generation
@@ -2358,6 +2392,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 reference,
                 confirmed,
                 generation,
+                publication_generation,
                 failure,
             },
         );
@@ -2954,10 +2989,12 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         Identity {
             task: state.task.clone(),
             owner: native_reference_token(pane),
-            generation: self
-                .sessions
-                .get(&pane.id)
-                .map(|session| format!("{}:{:x}", self.publication_instance, session.generation)),
+            generation: self.sessions.get(&pane.id).map(|session| {
+                format!(
+                    "{}:{:x}",
+                    self.publication_instance, session.publication_generation
+                )
+            }),
             activity: 0,
             progress: non_empty(&state.progress),
             expected_reply: non_empty(&state.expected_reply),
@@ -3022,7 +3059,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             "label_publication_failed",
             Some(pane),
             Some(&format!(
-                "class={class};report={report};reference={};owner={};generation={}",
+                "class={class};report={report};reference={};owner={};generation={};publication_generation={}",
                 session
                     .and_then(|s| s.reference.as_deref())
                     .unwrap_or("absent"),
@@ -3030,6 +3067,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                     .and_then(|s| s.confirmed.as_ref())
                     .map_or("unconfirmed", |s| s.owner.as_str()),
                 session.map_or(0, |s| s.generation),
+                session.map_or(0, |s| s.publication_generation),
             )),
         )?;
         Err(anyhow!("label_publication_failed:{report}"))

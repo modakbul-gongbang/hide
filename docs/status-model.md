@@ -376,7 +376,9 @@ The plugin’s `task`, `progress` and `expected_reply` are accepted only when th
 `sidebar.rs::project_agent` rejects missing, unsupported and mismatched ownership before deriving any title, detail or message, including the first snapshot after a native-session transition.
 Atomic `status_owner` and `status_generation` independently guard plugin demand; Herdr’s actual lifecycle remains the fallback.
 The local Runtime and remote SessionReplica each retain one publication fence per live pane, preserving it across reconnect and retiring it with the pane.
-An observed native-reference change invalidates the previously published owner/generation pairs, so retained A strings or demand cannot reappear on A → B → A before a fresh publication.
+An observed different concrete native reference invalidates the previously published owner/generation pairs, so retained A strings or demand cannot reappear on A → B → A before a fresh publication.
+Missing or unsupported references suppress the strings and semantic status while preserving the last concrete-reference fence; returning that same reference restores an unchanged publication unless another concrete session was observed.
+`label_generation` advances on each raw ID/path reference change, independently of the canonical worker generation, so equivalent-reference publications coalesced between frames still recover.
 `label_generation` accompanies the label group, and a restart uses a fresh watcher instance prefix while restoring only proven same-session labels.
 This comparison adds fixed-size token checks per projected agent, no worker, subprocess or I/O under the runtime lock, and no new notification beyond an actual projected state transition.
 The plugin proves durable ownership from transcript metadata, restores only that same provider/native ID after restart or reconnect, hides labels during temporary reference absence and rejects ownerless legacy state.
