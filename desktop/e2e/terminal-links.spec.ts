@@ -83,7 +83,9 @@ async function print(page: Page, paneId: string, lines: string[], last: string):
   // Leave the old row before replacing its text so xterm requests fresh links
   // when the next real hover enters it, including after an empty/error answer.
   const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
-  const away = await cellPoint(page, paneId, { row: grid.rows - 1, column: 0 });
+  // The first column is covered by the pane resize grab, so use the middle.
+  const away = await cellPoint(page, paneId, { row: grid.rows - 1, column: Math.floor(grid.cols / 2) });
+  expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest(".xterm") != null, away)).toBe(true);
   await page.mouse.move(away.x, away.y);
   const file = path.join(herdr.root, `print-${Date.now()}.txt`);
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
