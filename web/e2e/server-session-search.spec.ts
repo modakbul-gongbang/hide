@@ -5,7 +5,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace } from "./wire";
-import { openSessions, startServer, writeConversation } from "./server-session-fixture";
+import { openServerButton, openSessions, startServer, writeConversation } from "./server-session-fixture";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -37,7 +37,8 @@ test("running Workspace ports and conversation content: keyboard, jump, scroll, 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    const globe = page.getByRole("button", { name: "Open server", exact: true });
+    const globe = openServerButton(page);
+    await expect(globe).toHaveCount(1);
     await globe.click();
     await expect(page.getByText("No running servers in this Workspace.")).toBeVisible({ timeout: 15_000 });
     await page.keyboard.press("Escape");

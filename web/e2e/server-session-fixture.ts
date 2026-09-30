@@ -4,6 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
+export function openServerButton(page: Page) {
+  // Expanded panels retain the covered agent toolbar in an inert subtree.
+  // Role queries can still include it; only the active control can be used.
+  return page.locator('[data-open-server]:not([inert] *)');
+}
+
 export function writeConversation(home: string, cwd: string, id = "search-session"): string {
   const directory = path.join(home, ".codex/sessions/2026/10/01");
   fs.mkdirSync(directory, { recursive: true });
@@ -33,4 +39,3 @@ export async function openSessions(page: Page): Promise<void> {
   await page.locator('[data-lens-tile-button="sessions"]').click();
   await expect(page.locator("[data-sessions-screen]")).toBeVisible();
 }
-
