@@ -129,6 +129,9 @@ test("native session replacement hides stale labels before the watcher publishes
     await expect(page.locator('[data-palette="Search"]')).not.toContainText("세션 A의 한글 작업");
     await capture("session-b-current");
     await page.keyboard.press("Escape");
+    // Retire the earlier synthetic demand before observing actual hook publication.
+    report(["report-metadata", pane, "--source", "e2e", "--clear-token", "status_question_new"]);
+    await expect.poll(() => consumedDemand).toBe("none");
     const stateRoot = path.join(watcherHome, ".local/state/hide.agent-context-labels");
     const transcriptRoot = path.join(watcherHome, ".claude/projects/fixture");
     fs.mkdirSync(stateRoot, { recursive: true });
@@ -153,6 +156,10 @@ test("native session replacement hides stale labels before the watcher publishes
     // Preserve durable A until actual watcher reconciliation confirms B.
     await expect.poll(() => JSON.parse(fs.readFileSync(displayFile, "utf8")).panes[pane].session_owner).toBe(owner("session-b"));
     await expect.poll(() => consumedDemand).toBe("question");
+    const hookTokens = (herdr.run(["agent", "list"]) as { result: { agents: { pane_id: string; tokens: Record<string, string> }[] } }).result.agents.find((agent) => agent.pane_id === pane)!.tokens;
+    expect(hookTokens.status_owner).toBe(owner("session-b"));
+    expect(hookTokens.status_generation).not.toMatch(/^fixture:/);
+    expect([hookTokens.status_question, hookTokens.status_question_new]).toContain("?");
     const reconciledHook = JSON.parse(fs.readFileSync(path.join(stateRoot, "hook-state.json"), "utf8")).panes[pane];
     expect(reconciledHook.session_owner).toBe(owner("session-b"));
     expect(reconciledHook.attention).toBe("question");
@@ -160,7 +167,7 @@ test("native session replacement hides stale labels before the watcher publishes
     await expect(tab).toContainText("Claude");
     await expect(page.getByText("이전 A hook fixture", { exact: true })).toHaveCount(0);
     await capture("early-current-hook-reconciled");
-    if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "early-current-hook-reconciled.json"), JSON.stringify({ ...candidate, head: process.env.HIDE_QA_HEAD, pane, hookOwner: reconciledHook.session_owner, attention: reconciledHook.attention, demand: consumedDemand, actualWatcherReconciliation: true }));
+    if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "early-current-hook-reconciled.json"), JSON.stringify({ ...candidate, head: process.env.HIDE_QA_HEAD, pane, hookOwner: reconciledHook.session_owner, attention: reconciledHook.attention, demand: consumedDemand, publicationGeneration: hookTokens.status_generation, initialDemandCleared: true, actualWatcherReconciliation: true }));
     await stopWatcher();
     // Separately seed proven same-B state for restart/restoration observation.
     fs.writeFileSync(displayFile, JSON.stringify({ panes: { [pane]: { session_owner: owner("session-b"), state_change_seq: 1, changed_unix_ms: Date.now(), task: "워처가 복원한 한글 작업", progress: "검증된 세션 진행", expected_reply: "", unseen: false } } }));
