@@ -234,7 +234,9 @@ function interpretations(token: string): Interpretation[] {
     const match = GRAMMAR.exec(text);
     return match ? text.slice(0, match.index + 1) : null;
   };
-  const rawGrammarText = withoutParticle(token);
+  // Existing outer sentence punctuation is context, but raw leading symbols
+  // remain part of this grammar-only literal stage.
+  const rawGrammarText = withoutParticle(token.slice(0, token.length - symbols.trail));
   const grammarText = withoutParticle(symbols.text);
   const grammar = grammarText === null ? { text: symbols.text, lead: 0, trail: 0 } : strip(grammarText);
   const interpreted = parseTarget(grammar.text);

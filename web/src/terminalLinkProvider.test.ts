@@ -145,6 +145,8 @@ describe("original spelling and bounded hover work", () => {
     ["(docs/a.md)에", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
     ["docs/a.md)에.", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
     ["(docs/a.md)에", ["docs/a.md", "docs/a.md)", "(docs/a.md)"], "(docs/a.md)"],
+    ["(docs/a.md)에.", ["docs/a.md", "docs/a.md)", "(docs/a.md)"], "(docs/a.md)"],
+    ["(docs/a.md)에,", ["docs/a.md", "docs/a.md)", "(docs/a.md)"], "(docs/a.md)"],
     ["(src/a.ts:12:4)에", ["src/a.ts", "src/a.ts:12:4"], "src/a.ts:12:4"],
     ["src/a.ts:12:4)에", ["src/a.ts", "src/a.ts:12:4"], "src/a.ts:12:4"],
     ["docs/a.md)", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
@@ -174,6 +176,18 @@ describe("original spelling and bounded hover work", () => {
       const text = index === 5 ? spellings[4]! : spellings[index]!;
       const start = text.startsWith("(") ? 0 : 1;
       expect(candidate.spans).toEqual([{ row: 0, start, end: start + text.length + (text.endsWith("에") ? 1 : 0) }]);
+    }
+  });
+
+  it("keeps raw leading and closing literals with a location and trailing sentence punctuation", async () => {
+    for (const punctuation of [".", ",", ")", "]", "!", "?"]) {
+      clearProbeCache();
+      const token = "(src/a.ts:12:5)에" + punctuation;
+      const groups = linkCandidates([row(token, 40)], 0);
+      expect(groups[0]).toHaveLength(6);
+      const chosen = await resolveGroups(groups, { cwd: "/w", root: "/r" }, host(["/w/(src/a.ts:12:5)", "/w/src/a.ts:12:5)", "/w/src/a.ts:12:5", "/w/src/a.ts"]));
+      expect(chosen[0]!.resolved.found!.real).toBe("/w/(src/a.ts:12:5)");
+      expect(chosen[0]!.candidate.spans).toEqual([{ row: 0, start: 0, end: 15 }]);
     }
   });
 

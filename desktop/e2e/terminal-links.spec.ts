@@ -366,16 +366,18 @@ test("Korean prose links only the real path and opens that file", async () => {
   // Independent fixture names keep TTL hits from a prior collision from
   // deciding this one. Every shorter stage really exists alongside the winner.
   const collisions = [];
-  for (let stage = 0; stage < 6; stage += 1) {
-    const base = "docs/composite-" + stage + ".ts";
-    const written = "(" + base + ":12:5)에";
+  for (let caseIndex = 0; caseIndex < 12; caseIndex += 1) {
+    const stage = caseIndex % 6;
+    const punctuation = caseIndex < 6 ? "" : ".";
+    const base = "docs/composite-" + caseIndex + ".ts";
+    const written = "(" + base + ":12:5)에" + punctuation;
     const spellings = [written, base + ":12:5)에", "(" + base + ":12:5)", base + ":12:5)", base + ":12:5", base];
     const selected = spellings[stage]!;
     for (const file of spellings.slice(stage)) {
       fs.mkdirSync(path.join(checkout, path.dirname(file)), { recursive: true });
       fs.writeFileSync(path.join(checkout, file), Array.from({ length: 20 }, (_, line) => "// selected " + file + " line " + (line + 1)).join("\n"));
     }
-    await print(page, paneId, ["합성 " + written, "COMPOSITE-END-" + stage], "COMPOSITE-END-" + stage);
+    await print(page, paneId, ["합성 " + written, "COMPOSITE-END-" + caseIndex], "COMPOSITE-END-" + caseIndex);
     const first = await cellOf(page, paneId, written);
     const text = stage === 5 ? spellings[4]! : selected;
     const start = first.column + (text.startsWith("(") ? 0 : 1);
@@ -391,12 +393,12 @@ test("Korean prose links only the real path and opens that file", async () => {
     }
     const inside = await cellPoint(page, paneId, { row: first.row, column: start });
     await hoverLink(page, paneId, inside);
-    await nativeCapture("korean-composite-stage-" + stage + "-hover");
+    await nativeCapture("korean-composite-stage-" + caseIndex + "-hover");
     await page.mouse.click(inside.x, inside.y);
     await expect(page.locator(".cm-content")).toContainText("selected " + selected + " line ");
     if (stage === 5) await expect(page.locator(".cm-activeLine").first()).toHaveText("// selected " + selected + " line 12");
-    collisions.push({ stage, written, selected, range: { row: first.row, start, end }, line: stage === 5 ? 12 : null, column: stage === 5 ? 5 : null });
-    await nativeCapture("korean-composite-stage-" + stage + "-open");
+    collisions.push({ stage, punctuation, written, selected, range: { row: first.row, start, end }, line: stage === 5 ? 12 : null, column: stage === 5 ? 5 : null });
+    await nativeCapture("korean-composite-stage-" + caseIndex + "-open");
   }
   if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "composite-click-observations.json"), JSON.stringify(collisions, null, 2));
 

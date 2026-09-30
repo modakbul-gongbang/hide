@@ -180,12 +180,14 @@ describe("bounded Korean interpretations", () => {
   });
 
   it("bounds every joined spelling to six interpretations and every hovered token to sixteen joins", () => {
-    const rows = Array.from({ length: 7 }, () => row("docs/a.md)에", 12));
+    const rows = Array.from({ length: 7 }, (_, index) => row("docs/" + String.fromCharCode(97 + index) + ".md)에", 12));
     const groups = linkCandidates(rows, 3);
     expect(groups).toHaveLength(1);
     // All seven rows are fully occupied: four starts times four ends make
     // sixteen distinct joined spellings around the middle row.
-    expect(groups[0]!.filter((candidate) => candidate.original)).toHaveLength(16);
+    const originals = groups[0]!.filter((candidate) => candidate.original);
+    expect(originals).toHaveLength(16);
+    expect(new Set(originals.map((candidate) => candidate.text)).size).toBe(16);
     expect(groups[0]).toHaveLength(48); // This fixture has three distinct stages per join.
     expect(groups[0]!.length * 2).toBeLessThanOrEqual(192);
     expect(groups[0]!.filter((candidate) => !candidate.original).length * 2).toBeLessThanOrEqual(160);
