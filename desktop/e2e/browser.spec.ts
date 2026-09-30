@@ -490,7 +490,7 @@ function menuClick(id: string): Promise<void> {
 /** Real macOS input, refused unless this candidate is the foreground process. */
 function nativeKeys(pid: number, statements: string): void {
   const script = `tell application "System Events"
-if unix id of first application process whose frontmost is true is not ${pid} then error "candidate lost foreground"
+if (unix id of (first application process whose frontmost is true)) is not ${pid} then error "candidate lost foreground"
 ${statements}
 end tell`;
   const result = spawnSync("/usr/bin/osascript", ["-e", script], { encoding: "utf8", timeout: 10_000 });
@@ -528,7 +528,15 @@ test("area cycle native: page input previews one exact area, releases once and c
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
       child.webContents.focus();
     }, url);
-    await expect.poll(async () => (await zoomOf(url)).focused).toBe(true);
+    // macOS activates the window asynchronously; focus its visible page
+    // again after that activation rather than accepting shell focus alone.
+    await expect.poll(() => app!.evaluate(({ app: electron, BrowserWindow }, url) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      electron.focus({ steal: true }); window.focus();
+      const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+      child.webContents.focus();
+      return child.webContents.isFocused();
+    }, url)).toBe(true);
   };
   const capture = async (name: string) => {
     const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
