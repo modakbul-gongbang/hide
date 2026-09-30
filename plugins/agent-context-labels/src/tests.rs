@@ -240,7 +240,7 @@ fn unchanged_pane_finishes_the_session_backlog_before_requesting_a_label() {
     fs::write(
         &path,
         format!(
-            "{}{tool}{}",
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"backlog-session\"}}}}\n{}{tool}{}",
             message("이전 작업"),
             message("최신 라벨 복구 작업")
         ),
@@ -326,7 +326,7 @@ fn session_path_prefers_the_herdr_reported_identity() {
 }
 
 #[test]
-fn session_path_falls_back_to_the_newest_file_for_the_working_directory() {
+fn labels_do_not_guess_a_claude_session_from_the_working_directory() {
     let root = tempdir().unwrap();
     let project = root.path().join(".claude/projects/-Users-example");
     fs::create_dir_all(&project).unwrap();
@@ -343,7 +343,15 @@ fn session_path_falls_back_to_the_newest_file_for_the_working_directory() {
     // session whose file is not there yet is missing, not the neighbour's.
     target.agent_session = None;
 
-    assert_eq!(reader.session_path(&target).unwrap(), newer);
+    assert_eq!(
+        reader.session_path(&target).unwrap_err().to_string(),
+        "label_session_reference_missing"
+    );
+    target.agent_session = Some(AgentSession::new("unsupported", "unknown"));
+    assert_eq!(
+        reader.session_path(&target).unwrap_err().to_string(),
+        "session_kind_unsupported"
+    );
 }
 
 #[test]
@@ -366,7 +374,7 @@ fn session_path_of_a_reported_session_without_a_file_is_missing() {
 }
 
 #[test]
-fn codex_session_falls_back_through_the_recent_day_directories() {
+fn labels_do_not_guess_a_codex_session_from_recent_day_directories() {
     let root = tempdir().unwrap();
     let day = root.path().join(".codex/sessions/2026/08/14");
     fs::create_dir_all(&day).unwrap();
@@ -390,7 +398,10 @@ fn codex_session_falls_back_through_the_recent_day_directories() {
     target.cwd = Some("/Users/example/projects/mine".to_owned());
     target.agent_session = None;
 
-    assert_eq!(reader.session_path(&target).unwrap(), mine);
+    assert_eq!(
+        reader.session_path(&target).unwrap_err().to_string(),
+        "label_session_reference_missing"
+    );
 }
 
 #[test]
@@ -1380,9 +1391,11 @@ fn a_cleared_hook_retires_an_older_semantic_verdict() {
         FakeSessionReader,
         paths,
     );
+    watcher.reconcile_session(&subject).unwrap();
     watcher.display_states.panes.insert(
         subject.id.clone(),
         PersistedDisplayState {
+            session_owner: Some(fixture_session(&subject).unwrap().owner),
             semantic_attention: Some(Attention::Question),
             analysis_unix_ms: 1_000,
             ..PersistedDisplayState::default()
@@ -1720,7 +1733,11 @@ fn metadata_clears_every_status_token_it_may_own() {
     );
     let tokens = params["tokens"].as_object().unwrap();
 
-    assert_eq!(tokens["task"], "작업 요약 제목");
+    assert!(
+        !tokens.contains_key("task"),
+        "task travels atomically with its sentences and owner"
+    );
+    assert!(tokens.contains_key("status_owner"));
     assert!(!tokens.contains_key("summary"));
     assert!(!tokens.contains_key("progress"));
     assert_eq!(tokens.len(), 16);
@@ -2321,7 +2338,12 @@ impl HerdrTransport for BrokenTransport {
 
 impl<R: SessionReader> Watcher<FakeTransport, R> {
     fn last_report(&self) -> Display {
-        self.transport.reports.borrow().last().cloned().unwrap()
+        let mut display = self.transport.reports.borrow().last().cloned().unwrap();
+        if let Some((_, identity)) = self.transport.identity_reports.borrow().last() {
+            display.task = identity.task.clone();
+            display.identity = identity.clone();
+        }
+        display
     }
 }
 
@@ -2707,6 +2729,9 @@ impl ScriptedSessionReader {
 }
 
 impl SessionReader for ScriptedSessionReader {
+    fn confirm(&mut self, pane: &Pane) -> Result<ConfirmedLabelSession> {
+        fixture_session(pane)
+    }
     fn read(&mut self, _: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
             title: None,
@@ -2722,6 +2747,9 @@ impl SessionReader for ScriptedSessionReader {
 struct FakeSessionReader;
 
 impl SessionReader for FakeSessionReader {
+    fn confirm(&mut self, pane: &Pane) -> Result<ConfirmedLabelSession> {
+        fixture_session(pane)
+    }
     fn read(&mut self, _: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
             title: None,
@@ -2917,6 +2945,9 @@ fn a_label_request_carries_the_feature_prompt_and_schema() {
 struct StateSequenceReader;
 
 impl SessionReader for StateSequenceReader {
+    fn confirm(&mut self, pane: &Pane) -> Result<ConfirmedLabelSession> {
+        fixture_session(pane)
+    }
     fn read(&mut self, pane: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
             title: None,
@@ -3220,6 +3251,7 @@ fn identity_params_clear_absent_tokens_explicitly() {
     let identity = Identity {
         progress: None,
         expected_reply: None,
+        ..Identity::default()
     };
     let params = identity_params(&pane("w1:p1", AgentKind::Claude, "idle"), &identity);
     assert_eq!(params["pane_id"], json!("w1:p1"));
@@ -3227,6 +3259,397 @@ fn identity_params_clear_absent_tokens_explicitly() {
     assert_eq!(params["tokens"]["name"], Value::Null);
     assert_eq!(params["tokens"]["progress"], Value::Null);
     assert_eq!(params["tokens"]["expected_reply"], Value::Null);
+}
+
+#[test]
+fn atomic_label_and_status_reports_clear_old_values_with_fixed_budgets() {
+    let mut retained = serde_json::Map::new();
+    for index in 0..40 {
+        let mut subject = pane(
+            "w1:p1",
+            if index % 2 == 0 {
+                AgentKind::Claude
+            } else {
+                AgentKind::Codex
+            },
+            "working",
+        );
+        subject.agent_session = Some(AgentSession::new(
+            "path",
+            &format!("/fixture/{index}/{}", "x".repeat(512)),
+        ));
+        let identity = if index % 3 == 0 {
+            Identity::default()
+        } else {
+            Identity {
+                task: Some("현재 세션 작업 결과".into()),
+                owner: native_reference_token(&subject),
+                progress: Some("현재 진행".into()),
+                expected_reply: Some("현재 답변 요청".into()),
+            }
+        };
+        let display = Display {
+            task: identity.task.clone(),
+            status: StatusIcon::Working,
+            sort_key: SortKey::Working,
+            elapsed: Some("1s".into()),
+            unseen: false,
+            activity_unix_ms: 100,
+            identity: identity.clone(),
+        };
+        for (report, expected_keys) in [
+            (metadata_params(&subject, &display), 16),
+            (identity_params(&subject, &identity), 6),
+        ] {
+            assert_eq!(report["source"], PLUGIN_ID);
+            let tokens = report["tokens"].as_object().unwrap();
+            assert_eq!(tokens.len(), expected_keys);
+            assert!(tokens.len() <= 16);
+            for (key, value) in tokens {
+                if let Some(value) = value.as_str() {
+                    assert!(value.chars().count() <= 80);
+                }
+                if value.is_null() {
+                    retained.remove(key);
+                } else {
+                    retained.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        assert!(retained.len() <= 32);
+        assert_eq!(
+            retained.get("task").and_then(Value::as_str),
+            identity.task.as_deref()
+        );
+        assert_eq!(
+            retained.get("label_owner").and_then(Value::as_str),
+            identity.owner.as_deref()
+        );
+        assert!(!retained.contains_key(subject.agent.other_icon_token()));
+    }
+}
+
+// These reader doubles establish an explicit provider/native-id owner. File
+// metadata proof itself is exercised with LocalSessionReader and real JSONL.
+#[test]
+fn stale_session_success_error_and_retry_cannot_mutate_a_replacement_or_returned_owner() {
+    for returned_a in [false, true] {
+        for outcome_kind in 0..3 {
+            let root = tempdir().unwrap();
+            let paths = StatePaths::for_tests(root.path());
+            set_automatic_summaries(&paths, false).unwrap();
+            let a = pane("w1:p1", AgentKind::Codex, "idle");
+            let mut watcher = Watcher::new(
+                FakeTransport::new(vec![a.clone()]),
+                no_provider(),
+                FakeSessionReader,
+                paths,
+            );
+            watcher
+                .scan_panes(std::slice::from_ref(&a), false, false)
+                .unwrap();
+            let owner = watcher.sessions[&a.id]
+                .confirmed
+                .as_ref()
+                .unwrap()
+                .owner
+                .clone();
+            let generation = watcher.sessions[&a.id].generation;
+            watcher.analysis_in_flight.insert(a.id.clone());
+            let mut b = a.clone();
+            b.agent_session = Some(AgentSession::new("id", "replacement-session"));
+            b.revision += 1;
+            watcher
+                .scan_panes(std::slice::from_ref(&b), false, false)
+                .unwrap();
+            assert_eq!(
+                watcher.analysis_in_flight.len(),
+                1,
+                "an invalidated physical worker remains charged"
+            );
+            let current = if returned_a { &a } else { &b };
+            if returned_a {
+                watcher
+                    .scan_panes(std::slice::from_ref(&a), false, false)
+                    .unwrap();
+            }
+            let result = match outcome_kind {
+                0 => Ok((
+                    ProviderId::Codex,
+                    Analysis {
+                        task: "이전 세션 작업 결과".into(),
+                        task_changed: true,
+                        progress: "이전 진행".into(),
+                        expected_reply: "이전 답변 요청".into(),
+                        attention: Some(Attention::Question),
+                    },
+                )),
+                1 => Err(AnalysisFailure::Worker("old_failure".into())),
+                _ => Err(AnalysisFailure::Provider(AiError::UsageLimited {
+                    retry_after: Some(Duration::from_secs(600)),
+                })),
+            };
+            watcher
+                .analysis_sender
+                .send(AnalysisOutcome {
+                    pane_id: a.id.clone(),
+                    owner,
+                    generation,
+                    turn: 99,
+                    phase: AnalysisPhase::TurnEnd,
+                    context_chars: 10,
+                    task_input_cursor: Some(99),
+                    initial_context: true,
+                    result,
+                })
+                .unwrap();
+            watcher
+                .scan_panes(std::slice::from_ref(current), false, false)
+                .unwrap();
+            let state = &watcher.display_states.panes[&a.id];
+            assert_eq!(
+                (
+                    &state.task,
+                    state.progress.as_str(),
+                    state.expected_reply.as_str()
+                ),
+                (&None, "", "")
+            );
+            assert_eq!(
+                (
+                    state.task_input_cursor,
+                    state.analysis_turn_start,
+                    state.analysis_turn_end,
+                    state.semantic_attention
+                ),
+                (None, None, None, None)
+            );
+            assert!(!watcher.next_analysis_at.contains_key(&a.id));
+            assert!(watcher.analysis_in_flight.is_empty());
+            assert!(watcher.last_report().task.is_none());
+        }
+    }
+}
+
+#[test]
+fn proven_id_path_restart_lifecycle_and_transient_absence_restore_without_reanalysis() {
+    let home = tempdir().unwrap();
+    let project = home.path().join(".claude/projects/fixture");
+    fs::create_dir_all(&project).unwrap();
+    let path = project.join("same-session.jsonl");
+    fs::write(&path, format!("{}\n", json!({"type":"user", "sessionId":"same-session", "timestamp": "2026-09-30T10:00:00Z", "origin":{"kind":"human"}, "message":{"role":"user", "content":"같은 세션 라벨을 복원해줘"}}))).unwrap();
+    let mut subject = pane("w1:p1", AgentKind::Claude, "idle");
+    subject.agent_session = Some(AgentSession::new("id", "same-session"));
+    let backend = task_backend();
+    let paths = StatePaths::for_tests(&home.path().join("state"));
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![subject.clone()]),
+        router_with(&backend),
+        LocalSessionReader::new(home.path()),
+        paths.clone(),
+    );
+    watcher.settle();
+    let identity = watcher.last_report().identity.clone();
+    assert!(identity.task.is_some());
+    subject.agent_session = Some(AgentSession::new("path", path.to_str().unwrap()));
+    subject.state_change_seq += 10;
+    subject.revision += 1;
+    watcher
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    assert_eq!(watcher.last_report().task, identity.task);
+    assert_eq!(backend.calls(), 1);
+    let mut restarted = Watcher::new(
+        FakeTransport::new(vec![subject.clone()]),
+        router_with(&backend),
+        LocalSessionReader::new(home.path()),
+        paths,
+    );
+    restarted.scan().unwrap();
+    assert_eq!(restarted.last_report().task, identity.task);
+    assert_eq!(
+        backend.calls(),
+        1,
+        "restart preserves per-turn analysis phases"
+    );
+    let valid_owner = restarted.display_states.panes[&subject.id]
+        .session_owner
+        .clone();
+    subject.agent_session = None;
+    restarted
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    assert!(restarted.last_report().task.is_none());
+    assert!(restarted.last_report().identity.progress.is_none());
+    assert_eq!(
+        restarted.display_states.panes[&subject.id].session_owner,
+        valid_owner
+    );
+    subject.agent_session = Some(AgentSession::new("id", "same-session"));
+    restarted
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    assert_eq!(restarted.last_report().task, identity.task);
+    assert_eq!(backend.calls(), 1);
+    fs::remove_file(&path).unwrap();
+    restarted
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    assert!(
+        restarted.last_report().task.is_none(),
+        "a missing transcript cannot prove restoration"
+    );
+}
+
+#[test]
+fn ownerless_state_never_restores_labels_even_with_analysis_disabled() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    set_automatic_summaries(&paths, false).unwrap();
+    let subject = pane("w1:p1", AgentKind::Claude, "working");
+    let mut saved = DisplayStates::default();
+    saved.panes.insert(
+        subject.id.clone(),
+        PersistedDisplayState {
+            task: Some("주인 없는 이전 작업".into()),
+            progress: "이전 진행".into(),
+            expected_reply: "이전 답변 요청".into(),
+            semantic_attention: Some(Attention::Question),
+            task_input_cursor: Some(99),
+            ..Default::default()
+        },
+    );
+    write_state_json(&paths.display_state(), &saved, "fixture").unwrap();
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![subject]),
+        no_provider(),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.scan().unwrap();
+    let display = watcher.last_report();
+    assert_eq!(display.task, None);
+    assert_eq!(display.identity.progress, None);
+    assert_eq!(display.identity.expected_reply, None);
+    assert_eq!(display.status, StatusIcon::Working);
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert!(log.contains("label_session_reset"));
+    assert!(!log.contains("주인 없는 이전 작업"));
+}
+
+struct HeldBackend {
+    started: mpsc::Sender<()>,
+    release: Mutex<mpsc::Receiver<()>>,
+    calls: AtomicUsize,
+    active: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+impl AiBackend for HeldBackend {
+    fn id(&self) -> ProviderId {
+        ProviderId::Codex
+    }
+    fn availability(&self) -> Availability {
+        Availability::Ready
+    }
+    fn models(&self) -> hide_ai::ModelCatalog {
+        hide_ai::ModelCatalog::Offered(vec!["fixture".into()])
+    }
+    fn execute(
+        &self,
+        _: &hide_ai::AiRequest,
+        _: &CancelToken,
+    ) -> std::result::Result<AiResponse, AiError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(active, Ordering::SeqCst);
+        if call == 0 {
+            self.started.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+        }
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Ok(AiResponse {
+            value: json!({"task":if call == 0 {"이전 세션 작업 결과"} else {"현재 세션 작업 결과"}, "task_changed":true,"progress":"현재 진행","expected_reply":"","attention":"none"}),
+            usage: AiUsage::default(),
+        })
+    }
+}
+
+#[test]
+fn a_held_worker_remains_the_only_physical_analysis_across_a_b_a() {
+    let root = tempdir().unwrap();
+    let (started, started_receiver) = mpsc::channel();
+    let (release, release_receiver) = mpsc::channel();
+    let backend = Arc::new(HeldBackend {
+        started,
+        release: Mutex::new(release_receiver),
+        calls: AtomicUsize::new(0),
+        active: AtomicUsize::new(0),
+        peak: AtomicUsize::new(0),
+    });
+    // A permissive router proves the watcher's own physical-worker bound.
+    let router = Arc::new(AiRouter::with_sleep(
+        vec![backend.clone()],
+        RouterConfig {
+            max_in_flight: 4,
+            ..Default::default()
+        },
+        Arc::new(NoopLogSink),
+        Box::new(|_| {}),
+    ));
+    let a = pane("w1:p1", AgentKind::Codex, "idle");
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![a.clone()]),
+        router,
+        FakeSessionReader,
+        StatePaths::for_tests(root.path()),
+    );
+    watcher.scan().unwrap();
+    started_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    let mut b = a.clone();
+    b.agent_session = Some(AgentSession::new("id", "session-b"));
+    watcher.scan_panes(&[b], false, false).unwrap();
+    watcher
+        .scan_panes(std::slice::from_ref(&a), false, false)
+        .unwrap();
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(watcher.analysis_in_flight.len(), 1);
+    release.send(()).unwrap();
+    watcher.await_pending_analysis();
+    watcher.scan().unwrap();
+    assert!(
+        watcher.last_report().task.is_none(),
+        "old A result was dropped before current A analysis"
+    );
+    watcher.await_pending_analysis();
+    watcher.scan().unwrap();
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("현재 세션 작업 결과")
+    );
+    assert_eq!(backend.peak.load(Ordering::SeqCst), 1);
+}
+
+fn fixture_session(pane: &Pane) -> Result<ConfirmedLabelSession> {
+    let reference = pane
+        .agent_session
+        .as_ref()
+        .ok_or_else(|| anyhow!("fixture_reference_missing"))?;
+    if reference.kind != "id" {
+        return Err(anyhow!("fixture_reference_unsupported"));
+    }
+    let owner = native_reference_token(pane).ok_or_else(|| anyhow!("fixture_reference_invalid"))?;
+    Ok(ConfirmedLabelSession {
+        incarnation: owner.clone(),
+        owner,
+        bytes: 100,
+    })
 }
 
 fn hold_watcher_lock(paths: &StatePaths) -> File {

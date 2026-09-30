@@ -103,10 +103,9 @@ function herdr(env: NodeJS.ProcessEnv, bin: string, args: string[]): unknown {
 }
 
 function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  for (const key of ["HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"]) {
-    delete env[key];
-  }
+  const env = Object.fromEntries(Object.entries(process.env).filter(
+    ([key]) => !key.startsWith("HERDR_") && !key.startsWith("HIDE_") && !key.startsWith("ELECTRON_"),
+  ));
   const config = path.join(root, "herdr-config.toml");
   fs.writeFileSync(config, "[update]\nversion_check = false\nmanifest_check = false\n");
   for (const dir of ["xdg-config", "xdg-state", "home", "fixture", "bin"]) {
@@ -268,7 +267,19 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         [first, "Agent one"],
         [second, "Agent two"],
       ]) {
-        execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], {
+        // A label fixture declares the provider's actual native reference;
+        // ownerless metadata deliberately cannot title an agent.
+        const sessionId = `fixture-${pane}`;
+        execFileSync(bin, ["pane", "report-agent-session", pane, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", sessionId, "--seq", "1"], { env, timeout: 30_000 });
+        const digest = crypto.createHash("sha256");
+        for (const part of ["claude", "id", sessionId]) {
+          const bytes = Buffer.from(part);
+          const size = Buffer.alloc(8);
+          size.writeBigUInt64BE(BigInt(bytes.length));
+          digest.update(size).update(bytes);
+        }
+        const owner = `v1:${digest.digest("hex")}`;
+        execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`, "--token", `label_owner=${owner}`, "--token", `status_owner=${owner}`], {
           env,
           timeout: 30_000,
         });

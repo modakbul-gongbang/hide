@@ -5,7 +5,8 @@ use anyhow::{Context, Result, anyhow};
 use fs2::FileExt;
 use hide_ai::{AiError, AiResult, AiRouter, CancelToken, ProviderId};
 use hide_session::{
-    Agent as SessionAgent, ConversationCursor, SessionIdentity, SessionLocator, parse_events,
+    Agent as SessionAgent, ConfirmedLabelSession, ConversationCursor, SessionIdentity,
+    SessionLocator, confirm_label_session, label_reference_token, parse_events,
 };
 pub use hide_session::{ConversationEvent as SessionEvent, EventKind, ParsedSession};
 use regex::Regex;
@@ -301,6 +302,13 @@ impl AgentKind {
         }
     }
 
+    const fn other_icon_token(self) -> &'static str {
+        match self {
+            Self::Codex => "agent_claude",
+            Self::Claude => "agent_codex",
+        }
+    }
+
     /// Sidebar glyph rather than a word: the row already carries the workspace
     /// name, and the user's config colors the two tokens differently. Both
     /// glyphs are filled so they stay visible at one cell.
@@ -437,8 +445,7 @@ impl Default for Display {
 impl Display {
     /// Whether the first report's tokens differ from `other`'s.
     fn status_tokens_differ(&self, other: &Self) -> bool {
-        self.task != other.task
-            || self.status != other.status
+        self.status != other.status
             || self.sort_key != other.sort_key
             || self.elapsed != other.elapsed
             || self.unseen != other.unseen
@@ -450,6 +457,8 @@ impl Display {
 /// doing and the one action the operator is asked for (PRD D-05).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Identity {
+    pub task: Option<String>,
+    pub owner: Option<String>,
     pub progress: Option<String>,
     pub expected_reply: Option<String>,
 }
@@ -797,7 +806,13 @@ pub fn context_fingerprint(context: &str) -> u64 {
 }
 
 pub trait SessionReader {
+    fn confirm(&mut self, pane: &Pane) -> Result<ConfirmedLabelSession>;
+
     fn read(&mut self, pane: &Pane) -> Result<ParsedSession>;
+
+    fn reset(&mut self, _pane_id: &str) {}
+
+    fn retain_live(&mut self, _panes: &[Pane]) {}
 
     fn has_pending(&self, _pane: &Pane) -> bool {
         false
@@ -830,11 +845,10 @@ impl LocalSessionReader {
 
     fn session_path(&mut self, pane: &Pane) -> Result<PathBuf> {
         let identity = match pane.agent_session.as_ref() {
-            None => None,
+            None => return Err(anyhow!("label_session_reference_missing")),
             Some(session) => match session.kind.as_str() {
                 "id" => Some(SessionIdentity::id(&session.value)),
                 "path" => Some(SessionIdentity::path(&session.value)),
-                _ if pane.cwd.is_some() => None,
                 _ => return Err(anyhow!("session_kind_unsupported")),
             },
         };
@@ -844,7 +858,10 @@ impl LocalSessionReader {
         };
         self.locator
             .locate(&pane.id, agent, identity.as_ref(), pane.cwd.as_deref())
-            .map_err(Into::into)
+            .map_err(|error| match error {
+                hide_session::SessionError::SessionFileMissing => anyhow!("session_file_missing"),
+                _ => anyhow!("label_session_location_unavailable"),
+            })
     }
 
     fn retain_bounded(events: &mut std::collections::VecDeque<SessionEvent>) {
@@ -896,6 +913,41 @@ impl LocalSessionReader {
 }
 
 impl SessionReader for LocalSessionReader {
+    fn confirm(&mut self, pane: &Pane) -> Result<ConfirmedLabelSession> {
+        let path = self.session_path(pane)?;
+        let reference = pane
+            .agent_session
+            .as_ref()
+            .expect("session_path requires a reference");
+        confirm_label_session(
+            match pane.agent {
+                AgentKind::Claude => SessionAgent::Claude,
+                AgentKind::Codex => SessionAgent::Codex,
+            },
+            &path,
+            (reference.kind == "id").then_some(reference.value.as_str()),
+        )
+    }
+
+    fn reset(&mut self, pane_id: &str) {
+        self.sessions.remove(pane_id);
+        self.locator.forget(pane_id);
+    }
+
+    fn retain_live(&mut self, panes: &[Pane]) {
+        self.locator
+            .retain_callers(|id| panes.iter().any(|pane| pane.id == id));
+        let retired: Vec<_> = self
+            .sessions
+            .keys()
+            .filter(|id| !panes.iter().any(|pane| pane.id == **id))
+            .cloned()
+            .collect();
+        for id in retired {
+            self.reset(&id);
+        }
+    }
+
     fn has_pending(&self, pane: &Pane) -> bool {
         self.sessions
             .get(&pane.id)
@@ -1032,6 +1084,10 @@ struct DisplayStates {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PersistedDisplayState {
+    /// Verified provider/native-id fingerprint. Legacy ownerless labels are
+    /// never adopted just because the pane id matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_owner: Option<String>,
     state_change_seq: u64,
     changed_unix_ms: u64,
     task: Option<String>,
@@ -1514,8 +1570,11 @@ fn identity_params(pane: &Pane, identity: &Identity) -> serde_json::Value {
         "source": PLUGIN_ID,
         "tokens": {
             "name": serde_json::Value::Null,
+            "task": token(&identity.task),
+            "label_owner": token(&identity.owner),
             "progress": token(&identity.progress),
             "expected_reply": token(&identity.expected_reply),
+            pane.agent.other_icon_token(): serde_json::Value::Null,
         },
     })
 }
@@ -1563,9 +1622,10 @@ fn metadata_params(pane: &Pane, display: &Display) -> serde_json::Value {
         );
     }
     tokens.insert(
-        "task".to_owned(),
+        "status_owner".to_owned(),
         display
-            .task
+            .identity
+            .owner
             .clone()
             .map_or(serde_json::Value::Null, serde_json::Value::String),
     );
@@ -1649,6 +1709,8 @@ impl AnalysisFailure {
 
 struct AnalysisOutcome {
     pane_id: String,
+    owner: String,
+    generation: u64,
     turn: u64,
     phase: AnalysisPhase,
     context_chars: usize,
@@ -1715,6 +1777,21 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     /// changes rather than on every event. The plugin's log is never rotated,
     /// so a broken file logged unconditionally would grow it without end.
     ai_settings_failure: Option<String>,
+    sessions: HashMap<String, LabelSessionFence>,
+    next_session_generation: u64,
+}
+
+#[derive(Debug)]
+struct LabelSessionFence {
+    reference: Option<String>,
+    confirmed: Option<ConfirmedLabelSession>,
+    generation: u64,
+    failure: Option<String>,
+}
+
+fn native_reference_token(pane: &Pane) -> Option<String> {
+    let reference = pane.agent_session.as_ref()?;
+    label_reference_token(pane.agent.as_str(), &reference.kind, &reference.value)
 }
 
 impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
@@ -1763,6 +1840,8 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             legacy_name_cleanup_attempted: HashSet::new(),
             ai_settings: None,
             ai_settings_failure: None,
+            sessions: HashMap::new(),
+            next_session_generation: 0,
         }
     }
 
@@ -1860,11 +1939,42 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         }
         let mut processed = 0;
 
+        // Reconcile authoritative references before accepting ANY outcome,
+        // including failures and retries. The physical worker remains charged
+        // until its outcome arrives, even when its session is now invalid.
+        self.sessions
+            .retain(|id, _| panes.iter().any(|pane| pane.id == *id));
+        self.session_reader.retain_live(panes);
+        for pane in panes {
+            self.cleanup_legacy_name(pane)?;
+            self.reconcile_session(pane)?;
+        }
+
         while let Ok(outcome) = self.analysis_receiver.try_recv() {
             self.analysis_in_flight.remove(&outcome.pane_id);
             let Some(pane) = panes.iter().find(|pane| pane.id == outcome.pane_id) else {
                 continue;
             };
+            let current = self.sessions.get(&pane.id).is_some_and(|session| {
+                session.generation == outcome.generation
+                    && session
+                        .confirmed
+                        .as_ref()
+                        .is_some_and(|proof| proof.owner == outcome.owner)
+            });
+            if !current {
+                append_log(
+                    &self.paths,
+                    "analysis_discarded_session",
+                    Some(pane),
+                    Some(&format!(
+                        "owner={};generation={}",
+                        outcome.owner, outcome.generation
+                    )),
+                )?;
+                self.waiting_analysis.insert(pane.id.clone());
+                continue;
+            }
             match outcome.result {
                 Ok((provider, analysis)) => {
                     self.record_analysis(
@@ -1978,21 +2088,211 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         path.exists() && fs::remove_file(&path).is_ok()
     }
 
+    fn visible_state(&self, pane: &Pane) -> Option<&PersistedDisplayState> {
+        let proof = self.sessions.get(&pane.id)?.confirmed.as_ref()?;
+        self.display_states
+            .panes
+            .get(&pane.id)
+            .filter(|state| state.session_owner.as_deref() == Some(proof.owner.as_str()))
+    }
+
+    fn clear_session_scheduling(&mut self, pane: &Pane) {
+        self.next_analysis_at.remove(&pane.id);
+        self.pending_forced_refresh.remove(&pane.id);
+        self.waiting_analysis.remove(&pane.id);
+        self.last_displays.remove(&pane.id);
+        self.reported_revisions.remove(&pane.id);
+        self.revisions.remove(&pane.id);
+        self.session_reader.reset(&pane.id);
+    }
+
+    fn reset_analysis_state(&mut self, pane: &Pane) -> Result<()> {
+        if let Some(state) = self.display_states.panes.get_mut(&pane.id) {
+            state.task_input_cursor = None;
+            state.analysis_turn_start = None;
+            state.analysis_turn_end = None;
+            state.semantic_attention = None;
+            state.analysis_unix_ms = 0;
+            state.interrupted = false;
+        }
+        write_state_json(
+            &self.paths.display_state(),
+            &self.display_states,
+            "display-state",
+        )
+    }
+
+    fn suspend_session(&mut self, pane: &Pane) -> Result<()> {
+        self.next_session_generation = self
+            .next_session_generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("label_session_generation_capacity"))?;
+        if let Some(session) = self.sessions.get_mut(&pane.id) {
+            session.confirmed = None;
+            session.generation = self.next_session_generation;
+        }
+        self.clear_session_scheduling(pane);
+        Ok(())
+    }
+
+    fn reconcile_session(&mut self, pane: &Pane) -> Result<()> {
+        let reference = native_reference_token(pane);
+        let result = if reference.is_some() {
+            self.session_reader.confirm(pane)
+        } else {
+            Err(anyhow!("label_session_reference_unconfirmed"))
+        };
+        let (confirmed, failure) = match result {
+            Ok(proof) => (Some(proof), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        let previous = self.sessions.get(&pane.id);
+        let transcript_changed = previous
+            .and_then(|session| session.confirmed.as_ref())
+            .zip(confirmed.as_ref())
+            .is_some_and(|(before, after)| {
+                before.incarnation != after.incarnation || after.bytes < before.bytes
+            });
+        let boundary = previous.is_none_or(|previous| match (&previous.confirmed, &confirmed) {
+            (Some(before), Some(after)) => {
+                before.owner != after.owner
+                    || before.incarnation != after.incarnation
+                    || after.bytes < before.bytes
+            }
+            (None, None) => previous.reference != reference,
+            _ => true,
+        });
+        let reference_changed = previous.is_none_or(|before| before.reference != reference);
+        let failure_changed = previous.is_none_or(|before| before.failure != failure);
+        let mut generation = previous.map_or(0, |session| session.generation);
+        if boundary {
+            self.next_session_generation = self
+                .next_session_generation
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("label_session_generation_capacity"))?;
+            generation = self.next_session_generation;
+            self.clear_session_scheduling(pane);
+        } else if reference_changed {
+            self.last_displays.remove(&pane.id);
+            self.reported_revisions.remove(&pane.id);
+            self.revisions.remove(&pane.id);
+        }
+        if failure_changed {
+            let detail = format!(
+                "class={};reference={};generation={generation}",
+                failure.as_deref().unwrap_or("confirmed"),
+                reference.as_deref().unwrap_or("absent")
+            );
+            append_log(
+                &self.paths,
+                "label_session_confirmation",
+                Some(pane),
+                Some(&detail),
+            )?;
+        }
+        let known_owner = confirmed
+            .as_ref()
+            .map(|proof| proof.owner.clone())
+            .or_else(|| {
+                pane.agent_session
+                    .as_ref()
+                    .filter(|session| session.kind == "id")
+                    .and_then(|session| {
+                        label_reference_token(pane.agent.as_str(), "id", &session.value)
+                    })
+            });
+        let state = self
+            .display_states
+            .panes
+            .entry(pane.id.clone())
+            .or_default();
+        let owner_changed = known_owner.as_ref().is_some_and(|owner| {
+            state.session_owner.as_ref().is_some_and(|old| old != owner)
+                || (confirmed.is_some() && state.session_owner.is_none())
+        });
+        let legacy = state.session_owner.is_none()
+            && (state.task.is_some()
+                || !state.progress.is_empty()
+                || !state.expected_reply.is_empty());
+        if owner_changed || legacy {
+            state.task = None;
+            state.progress.clear();
+            state.expected_reply.clear();
+            state.session_owner = confirmed.as_ref().map(|proof| proof.owner.clone());
+            self.reset_analysis_state(pane)?;
+            append_log(
+                &self.paths,
+                "label_session_reset",
+                Some(pane),
+                Some(&format!(
+                    "reference={};generation={generation};legacy={legacy}",
+                    reference.as_deref().unwrap_or("absent")
+                )),
+            )?;
+        } else if transcript_changed {
+            self.reset_analysis_state(pane)?;
+        }
+        self.sessions.insert(
+            pane.id.clone(),
+            LabelSessionFence {
+                reference,
+                confirmed,
+                generation,
+                failure,
+            },
+        );
+        Ok(())
+    }
+
     fn process(&mut self, pane: &Pane, forced: bool) -> Result<bool> {
         self.waiting_analysis.remove(&pane.id);
+        if self.visible_state(pane).is_none() {
+            let display = self.display_for(pane)?;
+            return self.report_if_changed(pane, &display);
+        }
         let parsed = match self.session_reader.read(pane) {
             Ok(parsed) => parsed,
-            Err(error) => {
+            Err(_error) => {
                 append_log(
                     &self.paths,
                     "raw_session_unavailable",
                     Some(pane),
-                    Some(&format!("{error:#}")),
+                    Some(&format!(
+                        "class=read_failed;owner={}",
+                        self.sessions[&pane.id].confirmed.as_ref().unwrap().owner
+                    )),
                 )?;
+                // A read that cannot establish the current transcript must not
+                // leave a previously published label visible.
+                self.suspend_session(pane)?;
                 let display = self.display_for(pane)?;
                 return self.report_if_changed(pane, &display);
             }
         };
+        // The file can change after the scan's initial proof. Do not analyze
+        // bytes read across a replacement or owner transition.
+        let proof = self.session_reader.confirm(pane).ok();
+        let consistent = proof
+            .as_ref()
+            .zip(self.sessions[&pane.id].confirmed.as_ref())
+            .is_some_and(|(after, before)| {
+                after.owner == before.owner
+                    && after.incarnation == before.incarnation
+                    && after.bytes >= before.bytes
+            });
+        if !consistent {
+            append_log(
+                &self.paths,
+                "label_session_read_changed",
+                Some(pane),
+                Some(&format!(
+                    "generation={}",
+                    self.sessions[&pane.id].generation
+                )),
+            )?;
+            self.suspend_session(pane)?;
+            return self.report_if_changed(pane, &self.display_for(pane)?);
+        }
         if let Some(reason) = parsed.rescan_reason {
             append_log(
                 &self.paths,
@@ -2000,6 +2300,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 Some(pane),
                 Some(reason.as_str()),
             )?;
+            self.reset_analysis_state(pane)?;
         }
         if parsed.skipped_lines > 0 {
             let reasons = parsed
@@ -2164,10 +2465,18 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let pane_id = pane.id.clone();
         let context_chars = context.chars().count();
         let task_cursor = task_input_cursor(&parsed.events);
+        let session = &self.sessions[&pane.id];
+        let generation = session.generation;
+        let owner = session
+            .confirmed
+            .as_ref()
+            .expect("confirmed above")
+            .owner
+            .clone();
         // The same pane, turn, boundary and context is the same intent: a
         // repeat carries the same key to the provider and the log.
         let request_id = format!(
-            "{}:{turn:016x}:{}:{:016x}",
+            "{}:{owner}:{generation}:{turn:016x}:{}:{:016x}",
             pane.id,
             phase.label(),
             context_fingerprint(&context)
@@ -2187,6 +2496,8 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             });
             let _ = sender.send(AnalysisOutcome {
                 pane_id,
+                owner,
+                generation,
                 turn,
                 phase,
                 context_chars,
@@ -2384,7 +2695,13 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             "analysis_recorded",
             Some(pane),
             Some(&format!(
-                "phase={};task_changed={task_changed};task_chars={};progress_chars={};expected_reply_chars={};attention_chars={};context_chars={context_chars};turn={turn:016x};provider={provider}",
+                "owner={};generation={};phase={};task_changed={task_changed};task_chars={};progress_chars={};expected_reply_chars={};attention_chars={};context_chars={context_chars};turn={turn:016x};provider={provider}",
+                self.sessions[&pane.id]
+                    .confirmed
+                    .as_ref()
+                    .expect("recording requires confirmation")
+                    .owner,
+                self.sessions[&pane.id].generation,
                 phase.label(),
                 analysis.task.chars().count(),
                 analysis.progress.chars().count(),
@@ -2401,7 +2718,8 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
     /// only a newer inference may speak. The flag records which side spoke so
     /// the ordering can trust a fact more than an inference.
     fn resolve_attention(&self, pane: &Pane) -> Option<(Attention, AttentionSource)> {
-        let persisted = self.display_states.panes.get(&pane.id);
+        let persisted = self.visible_state(pane);
+        persisted?;
         let semantic = |state: &PersistedDisplayState| {
             state
                 .semantic_attention
@@ -2440,9 +2758,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let interrupted = attention.is_none()
             && matches!(pane.agent_status.as_str(), "idle" | "done" | "blocked")
             && self
-                .display_states
-                .panes
-                .get(&pane.id)
+                .visible_state(pane)
                 .is_some_and(|state| state.interrupted);
         let unseen = self
             .display_states
@@ -2458,9 +2774,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         if interrupted {
             return Ok(Display {
                 task: self
-                    .display_states
-                    .panes
-                    .get(&pane.id)
+                    .visible_state(pane)
                     .and_then(|state| state.task.clone()),
                 status: StatusIcon::Interrupted,
                 sort_key: SortKey::Interrupted,
@@ -2487,9 +2801,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         };
         Ok(Display {
             task: self
-                .display_states
-                .panes
-                .get(&pane.id)
+                .visible_state(pane)
                 .and_then(|state| state.task.clone()),
             status: status_icon(&pane.agent_status, attention.map(|(kind, _)| kind)),
             sort_key,
@@ -2503,11 +2815,13 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
     /// The second report's sentence tokens, read off the persisted state so a
     /// restart republishes them without a provider call (PRD D-05).
     fn identity_for(&self, pane: &Pane) -> Identity {
-        let Some(state) = self.display_states.panes.get(&pane.id) else {
+        let Some(state) = self.visible_state(pane) else {
             return Identity::default();
         };
         let non_empty = |value: &str| (!value.trim().is_empty()).then(|| value.to_owned());
         Identity {
+            task: state.task.clone(),
+            owner: native_reference_token(pane),
             progress: non_empty(&state.progress),
             expected_reply: non_empty(&state.expected_reply),
         }

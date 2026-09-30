@@ -23,15 +23,15 @@ fn event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
 fn session(seq: Option<u64>) -> SessionSnapshotPayload {
     let mut payload = tab_order_payload(CHECKOUT, &TABS, &TABS, "w-order:t1");
     if let Some(seq) = seq {
-        payload.agents.push(
-            serde_json::from_value(serde_json::json!({
+        let owned: SessionSnapshotPayload =
+            crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [{
                 "id": "reviewer", "pane_id": SLEEPER, "agent": "claude",
                 "agent_status": "idle", "state_change_seq": seq, "cwd": CHECKOUT,
                 "agent_session": {"kind": "id", "value": "11111111-2222-3333-4444-555555555555"},
                 "tokens": {"task": "Review the parser"}
-            }))
-            .unwrap(),
-        );
+            }]}))
+            .unwrap();
+        payload.agents.extend(owned.agents);
     }
     payload
 }

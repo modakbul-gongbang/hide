@@ -27,7 +27,7 @@ Each supported pane gets a short task label, lifecycle status, agent kind, and t
 ## What it does
 
 - Adds an 8-to-30-character Korean task label to recognized Codex and Claude Code panes.
-- Uses that rolling task as Hide's agent title, with the workspace label as the fallback; Herdr agent names remain control identifiers.
+- Uses that rolling task as Hide's agent title, with the provider name as the fallback; Herdr agent names remain control identifiers.
 - Publishes the one-line `progress` and the 40-character `expected_reply` as tokens, so Hide's sidebar can say what the agent is doing or what it is waiting for you to do.
 - Shows question, approval, error, working, unseen completion, idle, and unknown states as compact symbols.
 - Holds one steady symbol per state; working is told apart from an unseen completion by color, not by a blink.
@@ -106,7 +106,7 @@ Not every symbol has the same source, which matters if you skip the optional [ag
 There is no API key and no environment variable.
 Task labels are produced by the CLIs already logged in on this machine: `codex app-server`, the same local process the Codex CLI itself uses, and `claude -p` print mode.
 Lifecycle symbols continue to work without either.
-When no provider can answer (neither CLI is installed or logged in, or both are over their usage limit), the watcher keeps existing task labels, records `analysis_provider_unavailable` with the provider state, and asks again ten minutes later.
+When no provider can answer (neither CLI is installed or logged in, or both are over their usage limit), the watcher keeps existing task labels only for their currently confirmed session, records `analysis_provider_unavailable` with the provider state, and asks again ten minutes later.
 
 Nothing is scraped from a terminal and no credential file is read; a provider that cannot answer is visible in the log rather than silently skipped.
 
@@ -285,12 +285,33 @@ The refresh action discards the rolling task for the focused pane and asks again
 ## Task titles
 
 The plugin publishes no session `name` and never renames a Herdr agent or tab.
-Hide titles an agent by the rolling `task`, then by the workspace label.
+Hide titles an agent by the current session’s rolling `task`, then by its provider (`Claude`, `Codex`, or `Agent`).
+The workspace label and orchestrator name never supply an agent display title.
 Names assigned by Sasu or another orchestrator remain available for CLI targeting but never become display titles.
 Claude's `ai-title` and Codex's first human turn have no separate title role.
 
-The second report carries `progress` and `expected_reply`, plus an explicit `null` for the retired `name` token so an older value cannot linger after an upgrade.
-Both sentences are read back from the state file, so a watcher restart republishes them without a provider call.
+The identity report carries `task`, `progress`, `expected_reply` and `label_owner` together, plus explicit `null` values for the retired `name` and opposite provider icon.
+Its owner is a 67-character SHA-256 fingerprint of the provider and current native reference, with a version prefix and length-delimited input.
+The watcher proves the native ID from provider transcript metadata before publishing any label.
+The durable state stores that provider/native-ID owner, so a confirmed ID and a confirmed transcript path can restore the same labels after restart or reconnect without a provider call.
+A missing or unsupported reference, an unavailable file, or an unproven old state hides labels; cwd and neighbouring transcripts are never used to guess label ownership.
+A transient absence preserves proven durable state while hiding it, and a different owner clears the task, sentences, semantic attention, analysis cursor and scheduling state.
+File replacement or truncation invalidates analysis phases and readers; labels survive only when the replacement still proves the same owner.
+Every asynchronous result carries the owner and a monotonically advancing generation, so success, failure and retry results from an earlier A → B → A transition are discarded.
+The single physical analysis worker remains charged until it actually finishes, including while its generation is invalid.
+Hide checks `label_owner` against the native reference at its common projection boundary, so stale strings cannot reach sidebar, pane header, search, Recent Panels, lineage, or Overview while the watcher catches up.
+The status report uses a separate `status_owner` fence; native lifecycle fallback remains available without plugin ownership.
+
+### Metadata and read budgets
+
+The status report writes exactly 16 keys, including its owner; the atomic identity report writes six.
+Both use the existing fixed `hide.agent-context-labels` metadata source, with no per-session source or key.
+The combined retained keys, including legacy tombstones and both provider icons, stay below Herdr’s 32-key limit, and every value stays within its 80-character cap.
+Null removes a previous token rather than retaining an old value.
+Native references of any length are represented by the fixed 67-character fingerprint, never a path or transcript in metadata.
+Each ownership confirmation reads at most 1 MiB and refuses a line above 256 KiB; a second proof after reading prevents analysis across a concurrent file replacement.
+Readers and discovery caches are pruned with the live pane set.
+Confirmation, reset and discarded-result diagnostics record only pane IDs, reason classes, owner fingerprints and generations, never transcript content or personal paths.
 `expected_reply` is cleared as soon as the agent works again, since the reply it asked for is no longer wanted.
 
 An older plugin version may have renamed a Herdr agent.

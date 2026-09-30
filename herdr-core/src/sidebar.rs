@@ -1270,7 +1270,48 @@ pub fn rederive(agent: &mut SidebarAgentSnapshot) {
     derive_from_axes(agent);
 }
 
-fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
+fn project_agent(mut agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
+    // Token guards in Herdr do not cover metadata patches. Validate at the
+    // common projection boundary so a native-session change suppresses stale
+    // strings in the very first frame, before the watcher can clear them.
+    let reference = agent.agent_session.as_ref().and_then(|session| {
+        hide_session::label_reference_token(
+            agent.agent.as_deref().unwrap_or_default(),
+            &session.kind,
+            &session.value,
+        )
+    });
+    let owns = |name: &str| {
+        reference.as_deref().is_some_and(|reference| {
+            agent.tokens.get(name).and_then(Value::as_str) == Some(reference)
+        })
+    };
+    let labels_current = owns("label_owner");
+    let status_current = owns("status_owner");
+    if !labels_current {
+        for key in ["task", "progress", "expected_reply"] {
+            agent.tokens.remove(key);
+        }
+    }
+    if !status_current {
+        agent.tokens.retain(|key, _| {
+            !matches!(
+                key.as_str(),
+                "status_question"
+                    | "status_question_new"
+                    | "status_approval"
+                    | "status_approval_new"
+                    | "status_error"
+                    | "status_error_new"
+                    | "status_working"
+                    | "status_done"
+                    | "status_done_new"
+                    | "status_interrupted"
+                    | "status_idle"
+                    | "status_stale"
+            )
+        });
+    }
     let pane_id = non_empty(agent.pane_id.as_deref().or(agent.id.as_deref()))
         .map(str::to_owned)
         .ok_or_else(|| "session agent is missing a pane id".to_owned())?;
@@ -1732,6 +1773,48 @@ fn valid_elapsed(value: &str) -> bool {
         && matches!(suffix, "s" | "m" | "h" | "d")
 }
 
+/// Existing status/lineage fixtures describe labels belonging to the current
+/// session. Supply the now-required provenance without changing their expected
+/// axes. Isolation regressions intentionally deserialize their raw input.
+#[cfg(test)]
+pub(crate) fn owned_label_fixture<T: serde::de::DeserializeOwned>(
+    mut value: Value,
+) -> Result<T, serde_json::Error> {
+    if let Some(agents) = value.get_mut("agents").and_then(Value::as_array_mut) {
+        for agent in agents {
+            let has_labels = agent
+                .get("tokens")
+                .and_then(Value::as_object)
+                .is_some_and(|tokens| {
+                    tokens.keys().any(|key| {
+                        matches!(key.as_str(), "task" | "progress" | "expected_reply")
+                            || key.starts_with("status_")
+                    })
+                });
+            if !has_labels {
+                continue;
+            }
+            if agent.get("agent").is_none() {
+                agent["agent"] = Value::String("codex".into());
+            }
+            if agent.get("agent_session").is_none() {
+                agent["agent_session"] =
+                    serde_json::json!({"kind":"id", "value":"owned-fixture-session"});
+            }
+            let session = &agent["agent_session"];
+            if let Some(owner) = hide_session::label_reference_token(
+                agent["agent"].as_str().unwrap_or_default(),
+                session["kind"].as_str().unwrap_or_default(),
+                session["value"].as_str().unwrap_or_default(),
+            ) {
+                agent["tokens"]["label_owner"] = Value::String(owner.clone());
+                agent["tokens"]["status_owner"] = Value::String(owner);
+            }
+        }
+    }
+    serde_json::from_value(value)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1998,7 +2081,91 @@ mod tests {
     }
 
     fn payload(agents: Value) -> SessionSnapshotPayload {
-        serde_json::from_value(json!({"agents": agents})).expect("valid fixture")
+        owned_label_fixture(json!({"agents": agents})).expect("valid fixture")
+    }
+
+    #[test]
+    fn native_session_changes_suppress_every_stale_label_and_status_before_the_watcher_runs() {
+        let a = hide_session::label_reference_token("codex", "id", "session-a").unwrap();
+        for (provider, reference, owner) in [
+            (
+                "codex",
+                json!({"kind":"id","value":"session-b"}),
+                Some(a.as_str()),
+            ),
+            (
+                "claude",
+                json!({"kind":"id","value":"session-a"}),
+                Some(a.as_str()),
+            ),
+            ("codex", Value::Null, Some(a.as_str())),
+            (
+                "codex",
+                json!({"kind":"opaque","value":"session-a"}),
+                Some(a.as_str()),
+            ),
+            ("codex", json!({"kind":"id","value":"session-a"}), None),
+        ] {
+            let snapshot: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
+                "pane_id":"w1:p1","agent":provider,"agent_status":"working","agent_session":reference,
+                "state_change_seq":7,"tokens":{"label_owner":owner,"status_owner":owner,
+                    "task":"이전 세션 작업","progress":"이전 진행","expected_reply":"이전 답변 요청","status_question_new":"?"}
+            }]})).unwrap();
+            let row = project_agents(snapshot).agents.remove(0);
+            assert_eq!(
+                row.identity_label,
+                if provider == "claude" {
+                    "Claude"
+                } else {
+                    "Codex"
+                }
+            );
+            assert_eq!(
+                (row.progress, row.expected_reply, row.message, row.detail),
+                (None, None, None, None)
+            );
+            assert_eq!(
+                (row.demand.as_str(), row.activity.as_str()),
+                ("none", "working")
+            );
+            assert_eq!(row.status_label, "Working");
+        }
+        let snapshot: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
+            "pane_id":"w1:p1","agent":"codex","agent_status":"idle","agent_session":{"kind":"id","value":"session-a"},
+            "state_change_seq":7,"tokens":{"label_owner":a,"status_owner":a,"task":"현재 작업","progress":"현재 진행","expected_reply":"현재 답변 요청","status_question":"?"}
+        }]})).unwrap();
+        let row = project_agents(snapshot).agents.remove(0);
+        assert_eq!(row.identity_label, "현재 작업");
+        assert_eq!(row.expected_reply.as_deref(), Some("현재 답변 요청"));
+        assert_eq!(row.message.as_deref(), Some("현재 답변 요청\n현재 진행"));
+        assert_eq!(row.demand, "question");
+    }
+
+    #[test]
+    fn current_label_changes_preserve_read_records_lineage_and_control_names() {
+        let snapshot = |task: &str| {
+            payload(json!([
+                {"pane_id":"root","name":"control-root","agent":"claude","agent_status":"working","state_change_seq":5,
+                 "agent_session":{"kind":"id","value":"same-root"},"tokens":{"task":task,"progress":"현재 진행"}},
+                {"pane_id":"child","name":"control-child","agent":"claude","agent_status":"idle","state_change_seq":6,
+                 "agent_session":{"kind":"id","value":"same-child"},"spawned_from_pane_id":"root","tokens":{"task":task,"status_question_new":"?"}}
+            ]))
+        };
+        let mut before = project_agents(snapshot("기존 현재 작업")).agents;
+        let mut records = BTreeMap::new();
+        apply_read_state(&mut before, &mut records, Some("root"));
+        let saved = records.clone();
+        let mut after = project_agents(snapshot("갱신된 현재 작업")).agents;
+        assert!(apply_read_state(&mut after, &mut records, None).is_empty());
+        assert_eq!(records, saved);
+        for (before, after) in before.iter().zip(&after) {
+            assert_eq!(before.id, after.id);
+            assert_eq!(before.unread, after.unread);
+            assert_eq!(ownership_of(before), ownership_of(after));
+            assert_eq!(before.descendant_counts, after.descendant_counts);
+            assert_eq!(before.group, after.group);
+        }
+        assert_eq!(after[0].identity_label, "갱신된 현재 작업");
     }
 
     /// AC1. Every token form and every Herdr lifecycle lands on the pair the
@@ -2470,7 +2637,7 @@ mod tests {
             {"pane_id":"p3","id":"sasu-implementor","agent":"claude","workspace_label":"home-graph","tokens":{"status_working":"●","activity":"0000000000003","name":"첫 프롬프트"}},
             {"pane_id":"p4","id":"p4","agent":"codex","workspace_label":"web-shell-pivot-s3","tokens":{"status_working":"●","activity":"0000000000004"}},
             {"pane_id":"p5","id":"p5","agent":"gemini","workspace_label":"home-graph","tokens":{"status_working":"●","activity":"0000000000005"}},
-            {"pane_id":"p6","id":"p6","workspace_label":"home-graph","tokens":{"status_working":"●","activity":"0000000000006"}}
+            {"pane_id":"p6","id":"p6","workspace_label":"home-graph","agent_status":"working","tokens":{"activity":"0000000000006"}}
         ]));
         let labels = projected
             .iter()
