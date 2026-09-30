@@ -463,7 +463,12 @@ test("Korean prose links only the real path and opens that file", async () => {
 test("dense terminal path hover measures cold and warm native work", async () => {
   const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
   fs.mkdirSync(path.join(checkout, "dense"), { recursive: true });
-  const tokens = Array.from({ length: 12 }, (_, index) => "dense/f" + String(index).padStart(2, "0") + ".md" + (index % 2 ? ")에" : ""));
+  // Half the row exercises the complete six-stage punctuation/location
+  // composition; the first plain path stays hoverable on the original baseline.
+  const tokens = Array.from({ length: 12 }, (_, index) => {
+    const base = "dense/f" + String(index).padStart(2, "0") + ".md";
+    return index % 2 ? "(" + base + ":12:5)에" : base;
+  });
   for (let index = 0; index < tokens.length; index += 1) {
     fs.writeFileSync(path.join(checkout, "dense/f" + String(index).padStart(2, "0") + ".md"), "# dense file " + index);
   }
