@@ -1289,8 +1289,14 @@ pub fn apply_hook_payload<T: HerdrTransport>(
         return Ok(update);
     }
     let owner = hook_session_owner(payload);
-    // The display file can still contain A when Herdr already owns B. Check
-    // the authoritative native reference before taking the hook-state lock.
+    fs::create_dir_all(&paths.root)?;
+    // Native validation and the file mutation share the retirement boundary.
+    // Otherwise a query captured for A can overwrite a newer B hook after
+    // waiting for the lock. The socket query has its existing five-second
+    // deadline; this lock is never the core runtime mutex.
+    let _lock = locked_state_file(&paths.hook_state_lock())?;
+    // The display file can still contain A when Herdr already owns B, so
+    // validate against the authoritative native reference rather than it.
     let current_owner = if owner.is_some() {
         transport.panes().map(|panes| {
             panes
@@ -1333,8 +1339,6 @@ pub fn apply_hook_payload<T: HerdrTransport>(
         )?;
         return Ok(HookUpdate::Ignore);
     }
-    fs::create_dir_all(&paths.root)?;
-    let _lock = locked_state_file(&paths.hook_state_lock())?;
     let mut states = load_hook_states(paths);
     let event = payload
         .get("hook_event_name")

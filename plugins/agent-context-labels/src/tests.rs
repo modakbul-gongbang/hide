@@ -4014,6 +4014,119 @@ fn retired_hook_attention_does_not_return_on_a_b_a() {
 }
 
 #[test]
+fn delayed_hook_set_and_clear_cannot_replace_attention_after_serialized_retirement() {
+    struct PausedNativeQuery {
+        snapshot: Pane,
+        captured: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    }
+    impl HerdrTransport for PausedNativeQuery {
+        fn panes(&self) -> Result<Vec<Pane>> {
+            self.captured.send(())?;
+            self.release.recv_timeout(Duration::from_secs(5))?;
+            Ok(vec![self.snapshot.clone()])
+        }
+        fn report(&self, _: &Pane, _: &Display) -> Result<()> {
+            unreachable!()
+        }
+        fn report_identity(&self, _: &Pane, _: &Identity) -> Result<()> {
+            unreachable!()
+        }
+        fn clear_agent_name(&self, _: &Pane) -> Result<()> {
+            unreachable!()
+        }
+    }
+
+    for event in ["PermissionRequest", "UserPromptSubmit"] {
+        let root = tempdir().unwrap();
+        let paths = StatePaths::for_tests(root.path());
+        set_automatic_summaries(&paths, false).unwrap();
+        let a = pane("w1:p1", AgentKind::Claude, "idle");
+        let mut watcher = Watcher::new(
+            FakeTransport::new(vec![a.clone()]),
+            no_provider(),
+            FakeSessionReader,
+            paths.clone(),
+        );
+        watcher.scan().unwrap();
+        let mut stale = proven_hook_payload(
+            &paths,
+            json!({"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_use_id":"a-tool"}),
+        );
+        apply_hook_payload(&paths, &a.id, &stale, &watcher.transport).unwrap();
+        watcher.scan().unwrap();
+        stale["hook_event_name"] = json!(event);
+        let (captured_tx, captured_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker_paths = paths.clone();
+        let worker_pane = a.clone();
+        let worker = std::thread::spawn(move || {
+            apply_hook_payload(
+                &worker_paths,
+                &worker_pane.id,
+                &stale,
+                &PausedNativeQuery {
+                    snapshot: worker_pane.clone(),
+                    captured: captured_tx,
+                    release: release_rx,
+                },
+            )
+        });
+        captured_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let mut b = a.clone();
+        b.agent_session = Some(AgentSession::new("id", "session-b"));
+        *watcher.transport.panes.borrow_mut() = vec![b.clone()];
+        let transcript = root.path().join("b.jsonl");
+        fs::write(
+            &transcript,
+            format!("{}\n", json!({"type":"user","sessionId":"session-b"})),
+        )
+        .unwrap();
+        let current = json!({"session_id":"session-b","transcript_path":transcript,
+            "hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_use_id":"b-tool"});
+
+        // A real file lock chooses the legal competing schedule without a
+        // sleep: if A owns this boundary, B retirement must serialize after it.
+        // The old query-before-lock implementation permits B to finish first.
+        let competing_lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(paths.hook_state_lock())
+            .unwrap();
+        let competitor_can_enter = match FileExt::try_lock_exclusive(&competing_lock) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+            Err(error) => panic!("hook mutation lock failed: {error}"),
+        };
+        drop(competing_lock);
+        if competitor_can_enter {
+            watcher.scan().unwrap();
+            apply_hook_payload(&paths, &b.id, &current, &watcher.transport).unwrap();
+        }
+        release_tx.send(()).unwrap();
+        worker.join().unwrap().unwrap();
+        if !competitor_can_enter {
+            watcher.scan().unwrap();
+            apply_hook_payload(&paths, &b.id, &current, &watcher.transport).unwrap();
+        }
+        watcher.scan().unwrap();
+        assert_eq!(
+            watcher.resolve_attention(&b),
+            Some((Attention::Question, AttentionSource::Hook)),
+            "a delayed A {event} must preserve B's current question"
+        );
+        let state = &load_hook_states(&paths).panes[&b.id];
+        assert_eq!(state.session_owner, hook_session_owner(&current));
+        assert_eq!(state.pending_tool_id.as_deref(), Some("b-tool"));
+        *watcher.transport.panes.borrow_mut() = vec![a.clone()];
+        watcher.scan().unwrap();
+        assert_eq!(watcher.resolve_attention(&a), None);
+        assert!(!load_hook_states(&paths).panes.contains_key(&a.id));
+    }
+}
+
+#[test]
 fn hooks_require_current_native_proof_and_preserve_state_on_query_failure() {
     struct Unavailable;
     impl HerdrTransport for Unavailable {

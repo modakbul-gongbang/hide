@@ -137,7 +137,7 @@ test("native session replacement hides stale labels before the watcher publishes
     const watcherEnv = { ...herdr.env, HOME: watcherHome, HERDR_BIN_PATH: herdr.bin, HERDR_PANE_ID: pane };
     // The actual hook CLI must accept B while the durable display still owns A.
     const displayFile = path.join(stateRoot, "display-state.json");
-    fs.writeFileSync(displayFile, JSON.stringify({ panes: { [pane]: { session_owner: owner(`fixture-${pane}`), task: "이전 A hook fixture" } } }));
+    fs.writeFileSync(displayFile, JSON.stringify({ panes: { [pane]: { session_owner: owner(`fixture-${pane}`), state_change_seq: 1, changed_unix_ms: Date.now(), task: "이전 A hook fixture", progress: "이전 A 진행", expected_reply: "", unseen: false } } }));
     execFileSync(watcherBin, ["hook"], { env: watcherEnv, input: JSON.stringify({
       session_id: "session-b", transcript_path: path.join(transcriptRoot, "session-b.jsonl"),
       hook_event_name: "PermissionRequest", tool_name: "AskUserQuestion", tool_use_id: "b-question",
@@ -147,14 +147,28 @@ test("native session replacement hides stale labels before the watcher publishes
     expect(earlyHook.attention).toBe("question");
     expect(JSON.parse(fs.readFileSync(displayFile, "utf8")).panes[pane].session_owner).toBe(owner(`fixture-${pane}`));
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "early-current-hook.json"), JSON.stringify({ ...candidate, head: process.env.HIDE_QA_HEAD, pane, nativeOwner: "session-b", persistedOwnerUnchanged: true, acceptedHookOwner: earlyHook.session_owner, attention: earlyHook.attention }));
-    fs.writeFileSync(path.join(stateRoot, "display-state.json"), JSON.stringify({ panes: { [pane]: { session_owner: owner("session-b"), state_change_seq: 1, changed_unix_ms: Date.now(), task: "워처가 복원한 한글 작업", progress: "검증된 세션 진행", expected_reply: "", unseen: false } } }));
     execFileSync(watcherBin, ["set-automatic-summaries", "--enabled", "false"], { env: watcherEnv });
     const startWatcher = () => { watcher = spawn(watcherBin, ["watch"], { env: watcherEnv, stdio: "ignore" }); };
+    startWatcher();
+    // Preserve durable A until actual watcher reconciliation confirms B.
+    await expect.poll(() => JSON.parse(fs.readFileSync(displayFile, "utf8")).panes[pane].session_owner).toBe(owner("session-b"));
+    await expect.poll(() => consumedDemand).toBe("question");
+    const reconciledHook = JSON.parse(fs.readFileSync(path.join(stateRoot, "hook-state.json"), "utf8")).panes[pane];
+    expect(reconciledHook.session_owner).toBe(owner("session-b"));
+    expect(reconciledHook.attention).toBe("question");
+    expect(JSON.parse(fs.readFileSync(displayFile, "utf8")).panes[pane].task).toBeNull();
+    await expect(tab).toContainText("Claude");
+    await expect(page.getByText("이전 A hook fixture", { exact: true })).toHaveCount(0);
+    await capture("early-current-hook-reconciled");
+    if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "early-current-hook-reconciled.json"), JSON.stringify({ ...candidate, head: process.env.HIDE_QA_HEAD, pane, hookOwner: reconciledHook.session_owner, attention: reconciledHook.attention, demand: consumedDemand, actualWatcherReconciliation: true }));
+    await stopWatcher();
+    // Separately seed proven same-B state for restart/restoration observation.
+    fs.writeFileSync(displayFile, JSON.stringify({ panes: { [pane]: { session_owner: owner("session-b"), state_change_seq: 1, changed_unix_ms: Date.now(), task: "워처가 복원한 한글 작업", progress: "검증된 세션 진행", expected_reply: "", unseen: false } } }));
     startWatcher();
     await expect(tab).toContainText("워처가 복원한 한글 작업", { timeout: 10_000 });
     await stopWatcher();
     startWatcher();
-    await expect.poll(() => fs.readFileSync(path.join(stateRoot, "events.jsonl"), "utf8").split("watcher_started").length - 1).toBe(2);
+    await expect.poll(() => fs.readFileSync(path.join(stateRoot, "events.jsonl"), "utf8").split("watcher_started").length - 1).toBe(3);
     await expect(tab).toContainText("워처가 복원한 한글 작업");
     await capture("watcher-restarted-current");
     let sequence = 4;
