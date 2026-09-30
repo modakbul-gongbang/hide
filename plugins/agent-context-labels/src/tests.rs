@@ -4067,7 +4067,7 @@ fn hooks_require_current_native_proof_and_preserve_state_on_query_failure() {
             &paths,
             &current.id,
             &payload,
-            &FakeTransport::new(vec![current])
+            &FakeTransport::new(vec![current.clone()])
         )
         .unwrap(),
         HookUpdate::Ignore
