@@ -15,7 +15,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::model::{ListeningPortSnapshot, ListeningPortsSnapshot};
+use crate::model::{ListeningPortSnapshot, ListeningPortsSnapshot, ServerEndpointSnapshot};
 
 /// How stale the port list may be.
 ///
@@ -92,9 +92,10 @@ fn read() -> ListeningPortsSnapshot {
         let Some(cwd) = directories.get(&pid) else {
             continue;
         };
-        for port in ports {
+        for endpoint in ports {
             entries.push(ListeningPortSnapshot {
-                port,
+                host: endpoint.host,
+                port: endpoint.port,
                 cwd: cwd.clone(),
             });
         }
@@ -103,6 +104,7 @@ fn read() -> ListeningPortsSnapshot {
         left.port
             .cmp(&right.port)
             .then_with(|| left.cwd.cmp(&right.cwd))
+            .then_with(|| left.host.cmp(&right.host))
     });
     entries.dedup();
     ListeningPortsSnapshot {
@@ -112,8 +114,8 @@ fn read() -> ListeningPortsSnapshot {
 }
 
 /// Listening TCP sockets, as a pid to ports map.
-fn listening_sockets() -> Result<BTreeMap<u32, Vec<u16>>, String> {
-    let output = run_lsof(&["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pn"])?;
+fn listening_sockets() -> Result<BTreeMap<u32, Vec<ServerEndpointSnapshot>>, String> {
+    let output = run_lsof(&["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pnt"])?;
     Ok(parse_listening_sockets(&output))
 }
 
@@ -170,31 +172,50 @@ fn run_within(command: &mut Command, deadline: Duration) -> Result<String, Strin
 /// line applies to every following line until the next `p`. A socket's `n`
 /// field is an address such as `127.0.0.1:5173` or `*:8080`, so the port is
 /// what follows the last colon.
-pub fn parse_listening_sockets(output: &str) -> BTreeMap<u32, Vec<u16>> {
-    let mut sockets: BTreeMap<u32, Vec<u16>> = BTreeMap::new();
+pub fn parse_listening_sockets(output: &str) -> BTreeMap<u32, Vec<ServerEndpointSnapshot>> {
+    let mut sockets: BTreeMap<u32, Vec<ServerEndpointSnapshot>> = BTreeMap::new();
     let mut pid = None;
+    let mut family = None;
     for line in output.lines() {
         let Some((tag, value)) = line.split_at_checked(1) else {
             continue;
         };
         match tag {
-            "p" => pid = value.trim().parse::<u32>().ok(),
+            "p" => {
+                pid = value.trim().parse::<u32>().ok();
+                family = None;
+            }
+            "t" => family = Some(value.trim()),
             "n" => {
                 let Some(pid) = pid else { continue };
                 // An address with an arrow is a connection, not a listener.
                 if value.contains("->") {
                     continue;
                 }
-                let Some(port) = value
-                    .rsplit(':')
-                    .next()
-                    .and_then(|port| port.trim().parse::<u16>().ok())
-                else {
+                let Some((host, port)) = value.rsplit_once(':') else {
                     continue;
                 };
+                let Ok(port) = port.trim().parse::<u16>() else {
+                    continue;
+                };
+                if port == 0 {
+                    continue;
+                }
+                let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+                let host = match host {
+                    "*" if family == Some("IPv6") => "::1".to_owned(),
+                    "*" if family == Some("IPv4") => "127.0.0.1".to_owned(),
+                    "0.0.0.0" => "127.0.0.1".to_owned(),
+                    "::" => "::1".to_owned(),
+                    host => match host.parse::<std::net::IpAddr>() {
+                        Ok(address) => address.to_string(),
+                        Err(_) => continue,
+                    },
+                };
+                let endpoint = ServerEndpointSnapshot { host, port };
                 let ports = sockets.entry(pid).or_default();
-                if !ports.contains(&port) {
-                    ports.push(port);
+                if !ports.contains(&endpoint) {
+                    ports.push(endpoint);
                 }
             }
             _ => {}
@@ -246,12 +267,34 @@ pub fn attributed_ports(pane_cwd: &str, listeners: &[ListeningPortSnapshot]) -> 
     ports
 }
 
+/// Reuses the same cwd attribution, retaining each observed address.
+pub fn attributed_servers(
+    pane_cwd: &str,
+    listeners: &[ListeningPortSnapshot],
+) -> Vec<ServerEndpointSnapshot> {
+    if pane_cwd.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut servers: Vec<_> = listeners
+        .iter()
+        .filter(|listener| Path::new(&listener.cwd).starts_with(Path::new(pane_cwd)))
+        .map(|listener| ServerEndpointSnapshot {
+            host: listener.host.clone(),
+            port: listener.port,
+        })
+        .collect();
+    servers.sort();
+    servers.dedup();
+    servers
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn listener(port: u16, cwd: &str) -> ListeningPortSnapshot {
         ListeningPortSnapshot {
+            host: "127.0.0.1".into(),
             port,
             cwd: cwd.to_owned(),
         }
@@ -270,10 +313,28 @@ mod tests {
 
     #[test]
     fn field_output_groups_every_port_under_the_process_that_listens_on_it() {
-        let output = "p501\nn*:8080\nn127.0.0.1:5173\np777\nn[::1]:3000\n";
+        let output = "p501\ntIPv4\nn*:8080\nn127.0.0.1:5173\np777\nn[::1]:3000\n";
         let sockets = parse_listening_sockets(output);
-        assert_eq!(sockets.get(&501), Some(&vec![8080, 5173]));
-        assert_eq!(sockets.get(&777), Some(&vec![3000]));
+        assert_eq!(
+            sockets.get(&501),
+            Some(&vec![
+                ServerEndpointSnapshot {
+                    host: "127.0.0.1".into(),
+                    port: 8080
+                },
+                ServerEndpointSnapshot {
+                    host: "127.0.0.1".into(),
+                    port: 5173
+                }
+            ])
+        );
+        assert_eq!(
+            sockets.get(&777),
+            Some(&vec![ServerEndpointSnapshot {
+                host: "::1".into(),
+                port: 3000
+            }])
+        );
     }
 
     #[test]

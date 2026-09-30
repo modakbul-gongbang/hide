@@ -243,7 +243,7 @@ fn a_history_read_for_a_project_no_longer_named_cannot_land() {
     let load = crate::runtime::memory::SessionsLoad {
         project_id: "zeta".to_owned(),
         checkout_path: String::new(),
-        rows: zeta_rows,
+        rows: zeta_rows.to_vec(),
         memories: Vec::new(),
         state: None,
     };
@@ -382,8 +382,9 @@ fn a_session_whose_file_is_still_there_but_left_the_project_leaves_its_history()
     );
     let locator = settled(&shared)
         .rows
-        .into_iter()
+        .iter()
         .find(|row| row.id == "claude-alpha")
+        .cloned()
         .expect("listed")
         .locator;
 
@@ -402,7 +403,8 @@ fn a_session_whose_file_is_still_there_but_left_the_project_leaves_its_history()
     );
     let ids = settled(&shared)
         .rows
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|row| row.id)
         .collect::<Vec<_>>();
     assert_eq!(ids, ["claude-broken", "codex-alpha"]);
@@ -694,4 +696,218 @@ fn a_session_whose_file_moved_away_stays_listed_as_unavailable_from_its_memory_r
     );
     assert_eq!(detail.locator, moved.to_string_lossy());
     assert!(detail.archive.is_none());
+}
+
+#[test]
+fn rejected_search_keeps_its_identity_and_fences_late_valid_answers() {
+    use crate::runtime::session_search::SearchPayload;
+    let fixture = fixture();
+    let shared = shared(&fixture);
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id": workspace_id(&fixture.alpha)}),
+    );
+    settled(&shared);
+    let mut runtime = shared.lock().unwrap();
+    let payload = |query: String, days| SearchPayload {
+        workspace_id: workspace_id(&fixture.alpha),
+        device_id: "local".into(),
+        query,
+        provider: "all".into(),
+        clear: false,
+        days,
+    };
+    runtime.request_session_search(payload("valid".into(), None));
+    let old_generation = runtime.search_generation;
+    let rejected = "한".repeat(257);
+    runtime.request_session_search(payload(rejected.clone(), None));
+    assert!(!runtime.ingest_search(
+        old_generation,
+        crate::model::SessionSearchSnapshot {
+            query: "valid".into(),
+            ..Default::default()
+        }
+    ));
+    let answer = runtime.snapshot.session_search.as_ref().unwrap();
+    assert_eq!(answer.query, rejected);
+    assert!(answer.failure.is_some());
+    assert!(!answer.loading);
+    runtime.request_session_search(payload("valid".into(), None));
+    let old_generation = runtime.search_generation;
+    runtime.request_session_search(payload("invalid-policy".into(), Some(7)));
+    assert!(!runtime.ingest_search(old_generation, Default::default()));
+    assert_eq!(
+        runtime.snapshot.session_search.as_ref().unwrap().query,
+        "invalid-policy"
+    );
+}
+
+#[test]
+fn search_setup_failures_are_observable_and_successful_retry_recovers() {
+    use crate::runtime::session_search::{SearchPayload, SearchWorker};
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("session-search.sqlite3");
+    fs::create_dir(&database).unwrap();
+    let mut r = runtime();
+    r.state_path = dir.path().join("state.json");
+    r.snapshot.project_sessions = Some(ProjectSessionsSnapshot {
+        device_id: "local".into(),
+        workspace_id: "p".into(),
+        unavailable_reason: None,
+        loading: false,
+        failure: None,
+        rows: Arc::new(vec![]),
+        detail: None,
+    });
+    r.project_sessions_work.project_id = Some("p".into());
+    let shared = Arc::new(Mutex::new(r));
+    let worker = SearchWorker::spawn(Arc::downgrade(&shared), ChangeNotifier::noop()).unwrap();
+    worker.install(&mut shared.lock().unwrap());
+    let submit = || {
+        shared
+            .lock()
+            .unwrap()
+            .request_session_search(SearchPayload {
+                workspace_id: "p".into(),
+                device_id: "local".into(),
+                query: "valid query".into(),
+                provider: "all".into(),
+                clear: false,
+                days: None,
+            });
+    };
+    let wait = || {
+        let start = Instant::now();
+        loop {
+            let result = shared
+                .lock()
+                .unwrap()
+                .snapshot
+                .session_search
+                .clone()
+                .unwrap();
+            if !result.loading {
+                return result;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    submit();
+    let failed = wait();
+    assert!(failed.failure.unwrap().contains("could not open"));
+    assert!(!failed.policy_loaded);
+    fs::remove_dir(&database).unwrap();
+    submit();
+    let recovered = wait();
+    assert!(recovered.failure.is_none());
+    assert!(recovered.policy_loaded);
+    drop(worker);
+}
+
+#[test]
+fn search_capacity_reason_survives_publication() {
+    use crate::runtime::session_search::{SearchPayload, SearchWorker};
+    let dir = tempfile::tempdir().unwrap();
+    let mut r = runtime();
+    r.state_path = dir.path().join("state.json");
+    let row = SessionRowSnapshot {
+        id: "s".into(),
+        provider: "codex".into(),
+        provider_label: "Codex".into(),
+        locator: dir.path().join("missing").to_string_lossy().into_owned(),
+        checkout_path: "/fixture".into(),
+        first_human_request: None,
+        started_at_unix_ms: None,
+        updated_at_unix_ms: 0,
+        title: None,
+        unavailable_reason: None,
+    };
+    let rows = Arc::new(vec![row; 2001]);
+    r.project_sessions_work
+        .known
+        .insert("p".into(), rows.clone());
+    r.snapshot.project_sessions = Some(ProjectSessionsSnapshot {
+        device_id: "local".into(),
+        workspace_id: "p".into(),
+        unavailable_reason: None,
+        loading: false,
+        failure: None,
+        rows,
+        detail: None,
+    });
+    r.project_sessions_work.project_id = Some("p".into());
+    let shared = Arc::new(Mutex::new(r));
+    let worker = SearchWorker::spawn(Arc::downgrade(&shared), ChangeNotifier::noop()).unwrap();
+    worker.install(&mut shared.lock().unwrap());
+    shared
+        .lock()
+        .unwrap()
+        .request_session_search(SearchPayload {
+            workspace_id: "p".into(),
+            device_id: "local".into(),
+            query: String::new(),
+            provider: "all".into(),
+            clear: false,
+            days: None,
+        });
+    let start = Instant::now();
+    loop {
+        let state = shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .session_search
+            .clone()
+            .unwrap();
+        if !state.loading {
+            assert!(state.failure.unwrap().contains("2,000"));
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+    }
+    drop(worker);
+}
+
+#[test]
+fn real_project_replacement_clears_search_delta_and_rejects_late_old_answer() {
+    let f = fixture();
+    let shared = shared(&f);
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id":workspace_id(&f.zeta)}),
+    );
+    settled(&shared);
+    let mut r = shared.lock().unwrap();
+    let answer = crate::model::SessionSearchSnapshot {
+        workspace_id: workspace_id(&f.zeta),
+        device_id: "local".into(),
+        query: "old".into(),
+        page: hide_session::search::SearchPage {
+            hits: vec![hide_session::search::SearchHit {
+                session_id: "old-zeta".into(),
+                source_offset: 17,
+                role: "Human".into(),
+                at_unix_ms: 1,
+                snippet: "old private body".into(),
+            }],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    r.snapshot.session_search = Some(answer.clone());
+    let generation = r.search_generation;
+    let before = r.snapshot_delta_payload(0, 0);
+    r.refresh_project_sessions(None, &workspace_id(&f.alpha));
+    assert!(!r.ingest_search(generation, answer));
+    let delta = r.snapshot_delta_payload(before.revision, 0);
+    let cleared = delta.session_search.as_ref().unwrap();
+    assert!(cleared.workspace_id.is_empty() && cleared.page.hits.is_empty());
+    assert_eq!(
+        r.snapshot.project_sessions.as_ref().unwrap().workspace_id,
+        workspace_id(&f.alpha)
+    );
 }
