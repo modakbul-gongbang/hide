@@ -92,7 +92,7 @@ test("server picker and conversation search in a background native window", asyn
       await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children.map((view) => (view as unknown as { webContents?: Electron.WebContents }).webContents?.getURL()))).toContain(`http://[::1]:${servers[1]!.port}/`);
       await shot(`native-server-opened-${value}`);
     }
-    await openSessions(page);
+    await openSessions(page, page.locator("[data-project-overview]"));
     const search = page.getByRole("searchbox", { name: "Search sessions" });
     for (const value of ["light", "dark"] as const) {
       await theme(value);
