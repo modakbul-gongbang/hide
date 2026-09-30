@@ -94,9 +94,15 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
   try {
     ({ app } = await launch(run.env));
     const page = await app.firstWindow();
+    const sent = countSent(page);
+    // Observe the new live socket before it connects, including with an already-loaded shell.
+    // The exactly-once expectations below still assert the real outgoing events.
+    await Promise.all([
+      page.waitForEvent("websocket", { predicate: (socket) => new URL(socket.url()).pathname === "/ws", timeout: 5_000 }),
+      page.reload(),
+    ]);
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
-    const sent = countSent(page);
     await enterWorkspace(page, "fixture");
     const canvas = page.locator("[data-canvas]").first();
     const tab = (id: string) => page.locator(`[data-tab="${id}"]`);
