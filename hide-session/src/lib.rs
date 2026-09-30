@@ -23,6 +23,9 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 mod catalog;
+mod conversation_cursor;
+
+pub use conversation_cursor::ConversationCursor;
 
 pub use catalog::{
     ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
@@ -146,6 +149,7 @@ pub enum SkipReason {
     MalformedJson,
     MissingTimestamp,
     InvalidTimestamp,
+    NonConversationCapacity,
 }
 
 impl SkipReason {
@@ -154,6 +158,7 @@ impl SkipReason {
             Self::MalformedJson => "malformed_json",
             Self::MissingTimestamp => "missing_timestamp",
             Self::InvalidTimestamp => "invalid_timestamp",
+            Self::NonConversationCapacity => "non_conversation_capacity",
         }
     }
 }
@@ -331,6 +336,14 @@ pub struct SessionCursor {
     pending: Vec<u8>,
 }
 
+struct AppendedBytes {
+    contents: Vec<u8>,
+    start_offset: u64,
+    identity: FileIdentity,
+    rescan_reason: Option<RescanReason>,
+    has_more: bool,
+}
+
 impl SessionCursor {
     pub fn new() -> Self {
         Self::default()
@@ -381,7 +394,7 @@ impl SessionCursor {
         self.pending.clear();
     }
 
-    pub fn read(&mut self, path: &Path) -> Result<SessionChunk> {
+    fn read_appended(&mut self, path: &Path) -> Result<AppendedBytes> {
         let mut file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
         let metadata = file
             .metadata()
@@ -413,6 +426,24 @@ impl SessionCursor {
         file.take(SESSION_INCREMENT_READ_LIMIT_BYTES)
             .read_to_end(&mut appended)
             .map_err(|error| SessionError::io("read", path, error))?;
+
+        Ok(AppendedBytes {
+            has_more: start + (appended.len() as u64) < metadata.len(),
+            contents: appended,
+            start_offset: start,
+            identity,
+            rescan_reason,
+        })
+    }
+
+    pub fn read(&mut self, path: &Path) -> Result<SessionChunk> {
+        let AppendedBytes {
+            contents: appended,
+            start_offset: start,
+            identity,
+            rescan_reason,
+            ..
+        } = self.read_appended(path)?;
 
         let retained_len = self.pending.len() as u64;
         let mut combined = self.pending.clone();

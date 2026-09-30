@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use fs2::FileExt;
 use hide_ai::{AiError, AiResult, AiRouter, CancelToken, ProviderId};
 use hide_session::{
-    Agent as SessionAgent, SessionCursor, SessionIdentity, SessionLocator, parse_events,
+    Agent as SessionAgent, ConversationCursor, SessionIdentity, SessionLocator, parse_events,
 };
 pub use hide_session::{ConversationEvent as SessionEvent, EventKind, ParsedSession};
 use regex::Regex;
@@ -754,9 +754,10 @@ pub fn analysis_phase(
     start_done: bool,
     end_done: bool,
 ) -> Option<AnalysisPhase> {
-    if newest_user_is_last {
-        // The agent has not answered yet, so there is nothing to judge and only
-        // the task to name.
+    if newest_user_is_last || working {
+        // There is no completed turn to judge, only the task to name.
+        // A watcher catching up mid-turn still owes that
+        // decision even when progress messages already follow the request.
         return (!start_done).then_some(AnalysisPhase::TurnStart);
     }
     (!working && !end_done).then_some(AnalysisPhase::TurnEnd)
@@ -797,6 +798,10 @@ pub fn context_fingerprint(context: &str) -> u64 {
 
 pub trait SessionReader {
     fn read(&mut self, pane: &Pane) -> Result<ParsedSession>;
+
+    fn has_pending(&self, _pane: &Pane) -> bool {
+        false
+    }
 }
 
 pub struct LocalSessionReader {
@@ -806,7 +811,7 @@ pub struct LocalSessionReader {
 
 struct PaneSessionState {
     path: PathBuf,
-    cursor: SessionCursor,
+    cursor: ConversationCursor,
     events: std::collections::VecDeque<SessionEvent>,
     /// The session's own title, kept across incremental reads: a later chunk
     /// carries it only when the agent wrote it again.
@@ -891,6 +896,12 @@ impl LocalSessionReader {
 }
 
 impl SessionReader for LocalSessionReader {
+    fn has_pending(&self, pane: &Pane) -> bool {
+        self.sessions
+            .get(&pane.id)
+            .is_some_and(|state| state.cursor.has_more())
+    }
+
     fn read(&mut self, pane: &Pane) -> Result<ParsedSession> {
         let path = self.session_path(pane)?;
         let state = self
@@ -898,7 +909,7 @@ impl SessionReader for LocalSessionReader {
             .entry(pane.id.clone())
             .or_insert_with(|| PaneSessionState {
                 path: path.clone(),
-                cursor: SessionCursor::new(),
+                cursor: ConversationCursor::new(),
                 events: std::collections::VecDeque::new(),
                 title: None,
             });
@@ -908,18 +919,20 @@ impl SessionReader for LocalSessionReader {
             state.events.clear();
             state.title = None;
         }
-        let chunk = state.cursor.read(&path).map_err(anyhow::Error::from)?;
-        if chunk.rescan_reason.is_some() {
+        let parsed = state
+            .cursor
+            .read(
+                match pane.agent {
+                    AgentKind::Claude => SessionAgent::Claude,
+                    AgentKind::Codex => SessionAgent::Codex,
+                },
+                &path,
+            )
+            .map_err(anyhow::Error::from)?;
+        if parsed.rescan_reason.is_some() {
             state.events.clear();
             state.title = None;
         }
-        let parsed = parse_events(
-            match pane.agent {
-                AgentKind::Claude => SessionAgent::Claude,
-                AgentKind::Codex => SessionAgent::Codex,
-            },
-            &chunk.contents,
-        );
         for event in parsed.events {
             if event.kind != EventKind::Injected {
                 state.events.push_back(event);
@@ -935,7 +948,7 @@ impl SessionReader for LocalSessionReader {
             title: state.title.clone(),
             skipped_lines: parsed.skipped_lines,
             skipped_reasons: parsed.skipped_reasons,
-            rescan_reason: chunk.rescan_reason,
+            rescan_reason: parsed.rescan_reason,
         })
     }
 }
@@ -1679,6 +1692,8 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     state_change_seqs: HashMap<String, u64>,
     reported_revisions: HashMap<String, u64>,
     next_analysis_at: HashMap<String, SystemTime>,
+    pending_forced_refresh: HashSet<String>,
+    waiting_analysis: HashSet<String>,
     display_states: DisplayStates,
     last_displays: HashMap<String, Display>,
     last_animation_at: SystemTime,
@@ -1736,6 +1751,8 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             state_change_seqs: HashMap::new(),
             reported_revisions: HashMap::new(),
             next_analysis_at: HashMap::new(),
+            pending_forced_refresh: HashSet::new(),
+            waiting_analysis: HashSet::new(),
             display_states,
             last_displays: HashMap::new(),
             last_animation_at: SystemTime::now(),
@@ -1826,6 +1843,10 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         elapsed_due: bool,
         event_received_at: Option<std::time::Instant>,
     ) -> Result<usize> {
+        self.pending_forced_refresh
+            .retain(|id| panes.iter().any(|pane| pane.id == *id));
+        self.waiting_analysis
+            .retain(|id| panes.iter().any(|pane| pane.id == *id));
         // Both files are read once per scan rather than once per pane.
         self.hook_states = load_hook_states(&self.paths);
         self.settings = load_settings(&self.paths);
@@ -1929,8 +1950,12 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             let own_revision =
                 revision_changed && self.reported_revisions.remove(&pane.id) == Some(pane.revision);
             let forced = refresh_requested && pane.focused;
-            let needs_full_refresh =
-                forced || state_changed || retry_due || (revision_changed && !own_revision);
+            let needs_full_refresh = forced
+                || state_changed
+                || retry_due
+                || (revision_changed && !own_revision)
+                || self.session_reader.has_pending(pane)
+                || (self.analysis_in_flight.is_empty() && self.waiting_analysis.contains(&pane.id));
             let changed = if needs_full_refresh {
                 self.process(pane, forced)?
             } else if lifecycle_changed || elapsed_due || self.elapsed_changed(pane)? {
@@ -1954,6 +1979,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
     }
 
     fn process(&mut self, pane: &Pane, forced: bool) -> Result<bool> {
+        self.waiting_analysis.remove(&pane.id);
         let parsed = match self.session_reader.read(pane) {
             Ok(parsed) => parsed,
             Err(error) => {
@@ -1989,6 +2015,16 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 Some(&format!("lines={};reasons={reasons}", parsed.skipped_lines)),
             )?;
         }
+        // A bounded read may stop inside an old tool result. Finish the
+        // backlog on subsequent scans before naming a partially read task.
+        if self.session_reader.has_pending(pane) {
+            if forced {
+                self.pending_forced_refresh.insert(pane.id.clone());
+            }
+            let display = self.display_for(pane)?;
+            return self.report_if_changed(pane, &display);
+        }
+        let forced = self.pending_forced_refresh.remove(&pane.id) || forced;
         let newest_user_is_last = parsed
             .events
             .iter()
@@ -2112,8 +2148,19 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         if self.analysis_in_flight.contains(&pane.id) {
             return self.report_if_changed(pane, &display);
         }
+        // One label worker runs at a time. Pending work is only a pane id,
+        // bounded by the live pane set, and re-reads current input when ready.
+        // Startup catch-up cannot exhaust the router's concurrency budget.
+        if !self.analysis_in_flight.is_empty() {
+            self.waiting_analysis.insert(pane.id.clone());
+            if forced {
+                self.pending_forced_refresh.insert(pane.id.clone());
+            }
+            return self.report_if_changed(pane, &display);
+        }
         let router = Arc::clone(&self.router);
         let sender = self.analysis_sender.clone();
+        let paths = self.paths.clone();
         let pane_id = pane.id.clone();
         let context_chars = context.chars().count();
         let task_cursor = task_input_cursor(&parsed.events);
@@ -2147,6 +2194,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 initial_context,
                 result,
             });
+            wake_watcher(&paths);
         });
         self.report_if_changed(pane, &display)
     }
@@ -3104,8 +3152,16 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
             }
         }
     }
+}
 
+impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
     fn next_elapsed_wait(&self, panes: &[Pane]) -> Duration {
+        if panes
+            .iter()
+            .any(|pane| self.session_reader.has_pending(pane))
+        {
+            return Duration::from_millis(20);
+        }
         let now = unix_time_ms().unwrap_or(u64::MAX);
         panes
             .iter()

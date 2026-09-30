@@ -220,6 +220,66 @@ fn watcher_clears_the_legacy_summary_token_once_per_pane() {
     );
 }
 
+#[test]
+fn unchanged_pane_finishes_the_session_backlog_before_requesting_a_label() {
+    let home = tempdir().unwrap();
+    let path = home.path().join("session.jsonl");
+    let message = |text: &str| {
+        format!(
+            "{}\n",
+            json!({
+                "type": "response_item", "timestamp": "2026-09-30T00:00:00Z",
+                "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}
+            })
+        )
+    };
+    let tool = format!(
+        "{{\"type\":\"event_msg\",\"output\":\"{}\"}}\n",
+        "x".repeat(hide_session::SESSION_LINE_LIMIT_BYTES * 5)
+    );
+    fs::write(
+        &path,
+        format!(
+            "{}{tool}{}",
+            message("이전 작업"),
+            message("최신 라벨 복구 작업")
+        ),
+    )
+    .unwrap();
+    let mut subject = pane("w1:p1", AgentKind::Codex, "working");
+    subject.agent_session = Some(AgentSession::new("path", path.to_str().unwrap()));
+    let backend = task_backend();
+    let paths = StatePaths::for_tests(&home.path().join("state"));
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![subject.clone()]),
+        router_with(&backend),
+        LocalSessionReader::new(home.path()),
+        paths,
+    );
+    watcher
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    assert!(
+        watcher.analysis_in_flight.is_empty(),
+        "no analysis from a partial transcript"
+    );
+    assert!(watcher.next_elapsed_wait(std::slice::from_ref(&subject)) <= Duration::from_millis(20));
+    // No Herdr revision or lifecycle change arrives between these scans.
+    watcher
+        .scan_panes(std::slice::from_ref(&subject), false, true)
+        .unwrap();
+    watcher.await_pending_analysis();
+    watcher
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    assert_eq!(backend.calls(), 1);
+    assert!(backend.inputs()[0].contains("최신 라벨 복구 작업"));
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("작업 요약 제목")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn refresh_marker_wakes_the_single_event_loop_without_becoming_state() {
@@ -1439,6 +1499,80 @@ fn missing_task_state_rebuilds_from_the_initial_session_view() {
     );
 }
 
+#[test]
+fn a_watcher_catching_up_mid_turn_names_the_task_once() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let session = ScriptedSessionReader::new();
+    session.user("라벨 플러그인을 복구해줘");
+    session.assistant("로그를 확인하고 있습니다.");
+    let backend = task_backend();
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Codex, "working")]),
+        router_with(&backend),
+        session,
+        paths,
+    );
+    watcher.settle();
+    assert_eq!(backend.calls(), 1);
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("작업 요약 제목")
+    );
+    for _ in 0..3 {
+        watcher.session_reader.assistant("계속 확인하고 있습니다.");
+        watcher.transport.panes.borrow_mut()[0].revision += 1;
+        watcher.settle();
+    }
+    assert_eq!(
+        backend.calls(),
+        1,
+        "progress does not create another task decision"
+    );
+}
+
+#[test]
+fn startup_names_every_pane_without_exhausting_the_routers_concurrency_budget() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let subjects = vec![
+        pane("w1:p1", AgentKind::Codex, "working"),
+        pane("w1:p2", AgentKind::Codex, "working"),
+        pane("w1:p3", AgentKind::Claude, "working"),
+    ];
+    let backend = task_backend();
+    // The default router permits one request at a time.
+    let mut watcher = Watcher::new(
+        FakeTransport::new(subjects.clone()),
+        router_with(&backend),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.scan_panes(&subjects, false, false).unwrap();
+    for _ in &subjects {
+        watcher.await_pending_analysis();
+        watcher.scan_panes(&subjects, false, false).unwrap();
+    }
+    assert_eq!(backend.calls(), subjects.len());
+    for subject in &subjects {
+        assert_eq!(
+            watcher.display_states.panes[&subject.id].task.as_deref(),
+            Some("작업 요약 제목")
+        );
+    }
+    assert!(
+        !fs::read_to_string(paths.log())
+            .unwrap()
+            .contains("over_budget")
+    );
+    watcher.scan_panes(&subjects, false, false).unwrap();
+    assert_eq!(
+        backend.calls(),
+        subjects.len(),
+        "unchanged panes spend no extra calls"
+    );
+}
+
 // ------------------------------------------------------------- scheduling
 
 #[test]
@@ -1850,6 +1984,7 @@ fn the_phase_stays_offered_until_its_call_actually_lands() {
     // Turn start: the user has spoken and the agent has not answered.
     assert_eq!(analysis_phase(true, false, false, false), Some(TurnStart));
     assert_eq!(analysis_phase(true, true, false, false), Some(TurnStart));
+    assert_eq!(analysis_phase(false, true, false, false), Some(TurnStart));
     // Offered again and again until it is recorded.
     assert_eq!(analysis_phase(true, true, true, false), None);
 
