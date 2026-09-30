@@ -80,6 +80,9 @@ async function withProbe(page: Page): Promise<void> {
 
 /** Prints `lines` in the fixture pane through `cat`, so the shell draws them as a program would. */
 async function print(page: Page, paneId: string, lines: string[], last: string): Promise<void> {
+  // Leave the old row before replacing its text so xterm requests fresh links
+  // when the next real hover enters it, including after an empty/error answer.
+  await page.mouse.move(0, 0);
   const file = path.join(herdr.root, `print-${Date.now()}.txt`);
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], `clear; cat '${file}'\n`], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
