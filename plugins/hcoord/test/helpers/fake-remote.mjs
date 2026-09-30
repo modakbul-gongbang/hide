@@ -126,7 +126,7 @@ export function createFakeRemote(cliPath) {
   delete baseEnv.HERDR_SOCKET_PATH; delete baseEnv.HERDR_BIN_PATH; delete baseEnv.HCOORD_HOME; delete baseEnv.HCOORD_REMOTE_HOME; delete baseEnv.HERDR_PANE_ID;
   return {
     root, bin,
-    env: (host = "local", extra = {}) => ({ ...baseEnv, HOME: home(host), ...extra }),
+    env: (host = "local", extra = {}) => ({ ...baseEnv, HOME: home(host), HCOORD_HOME: path.join(home(host), ".hcoord"), ...extra }),
     home,
     addMachine(label, target = label) {
       const list = JSON.parse(fs.readFileSync(path.join(root, "machines.json"), "utf8"));

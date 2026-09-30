@@ -10,8 +10,21 @@ import { inputReadiness, messageForDelivery } from "../../dist/hcoord/herdr.js";
 import { loadLedger, saveLedger } from "../../dist/hcoord/store.js";
 import { callDaemon } from "../../dist/hcoord/transport.js";
 
+
+// Explicit home arguments do not override an inherited HCOORD_HOME.
+// Each file/socket fixture owns the relocation and restores it after the test.
+function bindPrivateCoordinator(t, home) {
+  const previous = process.env.HCOORD_HOME;
+  process.env.HCOORD_HOME = path.join(home, ".hcoord");
+  t.after(() => {
+    if (previous === undefined) delete process.env.HCOORD_HOME;
+    else process.env.HCOORD_HOME = previous;
+  });
+}
+
 test("a denied local socket gives the caller a permission cause and next action", { skip: process.platform === "win32" }, async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-denied-socket-"));
+  bindPrivateCoordinator(t, home);
   const dir = path.join(home, ".hcoord");
   fs.mkdirSync(dir);
   const socketFile = path.join(dir, "api.sock");
@@ -432,8 +445,9 @@ test("oversized calls return an actionable capacity error before connecting", as
   await assert.rejects(callDaemon("request.send", { context: "a".repeat(1024 * 1024) }, "/nonexistent/hcoord-home"), { code: "capacity" });
 });
 
-test("invalid ledger JSON does not expose stored request text", () => {
+test("invalid ledger JSON does not expose stored request text", (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-corrupt-"));
+  bindPrivateCoordinator(t, home);
   try {
     fs.mkdirSync(path.join(home, ".hcoord"));
     fs.writeFileSync(path.join(home, ".hcoord", "ledger.json"), '{"request":"PRIVATE_ANSWER", invalid');
