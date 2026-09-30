@@ -416,17 +416,24 @@ export function installKeyboard(actions: Actions): () => void {
       return;
     }
     if (input.kind !== "cycle-input") return;
+    const firstStart = !nativeCycle && !ui().cycle && input.type === "keyDown";
     nativeCycle = { cycleId: input.cycleId, workspace: input.workspace, id: input.id };
     const cycle = ui().cycle;
     const scope = focusedCycleScope(useShellStore.getState().rest);
     const frame = drawnViews();
     if (!cycle && (!scope || scope.kind !== "view" || !frame || `${frame.workspace.device_id}\u0000${frame.workspace.path}` !== input.workspace || focusedSurface(useShellStore.getState().rest, scope)?.id !== input.id)) {
+      if (firstStart) focusBrowserDisplay(input.workspace, input.id);
       endNativeCycle();
       return;
     }
     const event = new KeyboardEvent(input.type === "keyDown" ? "keydown" : "keyup", { code: input.code, key: input.key, ctrlKey: input.control, altKey: input.alt, metaKey: input.meta, shiftKey: input.shift });
     if (input.type === "keyDown") onKeyDown(event); else onKeyUp(event);
-    if (!ui().cycle) endNativeCycle();
+    if (!ui().cycle) {
+      // A rejected or zero/one-item start borrowed the shell's responder,
+      // but selected nothing. A completed cycle follows its chosen page instead.
+      if (firstStart) focusBrowserDisplay(input.workspace, input.id);
+      endNativeCycle();
+    }
   });
   const unsubscribeMenu = bridge?.onCommand((id) => {
     const command = REGISTRY.find((row) => row.id === id);

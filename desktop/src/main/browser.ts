@@ -12,7 +12,7 @@
 //
 // A hidden page past `MAX_LIVE_VIEWS` is closed and loads again when shown.
 
-import { BrowserWindow, ipcMain, Menu, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session } from "electron";
+import { BrowserWindow, ipcMain, Menu, session, shell, WebContentsView, type Input, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
@@ -120,6 +120,9 @@ export class BrowserViews {
   /** The window the pages are drawn in. A new window starts with no pages. */
   attach(window: BrowserWindow): void {
     this.window = window;
+    // Once a native page starts a hold, its shell input uses the same IPC
+    // route. Even a quick release cannot overtake the forwarded first chord.
+    window.webContents.on("before-input-event", (event, input) => this.routeCycleInput(event, input));
     // A shell that loads again, or moves to another daemon, has not placed
     // anything yet: its pages hide until it says where they go.
     window.webContents.on("did-start-navigation", (details) => {
@@ -278,28 +281,7 @@ export class BrowserViews {
       void contents.setVisualZoomLevelLimits(...PINCH_ZOOM_LIMITS).catch((error: unknown) => this.log.event("browser.pinch_zoom_failed", { detail: String(error) }));
     });
     contents.on("before-input-event", (event, input) => {
-      // Only the shown focused page starts a cycle. Its bounded held input
-      // remains the owner while a shell overlay temporarily draws its still.
-      const held = this.cycleInput;
-      const eventLike = { code: input.code, metaKey: input.meta, altKey: input.alt, shiftKey: input.shift, ctrlKey: input.control };
-      const command = input.type === "keyDown" && !input.isComposing ? matchHost(eventLike, this.registry, "electron") : null;
-      const starts = !held && command && isCycleCommand(command.id) && page.visible && contents.isFocused();
-      const continues = held && command && isCycleCommand(command.id);
-      const ends = held && ((input.type === "keyUp" && input.key === held.release) || (input.type === "keyDown" && input.key === "Escape"));
-      if (starts || continues || ends) {
-        const chord = command && hostChord(command, "electron");
-        const release = chord && releaseModifier(chord);
-        if (!held && release) {
-          this.cycleSequence = (this.cycleSequence + 1) % Number.MAX_SAFE_INTEGER;
-          this.cycleInput = { page, release, cycleId: this.cycleSequence };
-        }
-        const cycle = held ?? this.cycleInput;
-        if (!cycle) return;
-        if (ends) this.cycleInput = null;
-        event.preventDefault();
-        this.emit({ kind: "cycle-input", cycleId: cycle.cycleId, workspace: cycle.page.workspace, id: cycle.page.id, type: input.type as "keyDown" | "keyUp", key: input.key, code: input.code, control: input.control, alt: input.alt, meta: input.meta, shift: input.shift });
-        return;
-      }
+      if (this.routeCycleInput(event, input, page)) return;
       // ⌘+ reaches no menu item (the menu's zoom in is ⌘=), so the page
       // answers it here unless the operator bound that chord to a command.
       if (input.type !== "keyDown" || input.code !== "Equal" || !input.meta || !input.shift || input.alt || input.control) return;
@@ -347,6 +329,33 @@ export class BrowserViews {
     };
     contents.on("will-navigate", guard);
     contents.on("will-redirect", guard);
+  }
+
+  /** One held origin and one ordered delivery route, independent of overlay coverage. */
+  private routeCycleInput(event: { preventDefault(): void }, input: Input, page?: Page): boolean {
+    const held = this.cycleInput;
+    if (!held && !page) return false;
+    const eventLike = { code: input.code, metaKey: input.meta, altKey: input.alt, shiftKey: input.shift, ctrlKey: input.control };
+    const command = input.type === "keyDown" && !input.isComposing ? matchHost(eventLike, this.registry, "electron") : null;
+    const starts = !held && command && isCycleCommand(command.id) && page?.visible && page.view.webContents.isFocused();
+    const continues = held && command && isCycleCommand(command.id);
+    const ends = held && ((input.type === "keyUp" && input.key === held.release) || (input.type === "keyDown" && input.key === "Escape"));
+    if (!starts && !continues && !ends) return false;
+    const chord = command && hostChord(command, "electron");
+    const release = chord && releaseModifier(chord);
+    if (starts && release && page) {
+      this.cycleSequence = (this.cycleSequence + 1) % Number.MAX_SAFE_INTEGER;
+      this.cycleInput = { page, release, cycleId: this.cycleSequence };
+    }
+    const cycle = held ?? this.cycleInput;
+    if (!cycle) return false;
+    if (ends) this.cycleInput = null;
+    event.preventDefault();
+    this.emit({ kind: "cycle-input", cycleId: cycle.cycleId, workspace: cycle.page.workspace, id: cycle.page.id, type: input.type as "keyDown" | "keyUp", key: input.key, code: input.code, control: input.control, alt: input.alt, meta: input.meta, shift: input.shift });
+    // The overlay can be outside the originating page. Transfer its native
+    // response at the start, while its logical owner stays frozen in the shell.
+    if (starts && this.window?.isFocused()) this.window.webContents.focus();
+    return true;
   }
 
   private update(page: Page, change: Partial<BrowserPageState>): void {

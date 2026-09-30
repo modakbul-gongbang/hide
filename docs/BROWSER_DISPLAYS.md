@@ -101,8 +101,11 @@ An evicted page reports its disappearance as disconnected until shown again.
 Only a visible native page can report keyboard focus to the shell; the shell resolves its complete Workspace identity and current View area.
 The page's `before-input-event` matches the shell's effective Electron shortcut registry for focused-area, global panel and project cycle commands before the page or menu sees them.
 One host slot holds the initiating page, actual release modifier and cycle identifier, including input received after the overlay hides that page.
-After hiding that held page, the host gives native keyboard response to the shell in the same focused window, because hiding a WebContentsView removes its native keyboard response.
+The first native cycle chord gives keyboard response to the shell in the same focused window, even when the overlay leaves the initiating page visible.
+Held repeats, release and Escape received by the shell follow the same host IPC route as the first chord, so a quick release cannot arrive before cycle initialization or also run through the DOM listener.
+After hiding that held page, the host reasserts shell keyboard response, because hiding a WebContentsView removes its native keyboard response.
 The shell retains the initiating page's logical ownership until release commits or Escape restores its input destination.
+When a first start is rejected or has zero or one eligible item, it restores the initiating visible page without committing a selection; completing a cycle instead follows the chosen page.
 The trusted bridge carries only cycle keydown/keyup and cancellation; the shell keeps the frozen scope and preview and owns the single commit.
 The shell also reports the matching identifier when release arrived in its renderer, so a late completion cannot erase a newer hold.
 Release or Escape received by another native page still ends the frozen initiating cycle.
