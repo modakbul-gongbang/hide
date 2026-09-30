@@ -280,7 +280,10 @@ export function installKeyboard(actions: Actions): () => void {
     ui().setHint(revealedFamily(hint, registry, host));
   };
   const setHint = (next: HintState) => {
-    if (next === hint) return;
+    const changed = next !== hint;
+    // A timer may wake before the fractional deadline. Keep one wake pending
+    // without publishing until the pure state actually advances.
+    if (!changed && (timer !== null || hint.deadline === null)) return;
     hint = next;
     if (timer) {
       clearTimeout(timer);
@@ -290,9 +293,9 @@ export function installKeyboard(actions: Actions): () => void {
       timer = setTimeout(() => {
         timer = null;
         setHint(advanceHint(hint, performance.now()));
-      }, Math.max(0, hint.deadline - performance.now()));
+      }, Math.max(1, Math.ceil(hint.deadline - performance.now())));
     }
-    publish();
+    if (changed) publish();
   };
   // A blur or a layer with no hold in progress changes nothing and publishes nothing.
   const endHold = () => {
