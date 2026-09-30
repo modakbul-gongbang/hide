@@ -311,7 +311,8 @@ A watcher restart gives its publication generations a fresh instance prefix with
 Hook attention also requires matching provider/native-ID proof from the hook's `session_id` and `transcript_path`.
 The hook command checks that proof against Herdr's current native reference before recording attention, so a valid new-session hook may arrive before the watcher replaces the previous durable owner.
 Native validation and hook mutation hold the same file lock as watcher retirement, so a delayed old-owner set or clear cannot overwrite newer attention after retirement.
-The existing five-second socket deadline bounds the query inside this plugin-only lock; the core runtime mutex is never involved.
+The query retains the existing five-second socket read/write timeouts; these are per-operation timeouts rather than a total deadline for waiting for or holding the plugin file lock.
+The core runtime mutex is never involved.
 Missing proof, unavailable current-reference queries and previous-session hook updates are diagnosed without personal content and ignored.
 Ownerless legacy hook attention cannot become a current session demand.
 

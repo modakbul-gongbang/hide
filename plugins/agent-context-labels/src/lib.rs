@@ -1292,8 +1292,8 @@ pub fn apply_hook_payload<T: HerdrTransport>(
     fs::create_dir_all(&paths.root)?;
     // Native validation and the file mutation share the retirement boundary.
     // Otherwise a query captured for A can overwrite a newer B hook after
-    // waiting for the lock. The socket query has its existing five-second
-    // deadline; this lock is never the core runtime mutex.
+    // waiting for the lock. The socket query retains its five-second
+    // read/write timeouts; this lock is never the core runtime mutex.
     let _lock = locked_state_file(&paths.hook_state_lock())?;
     // The display file can still contain A when Herdr already owns B, so
     // validate against the authoritative native reference rather than it.
