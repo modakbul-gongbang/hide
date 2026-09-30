@@ -14,6 +14,7 @@ import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { AgentAreas } from "./AgentAreas";
 import { Tools } from "./Tools";
+import { RunningServers } from "./RunningServers";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { shownTool } from "./viewLayout";
@@ -32,7 +33,7 @@ import { displayCommand } from "./shortcuts";
 // closed: its views stay in the core.
 //
 // Every control sits once, on the container it changes (issue 170, "Side
-// panel hierarchy, revised"): the toolbar holds only the path back and, while
+// panel hierarchy, revised"): the toolbar holds the path back, the server globe and, while
 // the panel is closed, its toggle; the panel's first row, at the toolbar's
 // height, holds each area's tabs and New tab, then the tool column's toggle,
 // Expand, Pin and the panel toggle; its second row, level with the agents'
@@ -155,7 +156,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
         inert={frame.shown === "expanded"}
         data-agent-area="true"
       >
-        <WorkspaceToolbar checkout={checkout} view={view} panelShown={shown} actions={actions} />
+        <WorkspaceToolbar checkout={checkout} view={view} panelShown={shown} coveredRight={shown ? Math.max(0, frame.width - frame.agentsRight) : 0} actions={actions} />
         <AgentArea checkout={checkout} actions={actions} />
       </div>
       {shown ? <SidePanel view={view} frame={frame} tool={tool} placement={placement} body={body} sizes={sizes} actions={actions} /> : null}
@@ -185,7 +186,7 @@ function useWidth(element: HTMLElement | null): number {
  * toggle at its right end while the panel is closed; an open panel carries
  * the toggle in the same spot.
  */
-function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: Checkout; view: WorkspaceView; panelShown: boolean; actions: Actions }) {
+function WorkspaceToolbar({ checkout, view, panelShown, coveredRight, actions }: { checkout: Checkout; view: WorkspaceView; panelShown: boolean; coveredRight: number; actions: Actions }) {
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
   const setScreen = useUiStore((s) => s.setScreen);
@@ -206,7 +207,7 @@ function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: C
   };
   return (
     <EntryContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
-      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar pl-sm pr-sm text-caption" data-workspace-toolbar="true">
+      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar pl-sm pr-sm text-caption" data-workspace-toolbar="true" style={{ marginRight: coveredRight }}>
         {device ? (
           // The front thing is a remote device's: its color and name lead the toolbar, and the pane border wears the same color (PRD home-device-rail D-15).
           <span className="-ml-sm flex h-full max-w-(--size-recent-location-max) shrink-0 items-center gap-xs bg-device-remote px-sm font-medium text-primary-foreground" data-device-band={device.id}>
@@ -241,6 +242,7 @@ function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: C
             </span>
           </Hint>
         </nav>
+        <RunningServers key={checkout.id} checkout={checkout} view={view} actions={actions} />
         {panelShown ? null : <PanelToggle view={view} actions={actions} />}
       </div>
     </EntryContextMenu>
@@ -417,10 +419,12 @@ function PanelGrip({ className = "" }: { className?: string }) {
  * Pin, since the panel already covers the Workspace there.
  */
 function PanelActions({ view, frame, toolsShown, actions }: { view: WorkspaceView; frame: PanelFrame; toolsShown: boolean; actions: Actions }) {
+  const checkout = useShellStore((s) => frontCheckout(s.rest));
   const expanded = view.panel === "expanded";
   const pinLabel = view.pinned ? "Unpin: float over the agents" : "Pin beside the agents";
   return (
     <div className="flex shrink-0 items-center gap-xxs pl-xs pr-sm" role="group" aria-label="Side panel actions" data-panel-actions="true">
+      {frame.shown === "expanded" && checkout ? <RunningServers checkout={checkout} view={view} actions={actions} /> : null}
       {frame.content === "tools" ? null : (
         <Hint label={toolsShown ? "Hide tools" : "Show tools"}>
           <Button

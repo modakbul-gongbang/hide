@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { Status } from "./components/settings-rows";
 import { Button } from "./components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Input } from "./components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint } from "./components/ui/tooltip";
@@ -20,7 +21,7 @@ import {
   type ListState,
   type ProviderFilter,
 } from "./sessions";
-import type { ArchiveEvent, ProjectSessionDetail, SessionRow, Workspace } from "./snapshot";
+import type { SessionSearchHit, ArchiveEvent, ProjectSessionDetail, SessionRow, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 
 // A Project's Sessions tab (PRD S8 B1-B9, D-08): the session history of
@@ -31,11 +32,15 @@ import { useShellStore } from "./store";
 // keys it by the Project, so another Project starts with its own filters and
 // asks for itself.
 
+const NO_CONTENT_HITS: SessionSearchHit[] = [];
+
 export function ProjectSessions({ workspace, actions }: { workspace: Workspace; actions: Actions }) {
+  const contentSearch = useShellStore((s) => s.sessionSearch);
   const sessions = useShellStore((s) => s.projectSessions);
   const live = useShellStore((s) => s.connection === "live");
   const [provider, setProvider] = useState<ProviderFilter>("all");
   const [query, setQuery] = useState("");
+  const [jump, setJump] = useState<{ session: string; offset: number } | null>(null);
   // Whether this tab has seen its own Project named since it asked (A7).
   const [acknowledged, setAcknowledged] = useState(false);
   const project = useMemo(() => ({ id: workspace.id, deviceId: workspace.device_id }), [workspace.id, workspace.device_id]);
@@ -57,9 +62,27 @@ export function ProjectSessions({ workspace, actions }: { workspace: Workspace; 
     if (named === "ours" && !acknowledged) setAcknowledged(true);
   }, [named, acknowledged]);
 
-  const retry = () => actions.refreshProjectSessions(project.id, project.deviceId);
-  const list = listState(sessions, named, provider, query);
+  const retry = useCallback(() => actions.refreshProjectSessions(project.id, project.deviceId), [actions, project]);
+  useEffect(() => {
+    if (!live || named !== "ours" || sessions?.loading || sessions?.unavailable_reason) return;
+    const timer = window.setTimeout(() => actions.searchProjectSessions(project.id, project.deviceId, query, {provider}), 220);
+    return () => window.clearTimeout(timer);
+  }, [actions, live, named, project, query, provider, sessions?.loading, sessions?.unavailable_reason]);
+  const search = named === "ours" && contentSearch?.workspace_id === project.id && contentSearch.device_id === project.deviceId ? contentSearch : null;
+  const hits = search?.query === query.trim() && search.provider === provider && !search.loading ? search.page.hits : NO_CONTENT_HITS;
+  const matches = useMemo(() => new Map(hits.map((hit) => [hit.session_id, hit])), [hits]);
+  const metadata = useMemo(() => listState(sessions, named, provider, query), [sessions, named, provider, query]);
+  const matchingRows = useMemo(() => query.trim() && named === "ours" ? (sessions?.rows ?? []).filter((row) => (provider === "all" || row.provider === provider) && (matches.has(row.id) || (metadata.kind === "rows" && metadata.rows.includes(row)))) : [], [query, named, sessions, provider, matches, metadata]);
+  const pendingContent = query.trim() && named === "ours" && !sessions?.unavailable_reason && (search?.loading || search?.indexing || search?.query !== query.trim() || search.provider !== provider);
+  const unavailableContent = query.trim() && named === "ours" && !sessions?.unavailable_reason && (search?.failure || search?.control_failure || search?.page.stale);
+  const list = useMemo<ListState>(() => matchingRows.length > 0 ? { kind: "rows" as const, rows: matchingRows } : unavailableContent && metadata.kind === "no_match" ? {kind: "content_unavailable" as const, stale: search?.page.stale === true} : pendingContent && metadata.kind === "no_match" ? { kind: "content_pending" as const, indexing: search?.indexing === true } : metadata, [matchingRows, metadata, unavailableContent, pendingContent, search?.page.stale, search?.indexing]);
   const detail = detailState(sessions, named);
+  const openSession = useCallback((row: SessionRow) => {
+    const hit = matches.get(row.id);
+    setJump(hit ? {session:row.id,offset:hit.source_offset} : null);
+    actions.openProjectSession(project.id,row.id);
+  }, [matches,actions,project]);
+  const clearFilters = useCallback(() => { setProvider("all"); setQuery(""); }, []);
   const total = named === "ours" ? (sessions?.rows.length ?? 0) : 0;
 
   return (
@@ -79,21 +102,30 @@ export function ProjectSessions({ workspace, actions }: { workspace: Workspace; 
           onProvider={setProvider}
           onQuery={setQuery}
         />
+        {named === "ours" && !sessions?.unavailable_reason ? <div className="flex flex-col gap-xs border-b border-border px-sm py-xs text-micro text-muted-foreground">
+          <p role="status" data-content-search-status="true">{search?.control_failure ?? search?.failure ?? (search?.policy_loaded && search.days === 0 ? "Content search is off. Metadata search remains available." : search?.indexing ? `Indexing conversations · ${search.indexed}/${search.total}` : !search || search.loading || (query.trim() && (search.query !== query.trim() || search.provider !== provider)) ? "Searching conversations…" : "Search titles and conversation contents")}{search?.page.stale ? " · Changed sources waiting for refresh" : ""}{search?.page.limited ? " · Results limited" : ""}</p>
+          <div className="flex flex-wrap items-center gap-xs">Copied history
+            <Select disabled={!search?.policy_loaded} value={String(search?.policy_loaded ? search.days : 90)} onValueChange={(value) => actions.searchProjectSessions(project.id, project.deviceId, query, { days: Number(value), provider })}>
+              <SelectTrigger size="sm" aria-label="Search index retention" className="w-auto text-caption"><SelectValue /></SelectTrigger>
+              <SelectContent>{[0, 30, 90, 365].map((days) => <SelectItem key={days} value={String(days)}>{days === 0 ? "Off" : `${days} days`}</SelectItem>)}</SelectContent>
+            </Select>
+            <Button variant="ghost" onClick={() => actions.searchProjectSessions(project.id, project.deviceId, query, { clear: true, provider })}>Rebuild index</Button>
+          </div>
+          <p>Local copy only. Off clears this Project’s copy; originals stay intact.</p>
+        </div> : null}
         <HistoryList
+          matches={matches}
           state={list}
           workspace={workspace}
           selected={detail.kind === "none" ? null : detail.detail.session_id}
-          onOpen={(row) => actions.openProjectSession(project.id, row.id)}
+          onOpen={openSession}
           onRetry={retry}
-          onClearFilters={() => {
-            setProvider("all");
-            setQuery("");
-          }}
+          onClearFilters={clearFilters}
           onShowHere={retry}
         />
       </section>
       <section aria-label="Session" className="flex min-h-0 min-w-[var(--size-workspace-area-min)] flex-1 flex-col" data-session-detail={detail.kind}>
-        <SessionDetail state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} />
+        <SessionDetail jump={jump} state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} />
       </section>
     </section>
   );
@@ -191,7 +223,7 @@ function HistoryControls({
   );
 }
 
-function HistoryList({
+const HistoryList = memo(function HistoryList({
   state,
   workspace,
   selected,
@@ -199,6 +231,7 @@ function HistoryList({
   onRetry,
   onClearFilters,
   onShowHere,
+  matches,
 }: {
   state: ListState;
   workspace: Workspace;
@@ -207,6 +240,7 @@ function HistoryList({
   onRetry: () => void;
   onClearFilters: () => void;
   onShowHere: () => void;
+  matches: Map<string, SessionSearchHit>;
 }) {
   const listRef = useRef<HTMLUListElement>(null);
   if (state.kind !== "rows") {
@@ -231,11 +265,11 @@ function HistoryList({
   return (
     <ul ref={listRef} className="flex min-h-0 flex-1 flex-col gap-xxs overflow-auto p-xs" role="list" data-sessions-rows={state.rows.length}>
       {state.rows.map((row) => (
-        <SessionRowItem key={`${row.provider}:${row.id}`} row={row} workspace={workspace} selected={row.id === selected} focusable={row.id === focusable} onOpen={onOpen} onRetry={onRetry} onKeyDown={moveFocus} />
+        <SessionRowItem key={`${row.provider}:${row.id}`} row={row} match={matches.get(row.id)} workspace={workspace} selected={row.id === selected} focusable={row.id === focusable} onOpen={onOpen} onRetry={onRetry} onKeyDown={moveFocus} />
       ))}
     </ul>
   );
-}
+});
 
 function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exclude<ListState, { kind: "rows" }>; onRetry: () => void; onClearFilters: () => void; onShowHere: () => void }) {
   switch (state.kind) {
@@ -247,6 +281,10 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
       );
     case "empty":
       return <Status tone="muted">No sessions yet</Status>;
+    case "content_unavailable":
+      return <><Status tone="muted">{state.stale ? "Content results waiting for refresh" : "Conversation search unavailable"}</Status><p>Metadata has no matches. Conversation results could not be confirmed.</p><div><Button variant="secondary" onClick={onRetry}>Retry</Button></div></>;
+    case "content_pending":
+      return <p role="status"><Status tone="pending">{state.indexing ? "No matches in indexed conversations yet. Indexing continues…" : "Searching conversation contents…"}</Status></p>;
     case "no_match":
       return (
         <>
@@ -293,6 +331,7 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
 
 function SessionRowItem({
   row,
+  match,
   workspace,
   selected,
   focusable,
@@ -301,6 +340,7 @@ function SessionRowItem({
   onKeyDown,
 }: {
   row: SessionRow;
+  match?: SessionSearchHit;
   workspace: Workspace;
   selected: boolean;
   focusable: boolean;
@@ -333,6 +373,7 @@ function SessionRowItem({
         </span>
         <span className={`line-clamp-2 break-words break-keep text-body ${unavailable ? "text-muted-foreground" : title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? "Untitled session"}</span>
         <span className={`truncate text-micro ${unavailable ? "text-muted-foreground" : "text-subtle-foreground"}`}>{checkout.label}</span>
+        {match ? <span className="flex flex-col gap-xxs text-caption" data-content-match={match.source_offset}><span className="text-micro text-muted-foreground">{match.role === "user" ? "Human" : "Assistant"} · {sessionTime(match.at_unix_ms)}</span><span className="line-clamp-3 whitespace-pre-wrap break-words text-subtle-foreground">{match.snippet}</span></span> : null}
       </button>
       </Hint>
       {unavailable ? (
@@ -388,12 +429,14 @@ function CopySource({ locator, id }: { locator: string; id: string }) {
 }
 
 function SessionDetail({
+  jump,
   state,
   rows,
   choosable,
   workspace,
   onRetry,
 }: {
+  jump: { session: string; offset: number } | null;
   state: DetailState;
   rows: SessionRow[];
   /** Whether the list shows a session to choose; the hint says nothing otherwise. */
@@ -401,6 +444,17 @@ function SessionDetail({
   workspace: Workspace;
   onRetry: () => void;
 }) {
+  const body = useRef<HTMLOListElement>(null);
+  const appliedJump = useRef<typeof jump>(null);
+  const archive = state.kind === "open" ? state.archive : null;
+  const sessionId = state.kind === "none" ? null : state.detail.session_id;
+  useLayoutEffect(() => {
+    if (!archive || !jump || jump.session !== sessionId || appliedJump.current === jump) return;
+    const target = body.current?.querySelector<HTMLElement>(`[data-source-offset="${jump.offset}"]`);
+    if (!target) return;
+    target.scrollIntoView({ block: "center" });
+    appliedJump.current = jump;
+  }, [archive, sessionId, jump]);
   if (state.kind === "none") {
     return choosable ? <p className="m-auto p-lg text-caption text-muted-foreground">Choose a session to read it here.</p> : null;
   }
@@ -439,13 +493,14 @@ function SessionDetail({
         <p className="p-lg text-caption text-muted-foreground">This session has no readable request or answer.</p>
       ) : (
         <ol
+          ref={body}
           tabIndex={0}
           className="flex min-h-0 flex-1 flex-col gap-md overflow-auto p-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           aria-label="Conversation"
           data-session-turns={turns.length}
         >
           {turns.map((turn, index) => (
-            <Turn key={index} turn={turn} provider={state.archive.provider ?? row?.provider_label ?? "Agent"} />
+            <Turn key={index} matched={jump?.session === state.detail.session_id && jump.offset === turn.source_offset} turn={turn} provider={state.archive.provider ?? row?.provider_label ?? "Agent"} />
           ))}
         </ol>
       )}
@@ -482,12 +537,12 @@ function DetailHeader({ detail, row, workspace, reading = false }: { detail: Pro
   );
 }
 
-function Turn({ turn, provider }: { turn: ArchiveEvent; provider: string }) {
+function Turn({ turn, provider, matched }: { turn: ArchiveEvent; provider: string; matched: boolean }) {
   const person = turn.role === "user";
   const interrupted = turn.kind === "interrupted";
   const time = sessionTime(turn.at_unix_ms);
   return (
-    <li className={`flex flex-col gap-xxs ${person ? "rounded-sm bg-card px-sm py-xs" : "px-sm"}`} data-turn={turn.role}>
+    <li className={`flex flex-col gap-xxs ${person ? "rounded-sm bg-card px-sm py-xs" : "px-sm"}`} data-turn={turn.role} data-source-offset={turn.source_offset} data-search-match={matched || undefined} style={matched ? { outline: "var(--size-hairline) solid var(--ring)", borderRadius: "var(--radius-sm)" } : undefined}>
       <span className="flex items-baseline gap-xs text-micro text-muted-foreground">
         <span className="text-subtle-foreground">{person ? "Request" : provider}</span>
         {time ? <span>{time}</span> : null}

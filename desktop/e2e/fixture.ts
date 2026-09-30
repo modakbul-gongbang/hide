@@ -128,11 +128,11 @@ export const test = base.extend<{ focusGuard: void }>({
 });
 
 /** Starts the app with the focus guard preloaded, reporting into the running test's folder. */
-async function start(appDir: string, env: Record<string, string>): Promise<ElectronApplication> {
+async function start(appDir: string, env: Record<string, string>, executablePath?: string): Promise<ElectronApplication> {
   assertIsolated(env);
   if (!focusReports) throw new Error("launch the desktop app from a test imported from desktop/e2e/fixture.ts, so its focus guard runs");
   const report = path.join(focusReports.dir, `launch-${focusReports.apps.length + 1}.jsonl`);
-  const app = await electron.launch({ args: ["-r", FOCUS_GUARD, appDir, ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
+  const app = await electron.launch({ executablePath, args: ["-r", FOCUS_GUARD, ...(!executablePath ? [appDir] : []), ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
   // Taken now: `app.process()` throws once the app is closed.
   focusReports.apps.push({ app, child: app.process() });
   return app;
@@ -141,9 +141,9 @@ async function start(appDir: string, env: Record<string, string>): Promise<Elect
 /** `appDir` is the app folder to run, the desktop package unless a test copies it. */
 export async function launch(
   env: Record<string, string>,
-  { appDir = DESKTOP_DIR }: { appDir?: string } = {},
+  { appDir = DESKTOP_DIR, executablePath }: { appDir?: string; executablePath?: string } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await start(appDir, env);
+  const app = await start(appDir, env, executablePath);
   const page = await app.firstWindow();
   return { app, page };
 }
