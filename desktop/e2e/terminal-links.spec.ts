@@ -82,7 +82,9 @@ async function withProbe(page: Page): Promise<void> {
 async function print(page: Page, paneId: string, lines: string[], last: string): Promise<void> {
   // Leave the old row before replacing its text so xterm requests fresh links
   // when the next real hover enters it, including after an empty/error answer.
-  await page.mouse.move(0, 0);
+  const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
+  const away = await cellPoint(page, paneId, { row: grid.rows - 1, column: 0 });
+  await page.mouse.move(away.x, away.y);
   const file = path.join(herdr.root, `print-${Date.now()}.txt`);
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], `clear; cat '${file}'\n`], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
