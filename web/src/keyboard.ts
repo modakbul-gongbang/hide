@@ -17,18 +17,19 @@
 // store, so an unrevealed hold renders nothing. Losing the window, a page
 // going hidden, a layer opening or any key pressed during the hold ends it.
 
+import { areaCycle, focusedCycleScope, focusedSurface, scopedSurfaces } from "./areaCycle";
 import type { Actions } from "./actions";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
-import { hostBridge, hostKind } from "./host";
+import { browserBridge, hostBridge, hostKind } from "./host";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
 import { availableEntries, currentEntry, expectSurface, observeEntries, observeProject, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
 import { projectsOf, remoteContext, remoteView } from "./remote";
-import { hostRegistry, isNumberedCommand, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
+import { hostChord, hostRegistry, isNumberedCommand, releaseModifier, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
 import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 import { workspaceViewOf } from "./workspace";
-import { drawnViews, installKeyboardOwner, keyboardOwner, noteCommandDelivered } from "./viewFocus";
+import { drawnViews, installKeyboardOwner, keyboardOwner, keyboardCommandOwner, noteCommandDelivered, subscribeKeyboardOwner } from "./viewFocus";
 
 /**
  * Recent Panels: every surface the shell holds on every connected device and
@@ -70,13 +71,16 @@ export function projectCycle(rest: SnapshotRest | null): Cycle | null {
  * front.
  */
 export function observeRecent(rest: SnapshotRest | null, moved: boolean) {
-  observeEntries(rest, moved ? currentEntry(useUiStore.getState().screen, rest, keyboardOwner().kind === "view") : null);
+  const surface = focusedSurface(rest, focusedCycleScope(rest));
+  observeEntries(rest, moved ? surface ?? currentEntry(useUiStore.getState().screen, rest, keyboardOwner().kind === "view") : null);
   if (moved) observeProject(remoteContext(rest)?.session?.focused_workspace_id ?? rest?.navigator?.focused_workspace_id);
 }
 
 /** The held cycle once the session changed under it: see `reconcileCycle`. */
 export function reconcileHeldCycle(cycle: Cycle, rest: SnapshotRest | null): Cycle | null {
-  const alive =
+  const membership = cycle.scope ? scopedSurfaces(rest, cycle.scope) : null;
+  if (cycle.kind === "area" && !membership) return null;
+  const alive = cycle.kind === "area" ? new Set(membership!.surfaces.map((surface) => surface.key)) :
     cycle.kind === "projects"
       ? new Set(allProjects(rest).map((workspace) => workspace.id))
       : new Set(availableEntries(rest, recentEntries()).map((entry) => entry.key));
@@ -117,7 +121,12 @@ export function numberedTarget(family: NumberedFamily, number: Digit, state: { r
  */
 export function commitCycle(cycle: Cycle, actions: Actions) {
   const chosen = cycle.items[cycle.index];
-  if (!chosen || cycle.index === 0) return;
+  if (!chosen || (cycle.originKey ? chosen.key === cycle.originKey : cycle.index === 0)) return;
+  if (cycle.scope) {
+    const membership = scopedSurfaces(useShellStore.getState().rest, cycle.scope);
+    if (chosen.target.kind !== "surface" || !membership?.surfaces.some((surface) => surface.key === chosen.key)) return;
+    return cycle.scope.kind === "view" ? actions.focusView(chosen.target.surface.id) : actions.focusTab(chosen.target.surface.id, true);
+  }
   const target = chosen.target;
   switch (target.kind) {
     case "surface":
@@ -142,6 +151,10 @@ export function installKeyboard(actions: Actions): () => void {
   const ui = () => useUiStore.getState();
   const host = hostKind();
   const removeKeyboardOwner = installKeyboardOwner();
+  const unsubscribeOwner = subscribeKeyboardOwner(() => {
+    const rest = useShellStore.getState().rest;
+    if (focusedCycleScope(rest)) observeRecent(rest, true);
+  });
   // The modifier whose release commits the running cycle: ⌥ for the ⌥ family,
   // ⌃ for the desktop app's ⌃Tab.
   let cycleRelease = "Alt";
@@ -169,18 +182,28 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.openAddProject();
       case "start_agent":
         return actions.openStartPanel();
+      case "recent_area_tab":
+      case "previous_recent_area_tab":
       case "recent_panel":
       case "previous_recent_panel":
       case "recent_project":
       case "previous_recent_project": {
-        if (!event) return;
         const backward = id.startsWith("previous");
-        cycleRelease = event.ctrlKey ? "Control" : "Alt";
-        const kind = id.endsWith("panel") ? "panels" : "projects";
+        const rest = useShellStore.getState().rest;
+        const kind = id.endsWith("area_tab") ? "area" : id.endsWith("panel") ? "panels" : "projects";
         const current = ui().cycle;
-        const cycle = current?.kind === kind ? current : kind === "panels" ? panelCycle(useShellStore.getState().rest) : projectCycle(useShellStore.getState().rest);
+        if (event && current && current.kind !== kind) return;
+        const fresh = () => kind === "area" ? areaCycle(rest, event ? keyboardOwner() : keyboardCommandOwner()) : kind === "panels" ? panelCycle(rest) : projectCycle(rest);
+        const cycle = event && current?.kind === kind ? reconcileHeldCycle(current, rest) : fresh();
         if (!cycle) return;
-        ui().setCycle(advance(cycle, backward));
+        const next = advance(cycle, backward);
+        if (!event) { ui().setCycle(null); commitCycle(next, actions); return; }
+        const command = hostRegistry(rest?.ui_state, host).registry.find((row) => row.id === id);
+        const chord = command && hostChord(command, host);
+        const release = chord && releaseModifier(chord);
+        if (!release) return;
+        if (!current) cycleRelease = release;
+        ui().setCycle(next);
         return;
       }
       case "search":
@@ -279,6 +302,7 @@ export function installKeyboard(actions: Actions): () => void {
     state.overlay !== "none" || state.escapeLayers.length > 0 || state.workspaceDialog !== null || state.pendingClose !== null || state.pendingTrash !== null || state.cycle !== null;
   const unsubscribeLayers = useUiStore.subscribe((state, previous) => {
     if (layerOpen(state) && !layerOpen(previous)) endHold();
+    if (previous.cycle && !state.cycle) browserBridge()?.endCycle();
   });
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -366,6 +390,26 @@ export function installKeyboard(actions: Actions): () => void {
   // A menu item names a command id; one this registry does not know is a
   // host/shell version mismatch, recorded rather than guessed at.
   const bridge = hostBridge();
+  const unsubscribeCommand = useUiStore.subscribe((state, previous) => {
+    if (state.commandRequest && state.commandRequest !== previous.commandRequest) {
+      run(state.commandRequest.id, null);
+      ui().setCommandRequest(null);
+    }
+  });
+  const unsubscribeBrowser = browserBridge()?.onEvent((input) => {
+    if (input.kind === "cycle-cancel") { onBlur(); return; }
+    if (input.kind !== "cycle-input") return;
+    const cycle = ui().cycle;
+    const scope = focusedCycleScope(useShellStore.getState().rest);
+    const frame = drawnViews();
+    if (!cycle && (!scope || scope.kind !== "view" || !frame || `${frame.workspace.device_id}\u0000${frame.workspace.path}` !== input.workspace || focusedSurface(useShellStore.getState().rest, scope)?.id !== input.id)) {
+      browserBridge()?.endCycle();
+      return;
+    }
+    const event = new KeyboardEvent(input.type === "keyDown" ? "keydown" : "keyup", { code: input.code, key: input.key, ctrlKey: input.control, altKey: input.alt, metaKey: input.meta, shiftKey: input.shift });
+    if (input.type === "keyDown") onKeyDown(event); else onKeyUp(event);
+    if (!ui().cycle) browserBridge()?.endCycle();
+  });
   const unsubscribeMenu = bridge?.onCommand((id) => {
     const command = REGISTRY.find((row) => row.id === id);
     if (command) {
@@ -398,6 +442,9 @@ export function installKeyboard(actions: Actions): () => void {
   document.addEventListener("visibilitychange", onVisibility);
   return () => {
     removeKeyboardOwner();
+    unsubscribeCommand();
+    unsubscribeBrowser?.();
+    unsubscribeOwner();
     unsubscribeMenu?.();
     unsubscribeBindings?.();
     unsubscribeLayers();

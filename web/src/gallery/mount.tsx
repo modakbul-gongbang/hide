@@ -3,11 +3,16 @@ import type { Root } from "react-dom/client";
 import { Gallery, GalleryFrame } from "./Gallery";
 import { GALLERY, type Section } from "./manifest";
 import { sceneParams, SidebarScene } from "./SidebarScene";
+import { AreaFocusScene } from "./AreaFocusScene";
 
 export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
   const scene = params.get("scene");
   if (scene !== null) {
+    if (scene === "area-focus") {
+      root.render(<StrictMode><AreaFocusScene theme={params.get("theme") === "light" ? "light" : "dark"} /></StrictMode>);
+      return;
+    }
     // A scene seeds the app's own stores, so it is one document per scene.
     if (scene !== "projects-sidebar") throw new Error(`Unknown gallery scene ${scene}`);
     document.title = "hide · Projects sidebar scene";

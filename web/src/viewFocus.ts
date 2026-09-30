@@ -1,6 +1,7 @@
 // Page-local keyboard ownership and measured View geometry. Focus is recorded
 // when it changes, never inferred from document.activeElement at chord time.
 
+import { useSyncExternalStore } from "react";
 import { locateDisplay, workspaceKey } from "./viewLayout";
 import { browserBridge } from "./host";
 import { frontCheckout } from "./snapshot";
@@ -12,10 +13,20 @@ export type KeyboardOwner =
   | { kind: "view"; workspace: string; areaId: string }
   | { kind: "pane"; workspace: string; paneId: string }
   | { kind: "tool"; workspace: string }
-  | { kind: "agent"; workspace: string }
+  | { kind: "agent"; workspace: string; areaId?: string }
   | { kind: "none" };
 
 let owner: KeyboardOwner = { kind: "none" };
+const listeners = new Set<() => void>();
+let commandOwner: KeyboardOwner = owner;
+export function subscribeKeyboardOwner(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+export function useKeyboardOwner(): KeyboardOwner {
+  return useSyncExternalStore(subscribeKeyboardOwner, keyboardOwner, keyboardOwner);
+}
+export function keyboardCommandOwner(): KeyboardOwner { return commandOwner; }
 // The shell element a native page took the keyboard from. To deliver a menu
 // command pressed in a page, the host hands the keyboard back to the shell,
 // and the browser announces focus on that element again; that is not the
@@ -24,7 +35,9 @@ let owner: KeyboardOwner = { kind: "none" };
 let handedBack: Element | null = null;
 
 export function noteKeyboardOwner(next: KeyboardOwner): void {
+  if (JSON.stringify(owner) === JSON.stringify(next)) return;
   owner = next;
+  for (const listener of listeners) listener();
 }
 
 export function keyboardOwner(): KeyboardOwner {
@@ -38,10 +51,12 @@ function ownerOf(target: Element | null): KeyboardOwner | null {
   if (!target || !workspace) return { kind: "none" };
   const tool = target.closest("[data-workspace-tools]");
   const areaId = target.closest<HTMLElement>("[data-view-area-id]")?.dataset.viewAreaId;
+  const agentArea = target.closest<HTMLElement>("[data-agent-area-id]")?.dataset.agentAreaId;
   const paneId = target.closest<HTMLElement>("[data-pane-view]")?.dataset.paneView;
   return tool ? { kind: "tool", workspace }
     : areaId ? { kind: "view", workspace, areaId }
     : paneId ? { kind: "pane", workspace, paneId }
+    : agentArea ? { kind: "agent", workspace, areaId: agentArea }
     : target.closest("[data-agent-areas]") ? { kind: "agent", workspace }
     : { kind: "none" };
 }
@@ -54,7 +69,7 @@ function ownerOf(target: Element | null): KeyboardOwner | null {
 export function noteCommandDelivered(): void {
   if (!handedBack) return;
   handedBack = null;
-  owner = ownerOf(document.activeElement) ?? owner;
+  noteKeyboardOwner(ownerOf(document.activeElement) ?? owner);
 }
 
 /** One bounded value per page; no core events or per-key DOM reads. */
@@ -63,7 +78,8 @@ export function installKeyboardOwner(): () => void {
     const target = event.target instanceof Element ? event.target : null;
     if (event.type === "focusin" && target !== null && target === handedBack) return;
     handedBack = null;
-    owner = ownerOf(target) ?? owner;
+    if (!target?.closest("[data-palette]")) commandOwner = ownerOf(target) ?? owner;
+    noteKeyboardOwner(ownerOf(target) ?? owner);
   };
   // Native browser pages are outside the renderer DOM. Their host reports
   // the same ownership transition when the operator enters a page.
@@ -76,6 +92,7 @@ export function installKeyboardOwner(): () => void {
     const located = locateDisplay(view.layout.root, event.id);
     if (!located) return;
     noteKeyboardOwner({ kind: "view", workspace: checkout.id, areaId: located.area.id });
+    commandOwner = owner;
     handedBack = document.activeElement !== document.body ? document.activeElement : null;
   });
   window.addEventListener("focusin", record, true);
@@ -84,7 +101,8 @@ export function installKeyboardOwner(): () => void {
     unsubscribeBrowser?.();
     window.removeEventListener("focusin", record, true);
     window.removeEventListener("pointerdown", record, true);
-    owner = { kind: "none" };
+    noteKeyboardOwner({ kind: "none" });
+    commandOwner = owner;
     handedBack = null;
   };
 }

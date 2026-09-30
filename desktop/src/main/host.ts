@@ -155,6 +155,10 @@ export class DesktopHost {
    * window's page on the daemon origin is heard; anything else is logged and
    * dropped.
    */
+  setBrowserRegistry(registry: readonly import("../../../web/src/shortcuts").Command[]): void {
+    this.browsers?.setRegistry(registry);
+  }
+
   listenBindings(apply: (reported: unknown) => void): void {
     ipcMain.on(BINDINGS_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
       if (!this.fromShell(event)) {

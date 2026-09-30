@@ -45,6 +45,8 @@ function tabSlot(selected: boolean, icon: boolean): string {
 export type DrawnArea<I extends AreaItem> = { layout: AreaLayout<I>; geometry: Geometry; sizes: LayoutSizes };
 export type AreaAdapter<I extends AreaItem> = {
   words: AreaWords;
+  /** The page's keyboard owner, independent of each layout's committed active area. */
+  keyboardArea?: string | null;
   barAttributes?: Record<string, string>;
   shown?: (area: Area<I>) => I | null;
   splitUnavailable?: string;
@@ -423,6 +425,7 @@ function AreaView({ area, index, count, switcher }: { area: Area<I>; index: numb
   const tree = useTree();
   const display = tree.adapter.shown ? tree.adapter.shown(area) : area.displays.find((row) => row.id === area.active) ?? null;
   const active = tree.layout.active_area === area.id;
+  const keyboard = tree.adapter.keyboardArea === area.id;
   // The operator's pointer, or Tab, into a display makes it the one they
   // work in; a focus the page moved itself asks for nothing (B20).
   const claim = () => {
@@ -435,10 +438,11 @@ function AreaView({ area, index, count, switcher }: { area: Area<I>; index: numb
       aria-label={`${tree.adapter.words.plural.slice(0, -1)} ${index + 1} of ${count}`}
       {...data("area-id", area.id)}
       data-active-area={active ? "true" : "false"}
+      data-keyboard-area={keyboard ? "true" : "false"}
     >
-      <AreaTabBar area={area} active={active} index={index} count={count} switcher={switcher} />
+      <AreaTabBar area={area} active={keyboard} index={index} count={count} switcher={switcher} />
       <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        className={`flex min-h-0 min-w-0 flex-1 flex-col border ${keyboard ? "border-primary" : "border-transparent"}`}
         {...data("body", area.id)}
         onPointerDown={claim}
         onFocus={() => {
@@ -501,7 +505,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
     return () => observer.disconnect();
   }, [area.active, area.displays.length, icon]);
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch border-b border-border" data-area-tab-bar={area.id} {...data("tab-bar", area.id)} {...tree.adapter.barAttributes}>
+    <div className={`flex h-[var(--size-tab-strip)] shrink-0 items-stretch border-b border-border ${active ? "bg-background" : "bg-card"}`} data-area-tab-bar={area.id} {...data("tab-bar", area.id)} {...tree.adapter.barAttributes}>
       <div ref={zone} className="flex min-w-0 flex-1 items-stretch">
         <div ref={strip} role="tablist" aria-label={`${tree.adapter.tabListLabel}, area ${index + 1} of ${count}`} className="flex min-w-0 items-stretch overflow-x-auto">
           {area.displays.map((display) => (

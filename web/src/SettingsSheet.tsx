@@ -1147,10 +1147,10 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
   return (
     <>
       <Group
-        title="Pane chords"
+        title="Pane and navigation chords"
         note={
           host === "electron"
-            ? "The macOS app's pane chords: this desktop app and the macOS app share them. A chord needs ⌘, and one macOS or the app menu keeps is refused before it is saved."
+            ? "The macOS app's pane chords: this desktop app and the macOS app share them. Pane chords need ⌘; navigation can use ⌃ or ⌥ as well. A chord that macOS or the app menu keeps is refused before it is saved."
             : "These chords are this browser host's own; the macOS and desktop apps keep their own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
         }
       >

@@ -55,10 +55,14 @@ export type BrowserHostEvent =
   /** The page asked for a new window: it becomes another browser display. */
   | { kind: "open"; workspace: string; id: string; url: string }
   /** The operator clicked or tabbed into the page. */
-  | { kind: "focus"; workspace: string; id: string };
+  | { kind: "focus"; workspace: string; id: string }
+  | { kind: "cycle-input"; workspace: string; id: string; type: "keyDown" | "keyUp"; key: string; code: string; control: boolean; alt: boolean; meta: boolean; shift: boolean }
+  | { kind: "cycle-cancel"; workspace: string; id: string };
 
 export type BrowserBridge = {
   sync(state: BrowserSync): void;
+  /** The shell ended a held cycle, including a release delivered to the shell after hiding a page. */
+  endCycle(): void;
   /** A still of the page as a data URL, or null when it has none to give. */
   capture(workspace: string, id: string): Promise<string | null>;
   command(workspace: string, id: string, command: BrowserCommand): void;

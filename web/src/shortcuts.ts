@@ -40,6 +40,8 @@ export type CommandId =
   | "reopen_closed_tab"
   | "new_workspace"
   | "start_agent"
+  | "recent_area_tab"
+  | "previous_recent_area_tab"
   | "recent_panel"
   | "previous_recent_panel"
   | "recent_project"
@@ -132,8 +134,10 @@ export const REGISTRY: readonly Command[] = [
   ...numberedEntries(NUMBERED_FAMILIES[0]!),
   { id: "new_workspace", title: "Add project", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true, shift: true }, moved: false },
   { id: "start_agent", title: "Start agent", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true }, moved: false },
-  { id: "recent_panel", title: "Next recent panel", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
-  { id: "previous_recent_panel", title: "Previous recent panel", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
+  { id: "recent_area_tab", title: "Next recent tab in focused area", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
+  { id: "previous_recent_area_tab", title: "Previous recent tab in focused area", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
+  { id: "recent_panel", title: "Next global recent panel", group: "Navigate", browser: null, electron: null, moved: false },
+  { id: "previous_recent_panel", title: "Previous global recent panel", group: "Navigate", browser: null, electron: null, moved: false },
   { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: { code: "Tab", alt: true }, moved: false },
   { id: "previous_recent_project", title: "Previous recent project", group: "Navigate", browser: { code: "Tab", alt: true, shift: true }, electron: { code: "Tab", alt: true, shift: true }, moved: false },
   ...numberedEntries(NUMBERED_FAMILIES[1]!),
@@ -161,6 +165,7 @@ export const REGISTRY: readonly Command[] = [
 
 /** Chords Chrome or macOS never hands to a page; a browser chord using one is a registry error. */
 const CHROME_RESERVED: readonly Chord[] = [
+  { code: "Tab", meta: true },
   { code: "KeyT", meta: true },
   { code: "KeyW", meta: true },
   { code: "KeyT", meta: true, shift: true },
@@ -220,6 +225,7 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
 // format and command names (user decision 2026-09-26: the desktop app
 // honours the operator's existing shortcut settings).
 export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
+  "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
   "toggle_sidebar_view",
   "split_right",
   "split_down",
@@ -252,7 +258,7 @@ const MACOS_ONLY_KEYS: readonly string[] = ["toggle_conversation"];
 
 // A physical key a chord may use. Anything else (a dead key, an IME process
 // key, a lone modifier) is not a chord this registry can match reliably.
-const BINDABLE_CODE = /^(Key[A-Z]|Digit[0-9]|Enter|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|Arrow(Up|Down|Left|Right))$/;
+const BINDABLE_CODE = /^(Key[A-Z]|Digit[0-9]|Enter|Tab|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|Arrow(Up|Down|Left|Right))$/;
 
 /** One stored browser chord: its modifiers in a fixed order, then the physical key. */
 export function serializeChord(chord: Chord): string {
@@ -276,6 +282,7 @@ export function parseChord(text: string): Chord | null {
 // The macOS set's keys: one printable ASCII key, named by the character it
 // types unshifted, or Return.
 const MACOS_KEY_CODES: Readonly<Record<string, string>> = {
+  tab: "Tab",
   return: "Enter",
   "`": "Backquote",
   "-": "Minus",
@@ -331,7 +338,7 @@ export function serializeMacosChord(chord: Chord): string | null {
  * registry's own numbered commands hold them, so a pane chord bound onto one
  * is refused as that command's, by name.
  */
-const MACOS_RESERVED: readonly Chord[] = ["KeyQ", "KeyH", "KeyM", "KeyS", "KeyW", "Comma"].map((code) => ({ code, meta: true }));
+const MACOS_RESERVED: readonly Chord[] = ["Tab", "KeyQ", "KeyH", "KeyM", "KeyS", "KeyW", "Comma"].map((code) => ({ code, meta: true }));
 
 /** The key a command's chord is stored under in `host`'s set. */
 export function storedKey(id: CommandId, host: HostKind): string {
@@ -370,7 +377,7 @@ function withChord(command: Command, chord: Chord, host: HostKind): Command {
 export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[], host: HostKind = "browser"): string | null {
   if (host === "electron") {
     if (!macosKeyName(chord.code)) return "Use one letter, digit or punctuation key, or Return.";
-    if (!chord.meta) return "Include ⌘ so typing in a terminal stays typing.";
+    if (!chord.meta && !(isCycleCommand(id) && (chord.ctrl || chord.alt))) return "Include ⌘ so typing in a terminal stays typing.";
     if (MACOS_RESERVED.some((reserved) => chordEquals(reserved, chord))) return `${displayChord(chord)} is kept by macOS or the app menu.`;
   } else {
     if (!BINDABLE_CODE.test(chord.code)) return "Use a letter, a digit, Return, an arrow or a punctuation key.";
@@ -534,4 +541,12 @@ export function sheetRows(group: Command["group"], registry: readonly Command[],
     });
   }
   return rows;
+}
+
+/** Held navigation commands bypass native menu accelerators and share release routing. */
+export function isCycleCommand(id: CommandId): boolean {
+  return ["recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel", "recent_project", "previous_recent_project"].includes(id);
+}
+export function releaseModifier(chord: Chord): "Control" | "Alt" | "Meta" | null {
+  return chord.ctrl ? "Control" : chord.alt ? "Alt" : chord.meta ? "Meta" : null;
 }

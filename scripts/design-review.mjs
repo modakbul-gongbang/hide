@@ -456,7 +456,7 @@ async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes,
 
   // 3. The production screen in Chromium, measured and captured per condition.
   try {
-    const geometry = await import(pathToFileURL(path.join(root, 'web/e2e/sidebar-geometry.mjs')).href);
+    const geometry = await import(pathToFileURL(path.join(root, target.measurement ?? 'web/e2e/sidebar-geometry.mjs')).href);
     const {origin, browser} = await openBrowser(root, cleanup);
     const wanted = [];
     for (const theme of themes) for (const width of widths) for (const content of contents) for (const scale of scales) wanted.push({theme, width, content, scale});
@@ -476,7 +476,7 @@ async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes,
         await page.locator(target.selector).waitFor();
         await page.waitForTimeout(200);
         if (errors.length) throw new Error(`The scene raised: ${errors.join('; ')}`);
-        const measured = await measure(page, geometry);
+        const measured = geometry.measure ? await geometry.measure(page) : await measure(page, geometry);
         for (const result of evaluate(manifest.rules, measured)) report.rules.push({condition: conditionName(condition), ...result});
         for (const state of new Set(['rest', ...states])) {
           await page.reload();

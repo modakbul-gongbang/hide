@@ -9,11 +9,11 @@ import { Hint } from "./components/ui/tooltip";
 import { hostKind } from "./host";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
-import { editorTabFor, type ViewDisplaySnapshot, type ViewLayoutSnapshot } from "./snapshot";
+import { editorTabFor, frontCheckout, type ViewDisplaySnapshot, type ViewLayoutSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { displayCommand } from "./shortcuts";
-import { noteDrawnViews } from "./viewFocus";
+import { noteDrawnViews, useKeyboardOwner } from "./viewFocus";
 import { displayIdentity, displayMenu, focusRequestArrived, placeKey, shownDisplays, workspaceKey, showsSameDocument, VIEW_WORDS, type ViewMenuId, type ViewWorkspace } from "./viewLayout";
 import { locateDisplay } from "./areaLayout";
 import { workspaceViewOf } from "./workspace";
@@ -48,6 +48,8 @@ export function ViewAreas({ actions, trailing = null }: { actions: Actions; trai
 
 const SharedViewTree = createAreaTree<ViewDisplaySnapshot>("view");
 function ViewTree({ layout, deviceId, path, trailing, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; trailing: React.ReactNode; actions: Actions }) {
+  const owner = useKeyboardOwner();
+  const checkoutId = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
   const workspace = useMemo(() => ({ device_id: deviceId, path }), [deviceId, path]);
   const key = workspaceKey(workspace);
   const [body, setBody] = useState<HTMLDivElement | null>(null);
@@ -82,6 +84,7 @@ function ViewTree({ layout, deviceId, path, trailing, actions }: { layout: ViewL
 
   const adapter: AreaAdapter<ViewDisplaySnapshot> = {
     words: VIEW_WORDS,
+    keyboardArea: owner.kind === "view" && owner.workspace === checkoutId ? owner.areaId : null,
     label: (display) => display.label,
     sameContent: showsSameDocument,
     tab: (display, interaction) => <DisplayTab display={display} interaction={interaction} actions={actions} />,
@@ -131,7 +134,7 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
 }
 
 /** One display's tab: its kind's mark, italic while a preview, its save marks, and its whole identity (B2, B21). */
-function DisplayTab({ display, interaction, actions }: { display: ViewDisplaySnapshot; interaction: AreaTabInteraction; actions: Actions }) {
+export function DisplayTab({ display, interaction, actions }: { display: ViewDisplaySnapshot; interaction: AreaTabInteraction; actions: Actions }) {
   const { selected, areaActive } = interaction;
   const dirty = useShellStore((s) => editorTabFor(s.editor, display.tab_id)?.dirty ?? false);
   const saving = useShellStore((s) => display.tab_id !== null && s.savingTabs.has(display.tab_id));
@@ -154,7 +157,7 @@ function DisplayTab({ display, interaction, actions }: { display: ViewDisplaySna
       data-unavailable={unavailable ? "true" : "false"}
       data-view-state={display.state}
       className={`group relative flex min-w-0 flex-1 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
-        selected ? "text-foreground" : "text-subtle-foreground hover:bg-accent"
+        selected ? `text-foreground ${areaActive ? "bg-background" : "bg-secondary"}` : "text-subtle-foreground hover:bg-accent"
       } ${interaction.dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={interaction.press}
       onClick={() => {

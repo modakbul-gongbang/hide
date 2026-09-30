@@ -16,8 +16,8 @@ import { BrowserWindow, ipcMain, Menu, session, shell, WebContentsView, type Ipc
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
-import type { CommandId } from "../../../web/src/shortcuts";
-import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
+import { hostChord, isCycleCommand, matchHost, releaseModifier, REGISTRY, type Command, type CommandId } from "../../../web/src/shortcuts";
+import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
 import { browserPartition, loadable, MAX_LIVE_VIEWS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds, viewKey, type PageZoom } from "./browserSync";
 import type { HostLog } from "./log";
 import { accelerator } from "./menu";
@@ -55,6 +55,16 @@ export class BrowserViews {
   private readonly pages = new Map<string, Page>();
   private readonly configuredSessions = new Set<string>();
   private window: BrowserWindow | null = null;
+  private registry: readonly Command[] = REGISTRY;
+  private cycleInput: { page: Page; release: string } | null = null;
+
+  setRegistry(registry: readonly Command[]): void { this.registry = registry; }
+
+  private cancelCycle(): void {
+    const held = this.cycleInput;
+    this.cycleInput = null;
+    if (held) this.emit({ kind: "cycle-cancel", workspace: held.page.workspace, id: held.page.id });
+  }
 
   constructor(
     private readonly log: HostLog,
@@ -63,6 +73,10 @@ export class BrowserViews {
     private readonly resolve: (workspace: string, id: string, load: number) => Promise<ResolvedPage>,
     private readonly release: (workspace: string, id: string, load: number) => void,
   ) {
+    ipcMain.on(BROWSER_CYCLE_END_CHANNEL, (event) => {
+      if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "cycle_end" });
+      this.cycleInput = null;
+    });
     ipcMain.on(BROWSER_SYNC_CHANNEL, (event, value: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "sync" });
       const sync = parseSync(value);
@@ -108,7 +122,9 @@ export class BrowserViews {
     window.webContents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) this.hideAll();
     });
+    window.on("blur", () => this.cancelCycle());
     window.on("closed", () => {
+      this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");
       if (this.window === window) this.window = null;
     });
@@ -259,6 +275,23 @@ export class BrowserViews {
       void contents.setVisualZoomLevelLimits(...PINCH_ZOOM_LIMITS).catch((error: unknown) => this.log.event("browser.pinch_zoom_failed", { detail: String(error) }));
     });
     contents.on("before-input-event", (event, input) => {
+      // Only the shown focused page starts a cycle. Its bounded held input
+      // remains the owner while a shell overlay temporarily draws its still.
+      const held = this.cycleInput;
+      const eventLike = { code: input.code, metaKey: input.meta, altKey: input.alt, shiftKey: input.shift, ctrlKey: input.control };
+      const command = input.type === "keyDown" && !input.isComposing ? matchHost(eventLike, this.registry, "electron") : null;
+      const starts = command && isCycleCommand(command.id) && page.visible && contents.isFocused();
+      const continues = held?.page === page && command && isCycleCommand(command.id);
+      const ends = held?.page === page && ((input.type === "keyUp" && input.key === held.release) || (input.type === "keyDown" && input.key === "Escape"));
+      if (starts || continues || ends) {
+        const chord = command && hostChord(command, "electron");
+        const release = chord && releaseModifier(chord);
+        if (!held && release) this.cycleInput = { page, release };
+        if (ends) this.cycleInput = null;
+        event.preventDefault();
+        this.emit({ kind: "cycle-input", workspace: page.workspace, id: page.id, type: input.type as "keyDown" | "keyUp", key: input.key, code: input.code, control: input.control, alt: input.alt, meta: input.meta, shift: input.shift });
+        return;
+      }
       // ⌘+ reaches no menu item (the menu's zoom in is ⌘=), so the page
       // answers it here unless the operator bound that chord to a command.
       if (input.type !== "keyDown" || input.code !== "Equal" || !input.meta || !input.shift || input.alt || input.control) return;
@@ -278,7 +311,9 @@ export class BrowserViews {
       this.log.event("browser.page_gone", { reason: details.reason });
       this.update(page, { loading: false, failure: `The page stopped (${details.reason})` });
     });
-    contents.on("focus", () => this.emit({ kind: "focus", workspace: page.workspace, id: page.id }));
+    contents.on("focus", () => {
+      if (page.visible) this.emit({ kind: "focus", workspace: page.workspace, id: page.id });
+    });
     contents.setWindowOpenHandler(({ url }) => {
       // A new window is another browser display, which the core opens.
       if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
@@ -353,6 +388,7 @@ export class BrowserViews {
 
   private destroy(page: Page, reason: "closed" | "evicted" | "window_closed"): void {
     if (reason === "evicted") this.emit({ kind: "gone", workspace: page.workspace, id: page.id, load: page.applied, url: page.state.url });
+    if (this.cycleInput?.page === page) this.cancelCycle();
     this.pages.delete(page.key);
     this.release(page.workspace, page.id, page.applied);
     if (page.report) clearTimeout(page.report);

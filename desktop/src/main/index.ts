@@ -35,6 +35,7 @@ if (!app.requestSingleInstanceLock()) {
   // The menu is rebuilt only when the chords it shows change.
   let shown: string | null = null;
   const showMenu = (registry: readonly Command[]) => {
+    host.setBrowserRegistry(registry);
     const chords = JSON.stringify(registry.map((command) => command.electron));
     if (chords === shown) return;
     shown = chords;

@@ -26,11 +26,13 @@ let server: http.Server;
 let origin: string;
 let cliSequence = 0;
 let extraWorkspace: string | null = null;
+let nativeControlOwned = false;
 
 const PAGES: Record<string, string> = {
   "/a.html": '<!doctype html><meta charset="utf-8"><title>Page A</title><body style="background:lavender"><h1>Page A</h1><input id="q" aria-label="query">',
   "/b.html": '<!doctype html><meta charset="utf-8"><title>Page B</title><body style="background:honeydew"><h1>Page B</h1>',
   "/c.html": '<!doctype html><meta charset="utf-8"><title>Page C</title><body style="background:mistyrose"><h1>Page C</h1>',
+  "/korean.html": '<!doctype html><meta charset="utf-8"><title>한글 브라우저</title><body style="font:16px system-ui"><h1>작업 공간 검증</h1><p>다른 영역의 내용과 선택은 읽을 수 있어야 합니다.</p><input aria-label="한글 입력" value="한글 확인"><script>window.tabKeys=0;addEventListener("keydown",e=>{if(e.code==="Tab")window.tabKeys++})</script>',
 };
 
 test.beforeAll(async () => {
@@ -54,6 +56,12 @@ test.beforeEach(() => {
 });
 
 test.afterEach(async () => {
+  let releaseFailure: string | null = null;
+  if (nativeControlOwned) {
+    const released = spawnSync("/usr/bin/osascript", ["-e", 'tell application "System Events" to key up control'], { encoding: "utf8", timeout: 10_000 });
+    nativeControlOwned = false;
+    if (released.status !== 0) releaseFailure = released.stderr || "native modifier release failed";
+  }
   const info = test.info();
   if (info.status !== info.expectedStatus) console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
   await app?.close().catch(() => undefined);
@@ -61,6 +69,7 @@ test.afterEach(async () => {
   if (extraWorkspace) herdr.run(["workspace", "close", extraWorkspace]);
   extraWorkspace = null;
   run.cleanup();
+  expect(releaseFailure).toBeNull();
 });
 
 type View = { url: string; title: string; visible: boolean; bounds: { x: number; y: number; width: number; height: number }; pid: number };
@@ -286,9 +295,19 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(2);
   await expect(page.locator("[data-browser-still]")).toHaveCount(0);
 
-  // So does Recent Panels while ⌃ is held; Escape keeps the current surface.
+  // Explicitly bind the separate global command: these pages occupy two
+  // single-tab areas, so focused-area cycling deliberately does nothing.
+  await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="shortcuts"]').click();
+  await page.locator('[data-shortcut-record="recent_panel"]').click();
+  await page.keyboard.press("Control+KeyG");
+  await page.locator('[data-shortcut-apply="recent_panel"]').click();
+  await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText("⌃G");
+  await page.keyboard.press("Escape");
+
+  // Global Recent Panels freezes native pages while its modifier is held.
   await page.keyboard.down("Control");
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("KeyG");
   const cycle = page.locator("[data-cycle=panels]");
   await expect(cycle).toBeVisible();
   await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBeLessThan(2);
@@ -467,6 +486,102 @@ function zoomOf(url: string): Promise<Zoomed> {
 function menuClick(id: string): Promise<void> {
   return app!.evaluate(({ Menu }, id) => Menu.getApplicationMenu()!.getMenuItemById(id)!.click(), id);
 }
+
+/** Real macOS input, refused unless this candidate is the foreground process. */
+function nativeKeys(pid: number, statements: string): void {
+  const script = `tell application "System Events"
+if unix id of first application process whose frontmost is true is not ${pid} then error "candidate lost foreground"
+${statements}
+end tell`;
+  const result = spawnSync("/usr/bin/osascript", ["-e", script], { encoding: "utf8", timeout: 10_000 });
+  if (statements.includes("key down control")) nativeControlOwned = true;
+  if (result.status === 0 && statements.includes("key up control")) nativeControlOwned = false;
+  expect(result.status, result.stderr).toBe(0);
+}
+
+test("area cycle native: page input previews one exact area, releases once and cancels", { tag: NEEDS_FOCUS }, async () => {
+  ({ app } = await launch(run.env));
+  const page = await app.firstWindow();
+  const sent = countSent(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  await enterWorkspace(page, "fixture");
+  const outside = `${origin}/a.html`;
+  const previous = `${origin}/b.html`;
+  const current = `${origin}/korean.html`;
+  for (const url of [outside, previous]) expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  await page.keyboard.press("Meta+KeyK");
+  await page.keyboard.type("Expand side panel");
+  await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  if (await page.locator('[data-tools-toggle="on"]').count()) await page.locator('[data-tools-toggle="on"]').click();
+  await tab(page, "Page B").click({ button: "right" });
+  await page.locator('[role=menu] [data-menu-item=split_right]').click();
+  await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
+  expect(await openFromCli(current, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  const originalId = await displayIdOf(page, "한글 브라우저");
+  const previousId = await displayIdOf(page, "Page B");
+  const outsideId = await displayIdOf(page, "Page A");
+  const pid = app.process().pid!;
+  const focus = async (url: string) => {
+    await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      electron.focus({ steal: true }); window.focus();
+      const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+      child.webContents.focus();
+    }, url);
+    await expect.poll(async () => (await zoomOf(url)).focused).toBe(true);
+  };
+  const capture = async (name: string) => {
+    const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (!dir) return;
+    const source = await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getMediaSourceId());
+    const result = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.split(":")[1]!, path.join(dir, `${name}.png`)], { encoding: "utf8" });
+    expect(result.status, "exact native window capture failed: " + result.stderr).toBe(0);
+    fs.writeFileSync(path.join(dir, "area-native-identity.json"), JSON.stringify({ pid, window: source, daemonPid: run.daemonPid(), socket: herdr.socket, state: run.env.HIDE_STATE_DIR, userData: run.env.HIDE_DESKTOP_USER_DATA_DIR, pages: await views() }, null, 2));
+  };
+  await focus(current);
+  await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
+  const selections = () => page.locator('[data-view-tab-bar] [aria-selected=true]').evaluateAll(tabs => tabs.map(tab => tab.getAttribute("data-display")));
+  const before = await selections();
+  const commits = sent.get("view_layout") ?? 0;
+  nativeKeys(pid, "key down control\nkey code 48");
+  await expect(page.locator('[data-cycle=area] [aria-selected=true]')).toHaveAttribute("data-cycle-row", previousId);
+  await expect(page.locator(`[data-cycle-row="${outsideId}"]`)).toHaveCount(0);
+  expect(await selections()).toEqual(before);
+  expect(sent.get("view_layout") ?? 0).toBe(commits);
+  await capture("area-native-preview");
+  nativeKeys(pid, "key up control");
+  await expect(page.locator("[data-cycle]")).toHaveCount(0);
+  await expect(tab(page, "Page B")).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => sent.get("view_layout") ?? 0).toBe(commits + 1);
+  await page.waitForTimeout(300);
+  expect(sent.get("view_layout") ?? 0).toBe(commits + 1);
+  expect(await inPage(current, "window.tabKeys")).toBe(0);
+
+  // Escape from the actual native page preserves both the selection and owner.
+  await tab(page, "한글 브라우저").click();
+  await focus(current);
+  const canceled = sent.get("view_layout") ?? 0;
+  nativeKeys(pid, "key down control\nkey code 48");
+  await expect(page.locator("[data-cycle=area]")).toBeVisible();
+  nativeKeys(pid, "key code 53\nkey up control");
+  await expect(page.locator("[data-cycle]")).toHaveCount(0);
+  await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
+  expect(sent.get("view_layout") ?? 0).toBe(canceled);
+  await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
+  await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
+  await capture("area-native-readable");
+
+  // A native-window blur cancels a fresh hold; a later release cannot commit it.
+  nativeKeys(pid, "key down control\nkey code 48");
+  await expect(page.locator("[data-cycle=area]")).toBeVisible();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
+  await expect(page.locator("[data-cycle]")).toHaveCount(0);
+  await focus(current);
+  nativeKeys(pid, "key up control");
+  await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
+  expect(sent.get("view_layout") ?? 0).toBe(canceled);
+  expect(originalId).not.toBe(previousId);
+});
 
 /** A two-finger pinch at the middle of the page showing `url`, then the page's visual zoom. */
 function pinch(url: string): Promise<number> {
