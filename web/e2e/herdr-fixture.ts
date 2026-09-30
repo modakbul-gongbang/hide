@@ -181,6 +181,38 @@ export function setFixtureSession(fixture: HerdrFixture, pane: string, sessionId
   declareFixtureSession(fixture.env, fixture.bin, pane, "claude", sessionId, true);
 }
 
+/** Drive the fake Claude's actual screen detector while retaining its native
+ * session identity. Lifecycle hook reports may be ignored after declaration. */
+export async function setFixtureLifecycle(fixture: HerdrFixture, pane: string, state: "working" | "blocked"): Promise<void> {
+  type Agent = { pane_id: string; agent_status: string; agent_session?: { source: string; agent: string; kind: string; value: string } };
+  const current = () => (fixture.run(["agent", "list"]) as { result: { agents: Agent[] } }).result.agents.find((agent) => agent.pane_id === pane);
+  const reference = current()?.agent_session;
+  if (!reference || reference.source !== "herdr:claude" || reference.agent !== "claude") {
+    throw new Error("lifecycle fixture requires its declared Claude native session");
+  }
+  // The existing raw-mode shim echoes these bytes, so pinned Herdr's
+  // osc_title_working / bash_permission_prompt rules see a controlled TUI.
+  const screen = state === "working"
+    ? "\x1b]0;\u280b Working\x07"
+    : "\x1b]0;Fixture\x07\x1b[2J\x1b[Hdo you want to proceed?\n"
+      + "bash command\n❯ 1. Yes\n2. No\n";
+  execFileSync(fixture.bin, ["pane", "send-text", pane, screen], { env: fixture.env, timeout: 30_000 });
+  await waitFor(() => current()?.agent_status === state, `native fixture state ${state}`, 10_000,
+    () => JSON.stringify({ expected: state, observed: current()?.agent_status }));
+  const observed = current()!;
+  if (JSON.stringify(observed.agent_session) !== JSON.stringify(reference)) {
+    throw new Error("lifecycle fixture changed its declared native session");
+  }
+  // Detection provenance is run evidence, never product source.
+  const explanation = execFileSync(fixture.bin, ["agent", "explain", pane, "--json"], { env: fixture.env, encoding: "utf8", timeout: 30_000 });
+  const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (evidence) {
+    fs.mkdirSync(evidence, { recursive: true });
+    fs.writeFileSync(path.join(evidence, `lifecycle-${pane.replaceAll(":", "-")}-${state}.json`),
+      JSON.stringify({ expected: state, observed: observed.agent_status, nativeSessionUnchanged: true, explanation: JSON.parse(explanation) }));
+  }
+}
+
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
   const bin = herdrBinary();
   const version = execFileSync(bin, ["--version"], { encoding: "utf8" }).trim().split(/\s+/)[1];

@@ -17,7 +17,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { agentsIn, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -244,7 +244,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
 
     await workspaceAt(herdr, repo, null);
     const fixingPane = await workspaceAt(herdr, tree("fixing"), "리뷰 반영");
-    execFileSync(herdr.bin, ["pane", "report-agent", fixingPane, "--source", "e2e", "--agent", "claude", "--state", "working"], { env: herdr.env, timeout: 30_000 });
+    await setFixtureLifecycle(herdr, fixingPane, "working");
 
     const gh = fakeGh(herdr.root);
     daemon = await startHided(herdr, "overview-prs", undefined, { PATH: `${gh.bin}:${path.join(herdr.root, "bin")}:${process.env.PATH ?? ""}` });
