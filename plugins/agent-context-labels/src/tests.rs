@@ -3946,7 +3946,7 @@ fn hooks_accept_current_native_attention_before_reconciliation_and_reject_obsole
         *watcher.transport.panes.borrow_mut() = vec![a.clone()];
         watcher.scan().unwrap();
         assert_eq!(watcher.resolve_attention(&a), None);
-        assert!(load_hook_states(&paths).panes.get(&a.id).is_none());
+        assert!(!load_hook_states(&paths).panes.contains_key(&a.id));
         assert_eq!(
             apply_hook_payload(&paths, &a.id, &b_hook, &watcher.transport).unwrap(),
             HookUpdate::Ignore

@@ -2280,7 +2280,7 @@ mod tests {
         let owner = hide_session::label_reference_token("claude", "id", "session-a").unwrap();
         let snapshot = |reference: Option<&str>, generation: &str| {
             serde_json::from_value::<SessionSnapshotPayload>(json!({"agents":[{
-                "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle",
+                "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle", "state_change_seq":7,
                 "agent_session":reference.map(|value| json!({"kind":"id","value":value})),
                 "tokens":{"label_owner":owner,"status_owner":owner,
                     "label_generation":generation,"status_generation":generation,
@@ -2344,7 +2344,7 @@ mod tests {
         let owner = hide_session::label_reference_token("claude", "path", path).unwrap();
         let snapshot = |kind: &str, value: &str, generation: &str| {
             serde_json::from_value::<SessionSnapshotPayload>(json!({"agents":[{
-                "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle",
+                "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle", "state_change_seq":7,
                 "agent_session":{"kind":kind,"value":value},
                 "tokens":{"label_owner":owner,"status_owner":owner,
                     "label_generation":generation,"status_generation":generation,
