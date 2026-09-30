@@ -135,12 +135,26 @@ describe("bounded Korean interpretations", () => {
       for (const particle of particles.flatMap((base) => [base, ...["도", "만", "는", "은"].map((extra) => base + extra)])) {
         const token = "docs/한글.md" + closer + particle;
         const [group] = linkCandidates([row(token, 40)], 0);
-        expect(group!.length).toBeLessThanOrEqual(3);
+        expect(group!.length).toBeLessThanOrEqual(6);
         expect(group![0]!.target).toMatchObject({ path: token, line: null });
         expect(group!.at(-1)!.target).toMatchObject({ path: "docs/한글.md" });
         expect(group!.at(-1)!.spans).toEqual([{ row: 0, start: 0, end: 12 }]);
       }
     }
+  });
+
+  it("preserves all six composite spellings, including raw leading and closing punctuation", () => {
+    const [group] = linkCandidates([row("(src/a.ts:12:5)에", 40)], 0);
+    expect(group!.map((candidate) => [candidate.text, candidate.target])).toEqual([
+      ["(src/a.ts:12:5)에", { kind: "path", path: "(src/a.ts:12:5)에", line: null, column: null }],
+      ["src/a.ts:12:5)에", { kind: "path", path: "src/a.ts:12:5)에", line: null, column: null }],
+      ["(src/a.ts:12:5)", { kind: "path", path: "(src/a.ts:12:5)", line: null, column: null }],
+      ["src/a.ts:12:5)", { kind: "path", path: "src/a.ts:12:5)", line: null, column: null }],
+      ["src/a.ts:12:5", { kind: "path", path: "src/a.ts:12:5", line: null, column: null }],
+      ["src/a.ts:12:5", { kind: "path", path: "src/a.ts", line: 12, column: 5 }],
+    ]);
+    expect(group![2]!.spans).toEqual([{ row: 0, start: 0, end: 15 }]);
+    expect(group![4]!.spans).toEqual([{ row: 0, start: 1, end: 14 }]);
   });
 
   it("does not truncate unsupported words or unbounded particle chains", () => {
@@ -165,11 +179,15 @@ describe("bounded Korean interpretations", () => {
     expect(path.spans).toEqual([{ row: 0, start: 4, end: 15 }]);
   });
 
-  it("bounds every joined spelling to three interpretations and every hovered token to sixteen joins", () => {
-    const rows = Array.from({ length: 7 }, () => row("docs/a.md)에", 20));
+  it("bounds every joined spelling to six interpretations and every hovered token to sixteen joins", () => {
+    const rows = Array.from({ length: 7 }, () => row("docs/a.md)에", 12));
     const groups = linkCandidates(rows, 3);
     expect(groups).toHaveLength(1);
-    expect(groups[0]!.length).toBeLessThanOrEqual(48);
-    expect(groups[0]!.filter((candidate) => !candidate.original).length).toBeLessThanOrEqual(32);
+    // All seven rows are fully occupied: four starts times four ends make
+    // sixteen distinct joined spellings around the middle row.
+    expect(groups[0]!.filter((candidate) => candidate.original)).toHaveLength(16);
+    expect(groups[0]).toHaveLength(48); // This fixture has three distinct stages per join.
+    expect(groups[0]!.length * 2).toBeLessThanOrEqual(192);
+    expect(groups[0]!.filter((candidate) => !candidate.original).length * 2).toBeLessThanOrEqual(160);
   });
 });

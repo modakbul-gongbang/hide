@@ -219,7 +219,7 @@ type Interpretation = { text: string; lead: number; trail: number; target: LinkT
 // A base particle may take one of the four listed secondary particles.
 const GRAMMAR = /[)\]}>"'`](?:에서|에게|으로|부터|까지|에|께|로|와|과|을|를|은|는|이|가|의|도|만)(?:도|만|는|은)?$/u;
 
-/** At most three spellings: original, symbol-only, and grammar/location interpretation. */
+/** Six finite stages preserve literal punctuation and location before interpreting either. */
 function interpretations(token: string): Interpretation[] {
   const symbols = strip(token);
   const ordinary = parseTarget(symbols.text);
@@ -227,10 +227,15 @@ function interpretations(token: string): Interpretation[] {
   if (ordinary?.kind === "url" || uriTarget(symbols.text) !== undefined) {
     return ordinary ? [{ ...symbols, target: ordinary, original: true }] : [];
   }
-  const match = GRAMMAR.exec(symbols.text);
-  // Keep the closer when removing only the particle, so a literal closer in
-  // a file name can still beat the shorter, fully unwrapped path.
-  const grammarText = match ? symbols.text.slice(0, match.index + 1) : null;
+  // Grammar-only removal preserves both leading and closing punctuation.
+  // Apply it separately to raw and symbol-only spelling, never one character
+  // at a time, so each literal stage can beat a shorter interpretation.
+  const withoutParticle = (text: string) => {
+    const match = GRAMMAR.exec(text);
+    return match ? text.slice(0, match.index + 1) : null;
+  };
+  const rawGrammarText = withoutParticle(token);
+  const grammarText = withoutParticle(symbols.text);
   const grammar = grammarText === null ? { text: symbols.text, lead: 0, trail: 0 } : strip(grammarText);
   const interpreted = parseTarget(grammar.text);
   const result: Interpretation[] = [];
@@ -246,9 +251,13 @@ function interpretations(token: string): Interpretation[] {
     return { kind: "path", path: text, line: null, column: null };
   };
   add(token, 0, 0, literal(token), true);
-  if (symbols.text !== token) add(symbols.text, symbols.lead, symbols.trail, literal(symbols.text), false);
-  else if (grammarText !== null) add(grammarText, symbols.lead, token.length - symbols.lead - grammarText.length, literal(grammarText), false);
-  add(grammar.text, symbols.lead + grammar.lead, token.length - symbols.lead - grammar.lead - grammar.text.length, interpreted, false);
+  add(symbols.text, symbols.lead, symbols.trail, literal(symbols.text), false);
+  if (rawGrammarText !== null) add(rawGrammarText, 0, token.length - rawGrammarText.length, literal(rawGrammarText), false);
+  if (grammarText !== null) add(grammarText, symbols.lead, token.length - symbols.lead - grammarText.length, literal(grammarText), false);
+  const lead = symbols.lead + grammar.lead;
+  const trail = token.length - lead - grammar.text.length;
+  add(grammar.text, lead, trail, literal(grammar.text), false);
+  add(grammar.text, lead, trail, interpreted, false);
   return result;
 }
 

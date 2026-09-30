@@ -142,6 +142,11 @@ describe("original spelling and bounded hover work", () => {
     ["docs/a.md)에", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
     ["docs/a.md)에", ["docs/a.md", "docs/a.md)", "docs/a.md)에"], "docs/a.md)에"],
     ["(docs/a.md)에", ["docs/a.md", "docs/a.md)에"], "docs/a.md)에"],
+    ["(docs/a.md)에", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
+    ["docs/a.md)에.", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
+    ["(docs/a.md)에", ["docs/a.md", "docs/a.md)", "(docs/a.md)"], "(docs/a.md)"],
+    ["(src/a.ts:12:4)에", ["src/a.ts", "src/a.ts:12:4"], "src/a.ts:12:4"],
+    ["src/a.ts:12:4)에", ["src/a.ts", "src/a.ts:12:4"], "src/a.ts:12:4"],
     ["docs/a.md)", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
     ["src/a.ts:12:4", ["src/a.ts", "src/a.ts:12:4"], "src/a.ts:12:4"],
     ["src/a.ts:12:4", ["src/a.ts"], "src/a.ts"],
@@ -154,6 +159,21 @@ describe("original spelling and bounded hover work", () => {
     if (chosen[0]?.resolved.target.kind === "path") {
       expect(chosen[0].resolved.target.line).toBe(expected === "src/a.ts" ? 12 : null);
       expect(chosen[0].resolved.target.column).toBe(expected === "src/a.ts" ? 4 : null);
+    }
+  });
+
+  it("chooses each composite literal before shorter spellings or a location, with exact cells", async () => {
+    const spellings = ["(src/a.ts:12:5)에", "src/a.ts:12:5)에", "(src/a.ts:12:5)", "src/a.ts:12:5)", "src/a.ts:12:5", "src/a.ts"];
+    for (let index = 0; index < spellings.length; index += 1) {
+      clearProbeCache();
+      const chosen = await resolveGroups(linkCandidates([row(spellings[0]!, 40)], 0), { cwd: "/w", root: "/r" }, host(spellings.slice(index).map((file) => "/w/" + file)));
+      expect(chosen).toHaveLength(1);
+      const { candidate, resolved } = chosen[0]!;
+      expect(resolved.found!.real).toBe("/w/" + spellings[index]);
+      expect(resolved.target).toMatchObject({ line: index === 5 ? 12 : null, column: index === 5 ? 5 : null });
+      const text = index === 5 ? spellings[4]! : spellings[index]!;
+      const start = text.startsWith("(") ? 0 : 1;
+      expect(candidate.spans).toEqual([{ row: 0, start, end: start + text.length + (text.endsWith("에") ? 1 : 0) }]);
     }
   });
 

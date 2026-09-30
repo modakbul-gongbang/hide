@@ -364,7 +364,9 @@ Its only reads are a pull request's body and feedback when 맡기기 or 새 이�
 ### Terminal path links
 
 `web/src/terminalLinks.ts` reads at most three rows on either side of the hovered row and retains the existing maximum of sixteen joined spellings per token.
-Each spelling offers its original path and at most two context interpretations, so a token has at most 96 logical cwd/root lookups, at most 64 beyond the original spellings.
+Each spelling offers its original path and at most five context interpretations, so a token has at most 192 logical cwd/root lookups, at most 160 beyond the original spellings.
+The six stages preserve raw and symbol-only spelling, grammar-only removal from each with literal leading/closing punctuation, the cleaned literal location spelling, then the parsed location.
+Identical text/target stages deduplicate.
 These are finite punctuation, Korean grammar and location interpretations; arbitrary Hangul is never removed character by character.
 The selected range maps UTF-16 slice boundaries onto the buffer's glyph cells, retaining both halves of a wide glyph and refusing a cut inside a combining cell.
 

@@ -363,6 +363,73 @@ test("Korean prose links only the real path and opens that file", async () => {
   }
   await nativeCapture("korean-original-file");
 
+  // Independent fixture names keep TTL hits from a prior collision from
+  // deciding this one. Every shorter stage really exists alongside the winner.
+  const collisions = [];
+  for (let stage = 0; stage < 6; stage += 1) {
+    const base = "docs/composite-" + stage + ".ts";
+    const written = "(" + base + ":12:5)에";
+    const spellings = [written, base + ":12:5)에", "(" + base + ":12:5)", base + ":12:5)", base + ":12:5", base];
+    const selected = spellings[stage]!;
+    for (const file of spellings.slice(stage)) {
+      fs.mkdirSync(path.join(checkout, path.dirname(file)), { recursive: true });
+      fs.writeFileSync(path.join(checkout, file), Array.from({ length: 20 }, (_, line) => "// selected " + file + " line " + (line + 1)).join("\n"));
+    }
+    await print(page, paneId, ["합성 " + written, "COMPOSITE-END-" + stage], "COMPOSITE-END-" + stage);
+    const first = await cellOf(page, paneId, written);
+    const text = stage === 5 ? spellings[4]! : selected;
+    const start = first.column + (text.startsWith("(") ? 0 : 1);
+    const end = start + [...text].reduce((cells, char) => cells + (/\p{Script=Hangul}/u.test(char) ? 2 : 1), 0);
+    for (const column of [start, end - 1]) {
+      const inside = await cellPoint(page, paneId, { row: first.row, column });
+      await hoverLink(page, paneId, inside);
+    }
+    for (const column of [start - 1, end]) {
+      const outside = await cellPoint(page, paneId, { row: first.row, column });
+      await page.mouse.move(outside.x, outside.y);
+      await expect(page.locator('[data-terminal="' + paneId + '"] .xterm-screen')).not.toHaveClass(/xterm-cursor-pointer/);
+    }
+    const inside = await cellPoint(page, paneId, { row: first.row, column: start });
+    await hoverLink(page, paneId, inside);
+    await nativeCapture("korean-composite-stage-" + stage + "-hover");
+    await page.mouse.click(inside.x, inside.y);
+    await expect(page.locator(".cm-content")).toContainText("selected " + selected + " line ");
+    if (stage === 5) await expect(page.locator(".cm-activeLine").first()).toHaveText("// selected " + selected + " line 12");
+    collisions.push({ stage, written, selected, range: { row: first.row, start, end }, line: stage === 5 ? 12 : null, column: stage === 5 ? 5 : null });
+    await nativeCapture("korean-composite-stage-" + stage + "-open");
+  }
+  if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "composite-click-observations.json"), JSON.stringify(collisions, null, 2));
+
+  // A real IPC request still goes through the native host. Inject only an
+  // unexpected filesystem failure; it must not establish a shorter link.
+  fs.writeFileSync(path.join(checkout, "docs/fault.md"), "# native probe retry selected");
+  await app.evaluate((_electron, failingPath) => {
+    const fsp = process.getBuiltinModule("fs/promises") as typeof import("node:fs/promises");
+    const realpath = fsp.realpath;
+    (globalThis as { restoreLinkProbe?: () => void }).restoreLinkProbe = () => { fsp.realpath = realpath; };
+    fsp.realpath = (async (...args: unknown[]) => {
+      if (String(args[0]) === failingPath) throw Object.assign(new Error("private fixture " + failingPath), { code: "EIO" });
+      return Reflect.apply(realpath, fsp, args);
+    }) as typeof fsp.realpath;
+  }, path.join(checkout, "docs/fault.md)에"));
+  try {
+    await print(page, paneId, ["오류 docs/fault.md)에", "FAULT-END"], "FAULT-END");
+    const fault = await pointOf(page, paneId, "docs/fault.md", { offset: 2 });
+    await page.mouse.move(fault.x, fault.y);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.diagnostics?.().findLast((line) => line.includes("native path probe failed: EIO")) ?? null)).not.toBeNull();
+    await expect(page.locator('[data-terminal="' + paneId + '"] .xterm-screen')).not.toHaveClass(/xterm-cursor-pointer/);
+    const diagnostic = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.diagnostics?.().findLast((line) => line.includes("native path probe failed: EIO")));
+    expect(diagnostic).not.toContain(checkout);
+  } finally {
+    await app.evaluate(() => { (globalThis as { restoreLinkProbe?: () => void }).restoreLinkProbe!(); });
+  }
+  await print(page, paneId, ["재시도 docs/fault.md)에", "FAULT-RETRY-END"], "FAULT-RETRY-END");
+  const retry = await pointOf(page, paneId, "docs/fault.md", { offset: 2 });
+  await hoverLink(page, paneId, retry);
+  await page.mouse.click(retry.x, retry.y);
+  await expect(page.locator(".cm-content")).toContainText("native probe retry selected");
+  await nativeCapture("korean-probe-retry-open");
+
   const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
   const segments: string[] = [];
   while (["docs", ...segments].join("/").length < grid.cols + 10) segments.push("segment" + segments.length);
@@ -371,7 +438,11 @@ test("Korean prose links only the real path and opens that file", async () => {
   fs.writeFileSync(path.join(checkout, wrapped), "# wrapped Korean selected");
   await print(page, paneId, ["확인 (" + wrapped + ")에서도", "WRAPPED-KOREAN-END"], "WRAPPED-KOREAN-END");
   const endCell = await cellOf(page, paneId, "한글.md");
-  // Both halves of the last Hangul glyph and the file extension are part of the link.
+  // Probe both halves of each Hangul glyph and the file extension.
+  for (const extra of [0, 1, 2, 3, 4, 5, 6]) {
+    const inside = await cellPoint(page, paneId, { row: endCell.row, column: endCell.column + extra });
+    await hoverLink(page, paneId, inside);
+  }
   const endPoint = await cellPoint(page, paneId, { row: endCell.row, column: endCell.column + 6 });
   await hoverLink(page, paneId, endPoint);
   await nativeCapture("korean-wrapped-hover");
@@ -404,9 +475,11 @@ test("dense terminal path hover measures cold and warm native work", async () =>
   const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
   expect(grid.cols).toBeGreaterThan(tokens.join(" ").length + 12);
   await print(page, paneId, [tokens.join(" "), "DENSE-END"], "DENSE-END");
-  const sourceHashes = Object.fromEntries(["terminalLinks.ts", "terminalLinkProvider.ts"].map((name) => [name,
-    createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../web/src", name))).digest("hex"),
-  ]));
+  const sourceHashes = Object.fromEntries([
+    ["terminalLinks.ts", "../../web/src/terminalLinks.ts"],
+    ["terminalLinkProvider.ts", "../../web/src/terminalLinkProvider.ts"],
+    ["localPath.ts", "../src/main/localPath.ts"],
+  ].map(([name, relative]) => [name!, createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, relative!))).digest("hex")]));
   const cells = [...tokens.join(" ")].flatMap((char) => /\p{Script=Hangul}/u.test(char) ? [char, null] : [char]);
   while (cells.length < grid.cols) cells.push(" ");
   // Logical candidates use the actual parser source on this same unwrapped
@@ -489,6 +562,13 @@ test("dense terminal path hover measures cold and warm native work", async () =>
       expect(counts.batchSizes.every((size) => size <= 64)).toBe(true);
       if (phase === "warm") expect(counts.hostUniqueLookups + counts.nativeRealpath + counts.nativeStat).toBe(0);
       samples.push({ trial, phase, cacheState: phase === "cold" ? "new renderer, empty provider cache" : "same renderer, preceding hover within 10s TTL", logicalUniqueLookups: fields?.unique ?? logicalUniqueLookups, cacheMisses: fields?.cache_misses ?? counts.hostUniqueLookups, providerDiagnostic, latencyMs, ...counts, idleHostLoad, drivenHostLoad });
+      // The baseline and candidate take the same extra pointer movement,
+      // outside the measured hover. Only the candidate links this suffix token.
+      const suffix = await pointOf(page, paneId, tokens[1]!, { offset: 2 });
+      await page.mouse.move(suffix.x, suffix.y);
+      const screen = page.locator('[data-terminal="' + paneId + '"] .xterm-screen');
+      if (fields) await expect(screen).toHaveClass(/xterm-cursor-pointer/);
+      else await expect(screen).not.toHaveClass(/xterm-cursor-pointer/);
     }
   }
   await nativeCapture("dense-hover");
