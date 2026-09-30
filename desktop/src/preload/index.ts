@@ -38,8 +38,8 @@ contextBridge.exposeInMainWorld("hideHost", {
     ipcRenderer.send(OPEN_PATH_CHANNEL, path);
   },
   browser: {
-    endCycle(): void {
-      ipcRenderer.send(BROWSER_CYCLE_END_CHANNEL);
+    endCycle(cycleId: number): void {
+      ipcRenderer.send(BROWSER_CYCLE_END_CHANNEL, cycleId);
     },
     sync(state: BrowserSync): void {
       ipcRenderer.send(BROWSER_SYNC_CHANNEL, state);

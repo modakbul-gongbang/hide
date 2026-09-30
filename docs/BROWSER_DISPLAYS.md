@@ -100,10 +100,13 @@ An evicted page reports its disappearance as disconnected until shown again.
 
 Only a visible native page can report keyboard focus to the shell; the shell resolves its complete Workspace identity and current View area.
 The page's `before-input-event` matches the shell's effective Electron shortcut registry for focused-area, global panel and project cycle commands before the page or menu sees them.
-One host slot holds the initiating page and actual release modifier, including input received after the overlay hides that page.
+One host slot holds the initiating page, actual release modifier and cycle identifier, including input received after the overlay hides that page.
 The trusted bridge carries only cycle keydown/keyup and cancellation; the shell keeps the frozen scope and preview and owns the single commit.
-The shell also reports completion when release arrived in its renderer, so the host cannot retain an old held page into the next cycle.
-Window blur and destruction of the held page cancel the host slot, and a hidden or unfocused page cannot begin a cycle.
+The shell also reports the matching identifier when release arrived in its renderer, so a late completion cannot erase a newer hold.
+Release or Escape received by another native page still ends the frozen initiating cycle.
+Window blur, page renderer failure and destruction of the held page cancel the host slot, and a hidden or unfocused page cannot begin a cycle.
+After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
+The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.
 The keyboard area has a strong tab accent and a content boundary outside the native slot; other selected tabs remain readable, with no page blur or recurring capture for focus styling.
 

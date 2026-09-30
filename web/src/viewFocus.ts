@@ -70,6 +70,7 @@ export function noteCommandDelivered(): void {
   if (!handedBack) return;
   handedBack = null;
   noteKeyboardOwner(ownerOf(document.activeElement) ?? owner);
+  commandOwner = owner;
 }
 
 /** One bounded value per page; no core events or per-key DOM reads. */

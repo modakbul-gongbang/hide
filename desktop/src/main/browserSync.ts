@@ -13,7 +13,7 @@ export const MAX_RETAINED_DISPLAYS = 16_384;
 export const MAX_LIVE_VIEWS = 12;
 const MAX_TEXT = 8192;
 const MAX_EXTENT = 100_000;
-const COMMANDS: ReadonlySet<string> = new Set<BrowserCommand>(["back", "forward", "reload", "stop"]);
+const COMMANDS: ReadonlySet<string> = new Set<BrowserCommand>(["back", "forward", "reload", "stop", "focus"]);
 const LOADABLE_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:", "file:"]);
 
 function text(value: unknown): value is string {

@@ -30,7 +30,7 @@ let nativeControlOwned = false;
 
 const PAGES: Record<string, string> = {
   "/a.html": '<!doctype html><meta charset="utf-8"><title>Page A</title><body style="background:lavender"><h1>Page A</h1><input id="q" aria-label="query">',
-  "/b.html": '<!doctype html><meta charset="utf-8"><title>Page B</title><body style="background:honeydew"><h1>Page B</h1>',
+  "/b.html": '<!doctype html><meta charset="utf-8"><title>Page B</title><body style="background:honeydew"><h1>Page B</h1><input id="q" aria-label="Page B input" autofocus>',
   "/c.html": '<!doctype html><meta charset="utf-8"><title>Page C</title><body style="background:mistyrose"><h1>Page C</h1>',
   "/korean.html": '<!doctype html><meta charset="utf-8"><title>한글 브라우저</title><body style="font:16px system-ui"><h1>작업 공간 검증</h1><p>다른 영역의 내용과 선택은 읽을 수 있어야 합니다.</p><input aria-label="한글 입력" value="한글 확인"><script>window.tabKeys=0;addEventListener("keydown",e=>{if(e.code==="Tab")window.tabKeys++})</script>',
 };
@@ -556,9 +556,14 @@ test("area cycle native: page input previews one exact area, releases once and c
   await page.waitForTimeout(300);
   expect(sent.get("view_layout") ?? 0).toBe(commits + 1);
   expect(await inPage(current, "window.tabKeys")).toBe(0);
+  await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);
+  nativeKeys(pid, 'keystroke "z"');
+  expect(await inPage(previous, "document.getElementById('q').value")).toBe("z");
+  expect(await inPage(current, "document.querySelector('input').value")).toBe("한글 확인");
 
   // Escape from the actual native page preserves both the selection and owner.
   await tab(page, "한글 브라우저").click();
+  await inPage(current, "document.querySelector('input').focus()");
   await focus(current);
   const canceled = sent.get("view_layout") ?? 0;
   nativeKeys(pid, "key down control\nkey code 48");
@@ -569,6 +574,8 @@ test("area cycle native: page input previews one exact area, releases once and c
   expect(sent.get("view_layout") ?? 0).toBe(canceled);
   await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
   await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
+  nativeKeys(pid, 'keystroke "e"');
+  expect(await inPage(current, "document.querySelector('input').value")).toContain("e");
   await capture("area-native-readable");
 
   // A native-window blur cancels a fresh hold; a later release cannot commit it.

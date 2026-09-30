@@ -58,6 +58,7 @@ describe("focused-area recent tabs", () => {
     const views = areaCycle(rest, { kind: "view", workspace: "c", areaId: "a1" })!;
     commitCycle({ ...views, index: 1 }, actions);
     expect(sent).toEqual([expect.objectContaining({ kind: "view_layout", payload: expect.objectContaining({ action: "focus", display_id: "d2" }) })]);
+    expect(useUiStore.getState().viewFocusRequest).toEqual({ workspace: "local\u0000/fixture", displayId: "d2", from: null });
   });
   it("prunes a moved tab using the new snapshot, keeps the frozen order and cancels a removed origin", () => {
     const rest = world(); draw(rest);

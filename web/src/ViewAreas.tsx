@@ -4,6 +4,7 @@ import type { Actions } from "./actions";
 import { createAreaTree, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
 import { AreaEmpty } from "./AreaEmpty";
 import { BrowserDisplay } from "./BrowserDisplay";
+import { focusBrowserDisplay } from "./browserViews";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { hostKind } from "./host";
@@ -70,7 +71,12 @@ function ViewTree({ layout, deviceId, path, trailing, actions }: { layout: ViewL
       const now = document.activeElement;
       if (now !== before && now !== null && now !== document.body) return;
       const area = body.querySelector<HTMLElement>(`[data-view-area-id="${CSS.escape(areaId)}"]`);
-      const target = area?.querySelector<HTMLElement>("[data-editor-body] .cm-content") ?? area?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      const browserId = area?.querySelector<HTMLElement>("[data-browser-slot]")?.dataset.browserSlot;
+      if (browserId) {
+        focusBrowserDisplay(key, browserId);
+        return;
+      }
+      const target = area?.querySelector<HTMLElement>(".cm-content") ?? area?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
       target?.focus({ preventScroll: true });
     });
   }, [request, key, layout, body]);

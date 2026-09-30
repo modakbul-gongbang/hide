@@ -56,14 +56,15 @@ export class BrowserViews {
   private readonly configuredSessions = new Set<string>();
   private window: BrowserWindow | null = null;
   private registry: readonly Command[] = REGISTRY;
-  private cycleInput: { page: Page; release: string } | null = null;
+  private cycleInput: { page: Page; release: string; cycleId: number } | null = null;
+  private cycleSequence = 0;
 
   setRegistry(registry: readonly Command[]): void { this.registry = registry; }
 
   private cancelCycle(): void {
     const held = this.cycleInput;
     this.cycleInput = null;
-    if (held) this.emit({ kind: "cycle-cancel", workspace: held.page.workspace, id: held.page.id });
+    if (held) this.emit({ kind: "cycle-cancel", cycleId: held.cycleId, workspace: held.page.workspace, id: held.page.id });
   }
 
   constructor(
@@ -73,9 +74,9 @@ export class BrowserViews {
     private readonly resolve: (workspace: string, id: string, load: number) => Promise<ResolvedPage>,
     private readonly release: (workspace: string, id: string, load: number) => void,
   ) {
-    ipcMain.on(BROWSER_CYCLE_END_CHANNEL, (event) => {
+    ipcMain.on(BROWSER_CYCLE_END_CHANNEL, (event, cycleId: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "cycle_end" });
-      this.cycleInput = null;
+      if (this.cycleInput?.cycleId === cycleId) this.cycleInput = null;
     });
     ipcMain.on(BROWSER_SYNC_CHANNEL, (event, value: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "sync" });
@@ -103,7 +104,9 @@ export class BrowserViews {
       const page = target ? this.pages.get(viewKey(target.workspace, target.id)) : undefined;
       if (!page || !command) return;
       const contents = page.view.webContents;
-      if (command === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+      if (command === "focus") {
+        if (page.visible && this.window?.isFocused()) contents.focus();
+      } else if (command === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
       else if (command === "forward" && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
       else if (command === "stop") contents.stop();
       else if (command === "reload") {
@@ -280,16 +283,21 @@ export class BrowserViews {
       const held = this.cycleInput;
       const eventLike = { code: input.code, metaKey: input.meta, altKey: input.alt, shiftKey: input.shift, ctrlKey: input.control };
       const command = input.type === "keyDown" && !input.isComposing ? matchHost(eventLike, this.registry, "electron") : null;
-      const starts = command && isCycleCommand(command.id) && page.visible && contents.isFocused();
-      const continues = held?.page === page && command && isCycleCommand(command.id);
-      const ends = held?.page === page && ((input.type === "keyUp" && input.key === held.release) || (input.type === "keyDown" && input.key === "Escape"));
+      const starts = !held && command && isCycleCommand(command.id) && page.visible && contents.isFocused();
+      const continues = held && command && isCycleCommand(command.id);
+      const ends = held && ((input.type === "keyUp" && input.key === held.release) || (input.type === "keyDown" && input.key === "Escape"));
       if (starts || continues || ends) {
         const chord = command && hostChord(command, "electron");
         const release = chord && releaseModifier(chord);
-        if (!held && release) this.cycleInput = { page, release };
+        if (!held && release) {
+          this.cycleSequence = (this.cycleSequence + 1) % Number.MAX_SAFE_INTEGER;
+          this.cycleInput = { page, release, cycleId: this.cycleSequence };
+        }
+        const cycle = held ?? this.cycleInput;
+        if (!cycle) return;
         if (ends) this.cycleInput = null;
         event.preventDefault();
-        this.emit({ kind: "cycle-input", workspace: page.workspace, id: page.id, type: input.type as "keyDown" | "keyUp", key: input.key, code: input.code, control: input.control, alt: input.alt, meta: input.meta, shift: input.shift });
+        this.emit({ kind: "cycle-input", cycleId: cycle.cycleId, workspace: cycle.page.workspace, id: cycle.page.id, type: input.type as "keyDown" | "keyUp", key: input.key, code: input.code, control: input.control, alt: input.alt, meta: input.meta, shift: input.shift });
         return;
       }
       // ⌘+ reaches no menu item (the menu's zoom in is ⌘=), so the page
@@ -308,6 +316,7 @@ export class BrowserViews {
       this.update(page, { url: this.sourceAddress(page, url), loading: false, failure: description || `Load failed (${code})` });
     });
     contents.on("render-process-gone", (_event, details) => {
+      if (this.cycleInput?.page === page) this.cancelCycle();
       this.log.event("browser.page_gone", { reason: details.reason });
       this.update(page, { loading: false, failure: `The page stopped (${details.reason})` });
     });

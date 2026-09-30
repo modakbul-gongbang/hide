@@ -19,6 +19,7 @@
 
 import { areaCycle, focusedCycleScope, focusedSurface, scopedSurfaces } from "./areaCycle";
 import type { Actions } from "./actions";
+import { focusBrowserDisplay } from "./browserViews";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { browserBridge, hostBridge, hostKind } from "./host";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
@@ -125,7 +126,7 @@ export function commitCycle(cycle: Cycle, actions: Actions) {
   if (cycle.scope) {
     const membership = scopedSurfaces(useShellStore.getState().rest, cycle.scope);
     if (chosen.target.kind !== "surface" || !membership?.surfaces.some((surface) => surface.key === chosen.key)) return;
-    return cycle.scope.kind === "view" ? actions.focusView(chosen.target.surface.id) : actions.focusTab(chosen.target.surface.id, true);
+    return cycle.scope.kind === "view" ? actions.focusView(chosen.target.surface.id, true) : actions.focusTab(chosen.target.surface.id, true);
   }
   const target = chosen.target;
   switch (target.kind) {
@@ -158,6 +159,12 @@ export function installKeyboard(actions: Actions): () => void {
   // The modifier whose release commits the running cycle: ⌥ for the ⌥ family,
   // ⌃ for the desktop app's ⌃Tab.
   let cycleRelease = "Alt";
+  let nativeCycle: { cycleId: number; workspace: string; id: string } | null = null;
+  const endNativeCycle = () => {
+    if (!nativeCycle) return;
+    browserBridge()?.endCycle(nativeCycle.cycleId);
+    nativeCycle = null;
+  };
 
   const run = (id: CommandId, event: KeyboardEvent | null) => {
     if (isNumberedCommand(id)) {
@@ -302,7 +309,7 @@ export function installKeyboard(actions: Actions): () => void {
     state.overlay !== "none" || state.escapeLayers.length > 0 || state.workspaceDialog !== null || state.pendingClose !== null || state.pendingTrash !== null || state.cycle !== null;
   const unsubscribeLayers = useUiStore.subscribe((state, previous) => {
     if (layerOpen(state) && !layerOpen(previous)) endHold();
-    if (previous.cycle && !state.cycle) browserBridge()?.endCycle();
+    if (previous.cycle && !state.cycle) endNativeCycle();
   });
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -329,7 +336,9 @@ export function installKeyboard(actions: Actions): () => void {
         for (const close of ui().tooltips) close();
       };
       if (ui().cycle) {
+        const originalPage = nativeCycle;
         ui().setCycle(null);
+        if (originalPage) focusBrowserDisplay(originalPage.workspace, originalPage.id);
         consume();
         return;
       }
@@ -376,8 +385,10 @@ export function installKeyboard(actions: Actions): () => void {
     if (event.key !== cycleRelease) return;
     const cycle = ui().cycle;
     if (!cycle) return;
+    const originalPage = nativeCycle;
     ui().setCycle(null);
     commitCycle(cycle, actions);
+    if (originalPage && cycle.items[cycle.index]?.key === cycle.originKey) focusBrowserDisplay(originalPage.workspace, originalPage.id);
   };
 
   // Losing the window mid-cycle (⌥-Tab switching apps) cancels it; nothing
@@ -397,18 +408,22 @@ export function installKeyboard(actions: Actions): () => void {
     }
   });
   const unsubscribeBrowser = browserBridge()?.onEvent((input) => {
-    if (input.kind === "cycle-cancel") { onBlur(); return; }
+    if (input.kind === "cycle-cancel") {
+      if (nativeCycle?.cycleId === input.cycleId) onBlur();
+      return;
+    }
     if (input.kind !== "cycle-input") return;
+    nativeCycle = { cycleId: input.cycleId, workspace: input.workspace, id: input.id };
     const cycle = ui().cycle;
     const scope = focusedCycleScope(useShellStore.getState().rest);
     const frame = drawnViews();
     if (!cycle && (!scope || scope.kind !== "view" || !frame || `${frame.workspace.device_id}\u0000${frame.workspace.path}` !== input.workspace || focusedSurface(useShellStore.getState().rest, scope)?.id !== input.id)) {
-      browserBridge()?.endCycle();
+      endNativeCycle();
       return;
     }
     const event = new KeyboardEvent(input.type === "keyDown" ? "keydown" : "keyup", { code: input.code, key: input.key, ctrlKey: input.control, altKey: input.alt, metaKey: input.meta, shiftKey: input.shift });
     if (input.type === "keyDown") onKeyDown(event); else onKeyUp(event);
-    if (!ui().cycle) browserBridge()?.endCycle();
+    if (!ui().cycle) endNativeCycle();
   });
   const unsubscribeMenu = bridge?.onCommand((id) => {
     const command = REGISTRY.find((row) => row.id === id);
@@ -441,6 +456,8 @@ export function installKeyboard(actions: Actions): () => void {
   window.addEventListener("blur", onBlur);
   document.addEventListener("visibilitychange", onVisibility);
   return () => {
+    onBlur();
+    endNativeCycle();
     removeKeyboardOwner();
     unsubscribeCommand();
     unsubscribeBrowser?.();

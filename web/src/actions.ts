@@ -460,9 +460,11 @@ export function createActions(dispatch: DispatchFn) {
     ui().setViewFocusRequest({ workspace, displayId: target.displayId, from: located ? { areaId: located.area.id, index: located.index } : null });
   };
 
-  const focusView = (displayId: string) => {
+  const focusView = (displayId: string, moveKeyboard = false) => {
     const frame = frameFor("focus");
-    if (frame) viewLayout(frame, { action: "focus", display_id: displayId });
+    if (!frame) return;
+    if (moveKeyboard) ui().setViewFocusRequest({ workspace: workspaceKey(frame.workspace), displayId, from: null });
+    viewLayout(frame, { action: "focus", display_id: displayId });
   };
 
   const focusViewArea = (areaId: string) => {
