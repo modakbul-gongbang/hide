@@ -334,11 +334,19 @@ That fallback is sticky, so the parked provider is not asked again until its wai
 A request that timed out or lost its connection after submission is never re-run on another provider, because whether it completed is unknown.
 Every recorded verdict (`analysis_recorded`) names the provider that answered it and records field lengths, not conversation content.
 Automatic task analysis is enabled by default and the chosen setting survives watcher restarts.
+The watcher runs one label analysis at a time and retains only live pane ids for waiting work, re-reading each pane's current conversation when its turn arrives.
+Completing an analysis wakes the existing event loop, so startup catch-up continues without simultaneous requests exhausting the provider router's concurrency budget.
 
 ## Privacy
 
 The plugin reads the local JSONL session reported by Herdr for each supported pane through the shared `hide-session` crate.
 The first view reads the complete file once, and later views read only complete lines appended after the remembered byte cursor.
+The conversation cursor advances at most 1 MiB per poll and retains at most 256 KiB of any record body.
+When a read leaves a backlog, the watcher schedules the next bounded read even if the pane has not changed, and waits for the backlog to finish before requesting a label.
+If the watcher catches up while an agent is working, it makes that turn's missing task decision once, even when assistant progress already follows the Human request.
+When a JSON type field follows an oversized body, a one-time streaming header scan uses the archive reader's 64 MiB budget without retaining that body.
+An oversized record whose provider-owned JSON type identifies it as unrelated to conversation is consumed through its next newline without retaining its body; `session_lines_skipped` reports `non_conversation_capacity`.
+Human and assistant messages, and records whose type cannot be determined within the bound, still report `session_capacity:line_bytes` rather than discarding conversation text.
 When no task state exists, the initial context carries the first three and last eight Human turns with an explicit omission marker, with an upper bound of 4,000 characters.
 After the first successful call, the rolling context carries only the previous task and new Human-turn delta; the latest turn remains available for attention classification.
 The end-boundary call sends an empty delta, so it can update progress and attention without rewriting the task.
