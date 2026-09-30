@@ -103,10 +103,9 @@ function herdr(env: NodeJS.ProcessEnv, bin: string, args: string[]): unknown {
 }
 
 function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  for (const key of ["HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"]) {
-    delete env[key];
-  }
+  const env = Object.fromEntries(Object.entries(process.env).filter(
+    ([key]) => !["HERDR_", "HIDE_", "ELECTRON_", "HCOORD_", "SASU_"].some((prefix) => key.startsWith(prefix)),
+  ));
   const config = path.join(root, "herdr-config.toml");
   fs.writeFileSync(config, "[update]\nversion_check = false\nmanifest_check = false\n");
   for (const dir of ["xdg-config", "xdg-state", "home", "fixture", "bin"]) {
@@ -126,6 +125,7 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
     ...env,
     SHELL: "/bin/zsh",
     HOME: path.join(root, "home"),
+    HCOORD_HOME: path.join(root, "home", ".hcoord"),
     HERDR_SESSION: `hide-e2e-${path.basename(root)}`,
     HERDR_SOCKET_PATH: socket,
     HERDR_CONFIG_PATH: config,
