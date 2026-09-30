@@ -3492,7 +3492,10 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
         );
     };
     git(&["init", "-q", "-b", "main"]);
+    // This synthetic commit must not invoke the operator's signing agent.
     git(&[
+        "-c",
+        "commit.gpgsign=false",
         "-c",
         "user.name=Fixture",
         "-c",
