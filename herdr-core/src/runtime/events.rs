@@ -573,6 +573,9 @@ pub(super) struct FileConflictPayload {
 pub(super) struct UiStateUpdatePayload {
     #[serde(default)]
     pub(super) left_sidebar_visible: Option<bool>,
+    /// Absent keeps the rail as it is: an older client does not carry it.
+    #[serde(default)]
+    pub(super) device_rail_visible: Option<bool>,
     #[serde(default)]
     pub(super) right_panel_visible: Option<bool>,
     #[serde(default)]
@@ -3264,6 +3267,9 @@ impl Runtime {
                     left_sidebar_visible: payload
                         .left_sidebar_visible
                         .unwrap_or(current.left_sidebar_visible),
+                    device_rail_visible: payload
+                        .device_rail_visible
+                        .unwrap_or(current.device_rail_visible),
                     right_panel_visible: payload
                         .right_panel_visible
                         .unwrap_or(current.right_panel_visible),

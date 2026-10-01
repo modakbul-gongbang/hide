@@ -50,6 +50,7 @@ export type CommandId =
   | "open_file"
   | "toggle_left_sidebar"
   | "toggle_sidebar_view"
+  | "toggle_device_rail"
   | "toggle_explorer"
   | "toggle_right_panel"
   | "project_home"
@@ -146,6 +147,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "project_home", title: "Project home", group: "Navigate", browser: { code: "KeyH", meta: true, shift: true }, electron: { code: "KeyH", meta: true, shift: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
   { id: "toggle_sidebar_view", title: "Toggle sidebar view", group: "Panels", browser: null, electron: null, moved: false },
+  { id: "toggle_device_rail", title: "Toggle device rail", group: "Panels", browser: null, electron: null, moved: false },
   { id: "toggle_explorer", title: "Toggle tools", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
   { id: "toggle_right_panel", title: "Toggle side panel", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
   { id: "find_in_pane", title: "Find in pane", group: "Panes", browser: { code: "KeyF", meta: true }, electron: { code: "KeyF", meta: true }, moved: false },
@@ -218,7 +220,8 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
 
 // The pane commands an operator may rebind (PRD S5 D-07): the eight macOS
 // pane commands less Toggle Conversation, which the web shell has no surface
-// for. Each host keeps its own set in the core, because the hosts reserve
+// for, plus the two sidebar switches (view and device rail) that have no macOS
+// pane command. Each host keeps its own set in the core, because the hosts reserve
 // different keys (Chrome keeps ⌘W): the browser's in
 // `ui_state.browser_shortcut_bindings`, and the desktop app's in
 // `ui_state.shortcut_bindings`, the macOS set in the removed native app's
@@ -227,6 +230,7 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
 export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
   "toggle_sidebar_view",
+  "toggle_device_rail",
   "split_right",
   "split_down",
   "toggle_zoom",
@@ -238,12 +242,13 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
 
 /**
  * The macOS set's name for each editable command. `toggle_sidebar_view`
- * has no pane command there: the set keeps the key and the desktop host
+ * and `toggle_device_rail` have no pane command there: the set keeps the key and the desktop host
  * ignores it, the way this shell ignores
  * `toggle_conversation`.
  */
 const MACOS_KEYS: Readonly<Partial<Record<CommandId, string>>> = {
   toggle_sidebar_view: "toggle_sidebar_view",
+  toggle_device_rail: "toggle_device_rail",
   split_right: "split_right",
   split_down: "split_down",
   toggle_zoom: "toggle_zoom",

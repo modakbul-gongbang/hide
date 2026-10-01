@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { numberedTarget } from "./keyboard";
-import { numberedAgents, numberedTabs, numberOf, projectListNumbers } from "./numbering";
+import { agentListOrder, numberedAgents, numberedTabs, numberOf, projectListNumbers } from "./numbering";
 import { projectRows } from "./projects";
 import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 
@@ -69,6 +69,18 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
       [3, "p3"],
     ]);
     expect(numberedAgents([]).size).toBe(0);
+  });
+
+  it("numbers only the device in front's Agents list, so another device's agents hold no number (quick device-rail-badges B3)", () => {
+    const devices = [
+      { id: "local", label: "This Mac", kind: "local" },
+      { id: "mini", label: "mini", kind: "remote" },
+    ];
+    const status = { remote: [{ target_id: "mini", state: "connected", session: { agents: [agent("r1", { group: "needs_you" })], workspaces: [] } }] };
+    const local = [agent("l1")];
+    const at = (front: string) => agentListOrder({ rest: { navigator: { focused_device_id: front, devices }, status } as unknown as SnapshotRest, agents: local }).map((row) => row.agent.pane_id);
+    expect(at("local")).toEqual(["l1"]);
+    expect(at("mini")).toEqual(["r1"]);
   });
 
   it("selects what holds the number, and nothing past the end", () => {

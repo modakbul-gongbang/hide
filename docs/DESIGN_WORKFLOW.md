@@ -142,7 +142,7 @@ The Overview of every project is `Screen / Main`, named after its web file and s
 It draws the agent and project sidebar beside the Overview, the sidebar's Home row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents, whose view is the Project Overview's lanes or lineage over every project.
 Its Tasks board holds every project's issues in `백로그 · 진행 중 · 리뷰 · 완료`, each card an issue with its project beside its id, `시작` on a backlog card under the pointer, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count.
 Below it, the Dependencies mode draws an arrow that crosses projects, with the blocker named by its repository on the lock line.
-The sidebar there is the one-device window's: the Home row over the `Projects | Agents` strip, the footer's device button at its left end.
+The sidebar there is the one-device window's: the device rail with This Mac alone, and the sidebar's top line over the `Projects | Agents` strip with the Home row in the list.
 Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
 
 Project Overview is `Screen / Project Overview`.
@@ -179,16 +179,16 @@ It draws every Dialog and AlertDialog surface the shell opens: New worktree, Del
 Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/AddProjectDialog.tsx`, `web/src/DraftRecovery.tsx`, `web/src/ShortcutSheet.tsx`, and `web/src/IssueDialogs.tsx`.
 
 Menus and Overlays is `Screen / Menus and Overlays`.
-It draws the sidebar row menu, the Explorer context menu, the footer device button's menu (This Mac, Add device), and the Explorer git-status notice, each anchored in its real screen context.
+It draws the sidebar row menu, the Explorer context menu, the hidden rail's device menu (the devices, Add device, Show rail), and the Explorer git-status notice, each anchored in its real screen context.
 Below them it draws the ⌘N start panel floating over the window as ⌘K does: one line to write, the target, agent kind and model dropdowns, and the start button with its Enter key.
 The panel is drawn at rest and with each dropdown open: the target menu (Home first, the front device's checkouts, then each other device's Home, an unreachable one dimmed with `연결 안 됨`), the kind menu (Claude, Codex), and the model menu for Claude and for Codex.
 Its web files are `web/src/entry-menu.tsx` and the start panel under `web/src/`.
 
 Projects Sidebar is `Screen / Projects Sidebar`.
 It draws the sidebar that follows the device rail.
-The rail stands left of it with Inbox first, a separator, This Mac and each registered device, and `+` at the bottom; each tile carries its Needs You count, the selected one the pill at the rail's edge, and an unreachable device is dimmed with a cross and no number.
-The rest frame is This Mac in front: a header line with the device name, Add project and Search, the Needs You group first (no Done group), the Home row with the project count where the Overview row stood (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects, with no `Projects | Agents` strip.
-Four more frames draw the Inbox (every device's agents by state, the device chip on a remote row only), a remote device in front, a device that is not connected (its name, `연결 안 됨` and one reconnect action, no tree), and the one-device window with no rail (the Home row over the `Projects | Agents` strip and a laptop button in the footer).
+The rail stands left of it with This Mac and each registered device, and `+` directly under the last tile; each tile carries up to three circles stacked down from its top right (Needs You, unseen Done, Working, a zero taking no slot, `9+` from ten), the selected one the pill at the rail's edge, and an unreachable device is dimmed with a cross and no circle.
+The rest frame is This Mac in front: a header line with the device name, Add project and Search over the `Projects | Agents` strip, then the Needs You group, the Home row with the project count where the Overview row stood (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects.
+Five more frames draw the Agents tab (this device's agents by state with the three counts above, no device chip), a remote device in front with the `9+` pill, a device that is not connected (its name, `연결 안 됨` and one reconnect action, no tree), the one-device window (the rail with This Mac alone), and the rail hidden (the name with a chevron over the open device menu).
 In the list, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
 The Overview child owns selection on Overview; a checkout row opens and unfolds, then folds on activation while already selected and unfolded.
 Beside each theme's sidebar it draws a pull-request row under the pointer with its card (`Component / PR hover card`) opened to the right, the state the row's tooltip has become.

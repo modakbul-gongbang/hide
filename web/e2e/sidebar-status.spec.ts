@@ -145,7 +145,7 @@ test("a root waiting on its child, the badge's child list, and the progress line
     await rest(page);
     expect(await childTitle.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
     await expect(childRow.locator('[data-agent-line="request"]')).toHaveCSS("white-space", "nowrap");
-    for (const width of ["240px", "var(--size-sidebar-min)"]) expect(await sidebarOverflow(page, width)).toEqual([]);
+    for (const width of ["calc(240px + var(--size-rail))", "calc(var(--size-sidebar-min) + var(--size-rail))"]) expect(await sidebarOverflow(page, width)).toEqual([]);
     await screenshot(page, "sidebar-status-narrow");
     await sidebarOverflow(page, "");
     // The chevron folds them away again.

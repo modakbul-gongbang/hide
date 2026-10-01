@@ -1,6 +1,7 @@
 // The sidebar's shell on an isolated pinned Herdr and hided (PRD sidebar-shell
-// B1-B7): the fixed Home row above the Projects | Agents strip opens the
-// device's Overview and carries its fill only while that screen is in front; Projects
+// B1-B7, with the Home row moved into the Projects list by quick
+// device-rail-badges B3): the Home row heads the Projects list under the
+// Projects | Agents strip, opens the device's Overview and carries its fill only while that screen is in front; Projects
 // is the first tab and the default; Search at the strip's end opens the ⌘K
 // palette, and a browser tab offers no Add project before it; the
 // Search field row, the bottom new-workspace button and the All projects row
@@ -40,7 +41,7 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     const list = page.locator("[data-project-list]");
     await expect(list.locator("[data-checkout]").first()).toBeVisible({ timeout: 20_000 });
 
-    // B1, B2: the Home row above the strip opens the device's Overview, titled with the device, and is marked.
+    // B1, B2: the Home row opens the device's Overview, titled with the device, and is marked.
     // No Overview row is left above the list.
     await expect(page.locator("[data-overview-destination]")).toHaveCount(0);
     const overview = page.locator("[data-home-destination]");
@@ -52,11 +53,9 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     await expect(main.locator("h1")).toContainText("Home");
     await expect(main.locator("[data-main-device-name]")).toHaveText("This Mac");
     await expect(overview).toHaveAttribute("aria-current", "page");
-    // The row is not part of the scrolling list, and it ends on the list rows' column.
-    expect(await overview.evaluate((row) => row.closest("[data-project-list], [data-agent-list]") === null)).toBe(true);
-    const overviewRight = (await overview.boundingBox())!;
-    const firstRow = (await list.locator(":scope > li").first().boundingBox())!;
-    expect(Math.abs(overviewRight.x + overviewRight.width - (firstRow.x + firstRow.width))).toBeLessThan(0.5);
+    // The row is the Projects list's own, under the tab strip.
+    expect(await overview.evaluate((row) => row.closest("[data-project-list]") !== null)).toBe(true);
+    expect((await overview.boundingBox())!.y).toBeGreaterThan((await page.locator("[data-sidebar-strip]").boundingBox())!.y);
 
     // B7 and the removed controls: the list starts at a project, and no field or bottom button is left.
     await expect(list).not.toContainText("All projects");
@@ -95,13 +94,13 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     const add = page.locator("[data-sidebar-new-workspace]");
     await expect(add).toHaveCount(0);
 
-    // B3, B5: the Agents tab swaps the list and leaves Search alone at the end; the Home row stays.
+    // B3, B5: the Agents tab swaps the list and leaves Search alone at the end; the Home row is Projects' and goes with it.
     await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(sidebar).toHaveAttribute("data-sidebar", "agents");
     await expect(page.locator("[data-agent-list]")).toBeVisible();
     await expect(add).toHaveCount(0);
     await expect(search).toBeVisible();
-    await expect(overview).toBeVisible();
+    await expect(overview).toHaveCount(0);
     await page.mouse.move(640, 700);
     await screenshot(page, "sidebar-shell-agents-light");
   } finally {

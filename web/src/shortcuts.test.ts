@@ -66,6 +66,7 @@ describe("shortcut registry", () => {
       // ⌘E shows the Explorer in both hosts (issue 170); the macOS set keeps
       // it on the sidebar switch, which has no chord here until one is bound.
       toggle_sidebar_view: "",
+      toggle_device_rail: "",
       toggle_explorer: "⌘E",
       toggle_right_panel: "⇧⌘B",
       find_in_pane: "⌘F",
@@ -240,9 +241,9 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect(effectiveRegistry({ split_right: "alt+KeyR", split_down: "alt+KeyR" }).registry).toBe(REGISTRY);
   });
 
-  it("edits the seven pane commands the browser host runs and the sidebar switch", () => {
+  it("edits the pane commands the browser host runs, the cycle commands, the sidebar switch and the device rail toggle", () => {
     expect([...EDITABLE_PANE_COMMANDS].sort()).toEqual(
-      ["recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel", "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_sidebar_view", "toggle_zoom"].sort(),
+      ["recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel", "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "toggle_sidebar_view", "toggle_zoom"].sort(),
     );
     for (const id of EDITABLE_PANE_COMMANDS) expect(REGISTRY.some((command) => command.id === id)).toBe(true);
   });

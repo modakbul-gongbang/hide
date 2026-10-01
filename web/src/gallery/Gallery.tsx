@@ -722,10 +722,11 @@ const SCENE_CASES = [
   { label: "Reference · larger text", query: "content=reference&scale=1.25" },
   { label: "Devices · This Mac in front", query: "content=reference&devices=two" },
   { label: "Devices · mini in front", query: "content=reference&devices=two&front=mini" },
-  { label: "Devices · Inbox", query: "content=reference&devices=two&front=inbox" },
+  { label: "Devices · one device", query: "content=reference" },
+  { label: "Devices · busy mini (9+)", query: "content=reference&devices=busy&front=mini" },
+  { label: "Devices · rail hidden", query: "content=reference&devices=two&rail=hidden" },
   { label: "Devices · not connected", query: "content=reference&devices=two&front=offline" },
   { label: "Devices · long names · narrow (240)", query: "content=long&devices=two&width=240" },
-  { label: "Devices · long names · Inbox (240)", query: "content=long&devices=two&front=inbox&width=240" },
 ] as const;
 
 function Scenes() {

@@ -202,13 +202,6 @@ type UiStore = {
   relation: Relation | null;
   sidebarMode: SidebarMode;
   /**
-   * The Inbox tile is the rail's selection: the sidebar lists every device's
-   * agents and the center stays where it was (PRD home-device-rail D-10, D-27).
-   * Page state beside the sidebar mode, not a core field; a device tile or a
-   * pick that moves to a device ends it.
-   */
-  inbox: boolean;
-  /**
    * The Home row's new-tab start this page sent: its `request_id` until its
    * pane is opened, then, when it was refused, the reason that device's Home
    * row shows until the next start or a click on the row (PRD home-device-rail B21).
@@ -290,7 +283,6 @@ type UiStore = {
   setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
-  setInbox: (inbox: boolean) => void;
   setHomeStart: (homeStart: HomeStart | null) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
@@ -333,7 +325,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   agentsMode: "checkouts",
   relation: null,
   sidebarMode: "projects",
-  inbox: false,
   homeStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
@@ -376,9 +367,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   },
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
-  setInbox: (inbox) => {
-    if (get().inbox !== inbox) set({ inbox });
-  },
   setHomeStart: (homeStart) => set({ homeStart }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);

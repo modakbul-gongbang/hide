@@ -140,7 +140,7 @@
   --ratio-agent-mark-font: 0.53;
   --size-tab-strip: 32px;
   --size-traffic-light-inset: 69px;
-  --size-rail: 52px;
+  --size-rail: 64px;
   --size-pane-header: 28px;
   --size-sidebar-min: 220px;
   --size-sidebar-ideal: 292px;
@@ -154,6 +154,7 @@
   --size-agent-mark: 12px;
   --size-status-mark: 7px;
   --size-badge-height: 16px;
+  --size-badge-wide: 20px;
   --size-recent-location-max: 112px;
   --size-keycap-height: 18px;
   --size-control-compact: 24px;

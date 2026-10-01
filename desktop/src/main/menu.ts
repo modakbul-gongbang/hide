@@ -62,6 +62,7 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     null,
     "toggle_left_sidebar",
     "toggle_sidebar_view",
+    "toggle_device_rail",
     "toggle_right_panel",
     "toggle_explorer",
     null,

@@ -17,6 +17,9 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
 
+/** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
+const RAIL = 64;
+
 test.describe.configure({ timeout: 180_000 });
 // A click or a key that cannot happen fails the flow in seconds, not at the test's end.
 test.use({ actionTimeout: 15_000 });
@@ -520,7 +523,7 @@ async function dragTab(page: Page, from: Locator, to: { x: number; y: number }, 
 }
 
 test("dragging a tab reorders, moves or splits once on a valid drop and leaves everything as it was otherwise", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.setViewportSize({ width: 1920 + RAIL, height: 1080 });
   const stack = await startStack(page, "s7-drag", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n" });
   try {
     // The drop points below are measured in the open panel.
@@ -895,7 +898,7 @@ async function dragToEdge(page: Page, from: Locator, target: Locator, edge: "rig
 }
 
 test("the tab menu offers only what a view can do, and each cap refuses with its reason and leaves the views alone", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.setViewportSize({ width: 1920 + RAIL, height: 1080 });
   const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps", files);
   try {
@@ -938,7 +941,7 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
     const cramped = await tabMenuRows(page, area(page, 0), "f02.txt");
     expect(cramped.find((row) => row.id === "split_right")).toMatchObject({ disabled: true, reason: "This view area is too narrow to split." });
     expect(cramped.find((row) => row.id === "split_down")).toMatchObject({ disabled: false });
-    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.setViewportSize({ width: 1920 + RAIL, height: 1080 });
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeGreaterThan(600);
 
     // Down to the depth limit: an area three splits deep cannot split again (B9, B19).

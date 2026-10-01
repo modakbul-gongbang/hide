@@ -25,6 +25,7 @@ import { closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
+import { railShown } from "./devices";
 import { allAgents, overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
@@ -115,6 +116,12 @@ export function createActions(dispatch: DispatchFn) {
     const state = rest()?.ui_state;
     if (!state || state.left_sidebar_visible === visible) return;
     updateUiState({ left_sidebar_visible: visible });
+  };
+
+  const setDeviceRailVisible = (visible: boolean) => {
+    const state = rest()?.ui_state;
+    if (!state || railShown(rest()) === visible) return;
+    updateUiState({ device_rail_visible: visible });
   };
 
   /**
@@ -975,24 +982,18 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /**
-     * A rail tile (PRD home-device-rail D-09): that device in front, which
-     * ends the Inbox. A device Overview on screen follows the device, so the
-     * sidebar and the center keep naming the same one.
+     * A rail tile (PRD home-device-rail D-09): that device in front. A device
+     * Overview on screen follows the device, so the sidebar and the center
+     * keep naming the same one.
      */
     focusDevice(deviceId: string) {
-      ui().setInbox(false);
       const screen = ui().screen;
       if (screen?.kind === "main" && screen.deviceId !== deviceId) ui().setScreen({ kind: "main", deviceId });
       if ((rest()?.navigator?.focused_device_id ?? "local") === deviceId) return;
       dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
     },
 
-    /** The rail's Inbox tile: every device's agents in the sidebar, the center unchanged (D-10, D-27). */
-    showInbox() {
-      ui().setInbox(true);
-    },
-
-    /** Every entry point of Add device (the footer button, the rail's `+`, Add project's Host list) opens the one form (D-11). */
+    /** Every entry point of Add device (the rail's `+`, the hidden rail's menu, Add project's Host list) opens the one form (D-11). */
     openAddDevice() {
       ui().openSettings("devices");
     },
@@ -1211,8 +1212,6 @@ export function createActions(dispatch: DispatchFn) {
 
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     openAgent(paneId: string) {
-      // Choosing an agent in the Inbox moves the rail to its device with the rest.
-      ui().setInbox(false);
       beginOpening({ paneId });
       const target = remoteTargetOfPane(rest(), paneId) ?? "local";
       const forward = (rest()?.navigator?.focused_device_id ?? "local") !== target;
@@ -1383,7 +1382,6 @@ export function createActions(dispatch: DispatchFn) {
      * into the display once the core shows it.
      */
     openSurface(surface: Surface) {
-      ui().setInbox(false);
       if (surface.deviceId !== "local") {
         // A device's tab comes forward on that device's Herdr, bringing the device with it: one event for rail, sidebar and center (D-16).
         const status = rest()?.status?.remote?.find((row) => row.target_id === surface.deviceId);
@@ -1651,6 +1649,19 @@ export function createActions(dispatch: DispatchFn) {
     toggleLeftSidebar() {
       const state = rest()?.ui_state;
       if (state) setLeftSidebarVisible(!state.left_sidebar_visible);
+    },
+
+    /** Shows or hides the device rail; the core keeps the choice across a restart. */
+    toggleDeviceRail() {
+      setDeviceRailVisible(!railShown(rest()));
+    },
+
+    hideDeviceRail() {
+      setDeviceRailVisible(false);
+    },
+
+    showDeviceRail() {
+      setDeviceRailVisible(true);
     },
 
     toggleSidebarView() {

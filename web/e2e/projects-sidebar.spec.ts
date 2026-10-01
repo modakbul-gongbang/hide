@@ -412,7 +412,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"] [data-agent-tree-toggle]`)).toHaveAttribute("aria-expanded", "true");
     await expect(primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "1");
     // B25: every level open, at the design width and the app's minimum, nothing runs sideways.
-    for (const width of ["240px", "var(--size-sidebar-min)"]) expect(await sidebarOverflow(page, width)).toEqual([]);
+    for (const width of ["calc(240px + var(--size-rail))", "calc(var(--size-sidebar-min) + var(--size-rail))"]) expect(await sidebarOverflow(page, width)).toEqual([]);
     await sidebarOverflow(page, "");
 
     // B4 in Agents: a quiet row and the row after it stay put through hover,
@@ -517,7 +517,7 @@ function reportStatus(herdr: HerdrFixture, pane: string, set: Record<string, str
   execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
 }
 
-test("Needs You and Done are raised above Pinned and stay in their tree, whatever is folded", async ({ page }) => {
+test("Needs You is raised above Pinned and stays in its tree, whatever is folded; Done is the Agents tab's", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -545,13 +545,12 @@ test("Needs You and Done are raised above Pinned and stay in their tree, whateve
     const needsYou = page.locator('[data-raised-group="needs_you"]');
     const done = page.locator('[data-raised-group="done"]');
     await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
-    await expect(done.locator(`[data-pane="${finished}"]`)).toBeVisible();
     await expect(needsYou.locator('[data-section="Needs You"]')).toHaveText("Needs You · 1");
-    await expect(done.locator('[data-section="Done"]')).toHaveText("Done · 1");
-    // Needs You, then Done, then Pinned, at the top of the list.
+    // Done is not raised: the finished agent is in the Agents tab and its checkout's tree.
+    await expect(done).toHaveCount(0);
+    // Needs You, then Pinned, at the top of the list.
     const top = async (locator: Locator) => (await locator.boundingBox())!.y;
-    expect(await top(needsYou)).toBeLessThan(await top(done));
-    expect(await top(done)).toBeLessThan(await top(pinned));
+    expect(await top(needsYou)).toBeLessThan(await top(pinned));
     await expect(page.locator("[data-project-list] > li").first()).toHaveAttribute("data-raised-group", "needs_you");
     // The raised row names where the agent runs, as the Agents list does.
     await expect(needsYou.locator(`[data-pane="${asking}"] [data-agent-place]`)).toHaveText("raised › main");
