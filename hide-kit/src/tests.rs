@@ -445,22 +445,18 @@ fn with_herdr_down_the_labels_plugin_files_stay_until_its_link_is_gone() {
     assert!(!labels_home(fixture.home()).exists());
 }
 
-/// A watcher is found by the lock it holds under this home, whatever its
-/// executable is called now, and it is stopped before its state goes.
-#[test]
-fn a_running_labels_watcher_is_found_by_its_lock_and_stopped() {
-    let fixture = Fixture::new();
-    fixture.legacy_plugin("local");
-    let lock = plugin_state_dir(fixture.home()).join("watcher.lock");
-    std::fs::write(&lock, "").unwrap();
-    let ready = fixture.root.join("watcher-ready");
-    let mut watcher = std::process::Command::new("perl")
+/// A process holding `lock` exclusively, as a running labels watcher does,
+/// once it holds it.
+fn lock_holder(lock: &Path, ready: &Path) -> std::process::Child {
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(lock, "").unwrap();
+    let watcher = std::process::Command::new("perl")
         .args([
             "-e",
             r#"use Fcntl ":flock"; open(my $f, ">>", $ARGV[0]) or die; flock($f, LOCK_EX) or die; open(my $r, ">", $ARGV[1]); close($r); sleep 60;"#,
         ])
-        .arg(&lock)
-        .arg(&ready)
+        .arg(lock)
+        .arg(ready)
         .spawn()
         .unwrap();
     let started = std::time::Instant::now();
@@ -468,6 +464,17 @@ fn a_running_labels_watcher_is_found_by_its_lock_and_stopped() {
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    watcher
+}
+
+/// A watcher is found by the lock it holds under this home, whatever its
+/// executable is called now, and it is stopped before its state goes.
+#[test]
+fn a_running_labels_watcher_is_found_by_its_lock_and_stopped() {
+    let fixture = Fixture::new();
+    fixture.legacy_plugin("local");
+    let lock = plugin_state_dir(fixture.home()).join("watcher.lock");
+    let mut watcher = lock_holder(&lock, &fixture.root.join("watcher-ready"));
 
     let report = apply(&fixture.target, &Scope::Automatic);
 
@@ -481,6 +488,38 @@ fn a_running_labels_watcher_is_found_by_its_lock_and_stopped() {
         "{report:?}"
     );
     assert!(!plugin_state_dir(fixture.home()).exists());
+}
+
+/// The boundary is the home: a watcher holding another home's lock (the
+/// operator's, seen from a test home) is never signalled, while this home's
+/// plugin is still taken out.
+#[test]
+fn a_watcher_holding_another_homes_lock_is_left_running() {
+    let fixture = Fixture::new();
+    fixture.legacy_plugin("local");
+    let other_home = fixture.root.join("other-home");
+    let lock = plugin_state_dir(&other_home).join("watcher.lock");
+    let mut watcher = lock_holder(&lock, &fixture.root.join("other-ready"));
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    let still_running = watcher.try_wait().unwrap().is_none();
+    let _ = watcher.kill();
+    let _ = watcher.wait();
+    assert!(
+        still_running,
+        "another home's watcher was signalled: {report:?}"
+    );
+    assert!(
+        !report
+            .labels_retirement
+            .removed
+            .iter()
+            .any(|part| part.starts_with("watcher process")),
+        "{report:?}"
+    );
+    assert!(!plugin_state_dir(fixture.home()).exists());
+    assert!(plugin_state_dir(&other_home).exists());
 }
 
 #[test]
