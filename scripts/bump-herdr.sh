@@ -80,8 +80,7 @@ current_tag=$(jq -er '.tag | strings | select(test("^[A-Za-z0-9][A-Za-z0-9._-]*$
 current_version=$(jq -er '.version' "$manifest")
 current_sha256=$(jq -er '.sha256' "$manifest")
 current_linux_sha256=$(jq -er '.linux_x86_64.sha256' "$manifest")
-# Empty while the manifest does not record the Windows asset yet.
-current_windows_sha256=$(jq -r '.windows_x86_64.sha256 // ""' "$manifest")
+current_windows_sha256=$(jq -er '.windows_x86_64.sha256' "$manifest")
 target_url="https://github.com/${target_repo}/releases/download/${target_tag}/herdr-macos-aarch64"
 target_linux_url="https://github.com/${target_repo}/releases/download/${target_tag}/herdr-linux-x86_64"
 target_windows_url="https://github.com/${target_repo}/releases/download/${target_tag}/herdr-windows-x86_64.zip"
@@ -160,20 +159,13 @@ if [[ "$current_repo" == "$target_repo" && "$current_tag" == "$target_tag" ]]; t
     print -u2 -- "the upstream release was replaced; confirm the new asset before repinning"
     exit 1
   fi
-  if [[ -n "$current_windows_sha256" && "$current_windows_sha256" != "$target_windows_sha256" ]]; then
+  if [[ "$current_windows_sha256" != "$target_windows_sha256" ]]; then
     print -u2 -- "error: $target_tag is already pinned but its Windows asset digest changed"
     print -u2 -- "pinned_windows_sha256=$current_windows_sha256 downloaded_windows_sha256=$target_windows_sha256"
     print -u2 -- "the upstream release was replaced; confirm the new asset before repinning"
     exit 1
   fi
-  if [[ -z "$current_windows_sha256" ]]; then
-    if [[ "$dry_run" == true ]]; then
-      print -u2 -- "error: $target_tag is already pinned but the manifest does not record its Windows asset"
-      print -u2 -- "rerun without --dry-run to record it"
-      exit 1
-    fi
-    outcome=windows_recorded
-  elif cmp -s <(jq -S . "$contract") <(jq -S . "$target_contract"); then
+  if cmp -s <(jq -S . "$contract") <(jq -S . "$target_contract"); then
     outcome=unchanged
   elif [[ "$dry_run" == true ]]; then
     print -u2 -- "error: $target_tag is already pinned but contracts/herdr-api.schema.json is not what its binary reports"
@@ -200,7 +192,7 @@ derived_documents=(
 
 replacements_json=$temporary_root/replacements.json
 print -r -- '[]' > "$replacements_json"
-[[ "$outcome" == unchanged || "$outcome" == contract_regenerated || "$outcome" == windows_recorded ]] || for relative in $derived_documents; do
+[[ "$outcome" == unchanged || "$outcome" == contract_regenerated ]] || for relative in $derived_documents; do
   document=$project_root/$relative
   [[ -f "$document" ]] || {
     print -u2 -- "error: document quoting the pin is missing: $relative"
@@ -269,12 +261,6 @@ if [[ "$outcome" == bumped ]]; then
      '.repo = $repo | .tag = $tag | .version = $version | .source_url = $source_url | .sha256 = $sha256
       | .linux_x86_64 = {platform: "linux-x86_64", source_url: $linux_url, sha256: $linux_sha256}
       | .windows_x86_64 = {platform: "windows-x86_64", source_url: $windows_url, sha256: $windows_sha256}' \
-     "$manifest" > "$manifest.next"
-  mv "$manifest.next" "$manifest"
-fi
-if [[ "$outcome" == windows_recorded ]]; then
-  jq --arg windows_url "$target_windows_url" --arg windows_sha256 "$target_windows_sha256" \
-     '.windows_x86_64 = {platform: "windows-x86_64", source_url: $windows_url, sha256: $windows_sha256}' \
      "$manifest" > "$manifest.next"
   mv "$manifest.next" "$manifest"
 fi
