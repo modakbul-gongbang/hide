@@ -1644,10 +1644,6 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
                 ),
                 part(
                     hide_kit::ComponentId::CodexHook,
-                    hide_kit::ComponentState::Absent,
-                ),
-                part(
-                    hide_kit::ComponentId::Labels,
                     hide_kit::ComponentState::Failed,
                 ),
                 part(
@@ -1655,6 +1651,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
                     hide_kit::ComponentState::Installed,
                 ),
             ],
+            labels_retirement: Default::default(),
         },
     );
     let local = |runtime: &Runtime| {
@@ -1679,7 +1676,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
         Some(crate::runtime::KitJob::Apply(hide_kit::Scope::Reinstall(
             vec![
                 hide_kit::ComponentId::ClaudeCodeHook,
-                hide_kit::ComponentId::Labels,
+                hide_kit::ComponentId::CodexHook,
             ]
         ))),
         "two presses are one install of the two parts that need it"
@@ -1692,6 +1689,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
                 hide_kit::ComponentId::Cli,
                 hide_kit::ComponentState::Installed,
             )],
+            labels_retirement: Default::default(),
         },
     );
     assert!(!local(&runtime).busy);

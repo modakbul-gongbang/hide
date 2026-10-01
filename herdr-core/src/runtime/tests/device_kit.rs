@@ -98,6 +98,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
                 location: Some(format!("/home/me/{}", id.code())),
             })
             .collect(),
+        labels_retirement: Default::default(),
     }
 }
 
@@ -200,8 +201,7 @@ fn a_connected_device_installs_its_kit_and_shows_each_part() {
         (ComponentId::Cli, ComponentState::Installed),
         (ComponentId::ClaudeCodeHook, ComponentState::Installed),
         (ComponentId::CodexHook, ComponentState::Absent),
-        (ComponentId::Labels, ComponentState::Failed),
-        (ComponentId::Hcoord, ComponentState::Installed),
+        (ComponentId::Hcoord, ComponentState::Failed),
     ])));
     let shared = with_consent(Some(Arc::clone(&helper)));
 
@@ -232,8 +232,7 @@ fn a_connected_device_installs_its_kit_and_shows_each_part() {
             (ComponentId::Cli, ComponentState::Installed),
             (ComponentId::ClaudeCodeHook, ComponentState::Installed),
             (ComponentId::CodexHook, ComponentState::Absent),
-            (ComponentId::Labels, ComponentState::Failed),
-            (ComponentId::Hcoord, ComponentState::Installed),
+            (ComponentId::Hcoord, ComponentState::Failed),
         ]
     );
     assert!(kit.offers_reinstall);
@@ -244,7 +243,7 @@ fn a_connected_device_installs_its_kit_and_shows_each_part() {
 fn reinstall_on_a_device_sends_only_the_parts_that_need_it() {
     let helper = KitDevice::answering(Ok(report(&[
         (ComponentId::Cli, ComponentState::Installed),
-        (ComponentId::Labels, ComponentState::Removed),
+        (ComponentId::ClaudeCodeHook, ComponentState::Removed),
         (ComponentId::Hcoord, ComponentState::Outdated),
     ])));
     let shared = with_consent(Some(Arc::clone(&helper)));
@@ -266,7 +265,7 @@ fn reinstall_on_a_device_sends_only_the_parts_that_need_it() {
     assert_eq!(
         calls[1].0,
         KitAction::Reinstall {
-            components: vec![ComponentId::Labels, ComponentId::Hcoord],
+            components: vec![ComponentId::ClaudeCodeHook, ComponentId::Hcoord],
         }
     );
 }

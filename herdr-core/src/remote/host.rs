@@ -59,8 +59,9 @@ fn present<'de, D: serde::Deserializer<'de>>(
 /// this contract describes bumps it, and every device asks again (B51).
 /// Contract 2 added the `hide` command installed beside the helper and its
 /// link in the consented command folder. Contract 3 is the whole install kit
-/// (PRD device-parity D-12): the hook entries, the labels plugin and hcoord
-/// besides the command; a contract-2 consent with the same folders is
+/// (PRD device-parity D-12): the hook entries and hcoord besides the command
+/// (it also held the labels plugin, which labels-in-hided retired, so the
+/// scope only narrowed); a contract-2 consent with the same folders is
 /// carried to 3 on its next connection without asking (D-13).
 pub const HOST_CONSENT_CONTRACT: u32 = 3;
 
@@ -83,9 +84,8 @@ const HELPER_NAME: &str = "hide-host-helper";
 /// device's panes can reach this Hide through their return route.
 const CLI_NAME: &str = "hide";
 /// The rest of the install kit (`hide_kit`), under the names the kit reads
-/// in its folder: the hook helper, the packaged labels plugin and hcoord.
+/// in its folder: the hook helper and hcoord.
 const HOOKS_NAME: &str = "hide-agent-hooks";
-const LABELS_NAME: &str = "agent-context-labels";
 const HCOORD_NAME: &str = "hcoord";
 /// Bounds on a kit folder read into memory for upload (engineering rule
 /// 15); a folder past them is left out and the kit names the missing part.
@@ -148,24 +148,20 @@ impl HelperPackages {
                 )),
             }
         }
-        let labels = self.find_named(LABELS_NAME, os, arch);
         let hcoord = self
             .directory
             .as_ref()
             .map(|directory| directory.join(HCOORD_NAME))
-            .filter(|folder| folder.is_dir())
-            .ok_or(());
-        for (name, folder) in [(LABELS_NAME, labels), (HCOORD_NAME, hcoord)] {
-            match folder {
-                Ok(folder) => match read_folder(name, &folder) {
-                    Ok(files) => payload.files.extend(files),
-                    Err(reason) => payload.missing.push(reason),
-                },
-                Err(()) => payload.missing.push(format!(
-                    "This Hide build does not include {name} for {} {arch}",
-                    platform_label(os)
-                )),
-            }
+            .filter(|folder| folder.is_dir());
+        match hcoord {
+            Some(folder) => match read_folder(HCOORD_NAME, &folder) {
+                Ok(files) => payload.files.extend(files),
+                Err(reason) => payload.missing.push(reason),
+            },
+            None => payload.missing.push(format!(
+                "This Hide build does not include {HCOORD_NAME} for {} {arch}",
+                platform_label(os)
+            )),
         }
         Ok(payload)
     }
@@ -898,7 +894,7 @@ struct Installed {
 
 /// Puts this build's helper and kit parts in `<root>/<version>/`, where the
 /// version is a prefix of the digest over all of them, keeping the folder
-/// layout the kit reads (`agent-context-labels/`, `hcoord/dist/...`). The
+/// layout the kit reads (`hcoord/dist/...`). The
 /// helper is reused only after checking its bytes, because Hide runs it; any
 /// other file is reused when a file of its size that only the account can
 /// change is already there, because only a verified upload is ever renamed
@@ -1771,18 +1767,10 @@ mod tests {
         let bare = packages.payload(os, arch).unwrap();
         assert_eq!(bare.files[0].relative, HELPER_NAME);
         assert_eq!(bare.files.len(), 1);
-        assert_eq!(bare.missing.len(), 4, "{:?}", bare.missing);
+        assert_eq!(bare.missing.len(), 3, "{:?}", bare.missing);
 
         write(&directory.path().join(CLI_NAME), b"cli", 0o755);
         write(&directory.path().join(HOOKS_NAME), b"hooks", 0o755);
-        let labels = directory.path().join(LABELS_NAME);
-        write(&labels.join("herdr-plugin.toml"), b"id = 'x'", 0o644);
-        write(
-            &labels.join("scripts/start-watcher.sh"),
-            b"#!/bin/sh",
-            0o644,
-        );
-        write(&labels.join("hide-agent-context-labels"), b"watcher", 0o755);
         write(
             &directory.path().join("hcoord/dist/hcoord/cli.js"),
             b"cli",
@@ -1793,15 +1781,6 @@ mod tests {
         assert_eq!(
             relative(&full),
             vec![
-                ("agent-context-labels/herdr-plugin.toml".to_owned(), false),
-                (
-                    "agent-context-labels/hide-agent-context-labels".to_owned(),
-                    true
-                ),
-                (
-                    "agent-context-labels/scripts/start-watcher.sh".to_owned(),
-                    false
-                ),
                 ("hcoord/dist/hcoord/cli.js".to_owned(), false),
                 ("hide".to_owned(), true),
                 ("hide-agent-hooks".to_owned(), true),
@@ -1832,7 +1811,7 @@ mod tests {
                 ("hide-host-helper".to_owned(), true),
             ]
         );
-        assert_eq!(other.missing.len(), 3, "{:?}", other.missing);
+        assert_eq!(other.missing.len(), 2, "{:?}", other.missing);
     }
 
     /// Any change to any part is a new version folder on the device, so a

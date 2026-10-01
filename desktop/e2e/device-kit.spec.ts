@@ -23,7 +23,7 @@ const DEVICE = "ssh-kit";
 const ALIAS = "isolated-kit";
 const SECOND_DEVICE = "ssh-kit-second";
 const SECOND_ALIAS = "isolated-kit-second";
-const PARTS = ["cli", "claude_code_hook", "codex_hook", "labels", "hcoord"];
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "hcoord"];
 const LABELS_ID = "hide.agent-context-labels";
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
@@ -161,8 +161,8 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
       expect(now.hooks.SessionStart).toEqual(expect.arrayContaining(before.hooks.SessionStart!));
       expect({ ...now, hooks: undefined }).toEqual({ ...before, hooks: undefined });
     }
-    expect(devicePlugins(device)).toContain(LABELS_ID);
-    expect(devicePlugins(device)).toContain(path.join(home, ".hide", "kit", "plugins", "agent-context-labels"));
+    // Labels for device panes are made on this Mac; the kit links no plugin there (PRD labels-in-hided B2).
+    expect(devicePlugins(device)).not.toContain(LABELS_ID);
     expect(fs.readFileSync(path.join(home, ".hcoord", "bin", "hcoord"), "utf8")).toContain(`HCOORD_HOME=${quote(hcoordHome)}`);
     expect(launchdPid(label)).not.toBeNull();
     expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operatorDaemon);

@@ -770,9 +770,7 @@ export function isAgentAlive(
  * One live agent as `agent get <pane|name>` answers it (herdr 0.9.1,
  * measured 2026-09-18). `agent_session.value` is the runtime's own session
  * UUID and the only identity that survives a herdr server restart;
- * `terminal_id` does not survive one. `tokens.activity` is epoch
- * milliseconds as a string and moves on lifecycle changes, not on output:
- * a working agent kept the same value through five minutes of tool calls.
+ * `terminal_id` does not survive one.
  * `input_guard` is absent on 0.9.1 and present only on the guarded-prompt
  * fork (modakbul-gongbang/herdr#3).
  */
@@ -783,8 +781,6 @@ export interface AgentObservation {
   sessionId: string | null;
   terminalId: string | null;
   status: "idle" | "working" | "blocked" | "done" | "unknown";
-  /** Epoch ms of the last lifecycle change herdr saw, or null when unreported. */
-  activityAt: number | null;
   stateChangeSeq: number | null;
   interactiveReady: boolean | null;
   inputGuard: string | null;
@@ -827,9 +823,6 @@ export function getAgent(target: string, environment: HerdrEnvironment = {}, tim
   if (paneId === null || kind === null) return { kind: "unavailable", detail: `herdr agent get ${target} returned an agent without pane_id or agent kind` };
   const status = text(raw["agent_status"]) ?? "unknown";
   const session = raw["agent_session"];
-  const tokens = raw["tokens"];
-  const activityRaw = tokens !== null && typeof tokens === "object" ? (tokens as Record<string, unknown>)["activity"] : undefined;
-  const activity = typeof activityRaw === "string" || typeof activityRaw === "number" ? Number(activityRaw) : Number.NaN;
   return {
     kind: "found",
     agent: {
@@ -839,7 +832,6 @@ export function getAgent(target: string, environment: HerdrEnvironment = {}, tim
       sessionId: session !== null && typeof session === "object" ? text((session as Record<string, unknown>)["value"]) : null,
       terminalId: text(raw["terminal_id"]),
       status: (AGENT_STATUSES.has(status) ? status : "unknown") as AgentObservation["status"],
-      activityAt: Number.isFinite(activity) && activity > 0 ? activity : null,
       stateChangeSeq: typeof raw["state_change_seq"] === "number" ? raw["state_change_seq"] : null,
       interactiveReady: typeof raw["interactive_ready"] === "boolean" ? raw["interactive_ready"] : null,
       inputGuard: text(raw["input_guard"]),

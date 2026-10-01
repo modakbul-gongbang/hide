@@ -432,6 +432,7 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
                 reason: None,
                 location: None,
             }],
+            labels_retirement: Default::default(),
         },
     );
 

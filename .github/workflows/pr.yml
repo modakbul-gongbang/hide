@@ -216,9 +216,8 @@ jobs:
         with:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build hide, hided and the label watcher for the desktop app
-        # session-labels.spec.ts drives the real context-label watcher binary.
-        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided && cargo build --locked -p agent-context-labels --bin hide-agent-context-labels'
+      - name: Build hide and hided for the desktop app
+        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build the web shell

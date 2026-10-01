@@ -11,9 +11,8 @@ use serde_json::{Value, json};
 
 use super::*;
 
-/// A Herdr that keeps a plugin registry in memory and answers the three
-/// plugin methods the way Herdr 0.9.1 does: `plugin.link` stores the
-/// resolved path and replaces an entry with the same id.
+/// A Herdr that keeps a plugin registry in memory and answers `plugin.list`
+/// and `plugin.unlink` the way Herdr 0.9.1 does.
 struct FakeHerdr {
     socket: PathBuf,
     plugins: Arc<Mutex<Vec<Value>>>,
@@ -40,25 +39,6 @@ impl FakeHerdr {
                 let mut plugins = registry.lock().unwrap();
                 let result = match method.as_str() {
                     "plugin.list" => json!({ "type": "plugin_list", "plugins": *plugins }),
-                    "plugin.link" => {
-                        let root =
-                            std::fs::canonicalize(request["params"]["path"].as_str().unwrap())
-                                .unwrap();
-                        let manifest =
-                            std::fs::read_to_string(root.join("herdr-plugin.toml")).unwrap();
-                        let id = manifest
-                            .lines()
-                            .find_map(|line| line.strip_prefix("id = "))
-                            .unwrap()
-                            .trim_matches('"')
-                            .to_owned();
-                        let entry = plugin(&id, &root.display().to_string(), "local");
-                        let mut entry = entry;
-                        entry["enabled"] = request["params"]["enabled"].clone();
-                        plugins.retain(|existing| existing["plugin_id"] != id.as_str());
-                        plugins.push(entry.clone());
-                        json!({ "type": "plugin_linked", "plugin": entry })
-                    }
                     "plugin.unlink" => {
                         let id = request["params"]["plugin_id"].as_str().unwrap().to_owned();
                         let before = plugins.len();
@@ -76,15 +56,6 @@ impl FakeHerdr {
             plugins,
             calls,
         }
-    }
-
-    fn links(&self) -> usize {
-        self.calls
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|method| *method == "plugin.link")
-            .count()
     }
 }
 
@@ -134,16 +105,6 @@ impl Fixture {
         std::fs::write(home.join(".claude/settings.json"), OTHER_TOOL).unwrap();
         executable(&kit.join("hide"), "#!/bin/sh\n");
         executable(&kit.join("hide-agent-hooks"), "#!/bin/sh\n");
-        std::fs::create_dir_all(kit.join("agent-context-labels/scripts")).unwrap();
-        std::fs::write(
-            kit.join("agent-context-labels/herdr-plugin.toml"),
-            "id = \"hide.agent-context-labels\"\n",
-        )
-        .unwrap();
-        executable(
-            &kit.join("agent-context-labels/hide-agent-context-labels"),
-            "#!/bin/sh\n",
-        );
         // hcoord's "Node" is sh, and its cli.js a script that answers the
         // ensure call the way hcoord does and remembers it was asked.
         executable(
@@ -183,6 +144,30 @@ impl Fixture {
     fn settings(&self) -> String {
         std::fs::read_to_string(self.home().join(".claude/settings.json")).unwrap()
     }
+
+    /// The retired labels plugin as an older Hide left it: the kit's copy,
+    /// the plugin's state folder, and Herdr's entry for it.
+    fn legacy_plugin(&self, kind: &str) {
+        let copy = labels_home(self.home());
+        executable(&copy.join("hide-agent-context-labels"), "#!/bin/sh\n");
+        std::fs::write(
+            copy.join("herdr-plugin.toml"),
+            "id = \"hide.agent-context-labels\"\n",
+        )
+        .unwrap();
+        let state = plugin_state_dir(self.home());
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("display-state.json"), "{}").unwrap();
+        let root = match kind {
+            "github" => "/somewhere/herdr/plugins/github/agent-context-labels".to_owned(),
+            _ => copy.display().to_string(),
+        };
+        self.herdr
+            .plugins
+            .lock()
+            .unwrap()
+            .push(plugin(LABELS_PLUGIN_ID, &root, kind));
+    }
 }
 
 fn state(report: &KitReport, id: ComponentId) -> ComponentState {
@@ -204,7 +189,6 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
     for id in [
         ComponentId::Cli,
         ComponentId::ClaudeCodeHook,
-        ComponentId::Labels,
         ComponentId::Hcoord,
     ] {
         assert_eq!(
@@ -232,17 +216,9 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
         std::fs::read_link(fixture.home().join(".local/bin/hide")).unwrap(),
         fixture.target.kit_dir.join("hide")
     );
-    let plugins = fixture.herdr.plugins.lock().unwrap().clone();
-    assert_eq!(plugins.len(), 1);
-    assert_eq!(
-        plugins[0]["plugin_root"],
-        labels_home(fixture.home()).display().to_string()
-    );
-    assert!(
-        labels_home(fixture.home())
-            .join("hide-agent-context-labels")
-            .is_file()
-    );
+    // A machine that never had the labels plugin is not asked about it.
+    assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+    assert!(report.labels_retirement.is_empty());
     let shim = std::fs::read_to_string(fixture.home().join(".hcoord/bin/hcoord")).unwrap();
     assert!(shim.starts_with("#!/bin/sh\nHCOORD_TEST='1' exec '/bin/sh' '"));
     assert!(
@@ -251,7 +227,7 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
             .contains("daemon ensure --json")
     );
     let record = std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap();
-    for code in ["cli", "claude_code_hook", "labels", "hcoord"] {
+    for code in ["cli", "claude_code_hook", "hcoord"] {
         assert!(record.contains(code), "{record}");
     }
     assert!(!record.contains("codex_hook"));
@@ -264,7 +240,7 @@ fn a_second_apply_of_the_same_build_changes_nothing() {
     let settings = fixture.settings();
     let record_path = fixture.home().join(".hide/kit/installed.json");
     let record_written = std::fs::metadata(&record_path).unwrap().modified().unwrap();
-    let links = fixture.herdr.links();
+    let calls = fixture.herdr.calls.lock().unwrap().len();
 
     let report = apply(&fixture.target, &Scope::Automatic);
 
@@ -273,7 +249,7 @@ fn a_second_apply_of_the_same_build_changes_nothing() {
         std::fs::metadata(&record_path).unwrap().modified().unwrap(),
         record_written
     );
-    assert_eq!(fixture.herdr.links(), links);
+    assert_eq!(fixture.herdr.calls.lock().unwrap().len(), calls);
     assert!(report.components.iter().all(|part| matches!(
         part.state,
         ComponentState::Installed | ComponentState::Absent
@@ -285,14 +261,12 @@ fn a_part_the_operator_removed_stays_removed_until_reinstall_asks_for_it() {
     let fixture = Fixture::new();
     apply(&fixture.target, &Scope::Automatic);
     hide_agent_hooks::remove(hide_agent_hooks::AgentRuntime::ClaudeCode, fixture.home()).unwrap();
-    fixture.herdr.plugins.lock().unwrap().clear();
 
     let report = apply(&fixture.target, &Scope::Automatic);
     assert_eq!(
         state(&report, ComponentId::ClaudeCodeHook),
         ComponentState::Removed
     );
-    assert_eq!(state(&report, ComponentId::Labels), ComponentState::Removed);
     assert!(!fixture.settings().contains("hide-subagents"));
 
     let report = apply(
@@ -303,8 +277,6 @@ fn a_part_the_operator_removed_stays_removed_until_reinstall_asks_for_it() {
         state(&report, ComponentId::ClaudeCodeHook),
         ComponentState::Installed
     );
-    assert_eq!(state(&report, ComponentId::Labels), ComponentState::Removed);
-    assert!(fixture.herdr.plugins.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -402,80 +374,113 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
     assert_eq!(std::fs::read_link(&link).unwrap(), climbing);
 }
 
+/// PRD labels-in-hided B2: an upgrade takes the plugin out of Herdr and off
+/// the disk, and the record of having installed it means nothing any more.
 #[test]
-fn a_github_install_of_the_plugin_is_replaced_through_the_herdr_command() {
+fn an_upgrade_takes_the_linked_labels_plugin_its_copy_and_its_state_out() {
     let fixture = Fixture::new();
-    fixture.herdr.plugins.lock().unwrap().push(plugin(
-        LABELS_PLUGIN_ID,
-        "/somewhere/herdr/plugins/github/agent-context-labels",
-        "github",
-    ));
-    assert_eq!(
-        state(&status(&fixture.target), ComponentId::Labels),
-        ComponentState::Outdated
-    );
+    fixture.legacy_plugin("local");
+    let record = fixture.home().join(".hide/kit/installed.json");
+    std::fs::write(&record, r#"{"format":1,"installed":["labels"]}"#).unwrap();
 
     let report = apply(&fixture.target, &Scope::Automatic);
 
+    assert!(fixture.herdr.plugins.lock().unwrap().is_empty());
+    assert!(!labels_home(fixture.home()).exists());
+    assert!(!plugin_state_dir(fixture.home()).exists());
     assert_eq!(
-        state(&report, ComponentId::Labels),
-        ComponentState::Installed
+        report.labels_retirement.removed,
+        [
+            "Herdr plugin link (linked folder)",
+            "kit copy",
+            "state folder"
+        ]
     );
+    assert!(report.labels_retirement.failures.is_empty());
+    assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
+
+    // Nothing is left to take out, and Herdr is not asked again.
+    let calls = fixture.herdr.calls.lock().unwrap().len();
+    let report = apply(&fixture.target, &Scope::Automatic);
+    assert!(report.labels_retirement.is_empty());
+    assert_eq!(fixture.herdr.calls.lock().unwrap().len(), calls);
+}
+
+#[test]
+fn a_github_install_of_the_labels_plugin_is_taken_out_through_the_herdr_command() {
+    let fixture = Fixture::new();
+    fixture.legacy_plugin("github");
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
     assert_eq!(
         std::fs::read_to_string(fixture.home().join("herdr.log")).unwrap(),
         "plugin uninstall hide.agent-context-labels\n"
     );
-}
-
-#[test]
-fn a_plugin_turned_off_in_herdr_stays_off_when_it_is_updated() {
-    let fixture = Fixture::new();
-    apply(&fixture.target, &Scope::Automatic);
-    fixture.herdr.plugins.lock().unwrap()[0]["enabled"] = json!(false);
-    std::fs::write(
-        fixture
-            .target
-            .kit_dir
-            .join("agent-context-labels/hide-agent-context-labels"),
-        "#!/bin/sh\necho newer\n",
-    )
-    .unwrap();
     assert_eq!(
-        state(&status(&fixture.target), ComponentId::Labels),
-        ComponentState::Outdated
-    );
-
-    let report = apply(&fixture.target, &Scope::Automatic);
-
-    assert_eq!(
-        state(&report, ComponentId::Labels),
-        ComponentState::Installed
-    );
-    assert_eq!(fixture.herdr.plugins.lock().unwrap()[0]["enabled"], false);
-    assert!(
-        std::fs::read_to_string(labels_home(fixture.home()).join("hide-agent-context-labels"))
-            .unwrap()
-            .contains("newer")
+        report.labels_retirement.removed[0],
+        "Herdr plugin link (GitHub)"
     );
 }
 
 #[test]
-fn with_herdr_down_the_plugin_fails_and_is_tried_again_later() {
+fn with_herdr_down_the_labels_plugin_files_stay_until_its_link_is_gone() {
     let mut fixture = Fixture::new();
+    fixture.legacy_plugin("local");
     fixture.target.herdr_socket = fixture.root.join("no-herdr.sock");
 
     let report = apply(&fixture.target, &Scope::Automatic);
-    let labels = report.component(ComponentId::Labels).unwrap();
-    assert_eq!(labels.state, ComponentState::Failed);
-    assert!(labels.reason.as_deref().unwrap().contains("plugin.list"));
+    assert!(
+        report.labels_retirement.failures[0].contains("plugin.list"),
+        "{report:?}"
+    );
+    assert!(labels_home(fixture.home()).exists());
+    assert!(plugin_state_dir(fixture.home()).exists());
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
 
     fixture.target.herdr_socket = fixture.herdr.socket.clone();
     let report = apply(&fixture.target, &Scope::Automatic);
-    assert_eq!(
-        state(&report, ComponentId::Labels),
-        ComponentState::Installed
+    assert!(report.labels_retirement.failures.is_empty());
+    assert!(fixture.herdr.plugins.lock().unwrap().is_empty());
+    assert!(!labels_home(fixture.home()).exists());
+}
+
+/// A watcher is found by the lock it holds under this home, whatever its
+/// executable is called now, and it is stopped before its state goes.
+#[test]
+fn a_running_labels_watcher_is_found_by_its_lock_and_stopped() {
+    let fixture = Fixture::new();
+    fixture.legacy_plugin("local");
+    let lock = plugin_state_dir(fixture.home()).join("watcher.lock");
+    std::fs::write(&lock, "").unwrap();
+    let ready = fixture.root.join("watcher-ready");
+    let mut watcher = std::process::Command::new("perl")
+        .args([
+            "-e",
+            r#"use Fcntl ":flock"; open(my $f, ">>", $ARGV[0]) or die; flock($f, LOCK_EX) or die; open(my $r, ">", $ARGV[1]); close($r); sleep 60;"#,
+        ])
+        .arg(&lock)
+        .arg(&ready)
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while !ready.exists() {
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    let status = watcher.wait().unwrap();
+    assert!(!status.success(), "the watcher was ended by a signal");
+    assert!(
+        report
+            .labels_retirement
+            .removed
+            .contains(&format!("watcher process {}", watcher.id())),
+        "{report:?}"
     );
+    assert!(!plugin_state_dir(fixture.home()).exists());
 }
 
 #[test]
@@ -515,16 +520,14 @@ fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
 
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o775)).unwrap();
     let report = status(&fixture.target);
-    for id in [ComponentId::Labels, ComponentId::Hcoord] {
-        let part = report.components.iter().find(|part| part.id == id).unwrap();
-        assert_eq!(part.state, ComponentState::Failed, "{id:?}");
-        assert!(
-            part.reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("can be changed by another account")),
-            "{part:?}"
-        );
-    }
+    let part = report.component(ComponentId::Hcoord).unwrap();
+    assert_eq!(part.state, ComponentState::Failed);
+    assert!(
+        part.reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("can be changed by another account")),
+        "{part:?}"
+    );
 }
 
 /// Two kits on one account take turns: while another holds the account,
@@ -594,7 +597,6 @@ fn removing_the_kit_takes_only_hides_parts_and_leaves_hcoord() {
     };
     assert_eq!(outcome(ComponentId::Cli), RemoveOutcome::Removed);
     assert_eq!(outcome(ComponentId::ClaudeCodeHook), RemoveOutcome::Removed);
-    assert_eq!(outcome(ComponentId::Labels), RemoveOutcome::Removed);
     assert!(matches!(
         outcome(ComponentId::Hcoord),
         RemoveOutcome::Kept { .. }
@@ -603,44 +605,6 @@ fn removing_the_kit_takes_only_hides_parts_and_leaves_hcoord() {
     assert!(!settings.contains("hide-subagents"));
     assert_eq!(other_tool_entry(&settings), other_tool_entry(OTHER_TOOL));
     assert!(!fixture.home().join(".local/bin/hide").exists());
-    assert!(fixture.herdr.plugins.lock().unwrap().is_empty());
     assert!(fixture.home().join(".hcoord/bin/hcoord").is_file());
     assert!(!fixture.home().join(".hide/kit/installed.json").exists());
-}
-
-/// The kit links the packaged manifest; the checkout's manifest is what
-/// `herdr plugin install` builds from. They must say the same thing apart
-/// from the build step.
-#[test]
-fn the_packaged_plugin_manifest_is_the_source_manifest_without_its_build_step() {
-    let plugin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/agent-context-labels");
-    let meaningful = |text: &str| {
-        let mut lines = Vec::new();
-        let mut in_build = false;
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("[[") || trimmed.starts_with('[') {
-                in_build = trimmed == "[[build]]";
-            }
-            if in_build || trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            lines.push(trimmed.to_owned());
-        }
-        lines
-    };
-    let source = std::fs::read_to_string(plugin.join("herdr-plugin.toml")).unwrap();
-    let packaged = std::fs::read_to_string(plugin.join("package/herdr-plugin.toml")).unwrap();
-    let has_build = |text: &str| text.lines().any(|line| line.trim() == "[[build]]");
-    assert!(has_build(&source));
-    assert!(!has_build(&packaged));
-    assert_eq!(meaningful(&packaged), meaningful(&source));
-    for line in meaningful(&packaged) {
-        if let Some(script) = line
-            .strip_prefix("command = [\"/bin/sh\", \"")
-            .and_then(|rest| rest.strip_suffix("\"]"))
-        {
-            assert!(plugin.join("package").join(script).is_file(), "{script}");
-        }
-    }
 }

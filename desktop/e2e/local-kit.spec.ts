@@ -20,7 +20,7 @@ import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixtu
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_APP, "a packaged hide.app is required");
 
-const PARTS = ["cli", "claude_code_hook", "codex_hook", "labels", "hcoord"];
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "hcoord"];
 const LABELS_ID = "hide.agent-context-labels";
 
 type Applied = { kind?: string; device_id?: string; components?: { id: string; state: string; reason: string | null }[] };
@@ -66,8 +66,9 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
       expect({ ...now, hooks: undefined }).toEqual({ ...before, hooks: undefined });
     }
     const plugins = spawnSync(local.bin, ["plugin", "list", "--json"], { env: local.env, encoding: "utf8", timeout: 10_000 });
-    expect(plugins.stdout).toContain(LABELS_ID);
-    expect(plugins.stdout).toContain(path.join(home, ".hide", "kit", "plugins", "agent-context-labels"));
+    // Labels are hided's own now; the kit links no plugin (PRD labels-in-hided B2).
+    expect(plugins.status, plugins.stderr).toBe(0);
+    expect(plugins.stdout).not.toContain(LABELS_ID);
     const shim = fs.readFileSync(path.join(home, ".hcoord", "bin", "hcoord"), "utf8");
     expect(shim).toContain("ELECTRON_RUN_AS_NODE='1'");
     expect(shim).toContain(path.join(bundle, "Contents", "MacOS"));

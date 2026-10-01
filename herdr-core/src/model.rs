@@ -4279,7 +4279,6 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::Labels
                 | hide_kit::ComponentId::Hcoord => {}
             }
         }
