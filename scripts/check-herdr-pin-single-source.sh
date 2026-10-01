@@ -20,11 +20,14 @@ repo=$(jq -er '.repo | strings | select(length > 0)' "$manifest")
 version=$(jq -er '.version' "$manifest")
 sha256=$(jq -er '.sha256' "$manifest")
 linux_sha256=$(jq -er '.linux_x86_64.sha256' "$manifest")
+windows_sha256=$(jq -er '.windows_x86_64.sha256' "$manifest")
 
 derived_sources=(
   .github/workflows/pr.yml
   .github/workflows/web-e2e.yml
+  .github/workflows/os-contract.yml
   scripts/fetch-herdr-runtime.sh
+  scripts/fetch-herdr-runtime.ps1
   desktop/scripts/package.mjs
   desktop/src/main/cli.ts
   web/e2e/herdr-fixture.ts
@@ -50,7 +53,7 @@ for relative in $derived_sources; do
     print -u2 -- "error: $relative restates the pinned repository; read it from the manifest"
     failed=1
   fi
-  if grep -Fq -- "$sha256" "$source_path" || grep -Fq -- "$linux_sha256" "$source_path"; then
+  if grep -Fq -- "$sha256" "$source_path" || grep -Fq -- "$linux_sha256" "$source_path" || grep -Fq -- "$windows_sha256" "$source_path"; then
     print -u2 -- "error: $relative restates the pinned digest; read it from the manifest"
     failed=1
   fi
