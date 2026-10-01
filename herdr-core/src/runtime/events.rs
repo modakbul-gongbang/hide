@@ -2602,16 +2602,13 @@ impl Runtime {
                 }
             }
             Event::FileView(payload) => {
-                let Some(tab) = self
-                    .snapshot
-                    .editor
-                    .tabs
-                    .iter_mut()
-                    .find(|tab| tab.id == payload.tab_id && tab.kind == EditorTabKind::File)
-                else {
+                let Some(tab) = self.snapshot.editor.tabs.iter_mut().find(|tab| {
+                    tab.id == payload.tab_id
+                        && matches!(tab.kind, EditorTabKind::File | EditorTabKind::Diff)
+                }) else {
                     self.set_error(
                         "file.view_rejected",
-                        "The file tab is no longer open",
+                        "The file or diff tab is no longer open",
                         false,
                     );
                     return true;

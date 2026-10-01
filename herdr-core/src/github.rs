@@ -1743,7 +1743,6 @@ mod tests {
     #[cfg(unix)]
     impl GhFixture {
         fn new(body: &str) -> Self {
-            use std::os::unix::fs::PermissionsExt;
             static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let root = std::env::temp_dir().join(format!(
                 "hide-gh-{}-{}-{}",
@@ -1756,8 +1755,7 @@ mod tests {
             ));
             std::fs::create_dir_all(&root).unwrap();
             let binary = root.join("gh");
-            std::fs::write(&binary, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            crate::executable_fixture::write_executable(&binary, &format!("#!/bin/sh\n{body}\n"));
             Self { root, binary }
         }
     }
@@ -1931,18 +1929,23 @@ esac"#,
     #[cfg(unix)]
     fn a_pull_request_takes_only_its_body_write_and_its_two_reads() {
         let fixture = GhFixture::new(r#"printf 'ok'"#);
-        let allowed = |arguments: &[&str]| {
+        let run = |arguments: &[&str]| {
             run_gh(
                 &fixture.binary,
                 Some(&fixture.root),
                 arguments,
                 Duration::from_secs(5),
             )
-            .is_ok()
         };
-        assert!(allowed(&["pr", "view", "12", "--json", "body"]));
-        assert!(allowed(&["pr", "view", "12", "--json", PR_FEEDBACK_FIELDS]));
-        assert!(allowed(&["pr", "edit", "12", "--body", "Closes #7"]));
+        for allowed in [
+            &["pr", "view", "12", "--json", "body"][..],
+            &["pr", "view", "12", "--json", PR_FEEDBACK_FIELDS],
+            &["pr", "edit", "12", "--body", "Closes #7"],
+        ] {
+            if let Err(failure) = run(allowed) {
+                panic!("{allowed:?} must run: {}", failure.reason);
+            }
+        }
         for refused in [
             &["pr", "edit", "12", "--title", "x"][..],
             &["pr", "edit", "12", "--add-label", "x"],
@@ -1954,7 +1957,7 @@ esac"#,
             &["pr", "review", "12", "--approve"],
             &["pr", "close", "12"],
         ] {
-            assert!(!allowed(refused), "{refused:?} must be refused");
+            assert!(run(refused).is_err(), "{refused:?} must be refused");
         }
     }
 

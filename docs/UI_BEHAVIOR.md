@@ -236,7 +236,7 @@ The new-tab page offers no tools or panes; ⌘P remains the file palette everywh
 
 A web page is a view like a file: it opens in the active area, has a tab, splits, moves, and closes like one, and comes back after a restart at the address it last showed.
 A page with an address carries a globe mark and the page's title, else its host, else a local file's name; its tooltip and accessible name carry `Page`, the title, and the full address.
-It opens from `hide browser open` in a connected Herdr pane or a shell inside a registered checkout, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side), from a page that opens a tab, and from the address field.
+It opens from `hide browser open` in a connected Herdr pane or a shell inside a registered checkout, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side), from a page that opens a tab (beside that page, which stays in view: in the area next to it, else in a new area to its right), and from the address field.
 A sign-in popup a page opens is a small window of its own above hide, so the sign-in can report back to the page and close; ⌘W closes it.
 A link that would open another app (Slack, Zoom) asks first with the app's name, and opens in that app only on Open.
 On a connected SSH device, the native page uses that device's localhost or consented checkout resources; a route failure appears in the page's existing failure state.
@@ -668,7 +668,7 @@ Web owner: `web/src/Editor.tsx`, `web/src/viewers/FileViewer.tsx`.
 The central file surface uses one document toolbar, preserving the tab strip and Explorer.
 The current folder and filename give context; Find uses the platform's native find bar, Wrap changes the source text container, and reveal actions target Explorer and Finder.
 Unsaved drafts and the existing read-only/conflict notices remain visible in every mode.
-Diff tabs retain their own viewer.
+Diff tabs retain their own viewer, with the same Wrap toggle.
 
 The core names each open file's kind (text, markdown, image, pdf, binary), and the overlay picks the adapter from it; the toolbar is the same bar in every kind, with controls a kind cannot use taken away rather than left dead.
 A PDF (recognised by its signature whatever its name) shows in a continuous, width-fitted, text-selectable, non-editable view.
@@ -678,7 +678,7 @@ An image hides Wrap as well; a file that is not UTF-8 shows a `Preview only` sta
 
 Markdown files alone show the centered Live/Source choice, and Live is the default.
 Both are editors over the same draft: Live draws the formatting in place and hides the markup on every line the caret is not on (the way Obsidian's Live Preview does); Source is the monospaced editor with its line-number ruler and Wrap toggle.
-The core owns mode and source wrapping per open file tab; another tab has independent choices, returning to a tab restores them, and close/reopen or app restart starts Live with source wrapping off.
+The core owns mode and wrapping per open file tab, and wrapping per open diff tab; another tab has independent choices, returning to a tab restores them, and a new tab, close/reopen, or app restart starts Live with wrapping on.
 Autosave captures its file identity when scheduled so a subsequent tab selection cannot redirect the write.
 Closing a file tab carries that tab's matching pending save in the same close intent, and the tab remains open with a visible error if the exact path and contents cannot be saved.
 The editor retains only its latest unacknowledged draft while older core snapshots arrive, preventing a snapshot echo from moving the caret or replacing newer input.
