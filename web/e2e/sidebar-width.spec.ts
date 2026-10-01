@@ -24,6 +24,9 @@ async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
   throw new Error(`no prompt in pane ${pane}`);
 }
 
+/** `--size-rail`: the always-shown device rail, which the nav and its box carry beside the content column the width names. */
+const RAIL = 64;
+
 const width = async (element: Locator) => Math.round((await element.boundingBox())!.width);
 
 /** Presses on the edge's centre, moves by `dx` in steps, and returns the release. */
@@ -62,7 +65,7 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(page.locator(".xterm").first()).toBeVisible({ timeout: 20_000 });
     await rest(page);
-    expect(await width(nav)).toBe(292);
+    expect(await width(nav)).toBe(292 + RAIL);
 
     // B10: the edge shows the line under the pointer.
     const line = edge.locator("span");
@@ -76,8 +79,8 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     const mainBefore = await main.boundingBox();
     const before = new Map(sent);
     const release = await dragEdge(page, edge, 400);
-    expect(await width(nav)).toBe(440);
-    expect(await width(box)).toBe(292);
+    expect(await width(nav)).toBe(440 + RAIL);
+    expect(await width(box)).toBe(292 + RAIL);
     expect(await main.boundingBox()).toEqual(mainBefore);
     expect((sent.get("ui_state_update") ?? 0) - (before.get("ui_state_update") ?? 0)).toBe(0);
     expect((sent.get("terminal_resize") ?? 0) - (before.get("terminal_resize") ?? 0)).toBe(0);
@@ -86,16 +89,16 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     // One event lands it, and the center takes the width once the core carries it.
     await expect.poll(() => (sent.get("ui_state_update") ?? 0) - (before.get("ui_state_update") ?? 0)).toBe(1);
     expect(last.get("ui_state_update")?.sidebar_width).toBe(440);
-    await expect.poll(() => width(box)).toBe(440);
-    expect(await width(nav)).toBe(440);
+    await expect.poll(() => width(box)).toBe(440 + RAIL);
+    expect(await width(nav)).toBe(440 + RAIL);
     await rest(page);
     await screenshot(page, "sidebar-width-440");
 
     // Dragged far past the minimum, it stops at 220.
     const shrink = await dragEdge(page, edge, -600);
-    expect(await width(nav)).toBe(220);
+    expect(await width(nav)).toBe(220 + RAIL);
     await shrink();
-    await expect.poll(() => width(box)).toBe(220);
+    await expect.poll(() => width(box)).toBe(220 + RAIL);
     expect(last.get("ui_state_update")?.sidebar_width).toBe(220);
     await rest(page);
     await screenshot(page, "sidebar-width-220");
@@ -103,7 +106,7 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     // B11: a reload keeps the width.
     await page.reload();
     await expect(nav).toBeVisible({ timeout: 20_000 });
-    await expect.poll(() => width(nav)).toBe(220);
+    await expect.poll(() => width(nav)).toBe(220 + RAIL);
 
     // A press that does not move sends nothing; a double-click returns to 292 and keeps it.
     const quiet = new Map(sent);
@@ -111,11 +114,11 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     await page.waitForTimeout(300);
     expect((sent.get("ui_state_update") ?? 0) - (quiet.get("ui_state_update") ?? 0)).toBe(0);
     await edge.dblclick();
-    await expect.poll(() => width(box)).toBe(292);
+    await expect.poll(() => width(box)).toBe(292 + RAIL);
     expect(last.get("ui_state_update")?.sidebar_width).toBe(292);
     await page.reload();
     await expect(nav).toBeVisible({ timeout: 20_000 });
-    await expect.poll(() => width(nav)).toBe(292);
+    await expect.poll(() => width(nav)).toBe(292 + RAIL);
   } finally {
     await daemon.stop();
     await herdr.stop();

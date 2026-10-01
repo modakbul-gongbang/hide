@@ -75,22 +75,9 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
     expect(startTargets(rest({ front: "mini" }), OVERVIEW("mw")).defaultKey).toBe(checkoutKey("mini", "/srv/app"));
   });
 
-  it("is the front device's Home while Inbox is selected, whatever the center still shows", () => {
+  it("is the front device's Home when the panel took Settings' place, whatever is under it", () => {
     expect(startTargets(rest(), { kind: "workspace" }, true).defaultKey).toBe(homeKey("local"));
     expect(startTargets(rest({ front: "mini", focusedCheckout: "m-main" }), { kind: "workspace" }, true).defaultKey).toBe(homeKey("mini"));
-  });
-
-  it("ignores an Inbox selection left over once no device's rail is shown", () => {
-    const alone = rest();
-    alone.navigator!.devices = [device("local", "This Mac", "local")];
-    alone.status!.remote = [];
-    expect(startTargets(alone, { kind: "workspace" }, true).defaultKey).toBe(startTargets(alone, { kind: "workspace" }).defaultKey);
-    expect(startTargets(alone, { kind: "workspace" }, true).defaultKey).not.toBe(homeKey("local"));
-  });
-
-  it("is the front device's Home when the panel took Settings' place, whatever is under it", () => {
-    expect(startTargets(rest(), { kind: "workspace" }, false, true).defaultKey).toBe(homeKey("local"));
-    expect(startTargets(rest({ front: "mini", focusedCheckout: "m-main" }), { kind: "workspace" }, false, true).defaultKey).toBe(homeKey("mini"));
   });
 
   it("is the Home of the device a Home screen names", () => {

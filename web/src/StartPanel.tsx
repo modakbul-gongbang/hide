@@ -108,10 +108,9 @@ function StartPanel({ actions }: { actions: Actions }) {
   const failure = useStartPanel((s) => s.failure);
   const rest = useShellStore((s) => s.rest);
   const screen = useUiStore((s) => s.screen);
-  const inbox = useUiStore((s) => s.inbox);
   const overSettings = useStartPanel((s) => s.overSettings);
   // What is in front is read again on every open; the panel itself lives only while open.
-  const targets = useMemo(() => startTargets(rest, screen, inbox, overSettings), [rest, screen, inbox, overSettings]);
+  const targets = useMemo(() => startTargets(rest, screen, overSettings), [rest, screen, overSettings]);
   const target = resolveTarget(targets, chosen);
   const [selection, setSelection] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const surface = useRef<HTMLDivElement>(null);

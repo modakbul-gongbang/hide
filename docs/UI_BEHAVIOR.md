@@ -44,6 +44,7 @@ With stacked View areas each area keeps its own tab strip, and the first row hol
 With no view open and the tools shown, the panel is only the tool column, including after the last view closes, and its first row holds the tool tabs, Pin, and the panel toggle, so the tools alone can be pinned beside the agents.
 ⌘E opens a closed panel with tools shown, closes a tools-only panel, and toggles the tool column beside views, keeping the chosen tool.
 The sidebar's Projects | Agents switch has no default chord and can be bound in Settings, Shortcuts; a bound chord shows in the tabs' hint.
+`Toggle device rail` has no default chord either and is bound the same way; it shows or hides the device rail.
 Panel content is views or tools only; closing the last view with tools hidden closes the panel in the core, and hiding the tools-only column does the same.
 There is no empty panel body or empty-panel New tab button.
 Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
@@ -283,7 +284,7 @@ Opening the pane's tab by a committed move (a row, a tab, a checkout, a relation
 The pane menu offers Sleep agent on a local agent pane that is awake, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported.
 Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
 
-The Agents explorer groups every current agent, this machine's and each connected device's, under Needs You, Done, Working, and Seen, and leaves an empty group out; a device's row names its device before the agent kind, and a device that is not connected lists nothing it only last reported.
+The sidebar's Agents tab groups the device in front's current agents under Needs You, Done, Working, and Seen, and leaves an empty group out; no row names its device, since the whole list is that device's, and a device that is not connected lists nothing it only last reported (the Palette still names a remote row's device).
 Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
 A group's heading counts every agent it speaks for, its roots and all their live descendants whether folded or not, so each agent is counted once, under its root's heading.
 In the desktop app ⌥1 to ⌥9 open the first to ninth row the list draws, top to bottom across the groups, exactly as clicking that row does; the order is the list's whether or not the sidebar shows it, a folded child takes no number, and a number with no row does nothing.
@@ -755,8 +756,10 @@ Before the first snapshot arrives the Agents and Projects lists say they are con
 The Home row stands for the device's Home (see Home) at every device count (PRD home-device-rail D-13): the house glyph, `Home`, and `N projects`, the device's registered projects with its Home not among them (no count before the first snapshot), in the project row's height, font and focus ring.
 It opens the device's Home Overview by click, Enter or Space and carries the selected fill while that screen is in front; it is drawn before the device has a Home folder, since the count comes from the registrations.
 The agents running in the Home are its child rows, opened as an agent row opens, and a `+` shown under the pointer, `New tab in Home`, opens a new tab in the Home and brings its pane forward once it is listed; a refusal, such as a `~/hide` that is not Hide's, shows the core's reason in a caption under that Home row until the next start or a click on the row.
-With no remote device there is no rail and the sidebar's top is fixed above both lists: the Home row, then the `Projects | Agents` tab strip, Projects first and shown at launch, the choice kept for the session, ending in Add project (on Projects only, where the Agents tab leaves its place empty, and only in the desktop app) and Search, icons whose hints read `Add project` and `Search` with their chords.
-With the rail there is no tab strip: the top line names what is in front, `This Mac`, a device's name with a smaller `Remote`, or `Inbox` with `모든 기기`, and ends in Add project (not while the Inbox is in front) and Search; the rail's selection decides the list below.
+Every device's sidebar has the same two lines at its top (quick device-rail-badges, replacing PRD home-device-rail D-13 and D-14): the top line names the device in front, `This Mac` or a device's name with a smaller `Remote`, and ends in Add project (not on the Agents tab, and only in the desktop app) and Search, icons whose hints read `Add project` and `Search` with their chords; under it the `Projects | Agents` tab strip, Projects first and shown at launch, the choice kept for the session.
+A device that is not connected shows the top line and its reconnect view with no tab strip.
+Projects lists the device's Needs You, its Home row and its projects, with Done left to the Agents tab (the one-device sidebar used to raise Done above Home too); Agents lists the device's own agents under Needs You, Done, Working and Seen (docs/status-model.md), with `Needs You N · Done N · Working N` above the list, a zero count left out, and no row naming its device.
+Choosing a tile keeps each device's lists apart: another device's agents never appear in this device's Agents, and ⌥n numbers the front device's Agents list.
 Search opens the ⌘K palette and Add project the Add a project dialog (see Adding a project), on this machine or a selected SSH device alike; there is no Search field row and no bottom new-workspace button.
 The Herdr status line sits under the top and above the list, and is not shown while a device is in front.
 The web Projects list is the scope picker, starting at its first project.
@@ -770,8 +773,8 @@ While a checkout's agent rows are closed, its status badge ends line one; openin
 A checkout's second line is its purpose, after the parent checkout it was raised from when there is one, with the last-commit age ending it on the time column; it is drawn only while the checkout has a purpose or a raising parent, so a checkout with agents and neither is one line.
 A checkout with neither, or one whose Git facts have not been read yet, is one line, with its age on that line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
-The web shell draws the raised groups at the top of the Projects list as `Needs You · N` then `Done · N`, each left out while empty: the Needs You or Done agents whose pane a listed project's checkout or the Home owns, in the core's order, on the Agents list's own row with its place line, drawn whatever their project, checkout or parent has folded, never unfolded themselves, and opened as the Agents row opens.
-With no rail the raised groups stand under the tab strip; with the rail a device's list is its `Needs You · N` group, then the Home row, then Pinned and the projects, with no Done group, and no row there names the device, since the whole list is that device's (PRD home-device-rail B6).
+The web shell draws the raised group at the top of the Projects list as `Needs You · N`, left out while empty: the Needs You agents whose pane a listed project's checkout or the Home owns, in the core's order, on the Agents list's own row with its place line, drawn whatever their project, checkout or parent has folded, never unfolded themselves, and opened as the Agents row opens.
+A device's Projects list is its `Needs You · N` group, then the Home row, then Pinned and the projects, with no Done group (Done is in the Agents tab), and no row there names the device, since the whole list is that device's (PRD home-device-rail B6, with the rail rework of quick device-rail-badges).
 An agent row's title is its identity label at both densities: the rolling task, or the provider's name when no task exists; a Herdr agent name and a Herdr workspace label never become display copy.
 A row whose descendants are folded, and every raised row, wears a descendant badge counting live descendants by state before the elapsed time; opening the fold removes the badge because the opened rows carry their own marks.
 
@@ -937,19 +940,24 @@ History is session-local and retains only existing projects and surfaces; a dele
 
 Web owner: `web/src/components/device-rail.tsx`, `web/src/devices.ts`, the rail branch of `web/src/sidebar.tsx`.
 
-The rail shows while at least one remote device is registered, connected or not (PRD home-device-rail D-09..D-11): a column on the sidebar's left with the Inbox on top, a divider, This Mac, each registered device in the core's order, and `기기 추가` at the bottom.
-The stored sidebar width stays the content column's; the rail adds `--size-rail` to its left only while it shows, and the drag edge sits on the content column.
-Each tile is a rounded square with its glyph (inbox, laptop, server) and its name under it, truncated; the selected tile has a bar at its left edge and one tile is selected at a time.
-A device tile's badge is how many of its agents are in Needs You, with none at zero; the Inbox's is the sum over every connected device, this machine included.
-A device that is not connected is dimmed with a `×` and no badge, since its last count is not current; selected, its sidebar shows only its name, `연결 안 됨` and `다시 연결`, which retries the connection in place, and never the tree it last reported.
-Selecting a device tile sends `focus_device`, and the sidebar becomes that device's Needs You, Home and projects (see Sidebar hierarchy); no row there names the device.
-Selecting the Inbox lists every connected device's agents under Needs You, Done, Working and Seen, each remote row with its device chip, and leaves the center where it was; a row on another device moves the rail, the sidebar and the center to that device's pane in one step.
-Every tile is a button reached with Tab and chosen with Enter or Space, named for assistive technology by the device and its state (`mini, 연결 안 됨`, `This Mac, Needs You 2`; the Inbox as `Inbox 모든 기기`).
-`기기 추가` opens Settings › Devices at its Add device form, as the footer's `기기 추가…` and the Add a project dialog's host list do.
-Removing the device in front moves the front to This Mac; that device's agents and its `~/hide` stay on it.
-Registering the first remote device, reachable or not, removes the footer's device button and shows the rail with This Mac selected and the center unchanged; removing the last one takes the rail away and gives the button back.
+This section supersedes PRD home-device-rail rows D-10, D-11, D-27, B3, B4 and B12 (quick device-rail-badges): the Inbox, the rail that came and went with the first remote device, the Needs You-only badge and the footer device button no longer exist.
 
-With no remote device there is no rail: the footer's left end is a laptop button whose popover lists `This Mac · 이 기기` with a check and `기기 추가…`.
+The rail is always shown, even when This Mac is the only device: a column on the sidebar's left with This Mac, each registered device in the core's order, and a `+` (`기기 추가`) directly under the last device tile.
+The stored sidebar width stays the content column's; the rail adds `--size-rail` to its left while it shows, and the drag edge sits on the content column.
+Each tile is a rounded square with its glyph (laptop, server) and its name under it, truncated; the selected tile has a bar at its left edge and one tile is selected at a time.
+A tile's badges are up to three 16px circles with the count inside, stacked downward from the tile's top-right corner with a 2px gap, in the fixed order Needs You (`--warning`), unseen Done (`--success`), Working (`--agent-working`).
+A zero count takes no slot, so a device with only Working agents shows one blue circle at the top, and a count of 10 or more reads `9+` in a 20px-wide pill.
+The counts come from the device's own agents in the snapshot (`deviceAgents()` and `groupCounts()`), with no extra core or wire data.
+A device that is not connected is dimmed with a `×` and no badge, since its last counts are not current; selected, its sidebar shows only its name, `연결 안 됨` and `다시 연결`, which retries the connection in place, and never the tree it last reported.
+Selecting a device tile sends `focus_device`, and the sidebar becomes that device's Projects | Agents; no row there names the device.
+Every tile is a button reached with Tab and chosen with Enter or Space, named for assistive technology by the device, its connection and each non-zero count (`mini, 연결 안 됨`, `This Mac, Needs You 2, Done 1, Working 3`).
+`기기 추가` opens Settings › Devices at its Add device form, as the hidden rail's `기기 추가…` and the Add a project dialog's host list do.
+Removing the device in front moves the front to This Mac; that device's agents and its `~/hide` stay on it, and the rail stays.
+
+A right-click on the rail offers `레일 숨기기`.
+While the rail is hidden the sidebar's top-line device name becomes a `This Mac ⌄` menu that lists the devices (a check on the one in front), `기기 추가…` and `레일 표시`.
+The View menu of the desktop app carries `Toggle device rail` (`toggle_device_rail`, no default chord, bindable in Settings › Shortcuts like the sidebar switch); a browser tab uses the `This Mac ⌄` menu.
+The hidden state is the core's `ui_state.device_rail_visible`, kept beside `left_sidebar_visible`, so it survives a restart.
 
 A device's Workspace in front wears the device color, `--device-remote`: a band at the start of the Workspace toolbar with the server glyph and the device's name, truncated, and a border of the same color around its panes; this machine's Workspace has neither.
 
@@ -962,7 +970,7 @@ The start panel starts a Claude or Codex agent with a first instruction anywhere
 It floats at the ⌘K palette's place and width with no backdrop, and the keyboard lands in its one-line text box, `무엇을 시킬까요?`.
 Opened while Settings is up, it takes Settings' place: Settings closes and the target is the front device's Home.
 Under the text are the target, the agent kind and the model menus, a `⏎` keycap and `시작`; Enter or `시작` sends one `agent_start_in_checkout` with a fresh request id, the text as the agent's first instruction, handed to the CLI as its own argument (ARCHITECTURE.md, the first prompt).
-The target defaults to what is in front: the checkout of the Workspace in front (a worktree when that is it), a project's main checkout while its Overview is in front, and the front device's Home while a Home Overview, the Inbox or Settings is; a device's surface in front makes that device the target's.
+The target defaults to what is in front: the checkout of the Workspace in front (a worktree when that is it), a project's main checkout while its Overview is in front, and the front device's Home while a Home Overview or Settings is; a device's surface in front makes that device the target's.
 The target menu lists the front device's Home and checkouts, then each other device's Home and checkouts prefixed with its name, with a separator between devices and a check on the chosen item; a device that is not connected is listed disabled with `연결 안 됨`.
 The kind menu holds Claude and Codex with their provider marks; the model menu is `CLI 기본값` then the chosen kind's catalog, and changing the kind takes that kind's list and the model last chosen for it.
 While the catalog is being read or cannot be read, the model menu shows the remembered model or `CLI 기본값`, is disabled, and gives the reason in its tooltip; starting is never held back by it.
@@ -979,7 +987,7 @@ Settings › Issues has no default agent of its own.
 Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`.
 The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shell only draws them.
 
-The sidebar footer reads the device button at its left while there is no rail, then one chip per provider and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
+The sidebar footer reads one chip per provider and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
 A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
 A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
 The chips' accessible name lists every provider with its reading.

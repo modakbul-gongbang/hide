@@ -145,7 +145,7 @@ The counts are `descendant_counts` on the row, derived on the lineage pass over 
 A descendant that is merely ready adds nothing, and one whose activity Herdr reports as unknown is left off the badge and written to the diagnostic log (`lineage.unknown_descendants`), because a count the projection cannot vouch for is not drawn.
 A closed pane leaves the list and therefore the badge on the next projection.
 
-The badge is drawn while the row's descendants are folded away and leaves when they are opened, since the opened rows carry their own marks; a raised row in Needs You or Done never unfolds and always wears it.
+The badge is drawn while the row's descendants are folded away and leaves when they are opened, since the opened rows carry their own marks; a raised row in Needs You never unfolds and always wears it.
 Descendants are folded by default: `expanded_agent_pane_ids` in the persisted UI state names the panes the operator opened, it lives as long as the pane id does, and an older store's collapsed set is ignored rather than migrated, so the first launch after the change starts every parent folded.
 The web shell folds a parent by this one set wherever it draws the parent, in Agents and under its checkout in Projects.
 The badge counts only live descendants in the parent's checkout, while one summary line per other checkout keeps that work visible under the folded root and the child is still drawn as a root in the checkout where it runs.
@@ -154,7 +154,7 @@ Regression owners: `the_descendant_badge_sums_every_live_descendant_and_skips_re
 
 Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
 The label plugin's `sort_rank` token is not read.
-The Projects view raises Needs You and Done above the project tree.
+The Projects view raises Needs You above the project tree; Done and the other groups are the Agents tab's.
 Raised agents also remain in their checkout tree, so a Workspace summary always has agent rows to reveal and an attention transition never leaves a child without its parent.
 Both appearances share one direct-select shortcut, assigned to the first visible occurrence.
 Collapsing a parent hides descendants in the tree while raised attention rows remain reachable.
@@ -246,7 +246,7 @@ Select an agent to focus its pane; expanding or collapsing a populated Workspace
 Collapsing does not change the selected pane, tab, agent read state, running processes, or aggregated status.
 `collapsed_checkout_ids` persists across launches.
 The web shell starts every checkout closed instead and keeps the ones the operator opened in `expanded_checkout_ids`; a `ui_state_update` without that set leaves it unchanged, and the legacy `collapsed_checkout_ids` field a client could send instead is kept in the schema but ignored by the web shell.
-Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
+Raised Needs You rows remain available, while number shortcuts skip hidden tree rows.
 In the web shell the fold controls of a project, a checkout and a parent agent all sit on the right of their row in slots kept at rest; a folded control is always shown and an unfolded one appears under the pointer, with focus inside the row, while the row's menu is open, or on an input with no hover.
 The body of each row navigates (a project to its Overview, a checkout to its Workspace, an agent to its pane); a project or checkout row also unfolds its children, or folds them when its scope is already in front and unfolded, and a fold control never navigates: folding from a chevron changes no screen, pane, tab, read state, group or process.
 

@@ -21,10 +21,12 @@ export type SceneParams = {
   /** The interface text scale the Appearance font size sets (`--interface-scale`); the sidebar itself does not follow it (PRD sidebar-typography D-05). */
   scale: number;
   content: SceneContent;
-  /** One device (no rail) or the two-device fixture with the rail. */
+  /** One device, the two-device fixture, or that fixture with a busy `mini`; the rail shows in all three. */
   devices: SceneDevices;
   /** What is in front once the scene opens; a rail tile changes it. */
   front: SceneFront;
+  /** `hidden` seeds the core's `ui_state.device_rail_visible` as false: the name on the top line is the device menu. */
+  rail: "shown" | "hidden";
 };
 
 export function sceneParams(params: URLSearchParams): SceneParams {
@@ -35,14 +37,16 @@ export function sceneParams(params: URLSearchParams): SceneParams {
   if (!(scale > 0)) throw new Error(`Scene scale must be a positive number, got ${params.get("scale")}`);
   if (content !== "reference" && content !== "long") throw new Error(`Unknown scene content ${content}`);
   const devices = params.get("devices") ?? "one";
-  if (devices !== "one" && devices !== "two") throw new Error(`Unknown scene devices ${devices}`);
+  if (devices !== "one" && devices !== "two" && devices !== "busy") throw new Error(`Unknown scene devices ${devices}`);
   const front = params.get("front") ?? "local";
-  if (front !== "local" && front !== "mini" && front !== "offline" && front !== "inbox") throw new Error(`Unknown scene front ${front}`);
+  if (front !== "local" && front !== "mini" && front !== "offline") throw new Error(`Unknown scene front ${front}`);
   if (devices === "one" && front !== "local") throw new Error(`Scene front ${front} needs devices=two`);
-  return { theme: params.get("theme") === "light" ? "light" : "dark", width: width === null ? null : Number(width), scale, content, devices, front };
+  const rail = params.get("rail") ?? "shown";
+  if (rail !== "shown" && rail !== "hidden") throw new Error(`Unknown scene rail ${rail}`);
+  return { theme: params.get("theme") === "light" ? "light" : "dark", width: width === null ? null : Number(width), scale, content, devices, front, rail };
 }
 
-export function SidebarScene({ theme, width, scale, content, devices, front }: SceneParams) {
+export function SidebarScene({ theme, width, scale, content, devices, front, rail }: SceneParams) {
   const [folds, setFolds] = useState<SceneFolds>({ ...REFERENCE_FOLDS, frontDevice: front === "mini" ? "mini" : front === "offline" ? OFFLINE_DEVICE : "local" });
   const actions = useMemo(
     () =>
@@ -59,12 +63,13 @@ export function SidebarScene({ theme, width, scale, content, devices, front }: S
   // Seed the app's stores before the first paint, and again on every fold.
   const scene = useMemo(() => sidebarScene(content, folds, Date.now(), devices), [content, folds, devices]);
   useLayoutEffect(() => {
-    const rest = width === null ? scene.rest : { ...scene.rest, ui_state: { ...scene.rest.ui_state, sidebar_width: width } };
+    const sized = width === null ? scene.rest : { ...scene.rest, ui_state: { ...scene.rest.ui_state, sidebar_width: width } };
+    const rest = { ...sized, ui_state: { ...sized.ui_state, device_rail_visible: rail === "shown" } };
     useShellStore.setState({ rest, agents: scene.agents, connection: "live" });
-  }, [scene, width]);
+  }, [scene, width, rail]);
 
   useLayoutEffect(() => {
-    useUiStore.setState({ sidebarMode: "projects", inbox: front === "inbox", screen: { kind: "overview", projectId: "herdr-ide", lens: entryLens(null, "board") } });
+    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "overview", projectId: "herdr-ide", lens: entryLens(null, "board") } });
   }, [front]);
 
   useLayoutEffect(() => {
@@ -77,7 +82,7 @@ export function SidebarScene({ theme, width, scale, content, devices, front }: S
 
   return (
     <TooltipProvider>
-      <div className="flex h-full bg-background text-foreground" data-gallery-scene="projects-sidebar" data-scene-content={content} data-scene-devices={devices} data-scene-front={front}>
+      <div className="flex h-full bg-background text-foreground" data-gallery-scene="projects-sidebar" data-scene-content={content} data-scene-devices={devices} data-scene-front={front} data-scene-rail={rail}>
         <Sidebar actions={actions} />
       </div>
     </TooltipProvider>

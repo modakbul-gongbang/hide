@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentPlaces, agentSections, allAgents, allProjectsCount, boardProjects, mainSections } from "./navigation";
+import { agentPlaces, agentSections, allAgents, allProjectsCount, boardProjects, deviceListedAgents, mainSections } from "./navigation";
 import { projectRows } from "./projects";
 import { contextAllWorkspaces, contextHome, contextWorkspaces, projectsOf } from "./remote";
 import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
@@ -88,24 +88,22 @@ describe("the device's Home is no project (PRD home-device-rail D-13, B16)", () 
   });
 });
 
-describe("the Inbox lists every connected device's agents by status (B4)", () => {
-  it("groups Needs You, Done, Working, Seen across devices and chips only a remote row", () => {
-    const local = [agent("l1", "working"), agent("l2", "needs_you")];
-    const listed = allAgents(REST.status!.remote, REST.navigator!.devices, local);
-    const sections = agentSections(listed.map((row) => row.agent));
-    expect(sections.map((section) => [section.group, section.agents.map((row) => row.pane_id)])).toEqual([
-      ["needs_you", ["l2", "remote:mini:p1"]],
+describe("a device's Agents tab lists only that device's agents by status (quick device-rail-badges B3)", () => {
+  const local = [agent("l1", "working"), agent("l2", "needs_you")];
+
+  it("groups Needs You, Done, Working, Seen for the device in front and names no other device's agent", () => {
+    const here = deviceListedAgents(REST.status!.remote, REST.navigator!.devices, local, "local");
+    expect(agentSections(here.map((row) => row.agent)).map((section) => [section.group, section.agents.map((row) => row.pane_id)])).toEqual([
+      ["needs_you", ["l2"]],
       ["working", ["l1"]],
     ]);
-    expect(listed.map((row) => [row.agent.pane_id, row.device])).toEqual([
-      ["l1", null],
-      ["l2", null],
-      ["remote:mini:p1", "mini"],
-    ]);
+    const there = deviceListedAgents(REST.status!.remote, REST.navigator!.devices, local, "mini");
+    expect(there.map((row) => [row.agent.pane_id, row.device])).toEqual([["remote:mini:p1", "mini"]]);
   });
 
   it("leaves out a device that is not connected", () => {
     const down = [{ target_id: "mini", state: "stale", session: { agents: [agent("x", "needs_you")], workspaces: [] } }] as unknown as NonNullable<SnapshotRest["status"]>["remote"];
+    expect(deviceListedAgents(down, REST.navigator!.devices, [], "mini")).toEqual([]);
     expect(allAgents(down, REST.navigator!.devices, [])).toEqual([]);
   });
 });

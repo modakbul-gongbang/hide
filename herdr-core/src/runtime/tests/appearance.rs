@@ -149,6 +149,34 @@ fn ui_state_update(runtime: &Runtime, patch: serde_json::Value) -> Vec<u8> {
     .expect("ui state event")
 }
 
+/// A hidden device rail survives a restart, an unrelated UI save that leaves the
+/// field out keeps it, and a store from before the toggle shows the rail.
+#[test]
+fn a_hidden_device_rail_survives_a_restart() {
+    let path = state_path("device-rail");
+    let mut runtime = runtime_at(&path);
+    assert!(runtime.snapshot().ui_state.device_rail_visible);
+    let event = ui_state_update(&runtime, serde_json::json!({"device_rail_visible": false}));
+    assert!(runtime.dispatch_json(&event));
+    assert!(!runtime.snapshot().ui_state.device_rail_visible);
+    let mut unrelated: serde_json::Value = serde_json::from_slice(&ui_state_update(
+        &runtime,
+        serde_json::json!({"left_sidebar_visible": false}),
+    ))
+    .unwrap();
+    unrelated["payload"]
+        .as_object_mut()
+        .unwrap()
+        .remove("device_rail_visible");
+    assert!(runtime.dispatch_json(&serde_json::to_vec(&unrelated).unwrap()));
+    assert!(
+        !runtime.snapshot().ui_state.device_rail_visible,
+        "an event that omits the field keeps the rail hidden"
+    );
+    drop(runtime);
+    assert!(!runtime_at(&path).snapshot().ui_state.device_rail_visible);
+}
+
 /// PRD sidebar-typography B11: a dragged width survives a restart, and a store
 /// from before the drag opens at the default.
 #[test]

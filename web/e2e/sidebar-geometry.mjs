@@ -170,7 +170,7 @@ export async function sidebarColumns(page) {
 }
 
 /**
- * The sidebar at a given width, and whether anything in it overflows
+ * The sidebar at a given total width (the content column plus the device rail), and whether anything in it overflows
  * sideways: the list scrolling horizontally, or a row's time or control
  * running past the row's right edge (PRD sidebar-readability B25).
  */
