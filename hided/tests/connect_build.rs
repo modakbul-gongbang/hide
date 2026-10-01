@@ -76,6 +76,22 @@ fn other_build(dir: &Path) -> PathBuf {
     cli
 }
 
+/// Stops whatever daemon the state folder names when the test ends, also
+/// after a failed assertion.
+struct StopOnDrop<'a> {
+    cli: &'a Path,
+    home: &'a Path,
+    state: &'a Path,
+}
+
+impl Drop for StopOnDrop<'_> {
+    fn drop(&mut self) {
+        let _ = isolated(self.cli, self.home, self.state)
+            .arg("stop")
+            .status();
+    }
+}
+
 #[test]
 fn connect_replaces_a_daemon_of_another_build_and_keeps_one_of_its_own() {
     let dir = tempfile::tempdir().unwrap();
@@ -83,6 +99,11 @@ fn connect_replaces_a_daemon_of_another_build_and_keeps_one_of_its_own() {
     let state = dir.path().join("state");
     std::fs::create_dir_all(&home).unwrap();
     let cargo_cli = Path::new(env!("CARGO_BIN_EXE_hided")).with_file_name("hide");
+    let _stop = StopOnDrop {
+        cli: &cargo_cli,
+        home: &home,
+        state: &state,
+    };
 
     let first = connect(&cargo_cli, &home, &state);
     let first_pid = first["pid"].as_i64().unwrap() as i32;
