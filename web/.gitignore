@@ -1,6 +1,7 @@
 node_modules/
 dist/
 test-results/
+test-results-quarantine/
 playwright-report/
 blob-report/
 playwright/.cache/

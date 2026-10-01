@@ -206,10 +206,24 @@ describe("snapshot merge", () => {
       folderChanges: {},
     });
     store.applyFrame({ type: "directory_changed", payload: { path: "/r/src", device_id: "local" } });
-    expect(useShellStore.getState().listings["/r/src"]).toBeDefined();
+    expect(useShellStore.getState().listings["/r/src"]?.stale).toBeUndefined();
     store.applyFrame({ type: "directory_changed", payload: { path: "/r/src", device_id: "mac" } });
-    expect(useShellStore.getState().listings["/r/src"]).toBeUndefined();
+    expect(useShellStore.getState().listings["/r/src"]?.stale).toBe(true);
     expect(useShellStore.getState().folderChanges["/r/src"]).toBe(1);
+  });
+
+  it("keeps a changed folder's rows until its re-read lands", () => {
+    const store = useShellStore.getState();
+    const entry = { name: "a.ts", path: "/r/src/a.ts", is_directory: false };
+    useShellStore.setState({
+      rest: { navigator: { focused_device_id: "local" } } as never,
+      listings: { "/r/src": { kind: "file_list", root_path: "/r/src", entries: [entry], truncated: false } as never },
+      folderChanges: {},
+    });
+    store.applyFrame({ type: "directory_changed", payload: { path: "/r/src" } });
+    expect(useShellStore.getState().listings["/r/src"]).toMatchObject({ entries: [entry], stale: true });
+    store.applyFrame({ type: "directory_list", payload: { kind: "file_list", root_path: "/r/src", entries: [], truncated: false } });
+    expect(useShellStore.getState().listings["/r/src"]).toEqual({ kind: "file_list", root_path: "/r/src", entries: [], truncated: false });
   });
 
   it("keeps the newest LISTING_CAP folders and drops the oldest", () => {
