@@ -139,7 +139,7 @@ export type FlowOptions = {
  * dashes keeps the whole frame pipeline running at the display's rate
  * whatever the dashes' own speed: measured natively with six lines it cost
  * about a tenth of a core, and still three percent when stepped in CSS,
- * where four timer steps a second cost a twentieth of that. No timer runs
+ * where three timer steps a second cost a fortieth of that. No timer runs
  * while no line is working or the system asks for less motion.
  */
 export class Flow {

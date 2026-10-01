@@ -1068,11 +1068,11 @@
     },
     "--graph-flow-step-ms": {
       "type": "number",
-      "value": 250
+      "value": 333
     },
     "--graph-flow-steps": {
       "type": "number",
-      "value": 4
+      "value": 3
     },
     "--graph-edge-flow-width": {
       "type": "number",

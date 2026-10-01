@@ -123,8 +123,8 @@
   --graph-search-width: 176px;
   --graph-flow-dash: 6px;
   --graph-flow-gap: 12px;
-  --graph-flow-step-ms: 250;
-  --graph-flow-steps: 4;
+  --graph-flow-step-ms: 333;
+  --graph-flow-steps: 3;
   --graph-edge-flow-width: 2px;
   --graph-motion-ms: 320;
   --issue-panel-min-width: 360px;
