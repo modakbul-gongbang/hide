@@ -1,0 +1,32 @@
+[package]
+name = "hide-platform"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The operating-system layer under every other crate: what differs between
+# macOS, Linux and Windows is written here once and checked by the contract
+# tests in `tests/` on all three. The crate has no hide dependencies and no
+# state, so those tests build in seconds on a runner that has no workspace.
+
+[dependencies]
+interprocess = "=2.4.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+widestring = "=1.2.1"
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
