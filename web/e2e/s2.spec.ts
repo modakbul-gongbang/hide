@@ -109,11 +109,14 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await firstRow.click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
+    // The fixture's first tab runs two Claude agents; the one focused is the agent pane the keyboard was last in.
+    const lastAgentPane = (await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view"))!;
 
     // Tab switch: the previous tab's instances are gone, the new one's mounted.
     await page.locator(`[data-tab="${tabs[1]}"]`).click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);
     await expect(page.locator("[data-pane-view]")).toHaveCount(1);
+    const secondTabShell = (await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!;
     await expect.poll(() => sent.get("agent_layout.focus")).toBe(1);
     await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
 
@@ -128,15 +131,18 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await expect(page.locator("[role=tab][aria-selected=true]")).toHaveAttribute("data-tab", labelled()!);
     await expect.poll(() => sent.get("create_tab")).toBe(1);
 
-    // ⌥` walks the focused Agent area's recent tabs: the previous tab (the second one) is the first candidate.
-    const panelFocusEvents = sent.get("focus_tab") ?? 0;
+    // ⌥` in the Agent area walks the recent agent panes. The new tab and the
+    // second one run plain shells, so the first candidate is the agent pane
+    // left in the first tab.
+    const paneFocusEvents = sent.get("focus_pane") ?? 0;
     await page.keyboard.down("Alt");
     await page.keyboard.press("Backquote");
-    await expect(page.locator("[data-cycle=area] [aria-selected=true]")).toHaveAttribute("data-cycle-row", tabs[1]);
+    await expect(page.locator("[data-cycle=agents] [aria-selected=true]")).toHaveAttribute("data-cycle-row", lastAgentPane);
+    await expect(page.locator(`[data-cycle=agents] [data-cycle-row="${secondTabShell}"]`)).toHaveCount(0);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
-    await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);
-    await expect.poll(() => sent.get("focus_tab")).toBe(panelFocusEvents + 1);
+    await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
+    await expect.poll(() => sent.get("focus_pane")).toBe(paneFocusEvents + 1);
 
     // Back on the split tab: ⌘D splits the focused pane (second split), ⌘⌥↩ zooms it.
     await page.locator(`[data-tab="${herdr.tab}"]`).click();

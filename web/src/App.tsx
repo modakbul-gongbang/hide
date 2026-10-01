@@ -13,7 +13,7 @@ import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar }
 import { Palette } from "./Palette";
 import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
-import { expectSurface, focusSignature } from "./recent";
+import { expectPane, expectSurface, focusSignature } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
 import { StartPanelHost } from "./StartPanel";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
@@ -77,6 +77,7 @@ export function App() {
       if (event.defaultPrevented) return;
       if (event instanceof KeyboardEvent && ["Control", "Alt", "Shift", "Meta"].includes(event.key)) return;
       expectSurface(null);
+      expectPane(null);
     };
     window.addEventListener("focusin", observeFocus);
     window.addEventListener("pointerdown", endCommit, true);
@@ -120,8 +121,11 @@ export function App() {
         else if (previouslyWaiting > 0 && useUiStore.getState().notice?.text === agentCapacityNotice(previouslyWaiting)) useUiStore.getState().setNotice(null);
       }
       // A refused commit brings nothing forward, so the next surface in use is a visit again.
-      if (fresh) expectSurface(null);
-      if (state.rest?.navigator === previous.rest?.navigator && state.rest?.workspace_view === previous.rest?.workspace_view) return;
+      if (fresh) {
+        expectSurface(null);
+        expectPane(null);
+      }
+      if (state.rest?.navigator === previous.rest?.navigator && state.rest?.workspace_view === previous.rest?.workspace_view && state.rest?.focused === previous.rest?.focused) return;
       observeRecent(state.rest, focusSignature(state.rest) !== focusSignature(previous.rest));
       const cycle = useUiStore.getState().cycle;
       if (cycle) useUiStore.getState().setCycle(reconcileHeldCycle(cycle, state.rest));

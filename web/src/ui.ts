@@ -154,9 +154,14 @@ export type WorkspaceDialog =
   | { kind: "disk_cleanup"; workspaceId: string; filter: DiskFilter }
   | { kind: "remove_project"; workspaceId: string };
 
-/** A held-modifier cycle over Recent Panels or Recent Projects; committed when the modifier is released. */
+/**
+ * A held switcher. `area` is a View area's tabs and `agents` the Agent area's
+ * panes; both compare the highlight with `originKey`, while Recent Panels and
+ * Recent Projects start on the row in use. An `agents` cycle with no pane in
+ * use starts at -1, before its first row.
+ */
 export type Cycle = {
-  kind: "panels" | "projects" | "area";
+  kind: "panels" | "projects" | "area" | "agents";
   scope?: import("./areaCycle").CycleScope;
   originKey?: string;
   items: CycleItem[];
