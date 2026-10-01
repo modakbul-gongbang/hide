@@ -320,9 +320,17 @@ Crossing a cap is an actionable state rather than an enlarged queue or automatic
 
 The web shell's Project Sessions (PRD S8) adds no work until a Project is named: the `project_sessions` delta section is one absent check per publication.
 Naming a Project, arriving at its screen, reconnecting or pressing Retry is one bounded catalog read on a worker; a request that arrives during a read coalesces into one more read, so pending work is at most one read, and opening a session is one bounded detail read the same way.
-While a Project is named, each publication compares the section by value under the lock, O(rows) with the open transcript behind a shared pointer compared in O(1), and resends it only when it changed; a re-read that finds the same conversation keeps that pointer, and the worker, not the lock, compares the two.
+While a Project is named, immutable rows and the open transcript are shared pointers with O(1) unchanged comparisons and capture under the lock; the history is resent only when it changed; a re-read that finds the same conversation keeps that pointer, and the worker, not the lock, compares the two.
 The core keeps each Project's last rows so a session whose file went away stays listed, and hands them to the next read's worker by pointer; the worker checks the file of each row the catalog no longer lists, so the lock does no file I/O, and what is kept grows only with the sessions deleted while the daemon runs.
-Provider filtering and search run in the page over the retained rows and send nothing.
+Metadata filtering stays local; debounced body queries and provider changes send one scoped event to the owned search worker.
+Progress/result transitions use the independent `session_search` section, so indexing never resends the full history, editor or navigator merely to change a counter.
+Each source operation combines at most 1 MiB of transcript and hash reads, staging oversized structural parsing, newly consumed prefix hashes and append validation across durable turns.
+An unchanged completed source stamp reads zero transcript bytes and performs no hash or SQLite write.
+A worker turn handles at most eight chunks and yields between chunks after 20 ms, with SQLite progress deadlines of 500 ms for mutations and 150 ms for retrieval.
+The 30-second refresh interval starts after a completed pass, and unchanged answer snapshots publish no notification.
+Measure backfill, unchanged and append workloads separately: actual source bytes per operation and total, query latency, notification count/WS payload sizes, idle and driven CPU/RSS, and terminal input-to-write timing.
+Include a 2,000-row named history while indexing and a broad query with hundreds of matches in one session; a progress deadline alone proves neither end-to-end latency nor responsiveness.
+Regression owners additionally include `hide-session/tests/search.rs`, `runtime::tests::session_search`, `runtime::tests::snapshot_delta`, `web/src/store.test.ts`, and the server/session browser and native E2E flows.
 Neither read schedules Memory work or touches the due-work poll.
 Regression owners are `runtime::tests::project_sessions`, `web/src/sessions.test.ts` and `web/e2e/s8.spec.ts`.
 

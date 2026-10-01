@@ -304,7 +304,7 @@ fn context_payload() -> SessionSnapshotPayload {
     })).unwrap()
 }
 
-fn runtime() -> Runtime {
+pub(super) fn runtime() -> Runtime {
     let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
@@ -482,6 +482,7 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
         activity_at_unix_ms: None,
         fork: PaneForkSnapshot::default(),
         ports: Vec::new(),
+        servers: Vec::new(),
         children: None,
         lineage_path: Vec::new(),
         sleep: None,

@@ -27,6 +27,8 @@ pub(super) struct DeltaState {
     editor_revision: u64,
     changes_revision: u64,
     project_sessions_revision: u64,
+    session_search_revision: u64,
+    last_session_search: Option<Arc<crate::model::SessionSearchSnapshot>>,
     /// Reference-counted so a delta can carry the section out of the lock
     /// without copying it. The runtime never mutates one in place: a changed
     /// section becomes a new `Arc`, which leaves any payload already handed
@@ -112,6 +114,13 @@ impl Runtime {
             self.delta.project_sessions_revision = self.delta.revision;
             self.delta.last_project_sessions = Some(Arc::new(project_sessions.clone()));
         }
+        if let Some(search) = &self.snapshot.session_search
+            && self.delta.last_session_search.as_deref() != Some(search)
+        {
+            self.delta.revision += 1;
+            self.delta.session_search_revision = self.delta.revision;
+            self.delta.last_session_search = Some(Arc::new(search.clone()));
+        }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
         let have_revision = if have_revision > self.delta.revision {
@@ -177,6 +186,12 @@ impl Runtime {
                 .last_project_sessions
                 .as_ref()
                 .filter(|_| self.delta.project_sessions_revision > have_revision)
+                .map(Arc::clone),
+            session_search: self
+                .delta
+                .last_session_search
+                .as_ref()
+                .filter(|_| self.delta.session_search_revision > have_revision)
                 .map(Arc::clone),
             find: self.snapshot.find.clone(),
             input_generation: self.snapshot.input_generation,

@@ -6,13 +6,36 @@
     "scene": "projects-sidebar",
     "selector": "nav[data-sidebar]",
     "frames": [
-      {"node": "psb-sidebar-l", "theme": "light", "width": 292, "scale": 1, "content": "reference", "state": "rest"},
-      {"node": "psb-sidebar-d", "theme": "dark", "width": 292, "scale": 1, "content": "reference", "state": "rest"}
+      {
+        "node": "psb-sidebar-l",
+        "theme": "light",
+        "width": 292,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "psb-sidebar-d",
+        "theme": "dark",
+        "width": 292,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
     ],
     "conditions": {
-      "themes": ["light", "dark"],
-      "widths": [292, 240],
-      "contents": ["reference", "long"]
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        292,
+        240
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ]
     },
     "states": {
       "rest": "No pointer on the list and no keyboard focus.",
@@ -35,6 +58,114 @@
       "Every difference visible between Pen and the actual screen: acceptable renderer difference, or drift to fix in Pen or code?",
       "Long Korean titles at the narrow width: is what the truncation keeps still recognizable?",
       "Hover and focus captures: is the feedback visible enough without moving anything?"
+    ]
+  },
+  "workspace-servers": {
+    "description": "Globe remains reachable with the panel open; picker shows distinct reachable IPv4/IPv6 endpoints without a redundant footer.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-workspace",
+    "scene": "workspace-servers",
+    "selector": "[data-gallery-scene=\"workspace-servers\"]",
+    "frames": [
+      {
+        "node": "ws-wrap-lc",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "server-picker",
+        "referenceNode": "aOb4w"
+      },
+      {
+        "node": "ws-wrap-dc",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "server-picker",
+        "referenceNode": "g1JuxO"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1440
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ],
+      "scales": [
+        1
+      ]
+    },
+    "states": {
+      "rest": "Initial screen.",
+      "server-picker": "Globe remains reachable with the panel open; picker shows distinct reachable IPv4/IPv6 endpoints without a redundant footer."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Globe remains reachable with the panel open; picker shows distinct reachable IPv4/IPv6 endpoints without a redundant footer."
+    ]
+  },
+  "session-search": {
+    "description": "Korean snippet, role/time and selected message are legible; copied-history controls fit the existing list without hiding metadata fallback.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-sessions",
+    "scene": "session-search",
+    "selector": "[data-gallery-scene=\"session-search\"]",
+    "frames": [
+      {
+        "node": "ss-wrap-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "content-match",
+        "referenceNode": "earbj"
+      },
+      {
+        "node": "ss-wrap-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "content-match",
+        "referenceNode": "ISulC"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1440
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ],
+      "scales": [
+        1
+      ]
+    },
+    "states": {
+      "rest": "Initial screen.",
+      "content-match": "Korean snippet, role/time and selected message are legible; copied-history controls fit the existing list without hiding metadata fallback."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Korean snippet, role/time and selected message are legible; copied-history controls fit the existing list without hiding metadata fallback."
     ]
   }
 }
