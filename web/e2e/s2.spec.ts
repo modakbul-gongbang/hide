@@ -30,6 +30,19 @@ async function settledFocus(page: Page, paneId: string): Promise<void> {
   }
 }
 
+/**
+ * Copies what the focused pane has selected, the way the system's copy chord
+ * does. Playwright binds its editing commands, copy among them, to the host
+ * system's chord: ⌘C on macOS, which is what the app's users press. Elsewhere
+ * that press is not a copy and Ctrl+C reaches the terminal as an interrupt, so
+ * the browser's own copy command runs instead; both raise the same `copy`
+ * event the pane's handler answers.
+ */
+async function copy(page: Page): Promise<void> {
+  if (process.platform === "darwin") await page.keyboard.press("Meta+KeyC");
+  else await page.evaluate(() => document.execCommand("copy"));
+}
+
 async function screen(page: Page): Promise<string> {
   return page.evaluate(() => window.__hideProbe?.screenText() ?? "");
 }
@@ -252,7 +265,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, shellPaneId)).toBe(`${wrapped}\nshort\n`);
     expect(sent.get("terminal_click") ?? 0).toBe(clicksBeforeDrag);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.keyboard.press("Meta+KeyC");
+    await copy(page);
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${wrapped}\nshort\n`);
     // Lines that share a margin lose it and keep their relative indentation.
     const indentFrom = shellCell(shellGrid.cols - 2, 5);
@@ -262,7 +275,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await page.mouse.move(indentTo.x - shellScreen.width / shellGrid.cols, indentTo.y, { steps: 8 });
     await page.mouse.up();
     await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, shellPaneId)).toBe("in\n  deeper");
-    await page.keyboard.press("Meta+KeyC");
+    await copy(page);
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("in\n  deeper");
 
     // Of three panes, the one holding the keyboard is outlined, and only it.
