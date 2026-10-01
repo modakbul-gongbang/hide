@@ -5,6 +5,9 @@
 
 import type { AgentRow, GithubSearchResult, SnapshotRest } from "../snapshot";
 
+/** The scene is drawn live, so its last GitHub read is a few minutes before it opens. */
+const READ_AT = Date.now() - 4 * 60_000;
+
 const agent = (pane: string, label: string, extra: Partial<AgentRow> = {}): AgentRow =>
   ({ id: `a-${pane}`, pane_id: pane, identity_label: label, agent_kind: "claude", symbol: "●", group: "working", status_label: "Working", elapsed: "1m", emphasized: false, unread: false, activity: "working", ...extra }) as AgentRow;
 
@@ -33,14 +36,14 @@ export const RICH = {
         pinned: false,
         is_git: true,
         tasks: {
-          source: { kind: "github", label: "GitHub", name: "acme/herdr-ide", reading: false, failure: null, last_read_at_unix_ms: 1_000_000 },
+          source: { kind: "github", label: "GitHub", name: "acme/herdr-ide", reading: false, failure: null, last_read_at_unix_ms: READ_AT },
           tasks: [{ key: "github:acme/herdr-ide#273", source: "github", id: "#273", url: "https://github.com/acme/herdr-ide/issues/273", title: "hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김", open: true }],
           overflow: false,
         },
         pull_requests: [PR_275, PR_260],
         inactive_checkouts: { expanded: false, checkout_ids: [] },
         checkouts: [
-          { id: "c-main", workspace_id: "w1", label: "main", path: "/repo", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [tab("c-main", ["p-parent", "p-dag"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2", github: { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: 1_000_000, unavailable_reason: null } },
+          { id: "c-main", workspace_id: "w1", label: "main", path: "/repo", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [tab("c-main", ["p-parent", "p-dag"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2", github: { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: READ_AT, unavailable_reason: null } },
           { id: "c-sand", workspace_id: "w1", label: "hcoord-sandbox-letters", path: "/repo.worktrees/sand", branch: "fix/hcoord-sandbox-letters", purpose: null, is_worktree: true, exists: true, has_panes: true, pull_request: PR_275, task_key: "github:acme/herdr-ide#273", closes_task_keys: ["github:acme/herdr-ide#273"], changed_file_count: 14, ahead: 1, tabs: [tab("c-sand", ["p-child"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2" },
         ],
       },

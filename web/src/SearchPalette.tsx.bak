@@ -1,6 +1,6 @@
 import { CircleDotIcon, FolderIcon, GitBranchIcon, GitPullRequestIcon, LoaderCircleIcon, SearchIcon, ServerIcon, TriangleAlertIcon, ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { DeviceChip } from "./components/device-chip";
@@ -54,7 +54,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
   const [highlighted, setHighlighted] = useState("");
   const [asked, setAsked] = useState<{ requestId: string; query: string } | null>(null);
   const [width, setWidth] = useState<number | null>(null);
-  const [box, setBox] = useState<HTMLDivElement | null>(null);
+  const box = useRef<HTMLDivElement>(null);
   // What was in front when ⌘K opened, read once: the page's own screen, whether the keyboard was in an agent, and the front checkout.
   const [front] = useState(() => {
     const ui = useUiStore.getState();
@@ -75,15 +75,14 @@ export function SearchPalette({ actions }: { actions: Actions }) {
     actions.readProjectTasks(workspace.id);
   }, [actions, front]);
 
-  // The dialog's content mounts after this component does, so the box is found when it appears, not on mount.
   useLayoutEffect(() => {
-    if (!box) return undefined;
-    setWidth(box.getBoundingClientRect().width);
-    if (typeof ResizeObserver === "undefined") return undefined;
+    const element = box.current;
+    if (!element || typeof ResizeObserver === "undefined") return undefined;
     const observer = new ResizeObserver(([entry]) => setWidth(entry ? entry.contentRect.width : null));
-    observer.observe(box);
+    observer.observe(element);
+    setWidth(element.getBoundingClientRect().width);
     return () => observer.disconnect();
-  }, [box]);
+  }, []);
 
   const entries = useMemo(() => searchEntries(rest), [rest]);
   const related = useMemo<Relations | null>(() => (front.target ? relationsOf(rest, front.target, true) : null), [rest, front]);
@@ -165,7 +164,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
         if (!open) close();
       }}
     >
-      <div ref={setBox} className="flex min-w-0 flex-col" data-cmdk={collapsed ? "collapsed" : "open"}>
+      <div ref={box} className="flex min-w-0 flex-col" data-cmdk={collapsed ? "collapsed" : "open"}>
         <Command shouldFilter={false} label="Search" data-palette="Search" value={selected} onValueChange={setHighlighted}>
           <CommandInput
             value={query}
