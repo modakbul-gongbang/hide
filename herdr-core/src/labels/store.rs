@@ -73,6 +73,19 @@ pub(crate) struct PaneRecord {
     pub(crate) agent_status: Option<String>,
 }
 
+/// Whether `reference` names the session a label was made for: its owner,
+/// or a path reference a read has shown to be that owner.
+pub(crate) fn proves(
+    owner: Option<&str>,
+    proven_reference: Option<&str>,
+    reference: Option<&str>,
+) -> bool {
+    let (Some(reference), Some(owner)) = (reference, owner) else {
+        return false;
+    };
+    owner == reference || proven_reference == Some(reference)
+}
+
 impl PaneRecord {
     pub(crate) fn first_seen(state_change_seq: u64, now_unix_ms: u64) -> Self {
         Self {
@@ -86,10 +99,11 @@ impl PaneRecord {
     /// current reference nothing is shown, and the proof is kept for when
     /// the same reference returns (session-label-isolation B9).
     pub(crate) fn proven_for(&self, reference: Option<&str>) -> bool {
-        let (Some(reference), Some(owner)) = (reference, self.owner.as_deref()) else {
-            return false;
-        };
-        owner == reference || self.proven_reference.as_deref() == Some(reference)
+        proves(
+            self.owner.as_deref(),
+            self.proven_reference.as_deref(),
+            reference,
+        )
     }
 
     /// A new session in the pane: nothing the old one said or decided stays.

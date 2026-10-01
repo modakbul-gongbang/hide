@@ -28,6 +28,8 @@ mod editor_reopen;
 mod home;
 #[path = "tests/issues.rs"]
 mod issues;
+#[path = "tests/labels.rs"]
+mod labels;
 #[path = "tests/lineage.rs"]
 mod lineage;
 #[path = "tests/memory.rs"]

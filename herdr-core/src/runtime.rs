@@ -1231,6 +1231,9 @@ pub struct Runtime {
     /// Whether a window draws the snapshot (`ui_attached`); a core no daemon
     /// told otherwise is drawn.
     ui_attached: bool,
+    /// The last labels the local session-sync coordinator published, laid on
+    /// every local projection this runtime ingests, whichever path brings it.
+    label_overlay: crate::labels::overlay::LabelOverlay,
     /// The label store and analyzer every session-sync coordinator's worker
     /// shares; `None` when the core was made without them (tests).
     label_services: Option<std::sync::Arc<crate::labels::LabelServices>>,
@@ -1631,6 +1634,7 @@ impl Runtime {
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
             ui_attached: true,
+            label_overlay: Default::default(),
             label_services: None,
             issue_tokens: Default::default(),
             issue_candidates: Default::default(),

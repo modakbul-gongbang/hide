@@ -757,11 +757,14 @@ fn publish_replica(
     labels: &mut Option<LabelWorker>,
 ) -> bool {
     let mut payload = replica.project();
-    if let Some(worker) = labels.as_mut() {
+    let overlay = labels.as_mut().map(|worker| {
         observe_labels(worker, replica);
-        worker.apply(&mut payload);
-    }
+        worker.overlay()
+    });
     if let SessionSyncTarget::Remote { target_id, .. } = &context.target {
+        if let Some(overlay) = &overlay {
+            overlay.apply(&mut payload);
+        }
         let projection = replica.project_remote(target_id, payload);
         let (fetched, excluded) = match projection {
             Ok((session, excluded)) => (Ok(session), excluded),
@@ -843,7 +846,12 @@ fn publish_replica(
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_session_with_catalog(Ok(payload), Some(precomputed)),
+        Ok(mut guard) => {
+            if let Some(overlay) = overlay {
+                guard.set_label_overlay(overlay);
+            }
+            guard.ingest_session_with_catalog(Ok(payload), Some(precomputed))
+        }
         Err(_) => return false,
     };
     drop(runtime);

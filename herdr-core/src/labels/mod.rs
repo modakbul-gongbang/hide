@@ -13,6 +13,7 @@ pub(crate) mod analyzer;
 mod context_label;
 pub(crate) mod generator;
 mod import;
+pub(crate) mod overlay;
 pub(crate) mod store;
 pub(crate) mod worker;
 

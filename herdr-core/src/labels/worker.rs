@@ -5,9 +5,9 @@
 //! state it already follows (`observe`), from its tick (`tick`) and from the
 //! worker's own wake (`drain`). Nothing here runs under the runtime mutex:
 //! conversation reads run on the worker's reader thread, analyses on the
-//! core's one analyzer, and the coordinator lays the result onto the
-//! session payload just before it hands the payload to the runtime
-//! (`apply`).
+//! core's one analyzer, and the coordinator hands the runtime an overlay of
+//! the result with each publish (`overlay`), which the runtime lays on every
+//! projection it ingests.
 //!
 //! A read happens only when a pane's state, status or session reference
 //! moved, when a read left a backlog, when a provider wait ran out, or once
@@ -38,8 +38,8 @@ use super::analysis::{
 use super::analyzer::{AnalysisJob, AnalysisResult, LabelAnalyzer};
 use super::context_label;
 use super::generator::GeneratorLock;
+use super::overlay::LabelOverlay;
 use super::store::{LabelStore, PaneRecord};
-use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 
 /// How long after a turn starts a pane whose prompt was not in the
 /// transcript yet is read once more.
@@ -400,41 +400,9 @@ impl LabelWorker {
         changed
     }
 
-    /// Lays each agent's label and state-change time onto the payload the
-    /// runtime projects. A label goes only onto a row whose current session
-    /// reference proves it; a daemon that is not this server's generator
-    /// shows none (D-10).
-    pub(crate) fn apply(&self, payload: &mut SessionSnapshotPayload) {
-        let held = self.generator.held();
-        for agent in &mut payload.agents {
-            let Some(pane_id) = agent.pane_id.as_deref().or(agent.id.as_deref()) else {
-                continue;
-            };
-            let Some(record) = self.records.get(pane_id) else {
-                continue;
-            };
-            agent.changed_at_unix_ms = Some(record.changed_unix_ms);
-            if !held {
-                continue;
-            }
-            let reference = agent.agent_session.as_ref().and_then(|session| {
-                label_reference_token(
-                    agent.agent.as_deref().unwrap_or_default(),
-                    &session.kind,
-                    &session.value,
-                )
-            });
-            if !record.proven_for(reference.as_deref()) {
-                continue;
-            }
-            let non_empty = |value: &str| (!value.trim().is_empty()).then(|| value.to_owned());
-            agent.label = Some(AgentLabel {
-                task: record.task.clone(),
-                progress: non_empty(&record.progress),
-                expected_reply: non_empty(&record.expected_reply),
-                question: record.question && agent.agent_status.as_deref() != Some("working"),
-            });
-        }
+    /// What these labels lay onto a projection; see [`LabelOverlay`].
+    pub(crate) fn overlay(&self) -> LabelOverlay {
+        LabelOverlay::of_records(&self.records, self.generator.held())
     }
 
     /// Nothing is being read or analyzed and nothing waits to be.

@@ -271,7 +271,7 @@ fn shown(worker: &LabelWorker, agent: &ObservedAgent) -> Option<AgentLabel> {
         "agent_session": {"kind": kind, "value": value},
     }]}))
     .unwrap();
-    worker.apply(&mut payload);
+    worker.overlay().apply(&mut payload);
     payload.agents.remove(0).label
 }
 
