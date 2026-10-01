@@ -225,6 +225,21 @@ pub(super) struct InactiveProjectsTogglePayload {
     pub(super) device_id: String,
 }
 
+/// Folds or unfolds a project's checkouts in the Projects list. Absent
+/// `expanded` flips the fold; present, it sets it, so a retry of the same
+/// intent lands on the same state.
+#[derive(Debug, Deserialize)]
+pub(super) struct ProjectCheckoutsFoldPayload {
+    pub(super) workspace_id: String,
+    #[serde(default)]
+    pub(super) expanded: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CheckoutAgentsTogglePayload {
+    pub(super) checkout_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct RemoveWorkspacePayload {
     pub(super) workspace_id: String,
@@ -584,15 +599,12 @@ pub(super) struct UiStateUpdatePayload {
     /// Absent keeps the devices' expansion: an older client does not carry it.
     #[serde(default)]
     pub(super) device_expanded_paths: Option<BTreeMap<String, Vec<String>>>,
-    #[serde(default)]
-    pub(super) collapsed_workspace_ids: Vec<String>,
+    /// The project, checkout and agent-lineage folds are not here: each has
+    /// its own event (`project_checkouts_fold`, `checkout_agents_toggle`,
+    /// `agent_tree_toggle`), because a fold computed from the shell's last
+    /// snapshot and sent as a set loses a toggle the core has not echoed yet.
     #[serde(default)]
     pub(super) collapsed_checkout_ids: Option<Vec<String>>,
-    /// Absent keeps the web's opened checkouts: an older client does not carry them.
-    #[serde(default)]
-    pub(super) expanded_checkout_ids: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) expanded_agent_pane_ids: Option<Vec<String>>,
     pub(super) selected_path: Option<String>,
     pub(super) selected_pane_id: Option<String>,
     #[serde(default)]
@@ -1148,6 +1160,8 @@ pub(super) enum Event {
     FocusDevice(FocusDevicePayload),
     InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
     InactiveProjectsToggle(InactiveProjectsTogglePayload),
+    ProjectCheckoutsFold(ProjectCheckoutsFoldPayload),
+    CheckoutAgentsToggle(CheckoutAgentsTogglePayload),
     WorkspacePinSet(WorkspacePinSetPayload),
     SetPrimaryCheckout(SetPrimaryCheckoutPayload),
     RemoveWorkspace(RemoveWorkspacePayload),
@@ -1336,6 +1350,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         }
         "inactive_projects_toggle" => {
             decode!(InactiveProjectsTogglePayload, InactiveProjectsToggle)
+        }
+        "project_checkouts_fold" => {
+            decode!(ProjectCheckoutsFoldPayload, ProjectCheckoutsFold)
+        }
+        "checkout_agents_toggle" => {
+            decode!(CheckoutAgentsTogglePayload, CheckoutAgentsToggle)
         }
         "set_primary_checkout" => decode!(SetPrimaryCheckoutPayload, SetPrimaryCheckout),
         "workspace_pin_set" => decode!(WorkspacePinSetPayload, WorkspacePinSet),
@@ -2034,6 +2054,36 @@ impl Runtime {
             Event::ReorderTab(payload) => self.reorder_tab(payload),
             Event::FocusDevice(payload) => {
                 self.bring_device_forward(payload.device_id);
+                true
+            }
+            Event::ProjectCheckoutsFold(payload) => {
+                let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
+                let was_expanded = !ids.contains(&payload.workspace_id);
+                let expanded = payload.expanded.unwrap_or(!was_expanded);
+                if expanded == was_expanded {
+                    return false;
+                }
+                ids.retain(|id| id != &payload.workspace_id);
+                if !expanded {
+                    ids.push(payload.workspace_id);
+                    ids.sort();
+                }
+                Self::apply_workspace_expansion(
+                    &mut self.snapshot.navigator.workspaces,
+                    &self.snapshot.ui_state.collapsed_workspace_ids,
+                );
+                self.persist_ui_state();
+                true
+            }
+            Event::CheckoutAgentsToggle(payload) => {
+                let ids = &mut self.snapshot.ui_state.expanded_checkout_ids;
+                if ids.contains(&payload.checkout_id) {
+                    ids.retain(|id| id != &payload.checkout_id);
+                } else {
+                    ids.push(payload.checkout_id);
+                    ids.sort();
+                }
+                self.persist_ui_state();
                 true
             }
             Event::InactiveCheckoutsToggle(payload) => {
@@ -3296,21 +3346,17 @@ impl Runtime {
                     device_expanded_paths: payload
                         .device_expanded_paths
                         .unwrap_or(current.device_expanded_paths),
-                    collapsed_workspace_ids: payload.collapsed_workspace_ids,
+                    collapsed_workspace_ids: current.collapsed_workspace_ids,
                     collapsed_checkout_ids: payload
                         .collapsed_checkout_ids
                         .unwrap_or(current.collapsed_checkout_ids),
-                    expanded_checkout_ids: payload
-                        .expanded_checkout_ids
-                        .unwrap_or(current.expanded_checkout_ids),
+                    expanded_checkout_ids: current.expanded_checkout_ids,
                     expanded_inactive_checkout_project_paths: current
                         .expanded_inactive_checkout_project_paths,
                     expanded_inactive_project_device_ids: current
                         .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
-                    expanded_agent_pane_ids: payload
-                        .expanded_agent_pane_ids
-                        .unwrap_or(current.expanded_agent_pane_ids),
+                    expanded_agent_pane_ids: current.expanded_agent_pane_ids,
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
                     shortcut_bindings: if bindings_fit(&payload.shortcut_bindings) {

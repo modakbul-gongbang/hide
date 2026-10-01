@@ -837,7 +837,6 @@ fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
             "kind": "ui_state_update",
             "payload": {
                 "expanded_paths": [],
-                "collapsed_workspace_ids": ["workspace:local"],
                 "collapsed_checkout_ids": [],
                 "selected_path": null,
                 "selected_pane_id": null,
@@ -848,10 +847,6 @@ fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
     );
     {
         let runtime = shared.lock().unwrap();
-        assert_eq!(
-            runtime.snapshot.ui_state.collapsed_workspace_ids,
-            vec!["workspace:local".to_owned()]
-        );
         assert!(!runtime.snapshot.ui_state.right_panel_visible);
         assert_eq!(runtime.snapshot.ui_state.selected_path, None);
         assert!(runtime.snapshot.editor.tabs.is_empty());

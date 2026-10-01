@@ -424,11 +424,11 @@ function toggled(list: string[], id: string): string[] {
  */
 export function applyEvent(folds: SceneFolds, event: { kind: string; payload: Record<string, unknown> }): SceneFolds | null {
   const { kind, payload } = event;
-  if (kind === "ui_state_update") {
-    const next = { ...folds };
-    if (Array.isArray(payload.expanded_checkout_ids)) next.expandedCheckouts = payload.expanded_checkout_ids as string[];
-    if (Array.isArray(payload.collapsed_workspace_ids)) next.collapsedWorkspaces = payload.collapsed_workspace_ids as string[];
-    return next;
+  if (kind === "checkout_agents_toggle") return { ...folds, expandedCheckouts: toggled(folds.expandedCheckouts, String(payload.checkout_id)) };
+  if (kind === "project_checkouts_fold") {
+    const id = String(payload.workspace_id);
+    const expanded = typeof payload.expanded === "boolean" ? payload.expanded : folds.collapsedWorkspaces.includes(id);
+    return { ...folds, collapsedWorkspaces: expanded ? folds.collapsedWorkspaces.filter((item) => item !== id) : [...new Set([...folds.collapsedWorkspaces, id])].sort() };
   }
   if (kind === "agent_tree_toggle") return { ...folds, expandedAgents: toggled(folds.expandedAgents, String(payload.pane_id)) };
   if (kind === "inactive_checkouts_toggle") return { ...folds, inactiveCheckoutsOpen: toggled(folds.inactiveCheckoutsOpen, String(payload.project_path)) };
