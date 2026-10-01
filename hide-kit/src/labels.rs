@@ -105,7 +105,16 @@ pub(crate) fn retire(target: &KitTarget) -> LabelsRetirement {
 
 fn request(target: &KitTarget, method: &str, params: Value) -> Result<Value, String> {
     hide_herdr_client::request_with_timeout(&target.herdr_socket, method, params, HERDR_DEADLINE)
-        .map_err(|error| format!("Herdr on this machine did not answer {method}: {error}"))
+        .map_err(|error| {
+            // A transport message can carry the socket's path (B20); the
+            // remote code is the part a reader needs.
+            let reason = match &error {
+                hide_herdr_client::ApiError::Remote { code, .. } => code.as_str(),
+                hide_herdr_client::ApiError::Transport(_) => "transport",
+                hide_herdr_client::ApiError::Malformed(_) => "malformed",
+            };
+            format!("Herdr on this machine did not answer {method}: {reason}")
+        })
 }
 
 /// Takes the plugin out of Herdr however it was installed. Returns where it
@@ -172,9 +181,11 @@ fn uninstall_managed(target: &KitTarget) -> Result<(), String> {
     if finished.succeeded() {
         Ok(())
     } else {
+        // Its stderr can name the operator's folders (B20): the exit code
+        // is the reason that reaches the log.
         Err(format!(
-            "herdr could not remove the GitHub copy of the labels plugin: {}",
-            finished.last_error_line()
+            "herdr could not remove the GitHub copy of the labels plugin: exit {:?}",
+            finished.code
         ))
     }
 }

@@ -2952,7 +2952,7 @@ mod tests {
     }
 
     /// The ordering key falls back to Herdr's own sequence, zero padded to the
-    /// activity token's width, when the label plugin sent nothing.
+    /// activity token's width, when no label worker timestamp came.
     #[test]
     fn last_activity_falls_back_to_the_herdr_sequence() {
         let projection = project_agents(payload(json!([
