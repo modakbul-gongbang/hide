@@ -49,6 +49,11 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
   Catalog discovery probes every provider, so appending the host's `PATH` also reaches its installed CLIs even when the test selects Claude.
   A spec adding a GitHub or Git shim prepends it to `fixturePath`; explicit `extraEnv.PATH` remains authoritative.
   A claim about a real agent session needs the real CLI inside an otherwise isolated fixture: a shim on the pane's `PATH` that runs the CLI under the operator's `HOME`, while the server keeps its private one.
+- A fixture makes agent labels the way the product does, through the core and not through tokens: `labelAgent` in `web/e2e/herdr-fixture.ts` gives a pane a new Claude session and writes a synthetic transcript (`writeFixtureTranscript`) the core's label worker reads, and the fixture `claude` shim acts as the provider that answers the analysis with the label the spec asked for.
+  The same session is read again only when the agent's state changes, so a spec that needs a different label gives the pane a new session.
+  A spec drives status through Herdr's own `agent_status` with `setFixtureLifecycle` and `finishFixtureTurn` (which needs `elsewhereTab`, so the turn ends unseen), because nothing else produces working, blocked or done.
+  No spec writes a label or status pane token; the lineage `parent_pane` token is the only one a fixture reports.
+  `desktop/e2e/session-labels.spec.ts` is the reference for the session boundary.
 
 ## Manual native QA
 

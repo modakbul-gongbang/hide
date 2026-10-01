@@ -67,7 +67,7 @@ HIDE_VERSION=<version> pnpm --dir desktop package
 `HIDE_VERSION` sets the version the packaged app reports.
 Omit it to build from a checkout that a Git tag matching `v[0-9]*` already describes; the packaging script fails rather than ship a version nothing was released under.
 
-Packaging builds the web shell and hcoord, builds the release `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper` and `hide-agent-context-labels` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those, or the labels plugin's packaged manifest, is missing or not executable.
+Packaging builds the web shell and hcoord, builds the release `hided`, `hide`, `hide-agent-hooks` and `hide-host-helper` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
 It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes `desktop/out/hide-v<version>-macos-arm64.zip` with a `.sha256` sidecar.
 
 Install the app into the system Applications directory and launch the installed bundle:
@@ -98,6 +98,7 @@ The app's bundle id is `me.grab.hide.desktop`.
 
 The app runs its own bundled `hide` CLI, which starts `hided` beside it.
 `hided` serves the web shell inside the app's window.
+It keeps running after the window closes for as long as the Herdr server it follows answers, so agent labels stay current with no window open; it exits after ten minutes with no client connected and no answering Herdr server.
 The app passes its bundled Herdr binary to that CLI as `HERDR_BIN_PATH` unless the environment names one as an explicit override, one that arrives without `HERDR_PANE_ID`; the value a Herdr pane exports is replaced, so opening the app from a pane behaves like opening it from the Dock.
 The CLI search order, and `HIDE_CLI_PATH`, are documented in [ARCHITECTURE.md](ARCHITECTURE.md), "The desktop host".
 
@@ -115,13 +116,16 @@ Every launch of the installed app installs Hide's kit on this Mac without asking
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex that is set up on this Mac, next to whatever other tools put there;
-- the agent labels Herdr plugin, `hide.agent-context-labels`, copied to `~/.hide/kit/plugins/` and linked in the Herdr server hide uses, replacing a copy of the same plugin installed from GitHub or linked from a checkout;
 - hcoord, copied to `~/.hide/kit/hcoord/`, with its command at `~/.hcoord/bin/hcoord` and its daemon.
 
 Settings > Devices shows each of these on This Mac's row, with where it is or why it is not.
 A part you remove by hand stays removed; Reinstall on that row puts it back.
 A `hided` run outside the installed app, such as a development build, installs nothing on this Mac and says so there.
-The standalone `herdr plugin install <owner>/<repo>/plugins/agent-context-labels` still works for a machine without hide.
+Agent labels are made by hide's own daemon, so there is no labels part to install.
+A machine that still has the old agent labels Herdr plugin, `hide.agent-context-labels`, loses it on the first kit pass after an update: the plugin is unlinked from Herdr (a copy installed from GitHub through `herdr plugin uninstall`), any watcher process holding its lock is stopped, and its copy under `~/.hide/kit/plugins/` and its state folder `~/.local/state/hide.agent-context-labels` are removed.
+On this Mac the first launch reads that state folder once, before it is removed, so a pane whose session the plugin had already labeled keeps that label.
+Herdr itself, your agent sessions, Herdr's own plugin configuration folder and your `config.toml` are not touched.
+If a part cannot be taken out, for example because Herdr is not running, it stays, the diagnostic log records `plugin.retire_incomplete`, and the next kit pass tries again.
 
 ## Connect another Mac over SSH
 
@@ -131,19 +135,20 @@ Authentication stays with SSH: the alias's `IdentityFile`, or the running SSH ag
 
 The remote machine needs Herdr installed where a non-login shell finds it (`~/.local/bin`, Homebrew, or the system paths) and a running `herdr server`, and Node 22.12 or later for hcoord.
 hide asks that machine `herdr status server --json` to learn where the server socket is, so nothing about the remote user or home directory is configured on this side.
-Adding the machine installs the same kit a first launch installs here, under that account's home, with the form listing each part and where it goes: Hide's helper and every part's files in `~/.local/share/hide/host-helper`, the `hide` link in `~/.local/bin`, the Claude Code and Codex hook entries, the labels plugin in that machine's Herdr, and hcoord.
+Adding the machine installs the same kit a first launch installs here, under that account's home, with the form listing each part and where it goes: Hide's helper and every part's files in `~/.local/share/hide/host-helper`, the `hide` link in `~/.local/bin`, the Claude Code and Codex hook entries, and hcoord.
 Every connection brings the kit up to this Hide's version, and a part you removed there stays removed until Reinstall on that machine's row.
 hcoord keeps its daemon running only on macOS, so on another system its row says so and nothing is installed for it.
 A pane on that machine can then run `hide file open`, `hide diff open` or `hide browser open http://localhost:3000`, and the result opens in this Hide, with `localhost` meaning that machine; that shell's `PATH` has to include `~/.local/bin` for a bare `hide` to be found.
-Its agent panes show labels, subagent counts and Workspace guidance as panes on this Mac do; Project Memory stays on this Mac and is not given to a device's sessions.
+Its agent panes show labels, subagent counts and Workspace guidance as panes on this Mac do, with the labels made on this Mac from the device's conversations, which the helper reads and sends in memory only; Project Memory stays on this Mac and is not given to a device's sessions.
 A machine allowed by an earlier version of Hide gets the whole kit on its next connection without asking again; a machine added without the helper installs nothing until you press Allow and install on its row.
 Only machines on the platform this build carries get the kit; another platform shows why on its row and is only viewed and driven.
-Removing a machine while it is connected takes Hide's hook entries, the labels plugin link, the `hide` link and the helper folder off it, and leaves hcoord, which other tools there may use; removing it while it is not connected leaves them there, where they do no harm, and adding it again replaces them.
+Removing a machine while it is connected takes Hide's hook entries, the `hide` link and the helper folder off it, and leaves hcoord, which other tools there may use; removing it while it is not connected leaves them there, where they do no harm, and adding it again replaces them.
 Each device row in Settings shows whether the remote session is connected and, when it is not, the reason in the words the connection failed with; `Test` runs the SSH, authentication, Herdr, protocol, PTY, SFTP, and Git stages one after another and lists the first one that needs attention on that host.
 
 ## Update
 
 Quit hide, replace `/Applications/hide.app` with the new release or rebuild, and reopen it.
+Opening the updated app replaces a `hided` still running from the previous build with one of its own build, and leaves the Herdr server, its panes and the agents running; a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
 State under `~/.local/state/hide` and the desktop profile at `~/Library/Application Support/hide-desktop` both persist across an update.
 Files the previous Swift app left under `~/Library/Application Support/hide/` are not read by the current app, apart from `state.json`'s shortcut bindings, which are imported once, and can be deleted by hand.
 Each launch replaces an outdated part of the kit on this Mac, and each device connection does the same there, hook entries included; a part you removed stays removed.
@@ -154,7 +159,7 @@ Quit hide and move `/Applications/hide.app` to the Trash.
 This removes the application but keeps `~/.local/state/hide` and `~/Library/Application Support/hide-desktop`.
 Delete both directories only when you deliberately want to reset hide's saved state.
 Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out.
-The labels plugin link (`herdr plugin unlink hide.agent-context-labels`), `~/.local/bin/hide`, `~/.hide/kit` and hcoord (`~/.hcoord`) stay as well until you remove them.
+`~/.local/bin/hide`, `~/.hide/kit` and hcoord (`~/.hcoord`) stay as well until you remove them.
 
 ## Troubleshooting
 

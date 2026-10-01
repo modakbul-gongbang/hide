@@ -13,13 +13,13 @@ Two facts make the default location the only correct one.
 Cargo names a workspace member's artifacts by its path relative to the workspace root, so two checkouts sharing one target directory read each other's build as fresh and run the other checkout's test binary.
 Cargo also holds an exclusive lock on the directory, so sharing serializes the parallel builds the worktree layout exists to allow.
 
-The release binaries are `target/release/{hided,hide,hide-host-helper,hide-agent-hooks,hide-agent-context-labels}`, and `desktop/scripts/package.mjs` reads every one of them from that fixed relative path.
+The release binaries are `target/release/{hided,hide,hide-host-helper,hide-agent-hooks}`, and `desktop/scripts/package.mjs` reads every one of them from that fixed relative path.
 Redirecting a release build with `CARGO_TARGET_DIR`, `--target-dir` or `--build-path` leaves the packager reading a path nothing wrote.
 `scripts/verify-cargo.sh` therefore sets `CARGO_TARGET_DIR` to the worktree's own `target/` on every invocation, whatever the caller carried.
 
 The cost of this layout is one full build cache per worktree, which is why a worktree is removed when its branch lands rather than kept around.
 
-A release `hided` carries `web/dist` inside the binary: `hided/build.rs` embeds every file under it when the profile is `release` and fails the build when `web/dist/index.html` is missing, so a release build is always `pnpm --dir web build` first, then `cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks -p agent-context-labels --bin hide-agent-context-labels` (`scripts/verify-cargo.sh release`).
+A release `hided` carries `web/dist` inside the binary: `hided/build.rs` embeds every file under it when the profile is `release` and fails the build when `web/dist/index.html` is missing, so a release build is always `pnpm --dir web build` first, then `cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks` (`scripts/verify-cargo.sh release`).
 `desktop/scripts/package.mjs` performs that build before staging the release binaries into the app bundle, so a packaged app's SessionStart probe has a matching `hide-agent-hooks` executable even without a separate CLI on `PATH`.
 A debug `hided` embeds nothing and reads `web/dist` from disk at run time (`HIDED_UI_DIR` overrides the lookup), so a rebuilt web shell shows up without a cargo rebuild.
 The web measurement (`MEASURE_SCENARIO=multi HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh`, `docs/PERFORMANCE_TESTING.md`) needs that release `hided` at `target/release/hided` inside the worktree it measures; it is never redirected, for the same reason as the release binaries.
@@ -50,8 +50,8 @@ A check script calls these scripts rather than cargo or pnpm directly, so the ta
 | --- | --- | --- |
 | test | `bash scripts/verify-cargo.sh test` | `target/debug`; locked workspace tests |
 | lint | `bash scripts/verify-cargo.sh lint` | `cargo fmt --check` then `cargo clippy -D warnings` over every target |
-| release | `bash scripts/verify-cargo.sh release` | `target/release/{hided,hide,hide-host-helper,hide-agent-hooks,hide-agent-context-labels}`, the binaries the desktop packager ships |
-| cli | `bash scripts/verify-cargo.sh cli` | `target/debug/{hide,hided,hide-host-helper,hide-agent-hooks,hide-agent-context-labels}` for isolated CLI, daemon, SessionStart and install kit checks |
+| release | `bash scripts/verify-cargo.sh release` | `target/release/{hided,hide,hide-host-helper,hide-agent-hooks}`, the binaries the desktop packager ships |
+| cli | `bash scripts/verify-cargo.sh cli` | `target/debug/{hide,hided,hide-host-helper,hide-agent-hooks}` for isolated CLI, daemon, SessionStart and install kit checks |
 | web | `bash scripts/verify-web.sh` | `pnpm install --frozen-lockfile`, then typecheck, lint, test and build for both `web` and `desktop`: `web/dist` and `desktop/dist` |
 
 The Cargo `test` mode forwards trailing test arguments, so an explicitly configured live probe can run as `verify-cargo.sh test <test-name> -- --ignored` without bypassing worktree isolation or toolchain ownership.
@@ -72,7 +72,7 @@ Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the
 | `pnpm --dir desktop dev` | Bundles `desktop/dist/` with esbuild and launches the app unpackaged; it finds this worktree's `target/{debug,release}/hide` itself |
 | `pnpm --dir desktop typecheck`, `lint`, `test` | The desktop CI lane |
 | `pnpm --dir desktop e2e` | Playwright `_electron` against a private hided and pinned Herdr; needs `web/dist`, `target/debug/hide` and `hided`, and the pinned `herdr` as the web e2e does |
-| `pnpm --dir desktop package` | `desktop/scripts/package.mjs`: builds the release binaries and fetches the pinned Herdr, bundles `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper-macos-<arch>` and `herdr` into `Contents/Resources` with the install kit's `hcoord/` and `agent-context-labels/` (the packaged plugin manifest, its scripts and the release watcher), ad-hoc signs `desktop/out/hide-darwin-<arch>/hide.app` (bundle id `me.grab.hide.desktop`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; nothing is notarized or installed |
+| `pnpm --dir desktop package` | `desktop/scripts/package.mjs`: builds the release binaries and fetches the pinned Herdr, bundles `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper-macos-<arch>` and `herdr` into `Contents/Resources` with the install kit's `hcoord/`, ad-hoc signs `desktop/out/hide-darwin-<arch>/hide.app` (bundle id `me.grab.hide.desktop`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; nothing is notarized or installed |
 
 The app attaches to whatever daemon the environment names: without `HIDE_STATE_DIR` it is the operator's own at `~/.local/state/hide`.
 For QA, set `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR` to private paths, as `desktop/e2e/fixture.ts` does and refuses to launch without.

@@ -26,7 +26,7 @@ Three finished agents side by side in one tab therefore cleared together on a si
 
 So Hide keeps its own record instead.
 A pane is read when it has held Hide's keyboard focus since its last state change, and within one answering Herdr connection a state change is Herdr's `state_change_seq` moving **or** the derived demand and activity pair changing.
-The pair matters because Herdr's sequence does not always rise when only plugin tokens change: with a pane's lifecycle held at `idle`, clearing its idle token so only a question token remained left the sequence where it was.
+The pair matters because Herdr's sequence does not move when only the core's own label changes: an analysis that reads a question at the end of a turn arrives after the agent stopped, so the demand appears with the sequence where it was.
 `state_change_seq` is process-local, so the first projection after a connection bootstrap reconciles a saved record only when the sequence moved backwards and the agent session id, demand and activity still match before adopting the new sequence.
 A sequence that moved forward is new work completed while Hide was disconnected and remains unread.
 A different known agent session or a different demand or activity also remains unread; a matching restored agent remains read when a restarted server reset the sequence.
@@ -37,14 +37,14 @@ The record is `pane_read_records` in the persisted UI state, keyed by pane id, s
 A record is dropped only when the authoritative pane layout stops reporting that pane, scoped to the namespace that pass owns, so a temporarily incomplete agent list and a local sync can never drop a restored or remote pane's record.
 A corrupt store loads as an empty record, which reads as everything unread, and says so in a diagnostic; it is never silently treated as read.
 
-Nothing reads Herdr's `done` versus `idle` split, or a token's `_new` suffix, to decide the read axis.
+Nothing reads Herdr's `done` versus `idle` split to decide the read axis.
 This is enforced by `INV-herdr-unseen-token`.
 
 ## Completion is separate from stopped
 
 An agent can be stopped because it has completed a turn or because a newly opened pane is ready for its first instruction.
-Only `agent_status: done` or a `status_done` token reports a completion.
-An idle lifecycle or `status_idle` token reports a ready stopped pane and does not put it in Done, even though a missing read record still makes its read axis unread.
+Only `agent_status: done` reports a completion.
+An `idle` lifecycle reports a ready stopped pane and does not put it in Done, even though a missing read record still makes its read axis unread.
 The completion fact is part of the pane read fingerprint, so a ready-to-completed transition becomes unread even when Herdr's process-local sequence does not move.
 Herdr's done/idle distinction supplies completion evidence only; Hide's own pane record remains the sole read authority.
 
@@ -78,17 +78,18 @@ The web row draws the ring in the working color from the flag, and the pet's Wor
 
 Regression owners: `a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet`, `a_root_waiting_on_its_children_counts_as_working_not_done`, and the web `agentRow.test.ts`.
 
-## Herdr token contract: both forms mean the same demand
+## Where each axis comes from
 
-Herdr reports attention state as suffixed string tokens, not booleans:
+Activity and completion come only from Herdr's `agent_status`: `working` is Working, `idle` and `done` are stopped, `done` alone reports a completion, and any other value reads as unknown rather than idle.
+No pane token is read for either.
+Demand has two sources:
 
-- `status_question_new: "?"` - a question, in the form Herdr uses before it considers the tab seen.
-- `status_question: "?"` - the same question after Herdr considers it acknowledged. Herdr also drops `agent_status` back to `idle` for it.
+- A question is the core's label verdict on the agent's last message (`label.question`, see Task identity below).
+  It exists only while the label is proven for the pane's current session, and it ends when the agent starts working again or a turn ran between two looks at a stopped agent, so a question never outlives the turn that asked it.
+- Approval is Herdr's `blocked` lifecycle, whether or not the operator has read it.
 
-The same pair applies to approval and error tokens, and the legacy boolean form (`status_question: true`) is still accepted.
-
-Both forms map to the same demand.
-The suffix is Herdr's answer to a question Hide no longer asks it, so reading the suffix as unread would put the tab-scoped verdict back in charge of a pane-level decision.
+Error is still a demand value on the wire and in the vocabulary, but nothing produces it since the hand-installed hook path was retired (PRD labels-in-hided D-06); a question outranks an approval.
+Whether the operator has read a demand is Hide's own record, never Herdr's tab-scoped seen state.
 
 ## The four groups
 
@@ -153,7 +154,7 @@ The badge counts only live descendants in the parent's checkout, while one summa
 Regression owners: `the_descendant_badge_sums_every_live_descendant_and_skips_ready_and_unknown_ones`, `lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappearance`, and `the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated`.
 
 Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
-The label plugin's `sort_rank` token is not read.
+Most recent activity is the time the core saw the agent change state (`changed_at_unix_ms`), or Herdr's state sequence while the core has not observed one; no token is read for it.
 The Projects view raises Needs You above the project tree; Done and the other groups are the Agents tab's.
 Raised agents also remain in their checkout tree, so a Workspace summary always has agent rows to reveal and an attention transition never leaves a child without its parent.
 Both appearances share one direct-select shortcut, assigned to the first visible occurrence.
@@ -368,23 +369,22 @@ The workspace inspector uses the canonical representative agent and disconnected
 ## Task identity
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, and the Overview agent line.
-`sidebar.rs` owns the ladder: the plugin's rolling `task`, then the provider's name (`Claude`, `Codex`, the kind Herdr reports, or `Agent` when it reports none).
+`sidebar.rs` owns the ladder: the label's rolling `task`, then the provider's name (`Claude`, `Codex`, the kind Herdr reports, or `Agent` when it reports none).
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
-The plugin publishes no session `name`, does not read Claude's `ai-title` or Codex's first human turn as a separate title, and never renames an agent or tab.
-The plugin’s `task`, `progress` and `expected_reply` are accepted only when their atomic `label_owner` fingerprint matches the current supported provider/native reference.
-`sidebar.rs::project_agent` rejects missing, unsupported and mismatched ownership before deriving any title, detail or message, including the first snapshot after a native-session transition.
-Atomic `status_owner` and `status_generation` independently guard plugin demand; Herdr’s actual lifecycle remains the fallback.
-The local Runtime and remote SessionReplica each retain one publication fence per live pane, preserving it across reconnect and retiring it with the pane.
-An observed different concrete native reference invalidates the previously published owner/generation pairs, so retained A strings or demand cannot reappear on A → B → A before a fresh publication.
-Missing or unsupported references suppress the strings and semantic status while preserving the last concrete-reference fence; returning that same reference restores an unchanged publication unless another concrete session was observed.
-`label_generation` advances on each raw ID/path reference change, independently of the canonical worker generation, so equivalent-reference publications coalesced between frames still recover.
-`label_generation` accompanies the label group, and a restart uses a fresh watcher instance prefix while restoring only proven same-session labels.
-This comparison adds fixed-size token checks per projected agent, no worker, subprocess or I/O under the runtime lock, and no new notification beyond an actual projected state transition.
-The plugin proves durable ownership from transcript metadata, restores only that same provider/native ID after restart or reconnect, hides labels during temporary reference absence and rejects ownerless legacy state.
-Its fixed metadata source, report/key/value budgets and physical-worker generation fence are documented in [the plugin guide](../plugins/agent-context-labels/README.md#metadata-and-read-budgets).
-Sleeping rows preserve only labels captured from the guarded current projection; older sleep records without provenance fall back to the provider.
-Regression owners: `an_observed_return_cannot_revalidate_retained_publications`, `native_session_changes_suppress_every_stale_label_and_status_before_the_watcher_runs`, the plugin session-transition tests, and `hide-session::label_owner` metadata tests.
+Nothing publishes a session `name`, reads Claude's `ai-title` or Codex's first human turn as a separate title, or renames an agent or tab.
+
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude or Codex pane's conversation, asks the background AI for a task title, a progress line, the reply the agent wants and whether it asked a question, and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+`LabelWorker::apply` lays that label onto an agent just before the runtime projects it, and `sidebar.rs::project_agent` reads `task`, `progress`, `expected_reply` and `question` off it.
+A label is shown only for the session it was proven for.
+The record keeps the provider's native session owner, proven from transcript metadata, and the Herdr reference it was proven under; the label is applied only while the pane's current provider and session reference equal that owner or that reference (`PaneRecord::proven_for`).
+A new session, a reused pane, a provider change and an A to B to A switch therefore show the provider's name and no question until the new session is proven, and returning to A restores A's label.
+While a pane has no concrete reference, nothing is shown and the proof is kept for the reference's return.
+A read or analysis that lands after the pane's reference moved carries an older generation and is dropped, so a late answer for the old session never reaches a row.
+A restart restores a label with no read and no request when the pane's reference still proves it, and an entry the retired plugin left (`display-state.json`) is imported once on this Mac only when it had proven an owner, and is shown by the same rule.
+Sleeping rows preserve only labels captured from the proven current projection; older sleep records without provenance fall back to the provider.
+This adds no worker, subprocess or I/O under the runtime lock: the worker's reads and analyses run off it and the projection only copies the bounded label strings, with no new notification beyond an actual projected state transition.
+Regression owners: in `herdr-core/src/labels/tests.rs`, `another_session_shows_nothing_of_the_last_one_until_it_is_proven`, `an_analysis_that_lands_after_the_session_changed_is_dropped`, `a_restart_restores_the_label_with_no_read_and_no_request`, `an_imported_label_shows_only_for_the_session_it_was_proven_for` and `a_turn_that_ran_between_two_looks_ends_the_question`; the device path is `a_device_panes_label_is_read_through_its_helper` and its disconnect and old-helper siblings; `desktop/e2e/session-labels.spec.ts` proves the session boundary against the running app.
 There is no `summary` token and no missing-summary notice: an agent without a task is titled by its provider, and the row says nothing else.
 Truncation belongs to each view and does not shorten tooltip or accessibility text.
 Projection adds bounded-by-metadata strings per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.
@@ -392,7 +392,7 @@ Projection adds bounded-by-metadata strings per agent to the existing snapshot b
 ### The second line
 
 The core chooses the row's second line from the group, and publishes it as `detail` with `status_word_visible`; the shell draws what it is given and decides nothing.
-The sentences come from the plugin's tokens: `expected_reply` is the one action the operator is asked for, at most 40 characters; `progress` is what the agent is doing or has done.
+The sentences come from the agent's label: `expected_reply` is the one action the operator is asked for, at most 40 characters; `progress` is what the agent is doing or has done.
 
 | Group | Sentence |
 | --- | --- |
@@ -404,11 +404,11 @@ The sentences come from the plugin's tokens: `expected_reply` is the one action 
 
 A request outlives reading: a question, approval or error keeps its sentence until it is resolved, whatever group the row sits in, so a view can keep showing what is being asked after the operator has looked.
 
-`status_word_visible` is true only when the group wanted a sentence and the tokens carried none (a Seen row never shows the word): the status word stands in for it, so an emphasized or working row never has an empty second line and a plugin that is absent or has not labelled the pane yet reads as before, title and status word.
+`status_word_visible` is true only when the group wanted a sentence and the label carried none (a Seen row never shows the word): the status word stands in for it, so an emphasized or working row never has an empty second line and a pane that has no proven label yet reads as title and status word.
 Beside a sentence the word is never drawn; the mark and the group heading already say it.
 A delegated row follows the same table for its own group, which for a child is Working or Seen, so a delegated child that has stopped shows only its title unless it is still asking.
 
-Beside `detail` the row carries `message`: both sentences, `expected_reply` then `progress`, each whole up to the token cap and joined by a line break, absent when the plugin has written neither.
+Beside `detail` the row carries `message`: both sentences, `expected_reply` then `progress`, each whole up to the 80-character label cap (`MAX_LABEL_TEXT_CHARS`) and joined by a line break, absent when the label has neither.
 It is what the agent last said, and the Overview's node shows it only when the operator rests on the node's line (PRD overview-lenses-tiles-agents D-50, B22); the second line stays the one sentence the table above chooses.
 
 The core publishes the sentence; when a view shows it is that view's presentation.
@@ -421,7 +421,7 @@ The accessibility label of a row and of a header always carries the status word,
 The ⌘K sheet's agent row is titled by the identity and subtitled by the second line above; when the state chose no sentence it falls to the status word because the rolling `task` is already the title.
 The pane id is no longer printed on the row but still matches the query and is read by accessibility.
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
-Neither the core nor the plugin renames the Herdr tab for this; the Recent Panels label is projection only.
+The core never renames the Herdr tab for this; the Recent Panels label is projection only.
 
 ### Project Home
 

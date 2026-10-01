@@ -1,7 +1,7 @@
 # Background AI providers
 
 `hide-ai/` is the one boundary through which a Hide feature asks a language model for something in the background.
-Its consumers are the context-label plugin under `plugins/agent-context-labels/`, Project Memory extraction under `hide-memory/`, and the Start dialog's worktree name; later features reuse the same boundary rather than a provider client of their own.
+Its consumers are the core's agent label analyzer (`herdr-core/src/labels/analyzer.rs`), Project Memory extraction under `hide-memory/`, and the Start dialog's worktree name; later features reuse the same boundary rather than a provider client of their own.
 This guide owns the boundary's rules; the code under `hide-ai/src/` and the tests under `hide-ai/tests/` are its executable authority.
 
 ## Ownership split
@@ -80,13 +80,10 @@ The one environment variable it sets is that `CODEX_HOME`, pointing the app-serv
 Which agent answers, and which of its models, is a setting.
 It lives in `~/Library/Application Support/hide/ai.json`, a sibling of Hide's own `state.json`, and `hide-ai/src/settings.rs` owns the path, the schema and the rule that turns a choice into a `RouterConfig`.
 
-Both processes that care link this crate, which is why the file is where it is.
 Hide writes it: the Settings `Background AI` group dispatches one `ai_settings` event, the core applies it to the snapshot at once and queues the write, and the session-sync coordinator performs the write off the runtime mutex.
-The context-label plugin reads it: `provider::settings` loads it at startup and the watcher re-reads it on every scan, on the same boundary that already re-reads the plugin's own `settings.json`, so a choice made in Settings reaches the next label without restarting the watcher.
+The core reads the file once, when this Mac's session-sync coordinator starts, and from then on holds the choice in the runtime, so a file edited by hand while `hided` runs is read at the next start.
+The core's label analyzer reads the runtime's choice before each analysis, so a choice made in Settings reaches the next label without restarting anything, and an analysis already running finishes on the choice it started with.
 A changed choice rebuilds the router, because a backend is constructed with its model; an unchanged one leaves the router and its sticky failover state alone.
-
-A path under a plugin's configuration directory was rejected: it would tie Hide to one plugin id and break when a second plugin consumes the boundary.
-A Herdr plugin action was rejected because an action takes no parameters, and a new daemon or socket was rejected as a third contract between two consumers.
 
 The file names a provider and a model per provider:
 
@@ -100,9 +97,7 @@ The file names a provider and a model per provider:
 The defaults are the backends' own constants: `codex` with `gpt-5.6-luna`, `claude` with `haiku`.
 A file that is not there means nobody has chosen, so the defaults stand and nothing is reported.
 A field that is missing takes its default and a field the crate does not know is ignored, so an older Hide reads a file a newer one wrote.
-A file that exists and cannot be read is never taken as the defaults in silence: Hide states the reason on the Settings group and the plugin writes `ai_settings_unreadable` to its log, and only then do the defaults apply.
-The plugin writes that line when the reason changes, not when it reads the file.
-It re-reads the choice on every scan and rotates nothing, so a line per read would grow its log for as long as the file stayed broken; a repaired file is recorded once too, as `ai_settings_readable`, so fixing it is visible in the same place.
+A file that exists and cannot be read is never taken as the defaults in silence: Hide states the reason on the Settings group and writes an `ai_settings` `settings.unreadable` record to its diagnostic log, and only then do the defaults apply.
 A write that fails says so on the same group, because a choice the operator made and the file on disk must not silently disagree.
 A write that succeeds marks the choice as chosen at once, so the group stops calling it the default without waiting for the next launch to read the file back.
 A session with no home directory to write to reports that on the group for the same reason: the choice has already left the runtime, so it cannot be dropped quietly.
@@ -120,9 +115,10 @@ In the web shell the daemon holds that flag for every connected page: each page 
 ## Process ownership and budgets
 
 A background feature asks a resident process for an answer, so `hide-ai` owns that process the way `oh-my-principle`'s resident-process practice requires: one spawn helper, one shutdown path, a child that dies with its owner, and caps that turn a leak into a reported failure rather than a larger number.
-This exists because on 2026-09-17 a single label watcher held 1,699 `codex app-server` descendants and 11.6 GB for two idle days with no signal at all.
+This exists because on 2026-09-17 a single label watcher (the retired plugin's process) held 1,699 `codex app-server` descendants and 11.6 GB for two idle days with no signal at all.
 
-`hide stop` sends `hided` SIGTERM, then SIGKILL after five seconds if it has not exited (`hided/src/cli.rs`); `hided` installs no signal handler for either, so on that path a background AI child's end relies on the OS closing the inherited stdin pipe when the owning process exits, not on an explicit graceful shutdown running first.
+`hide stop`, and `hide connect` replacing a daemon of another build, send `hided` SIGTERM, then SIGKILL after five seconds if it has not exited (`hided/src/cli.rs`); `hided` turns SIGTERM and SIGINT into its graceful stop (`hided/src/lib.rs`), and dropping the core cancels the running label analysis, which ends its provider child, and joins the analyzer thread (`Core::drop`), so on that path no label request outlives the daemon.
+On the SIGKILL path, and for a child no explicit shutdown reaches, a background AI child's end relies on the OS closing the inherited stdin pipe when the owning process exits.
 
 Every child the crate starts goes through one spawn helper (`hide-ai/src/process.rs`).
 The codex app-server is owned through the stdin pipe it inherits: when the owner dies, the pipe closes and the whole tree ends, which is what makes a `kill -9` of the owner leave no survivors.
@@ -146,7 +142,7 @@ The two process caps are measured after each codex turn (macOS `libproc`: `proc_
 Crossing one logs `ai.app_server.over_budget` with the measured value and the cap, ends the app-server through the graceful shutdown path, fails the request with `OverBudget`, and lets the next request start a fresh app-server.
 A request that completes under the cap clears the restart count; three consecutive restarts that do not clear it fail with `ProviderUnavailable(app_server_restart_cap)`.
 On a platform without the kernel query the measurement is `Unavailable`: the process caps are not enforced and the log line says `measurement=unavailable` rather than a zero.
-The context-label plugin treats `OverBudget` as an environmental failure: it keeps its last label and asks again after ten minutes, the same as any other environmental failure.
+The label worker treats `OverBudget` as an environmental failure: it keeps its last label and asks again after ten minutes, the same as any other environmental failure (`AnalysisFailure::retry_after`).
 
 ## Weekly usage display
 
@@ -234,7 +230,7 @@ There is no silent fallback: the result names the provider that answered, the lo
   The in-flight entry is owned by a guard, so a leader that panics still wakes its joiners and releases the key.
 
 What the caller does after the router gives up is the caller's decision.
-The context-label plugin parks a turn for good on a settled failure and asks again after ten minutes on an environmental one.
+The label worker parks a turn for good on a settled failure and asks again after ten minutes on an environmental one (after the provider's reset time when a usage limit reports one).
 
 ## Logging
 
@@ -242,25 +238,7 @@ The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.f
 A line carries the request id, feature id, provider, outcome class, attempt, duration, input length, output tokens and schema version.
 Every codex `ai.request.finished` also carries the app-server pid and the process measurement (`app_server_pid`, `descendants`, `rss_bytes`), or `measurement=unavailable` where the platform cannot measure it.
 It never carries the prompt, the input, the generated text, a token, a file path from a transcript, or a provider thread id.
-The plugin writes these lines into its own `events.jsonl` next to its watcher events.
-Hide's core writes the events of its own routers and backends (the Settings probe and Project Memory) to its diagnostic log, `Logs/core.jsonl` beside `state.json`, as records with `component` `ai` and the event name as `kind`.
-
-## Verifying a provider
-
-From the repository root, after `cargo build --release --locked -p agent-context-labels`:
-
-```sh
-target/release/hide-agent-context-labels verify-provider --provider codex
-target/release/hide-agent-context-labels verify-provider --provider claude
-```
-
-Each prints that provider's availability and one verdict for a fixed transcript with the answering provider named on it, and exits non-zero when the provider cannot answer, naming the class.
-For codex it also prints the app-server's descendant count and resident size, so a leak is visible from the command rather than only from the log.
-The pid held and measured is whatever `codex` on `PATH` starts: the pnpm install's node wrapper, whose one descendant is the real `codex app-server`, so a healthy tree prints `descendants=1` (measured 2026-09-20; a native binary prints 0), and the first MCP server would make it 2.
-Only `watch` moves state left under the plugin's previous id; verification does not.
-Still give a development build its own home so it never writes next to the installed watcher: `CODEX_HOME=$HOME/.codex HOME=$(mktemp -d) target/release/hide-agent-context-labels verify-provider --provider codex`.
-The assignments are expanded left to right, so `CODEX_HOME` has to be written before `HOME` is replaced; `HOME=$(mktemp -d) CODEX_HOME=~/.codex` expands `~` against the temporary home and reports `needs_login`.
-The claude path cannot take the isolated home, because Claude Code keys its login to `HOME`; run it with the real home and expect one `live_provider_verified` line in the installed watcher's `events.jsonl`.
+Hide's core writes the events of its own routers and backends (the label analyzer, the Settings probe and Project Memory) to its diagnostic log, `Logs/core.jsonl` beside `state.json`, as records with `component` `ai` and the event name as `kind`.
 
 ## Known gaps
 

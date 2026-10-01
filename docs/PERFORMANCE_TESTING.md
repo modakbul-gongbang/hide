@@ -67,7 +67,7 @@ bash scripts/verify-cargo.sh release
 pnpm --dir desktop package
 ```
 
-`verify-cargo.sh release` builds the release `hided`, `hide`, `hide-host-helper`, `hide-agent-hooks` and `hide-agent-context-labels` binaries; release `hided` embeds `web/dist`, so run `pnpm --dir web build` first.
+`verify-cargo.sh release` builds the release `hided`, `hide`, `hide-host-helper` and `hide-agent-hooks` binaries; release `hided` embeds `web/dist`, so run `pnpm --dir web build` first.
 `pnpm --dir desktop package` (`desktop/scripts/package.mjs`) runs that release build, fetches the pinned Herdr through `scripts/fetch-herdr-runtime.sh`, and packages `desktop/out/hide-darwin-<arch>/hide.app`; it refuses to produce an app if any binary it ships is missing or not executable.
 For an unpackaged dev run, `pnpm --dir desktop dev` finds this worktree's `target/{debug,release}/hide`.
 Archive baseline and candidate from separate worktrees so each keeps its own `target/` and `desktop/out/`; never redirect build output with `CARGO_TARGET_DIR` or share it across revisions.
@@ -137,6 +137,11 @@ Retain contemporaneous load, process lists, selected pane/grid, attached childre
 Inspect symbolication before calculating mutex-wait ratios; predominantly `???` frames mean no usable answer, not zero contention.
 State the denominator and thread when reporting a wait fraction, and distinguish waiting on the runtime mutex from time spent holding it.
 During idle observation, inspect snapshot publications, `rest` revisions, attach counts, and git subprocess activity rather than inferring no work from a static UI.
+
+A `hided` with no window is a separate idle condition, and it is the daemon's resident state: it lives as long as its Herdr server answers (ARCHITECTURE.md, The daemon lives with its Herdr), so it runs while the app is closed.
+With no web or desktop renderer attached the core's coordinator rests every reader that only feeds a window (foreground processes, provider usage, hook diagnosis, ports, worktrees, GitHub, disk and the Background AI probe), and the root follower reads and sends no screen snapshot while no client is connected, catching up with one read when the next client arrives; only label work runs, and it is bound to agent state changes (`herdr-core/src/labels/`).
+Report it apart from a daemon with a window attached, with the agent count and workload recorded for each, and check that no snapshot is read or sent and none of those readers runs while no agent state changes.
+A change to the coordinator's readers or to the root follower has to keep this: a new reader that feeds a screen belongs in the gated block of `run_coordinator`, and `ui_attached` is sent by the daemon only, never by a window.
 
 ### Memory and long-uptime degradation
 

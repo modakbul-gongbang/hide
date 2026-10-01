@@ -302,7 +302,7 @@ The representative is the most actionable child in Needs You, Done, Working, the
 
 A root whose own turn is over while a descendant still works or asks is waiting on its children (docs/status-model.md): it stays in Working with its ring in the working color, and its badge, not its own sentence, says what is going on.
 
-A sidebar agent row's first line is always its status mark, provider mark, stable task name, a branch chip only when a delegated row's checkout differs from its parent's and the row above does not already name that checkout, a device chip for a row on an SSH device, the badge, the elapsed time, and a parent's chevron; the elapsed time is always drawn and never gives way to a control, and an agent whose elapsed time was never reported shows none rather than a made-up `0s`.
+A sidebar agent row's first line is always its status mark, provider mark, stable task name, a branch chip only when a delegated row's checkout differs from its parent's and the row above does not already name that checkout, a device chip for a row on an SSH device, the badge, the elapsed time, and a parent's chevron; the elapsed time is always drawn and never gives way to a control, and the time is counted on the shell's one-second clock from the moment the core saw the agent change state, and an agent the core has no time for shows none rather than a made-up `0s`.
 The device chip is the existing Badge treatment with a server glyph and the device's real display name, never a connection state inferred by the web shell.
 Its second line exists only when the row has something to say, and from the moment it does: a question, approval or error keeps its request in the warning color (red for an error) until it is resolved, however often the row is read, and a row that changed since the operator last looked shows its sentence bright until it is read; either is one line, cut at its end.
 A quiet sentence is never drawn on the row; the row's tooltip carries it with the full title.
@@ -1047,7 +1047,7 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
 
-Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, the agent labels plugin, hcoord), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
+Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, hcoord), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
 Installed is ✓, not on this machine is –, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology.
 Reinstall sits on a machine's row only while one of its parts needs it, repairs only those parts, and reads Reinstalling… while the machine's kit work runs (B8); nothing else on the screen reacts, and the detail of every install goes to the diagnostic log (B18).
 A machine whose kit does not run says why in that place instead of its parts: a daemon outside the installed app, a device not allowed yet, a device that must be allowed again, or a platform this build does not carry (B11, B17, B21).

@@ -11,15 +11,8 @@ The code is the executable authority: `herdr-core/src/` for the core, `hided/src
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in and receives snapshot and delta frames out over hided's WebSocket (see hided and the WebSocket boundary) when the change notifier announces.
 The event sync coordinator (`session_sync/coordinator.rs`) delegates Herdr snapshot and subscription lifecycle to `session_sync/subscription.rs`, opens `events.subscribe` first and reads `session.snapshot` second, applies the topology events that follow, and refreshes agent telemetry with `agent.list` once per second.
+Agent labels are made by the core itself and shown only for the session they were proven for; see Agent labels in the core under hided and the WebSocket boundary, and [status-model.md](status-model.md#task-identity) for how they reach a row.
 Tab names use core focus and the same agent row as the sidebar; process names arrive through a coordinator-owned off-lock `pane.process_info` reader on each host's connector.
-Session label consumption validates provider/native-reference ownership before any title, progress, reply or semantic status is derived.
-The local Runtime and each remote SessionReplica hold one publication fence per live pane; a native-reference transition invalidates the previously observed atomic owner/generation pairs, including an A → B → A return before watcher publication.
-A reconnect retains the fence while a retired pane releases it, and a fresh watcher publication can restore proven same-session labels.
-A missing or unsupported reference hides the labels without retiring the last concrete reference, so a consumer-only absence can restore its unchanged valid publication.
-Equivalent ID/path references advance the producer's publication epoch without invalidating its canonical worker generation or forcing another analysis.
-This adds fixed-size comparisons and bounded per-pane state to projection, no file I/O, subprocess, timer or additional notification under the runtime mutex.
-The producer's transcript proof and physical-worker generation remain outside that lock; [status-model.md](status-model.md#task-identity) and the [plugin guide](../plugins/agent-context-labels/README.md#metadata-and-read-budgets) own their publication rules.
-
 Its single worker reads at most the five attached tabs' focused panes, on focus or agent-state changes or a 30-second recheck, rejects obsolete generations, and publishes only changed names.
 Stopping its coordinator cancels the rest of the batch and joins the active read off the runtime lock.
 Small process responses have a one-second absolute read deadline and a 64 KiB cap; SSH session contention, connection setup, socket discovery, channel opening and disconnect each use the remote transport's 15-second bound, so shutdown can include those setup and cleanup stages.
@@ -119,11 +112,6 @@ The history read is the Sessions list's own `load_sessions` (`herdr-core/src/run
 
 Project Memory in the web shell is a deferred TODO (PRD S8 D-17): the web has no Memory entry point, disabled control or placeholder, and Memory management has had no shell surface since the native shell that carried it was removed.
 That stage inherits the Project-scope-only management contract and the provenance, disclosure and retention rules above, and has to settle first that `hided` opens `<state_dir>/project-memory.sqlite3` while the hooks read `~/Library/Application Support/hide/project-memory.sqlite3`, that the Memory commands follow the focused checkout, and that the disclosure copy, which lived only in the removed native shell, gets a home in the web shell.
-
-The agent-context-labels plugin is a separate headless consumer of the same Herdr socket contract.
-It opens one long-lived `events.subscribe` stream for pane lifecycle events, bootstraps pane state with `agent.list`, and reports metadata only after a display transition.
-Its event loop also receives hook and refresh wakes through a short-lived Unix socket in the plugin state directory.
-When the stream ends, the plugin reconnects with bounded exponential backoff and always starts from a fresh pane list; an event is only a prompt to list again, and nothing is read off it but its kind.
 
 The shell holds no authority, but the core does not hand all of it to Herdr either.
 Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns the focused project and checkout, each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
@@ -406,12 +394,12 @@ For a remote Browser View, the desktop host asks hided for the current core-owne
 A remote loopback URL gets an SSH local forward with bounded connections, while a remote HTML file gets an owner-only loopback server whose assets are read through the device host's pinned checkout root.
 Neither route falls back to this Mac's same path or port; close, device loss, or desktop process exit releases the route.
 Client frames are core events (`schema_version`, `kind`, `payload`).
-HTTP serves static assets, `GET /health` (`pid`, `version`, `schema_version`, `clients`), and token-authenticated Browser route resolution and release for the desktop host.
+HTTP serves static assets, `GET /health` (`pid`, `version`, `build`, `schema_version`, `clients`), and token-authenticated Browser route resolution and release for the desktop host.
 No HTTP request dispatches a core event.
 The first frame after a valid handshake is `daemon` (`version`, `pid`, `schema_version`, `host_name`, the state paths, the Herdr binary and socket, the idle policy); Settings > General reads it, and it never carries the token.
 The daemon owns the core's two observation flags, the Settings one (`ai_settings.observing`, which runs the provider probe and the hook diagnosis) and a start surface's (`ai_settings.start_observing`, which runs the provider probe alone): a client's hint is only that connection's demand (`hided/src/demand.rs`, one `ObservationDemand` per flag), each flag follows its first observer in and its last one out, and a connection that closes releases both demands, so a closed tab never leaves the probe running.
-`hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client, and `hide serve --keep-alive`.
-`hide connect` is `hide open` for a host that loads the shell itself: the same discovery (the live daemon the state file names, else one started and waited for), answered as one JSON line (`ok`, `url`, `port`, `pid`, or `reason` `start_failed`/`no_response` with `detail`) instead of a browser; `hide status --json` is the attach-only probe and never starts a daemon.
+`hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client once the daemon's Herdr server no longer answers (see The daemon lives with its Herdr), and `hide serve --keep-alive`.
+`hide connect` is `hide open` for a host that loads the shell itself: the same discovery (the live daemon the state file names when it is this build, else one started and waited for), answered as one JSON line (`ok`, `url`, `port`, `pid`, or `reason` `start_failed`/`no_response` with `detail`) instead of a browser; `hide status --json` is the attach-only probe and never starts a daemon.
 Daemon startup gets a bounded ten-second health wait, and the desktop host allows up to 25 seconds for the whole discovery command before showing a retryable failure.
 The daemon leads its own process group, so an interrupt to the terminal job or host that ran the CLI never reaches it.
 Neither the CLI nor the daemon starts a Herdr server; only the packaged desktop host does (see The bundled Herdr runtime).
@@ -420,6 +408,59 @@ The core spawns `herdr terminal session control` for every pane attach and refus
 A `HERDR_BIN_PATH` that names nothing executable refuses the daemon before it binds, and `hide connect` refuses the same value as `start_failed` before spawning one: Herdr hands every pane the path its server started from, that path dies when the app bundle is replaced under a running server, and a daemon that came up on it would answer healthy and then fail every pane attach one by one (`env::herdr_bin_error`).
 The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.
 With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
+
+### The daemon lives with its Herdr
+
+`hided` stays up for as long as the Herdr server it follows answers, with or without a window or phone, so labels keep being made when the app is closed (PRD labels-in-hided D-18).
+The idle exit still counts ten minutes (`idle_secs`), but only while no client is connected and the Herdr server does not answer a `ping`; the daemon probes it every 30 seconds with a two-second timeout, and any answer from Herdr, even a refusal, counts as reachable (`server::herdr_reachable`).
+A Herdr restart or a live handoff, which brings the server back inside the window, never ends the daemon.
+A `hided` started without a Herdr socket, and `--keep-alive` and the paired-phone rule, behave as before.
+`SIGTERM` still ends the daemon gracefully, which cancels the running label analysis and its provider process before it exits.
+
+A build is the SHA-256 of the `hided` executable's bytes (`hided/src/build_id.rs`), hashed once when the daemon starts and reported as `build` on `/health`.
+`hide connect` hashes the `hided` shipped beside it and compares: the same build is attached to as it is, and a live daemon of another build is stopped (`SIGTERM`, five seconds, then `SIGKILL`) and replaced by a new one, so the window and its daemon are always one build after an app update (D-19).
+A daemon that will not stop is a `start_failed` answer, never a silent attach to the old one, and the replacement is logged as `daemon.replacing` or `daemon.replace_failed`.
+Only the daemon of the state folder the CLI was given is looked at, so a development or e2e daemon elsewhere is never replaced, and stopping a daemon leaves Herdr, its panes and their agents running.
+
+With no window attached the daemon does only the work that keeps labels current (D-20, B29).
+`hided` counts web and desktop renderers, tells the core `ui_attached` when the first arrives and when the last leaves (under one lock, so two windows arriving together cannot leave the core told the opposite of the final count), and refuses `ui_attached` from a client, because a window that sent it would pause the readers every other window draws.
+While none is attached the session-sync coordinator rests the readers that only feed what a window draws: foreground processes, provider usage, the hook diagnosis, ports, worktrees, GitHub and disk, and the Background AI probe.
+Label work, which runs on the coordinator's own wakes, goes on, and the root follower skips its snapshot reads while no client is connected and catches up with one read when the next client arrives (`RootFollower::resume`).
+The readers resume on the coordinator's next wake after a window attaches.
+`hided/tests/connect_build.rs` and `hided/tests/handshake.rs` (`the_daemon_outlives_the_idle_window_while_its_herdr_answers`, `the_daemon_exits_after_the_idle_window_when_its_herdr_is_gone`, `a_window_cannot_say_whether_windows_are_attached`) own these rules.
+
+### Agent labels in the core
+
+What each Claude or Codex pane is doing (its task title, its progress line, the reply it asks for, whether it asked a question) is made by the core, not by a Herdr plugin and not through pane tokens (PRD labels-in-hided).
+The code is `herdr-core/src/labels/`.
+Each session-sync coordinator, one per Herdr server (this Mac's and each connected device's), owns a `LabelWorker` it feeds from the agent state it already follows; the core owns one `LabelAnalyzer` for all of them and one `LabelStore`.
+Nothing runs under the runtime mutex: conversation reads run on the worker's reader thread, analyses on the analyzer's thread, and the coordinator lays the result onto the session payload just before it hands the payload to the runtime (`LabelWorker::apply`), so the projection is where a label becomes the row's title, sentences and question.
+
+- **When it reads.** A pane's conversation is read only when its agent status, Herdr state sequence or session reference moved, when an earlier read left a backlog, when a provider wait ran out, and once about three seconds after a turn starts whose prompt was not written yet.
+  A read is bounded and resumable, from the checkpoint the store kept, so an unchanged pane spends no read, no Herdr call, no request and no publish.
+- **What it reads.** `hide_session::label_transcript::read` proves the provider's native owner of the file Herdr's reference names, and returns only conversation events and the next checkpoint.
+  For this Mac it runs in process.
+  For a device the same function runs in `hide-host-helper` behind the `label_transcript` call (protocol 12); the events come to this Mac in memory only and are never stored, and the analysis runs on this Mac's provider login.
+  A device whose helper is not connected keeps its panes' labels and is retried every fifteen seconds; a helper too old to know the call leaves the provider name, and the device's kit status already offers the reinstall that replaces it.
+- **One analysis at a time.** `LabelAnalyzer` takes jobs in arrival order through one `hide-ai` router built from the operator's current provider and model choice, which it re-reads from the runtime before each analysis, so a change in Settings applies from the next analysis and the one running finishes on the choice it started with.
+  Each worker hands in at most one job, so arrival order is a round robin between servers.
+  Shutdown cancels the running request, which ends its provider child, and joins the thread.
+  The prompt, `context_label` schema, parser and task-keeping rules are the retired plugin's, moved without change (`context_label.rs`, `analysis.rs`); a failure the environment can clear (no login, a usage limit, no provider, an over-budget refusal) keeps the last label and asks again after the provider's reset time or ten minutes, and one the input settles parks that turn (`AnalysisFailure::retry_after`; [AI_PROVIDERS.md](AI_PROVIDERS.md#retry-policy) owns the router's side).
+- **Only for the session it was proven for.** A record stores the provider's native owner, proven from transcript metadata, and the reference it was proven under.
+  The projection shows a label only while the pane's current Herdr reference proves that owner, so a new session, a reused pane, a provider change and an A to B to A switch show nothing of the previous session until the new one is proven, and returning to the same session restores its label (`PaneRecord::proven_for`).
+  Every read and analysis result carries the pane's generation, which moves with the reference, and a late result for an earlier generation is dropped.
+  Nothing is exchanged through Herdr tokens, so there is no token fence or publication guard to keep in step.
+- **What is kept.** `labels.json` in the daemon's state folder, beside `core-state.json`, written whole through a temporary file and a rename with mode 0600, outside the runtime mutex, keeps per pane the proven owner, label, analyzed turns, the read checkpoint and the time the core saw the pane change state, limited to panes the server still lists.
+  A restart resumes from it with no read and no request for an unchanged pane; a file that cannot be read starts empty and records a diagnostic, and nothing in it is shown until a reference proves it.
+  The first run with no `labels.json` imports the retired plugin's `display-state.json` once, taking only entries it had proven an owner for.
+- **One generator per Herdr server.** A worker takes an exclusive `flock` on a file named after its server under `~/.local/state/hide/label-generators` and generates only while it holds it; a second daemon on the same server shows provider names, logs `generator.standby` and retries every thirty seconds, so it takes over when the first one ends.
+- **Status.** The question state comes from the analysis; blocked, working, done and idle come only from Herdr's `agent_status`.
+  An agent that is working, or whose Herdr state sequence moved while it was stopped and is stopped or blocked again, ran in between and is no longer asking, so its question and requested reply end.
+  Nothing reads `status_*` tokens, and nothing produces the Error demand any more.
+- **Time.** The core records when it saw each pane's state change and publishes it as `changed_at_unix_ms`; the web draws elapsed time from it on one shared one-second clock (`web/src/components/elapsed.tsx`), so a ticking elapsed time never causes a snapshot, and sorting uses the same time.
+- **Diagnostics.** Reads, discarded results, provider waits and standby go to `Logs/core.jsonl` with `component` `labels`, a pane and generation, and never conversation text, secrets or paths; a failure the operator cannot act on never reaches the screen.
+
+`herdr-core/src/labels/tests.rs` owns the behavior and `desktop/e2e/session-labels.spec.ts` proves it end to end; [status-model.md](status-model.md#task-identity) names the regression owners.
 
 ### The mobile companion
 
@@ -828,8 +869,8 @@ Revoking starts no new work: the connection admits nothing more, even from a wor
 Revoking deletes no draft, remote file or installed helper.
 The install root is refused unless it and every folder above it cannot be changed by another account: each is owned by the device account or by root and writable by neither its group nor others, except a root-owned sticky folder such as `/tmp`; the folders are checked as spelled while they are created and again on the root's resolved real path from `/`, home and its parents included, and the helper is then installed under and started from that resolved path, so no link on the spelled path is followed between the check and the launch (OpenSSH's rule for key files, which a device that signs in with a key already meets). A folder whose mode the device does not report is refused, and a group-writable one (a `umask 002` home on some Linux systems) is refused with the folder and the `chmod go-w` fix named.
 The helper file itself is reused, or started after its upload, only as the account's own regular file that no group or other account can write, with its mode reported.
-The helper is uploaded and replaced only when the device lacks this build's bytes, runs only while its connection lives, and is never started by anything but a connection; the helper itself is never resident and never starts at login (the kit's hcoord daemon and labels plugin are that machine's, see The install kit).
-Consent contract 3 is the whole install kit (PRD device-parity D-12): the install puts this build's helper and every kit part for the device's platform (`hide`, `hide-agent-hooks`, `agent-context-labels/`, and the platform-neutral `hcoord/`) in the helper's version folder, named by a digest over every file's path, mode and bytes (`remote/host.rs::Payload`), keeping the folder layout the kit reads.
+The helper is uploaded and replaced only when the device lacks this build's bytes, runs only while its connection lives, and is never started by anything but a connection; the helper itself is never resident and never starts at login (the kit's hcoord daemon is that machine's, see The install kit).
+Consent contract 3 is the whole install kit (PRD device-parity D-12): the install puts this build's helper and every kit part for the device's platform (`hide`, `hide-agent-hooks` and the platform-neutral `hcoord/`) in the helper's version folder, named by a digest over every file's path, mode and bytes (`remote/host.rs::Payload`), keeping the folder layout the kit reads.
 A contract-2 consent (the helper and the `hide` command only) whose install root and command folder match is carried to 3 when its next connection starts, keeping the identity it was bound to, and `host.consent_upgraded` records it (D-13); a device with no consent is not touched until the operator allows it (D-25).
 Every file but the helper is reused by size and mode once a verified upload is in its private folder, because Hide never runs them and reading every part back on each connection would delay each reconnect, so an install cut off part way resumes with only what it had not sent (B18); the helper, which Hide runs, is still checked byte for byte.
 A kit part the build does not carry for the device, or one that could not be placed, never stops the helper: `host.ready` records the upload's `sent`, `reused` and `missing`, and the kit on the device reports that part as missing from the build.
@@ -861,13 +902,16 @@ A change whose answer was lost is reported as an unknown result and the tree rea
 
 ### The install kit
 
-`hide-kit` is the one list of what Hide puts on a machine (PRD device-parity D-09, D-10): the `hide` link in the account's command folder, Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json` (through `hide-agent-hooks`, which owns the file format), the agent labels Herdr plugin `hide.agent-context-labels`, and hcoord (`~/.hcoord/bin/hcoord` and its daemon).
+`hide-kit` is the one list of what Hide puts on a machine (PRD device-parity D-09, D-10): the `hide` link in the account's command folder, Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json` (through `hide-agent-hooks`, which owns the file format), and hcoord (`~/.hcoord/bin/hcoord` and its daemon).
 Each part answers `observe`, `install` and `remove` against a `KitTarget` that names the machine's home, the kit folder, the command folder, the Herdr socket and binary and what runs hcoord; a new part is one more entry in that list.
 The kit folder is a path that outlives a build, because the hooks and the `hide` link name it: the running app bundle's `Contents/Resources` on this Mac, and the helper root's `current` link on a device, which the helper points at its own version folder before it installs.
-The labels plugin and hcoord are copied from the kit folder to `~/.hide/kit/` and refreshed by a digest of their files, because Herdr keeps a linked plugin by its resolved path and hcoord's LaunchAgent names its script's real path.
+hcoord is copied from the kit folder to `~/.hide/kit/` and refreshed by a digest of its files, because its LaunchAgent names its script's real path.
 `~/.hide/kit/installed.json` records the parts the kit installed; a recorded part that is gone was taken away by the operator and stays away until Reinstall (D-26), a record that cannot be read installs nothing on a guess, and `~/.hide/agent-hooks/installed-once` from before the kit is not such a record (B20).
 An apply installs what was never installed and replaces what is outdated, one part's failure never stops the next, and a second apply of the same build writes nothing; Reinstall also restores the parts it names (B8).
-Another tool's hook entries, a `hide` that is not Hide's link, and Herdr's per-plugin config folders are never touched; a GitHub install of the labels plugin is taken out with the machine's `herdr plugin uninstall` and another local link with `plugin.unlink` before Hide's is linked, keeping its enabled flag (D-15).
+Another tool's hook entries, a `hide` that is not Hide's link, and Herdr's per-plugin config folders are never touched.
+Every apply also retires the agent labels Herdr plugin `hide.agent-context-labels`, which the core's label worker replaced (PRD labels-in-hided D-12; `hide-kit/src/labels.rs`), before it installs any part: its Herdr link is taken out (a GitHub install with the machine's `herdr plugin uninstall`, any other link with `plugin.unlink`), a watcher found by the lock it holds under `<home>/.local/state/hide.agent-context-labels/watcher.lock` is sent `SIGTERM` and, after five seconds, `SIGKILL`, and the kit's copy `~/.hide/kit/plugins/agent-context-labels` and the plugin's state folder are removed once the link is gone, so a pass that could not unlink (Herdr down) keeps them and tries again on the next.
+What was removed and what stayed is `KitReport.labels_retirement`, which the core logs as `plugin.retired` or `plugin.retire_incomplete`; it is not a kit part, so Settings shows no row for it.
+On this Mac the core imports the plugin's state before the kit first runs.
 Every child the kit starts (`herdr plugin uninstall`, `node --version`, `hcoord daemon ensure`) runs with a cleared environment, in its own process group, under a deadline, and ends when the kit's owner raises its stop flag (`hide-kit/src/process.rs`).
 The one variable carried across that clearing is hcoord's own `HCOORD_HOME`, when the process running the kit was started with it: it moves every hcoord file and its LaunchAgent label, so an isolated install never takes the account's default `com.hcoord.daemon` label.
 The kit runs nothing from and writes nothing into a folder another account can change: `~/.hide/kit` and `~/.hcoord/bin` are created mode 0700, and a part whose folder is not owned by the account or is writable by its group or others reads failed with that folder named rather than used (`hide_kit::private_dirs`).
@@ -876,7 +920,7 @@ hcoord keeps its daemon running only through a macOS LaunchAgent, so on any othe
 
 This Mac's kit runs on `crate::kit::KitPump`, a core-owned thread rather than the session-sync coordinator, because the kit installs whether or not this Mac's Herdr answers: the launch pass first, then a Reinstall, then a re-read every five seconds while Settings is observed and once when a Settings tab showing the kit opens (`kit_check`); it takes its job under `Mutex<Runtime>` and does every file write, Herdr call and child process with the lock released.
 A `hided` that is not running from an app bundle (`hide_kit::bundled_kit_dir`, which refuses a Cargo build directory) installs nothing on this Mac and its row says why (B11).
-A device's kit runs on its helper through protocol 11's `kit` call (`hide-host/src/kit.rs`: `apply`, `reinstall`, `status`, `remove`), always for the helper root the running helper was installed under; one worker per device makes those calls one at a time (`runtime/kit.rs`, `crate::kit::spawn_device_worker`): the connection pass after every `host.ready`, a Reinstall, and a read when Settings opens.
+A device's kit runs on its helper through the helper protocol's `kit` call (`hide-host/src/kit.rs`: `apply`, `reinstall`, `status`, `remove`), always for the helper root the running helper was installed under; one worker per device makes those calls one at a time (`runtime/kit.rs`, `crate::kit::spawn_device_worker`): the connection pass after every `host.ready`, a Reinstall, and a read when Settings opens.
 Two registrations of one account can connect at the same time: the helper upload stages each file under a name no other connection uses, keeps a final file that already holds the expected bytes, and takes a helper folder another connection created first, and the account lock orders the two applies.
 An answer a worker brings back after its registration went or its removal started changes nothing (`ingest_device_kit_answer`), so a slow install never brings back a device the operator removed.
 A device without consent, with an outdated one, or on a platform this build does not carry installs nothing and its row says why (B17, B21).
@@ -953,7 +997,7 @@ A window is shown with `show()`, which activates the app, and a second launch or
 Under the switch the host can still bring something forward in four places the e2e never reaches without focus: `sendCommand`'s `webContents.focus()`, which runs only after a browser page was given native focus, which only `@needs-focus` specs do; restoring a minimized window on reopen; the folder picker sheet; and Reveal in Finder, which brings Finder forward.
 One instance runs per profile, closing the last window keeps the app, window bounds persist in `window-state.json` under the profile and fall back to a centered default when missing, unreadable or off every display, and the profile is `~/Library/Application Support/hide-desktop` (or `HIDE_DESKTOP_USER_DATA_DIR`).
 The host log is JSON lines in `<profile>/logs/desktop.log`, rotated once at 5 MB; it never carries the daemon URL, because the URL carries the token.
-`pnpm --dir desktop package` (`desktop/scripts/package.mjs`) builds the release binaries and fetches the pinned Herdr, ships `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper-macos-<arch>` and `herdr` flat in `Contents/Resources` beside `THIRD_PARTY_NOTICES`, with the install kit's `hcoord/` and `agent-context-labels/` (the packaged plugin manifest, its scripts and the release watcher), refuses by name and leaves no app when any of them is missing or not executable, ad-hoc signs the bundle (`codesign --force --deep --sign -`, then `--verify --deep --strict`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; it is not notarized, so a first launch needs Open from the context menu.
+`pnpm --dir desktop package` (`desktop/scripts/package.mjs`) builds the release binaries and fetches the pinned Herdr, ships `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper-macos-<arch>` and `herdr` flat in `Contents/Resources` beside `THIRD_PARTY_NOTICES`, with the install kit's `hcoord/`, refuses by name and leaves no app when any of them is missing or not executable, ad-hoc signs the bundle (`codesign --force --deep --sign -`, then `--verify --deep --strict`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; it is not notarized, so a first launch needs Open from the context menu.
 Signing with a real identity, notarization, auto-update, installers, a tray item, global shortcuts, Dock badges, a pet, file drops into a pane and the usage display are not part of this host yet (issue 184).
 
 ### The shortcut registry
