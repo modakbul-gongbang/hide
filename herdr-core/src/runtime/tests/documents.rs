@@ -1585,6 +1585,64 @@ fn a_preview_open_landing_right_after_its_restore_read_replaces_that_preview() {
     assert_eq!(tabs, vec!["a.txt"], "the replaced preview's document goes");
 }
 
+/// S7 B2, D-04: a double-click reaches the core as two single clicks and the
+/// double-click itself, three opens of one file. The file is still being read
+/// when the later ones arrive, so the pin must not be dropped as a repeat of
+/// the read already running: the document lands pinned, not as a preview.
+#[test]
+fn a_double_click_during_the_first_clicks_read_pins_the_document() {
+    let f = Fixture::new();
+    let views_dir = tempfile::tempdir().unwrap();
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        studio_connecting(&mut runtime);
+        runtime.workspace_views = Some(
+            WorkspaceViewStore::open(
+                views_dir.path().join("workspace-views.json"),
+                Default::default(),
+            )
+            .0,
+        );
+        helper_ready(&mut runtime, &f.device);
+    }
+    f.device.hold_read("a.txt");
+    let click = |preview: bool| {
+        f.dispatch(
+            "file_open",
+            serde_json::json!({
+                "path": f.path("a.txt"), "workspace_id": WORKSPACE, "checkout_id": &f.checkout,
+                "preview": preview,
+            }),
+        );
+    };
+    click(true);
+    click(true);
+    click(false);
+    f.device.release_read("a.txt");
+    f.wait_for_document("a.txt", "the read", |_| true);
+
+    let mut runtime = f.shared.lock().unwrap();
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.clone().unwrap();
+    let ViewNodeSnapshot::Area(area) = view.layout.root else {
+        panic!("one area");
+    };
+    let shown: Vec<_> = area
+        .displays
+        .iter()
+        .map(|display| (display.label.as_str(), display.preview))
+        .collect();
+    assert_eq!(shown, vec![("a.txt", false)]);
+    let tabs: Vec<_> = runtime
+        .snapshot
+        .editor
+        .tabs
+        .iter()
+        .map(|tab| (tab.label.as_str(), tab.preview))
+        .collect();
+    assert_eq!(tabs, vec![("a.txt", false)]);
+}
+
 /// S7 B23: this machine and a device can hold a checkout at the same path,
 /// and each is its own Workspace: the file opened in each is two documents,
 /// each shown by its own Workspace's view, so a draft in one leaves the
