@@ -662,9 +662,10 @@ test("area cycle native: page input previews one exact area, releases once and c
   const previous = `${origin}/b.html`;
   const current = `${origin}/korean.html`;
   for (const url of [outside, previous]) expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ ok: true });
-  await page.keyboard.press("Meta+KeyK");
-  await page.keyboard.type("Expand side panel");
-  await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  // Two View areas side by side need the Workspace's width: expand the side panel from the toolbar's location menu.
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
   if (await page.locator('[data-tools-toggle="on"]').count()) await page.locator('[data-tools-toggle="on"]').click();
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role=menu] [data-menu-item=split_right]').click();
