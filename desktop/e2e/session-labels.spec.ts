@@ -6,7 +6,7 @@ import path from "node:path";
 import { REPO } from "./fixture";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { isolate, launch, test } from "./fixture";
+import { isolate, launchShell, test } from "./fixture";
 
 function owner(id: string, kind = "id"): string {
   const hash = crypto.createHash("sha256");
@@ -39,7 +39,7 @@ test("native session replacement hides stale labels before the watcher publishes
   try {
     labels(`fixture-${pane}`, "세션 A의 한글 작업");
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "fixture-agents.json"), JSON.stringify(herdr.run(["agent", "list"])));
-    const launched = await launch(run.env);
+    const launched = await launchShell(run.env);
     app = launched.app;
     const page = launched.page;
     const cdp = await page.context().newCDPSession(page);
