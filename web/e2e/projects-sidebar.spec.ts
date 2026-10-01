@@ -12,7 +12,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { startHerdr, type HerdrFixture, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
 
@@ -329,7 +329,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     // descendant badge, and the parent keeps an always-shown chevron.
     // Unfolding is one agent_tree_toggle and nothing else, the C line gives way
     // to the child row under its parent, and its own checkout still lists it.
-    execFileSync(herdr.bin, ["pane", "report-metadata", rowsPane, "--source", "e2e-lineage", "--token", `parent_pane=${mainPane}`], { env: herdr.env, timeout: 30_000 });
+    declareParent(herdr, rowsPane, mainPane);
     await primaryToggle.click();
     const parentRow = primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"]`);
     await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0, { timeout: 20_000 });

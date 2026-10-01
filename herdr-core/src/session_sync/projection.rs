@@ -54,6 +54,8 @@ pub(crate) struct ProjectedAgent {
     pub(crate) agent_session: Option<crate::sidebar::SessionAgentSessionPayload>,
     pub(crate) spawned_from_pane_id: Option<String>,
     pub(crate) spawned_from_machine_id: Option<String>,
+    pub(crate) declared_parent_session: Option<String>,
+    pub(crate) lineage_session: Option<String>,
     pub(crate) state_change_seq: u64,
     pub(crate) tokens: BTreeMap<String, Value>,
 }
@@ -103,6 +105,8 @@ impl ProjectionState {
                     agent_session: agent.agent_session.clone(),
                     spawned_from_pane_id: agent.spawned_from_pane_id.clone(),
                     spawned_from_machine_id: agent.spawned_from_machine_id.clone(),
+                    declared_parent_session: agent.declared_parent_session.clone(),
+                    lineage_session: agent.lineage_session.clone(),
                     state_change_seq: Some(agent.state_change_seq),
                     tokens: agent.tokens.clone(),
                 }

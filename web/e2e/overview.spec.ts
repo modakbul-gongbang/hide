@@ -22,7 +22,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
+import { agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, screenshot } from "./wire";
 
@@ -224,7 +224,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     const shippedPane = await workspaceAt(herdr, tree("shipped"), "머지된 작업");
     // The Observer on main delegated the working worktree's Implementor,
     // which is working, so the Observer waits on it (B14, B21).
-    execFileSync(herdr.bin, ["pane", "report-metadata", workingPane, "--source", "e2e-lineage", "--token", `parent_pane=${mainPane}`], { env: herdr.env, timeout: 30_000 });
+    declareParent(herdr, workingPane, mainPane);
     await setFixtureLifecycle(herdr, workingPane, "working");
     // An agent asking the operator: the label plugin's `expected_reply` is
     // its question, and its `progress` the rest of what it said; the node

@@ -3,6 +3,7 @@
 //! a generated payload back into a hand-written deserialization shape.
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::live::SessionFetchError;
 use crate::model::PaneLayoutDirection;
@@ -312,7 +313,46 @@ record_conversions!(ev);
 /// `pane.report_metadata`, the same display-only channel the label plugin and
 /// the hook helper already use. The value is the parent's pane id, it dies
 /// with the pane, and Hide reads it here and nowhere else.
+///
+/// The token outlives the agent that earned it, because it dies with the
+/// pane and a pane can host another agent later, so it is only a claim until
+/// `CHILD_SESSION_TOKEN` and `PARENT_SESSION_TOKEN` prove that both panes
+/// still host the sessions it was written for.
 pub(crate) const PARENT_PANE_TOKEN: &str = "parent_pane";
+
+/// The digest of the child's agent session when the relationship was written.
+/// A relationship holds only while the child's pane still reports that session.
+pub(crate) const CHILD_SESSION_TOKEN: &str = "child_session";
+
+/// The digest of the parent's agent session when the relationship was written.
+/// `sidebar::apply_lineage` compares it with the parent pane's current session,
+/// because only there are both rows at hand, on this machine or another.
+pub(crate) const PARENT_SESSION_TOKEN: &str = "parent_session";
+
+/// How a session is written into a token: the lowercase hex SHA-256 of the
+/// value Herdr reports in `agent_session.value`. Herdr cuts a token value at
+/// 80 characters and a session can be a path, so a digest is the one form
+/// that keeps two sessions apart whatever they look like; hcoord writes the
+/// same function. A blank value names no session.
+pub(crate) fn session_digest(value: &str) -> Option<String> {
+    if value.trim().is_empty() {
+        return None;
+    }
+    Some(
+        Sha256::digest(value.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
+}
+
+/// Whether a pane still hosts the session a relationship was written for.
+/// A missing side proves nothing, so it does not hold: a pane Herdr reports
+/// without a session (Codex before its first turn) cannot confirm a match, and
+/// a token written before sessions were recorded has nothing to compare.
+pub(crate) fn session_holds(declared: Option<&str>, current: Option<&str>) -> bool {
+    matches!((declared, current), (Some(declared), Some(current)) if declared == current)
+}
 
 /// Stable machine identity paired with `parent_pane` for cross-device
 /// lineage. Same-machine children omit it so an ordinary local parent keeps
@@ -335,18 +375,27 @@ fn lineage_parent(declared: Option<&str>) -> Option<String> {
 
 impl From<res::AgentInfo> for ProjectedAgent {
     fn from(v: res::AgentInfo) -> Self {
-        let declared_parent = v
-            .tokens
-            .iter()
-            .find(|(key, _)| key.as_str() == PARENT_PANE_TOKEN)
-            .map(|(_, id)| id.as_str());
-        let spawned_from_pane_id = lineage_parent(declared_parent);
-        let declared_parent_machine = v
-            .tokens
-            .iter()
-            .find(|(key, _)| key.as_str() == PARENT_MACHINE_TOKEN)
-            .map(|(_, id)| id.as_str());
-        let spawned_from_machine_id = lineage_parent(declared_parent_machine);
+        let token = |name: &str| {
+            v.tokens
+                .iter()
+                .find(|(key, _)| key.as_str() == name)
+                .map(|(_, value)| value.as_str())
+        };
+        // A relationship is the spawner's claim plus the child still being the
+        // session the claim was written for. The parent's session is checked
+        // where the parent's row is known (`sidebar::apply_lineage`).
+        let own_session = v
+            .agent_session
+            .as_ref()
+            .and_then(|session| session_digest(&session.value));
+        let child_holds = session_holds(
+            lineage_parent(token(CHILD_SESSION_TOKEN)).as_deref(),
+            own_session.as_deref(),
+        );
+        let declared = |name: &str| child_holds.then(|| lineage_parent(token(name))).flatten();
+        let spawned_from_pane_id = declared(PARENT_PANE_TOKEN);
+        let spawned_from_machine_id = declared(PARENT_MACHINE_TOKEN);
+        let declared_parent_session = declared(PARENT_SESSION_TOKEN);
         Self {
             pane_id: v.pane_id,
             name: v.name,
@@ -361,6 +410,8 @@ impl From<res::AgentInfo> for ProjectedAgent {
             }),
             spawned_from_pane_id,
             spawned_from_machine_id,
+            declared_parent_session,
+            lineage_session: own_session,
             state_change_seq: v.state_change_seq,
             tokens: v
                 .tokens
@@ -2012,21 +2063,57 @@ mod tests {
         json!({"type": "agent_list", "agents": [agent]})
     }
 
+    fn declared_child(session: Option<(&str, &str)>, tokens: Value) -> Value {
+        let mut extra = json!({"tokens": tokens});
+        if let Some((kind, value)) = session {
+            extra["agent_session"] =
+                json!({"source": "herdr:claude", "agent": "claude", "kind": kind, "value": value});
+        }
+        listed_agent(extra)
+    }
+
+    fn token_set(child_session: &str, parent_session: &str) -> Value {
+        json!({
+            "parent_pane": "w1:p1",
+            "parent_machine": "machine-parent",
+            "child_session": session_digest(child_session).unwrap(),
+            "parent_session": session_digest(parent_session).unwrap(),
+        })
+    }
+
+    #[test]
+    fn a_session_is_written_into_a_token_as_its_sha256() {
+        // The expected value is `printf s-child | shasum -a 256`, which hcoord's
+        // `sessionDigest` reproduces; the two sides agree on this one string.
+        assert_eq!(
+            session_digest("s-child").as_deref(),
+            Some("e91e031561ec0bc9093101da407c3e78b99ebf139047f29f4ac6d5948e30cf0b")
+        );
+        assert_eq!(session_digest("  "), None);
+        assert_eq!(session_digest(""), None);
+        assert_ne!(session_digest("s-child"), session_digest("s-other"));
+    }
+
     // sasu starts its implementor with `agent.start` (the only start that can
     // carry the role marker) and declares the Observer's pane as the parent
     // afterwards; without this the row was a root in another checkout and the
     // Observer had no child (2026-09-18).
     #[test]
     fn a_parent_declared_as_a_pane_token_is_the_lineage() {
-        let declared = agents_response(listed_agent(json!({"tokens": {
-            "parent_pane": "w1:p1",
-            "parent_machine": "machine-parent"
-        }})))
+        let declared = agents_response(declared_child(
+            Some(("id", "s-child")),
+            token_set("s-child", "s-parent"),
+        ))
         .unwrap();
         assert_eq!(declared[0].spawned_from_pane_id.as_deref(), Some("w1:p1"));
         assert_eq!(
             declared[0].spawned_from_machine_id.as_deref(),
             Some("machine-parent")
+        );
+        assert_eq!(
+            declared[0].declared_parent_session,
+            session_digest("s-parent"),
+            "the parent's session travels on for the pass that can see the parent"
         );
         // The token is still carried verbatim; the sidebar's own token readers are unaffected.
         assert_eq!(declared[0].tokens.get("parent_pane"), Some(&json!("w1:p1")));
@@ -2035,8 +2122,10 @@ mod tests {
             Some(&json!("machine-parent"))
         );
 
+        let mut cleared_tokens = token_set("s-child", "s-parent");
+        cleared_tokens["parent_pane"] = json!("  ");
         let cleared =
-            agents_response(listed_agent(json!({"tokens": {"parent_pane": "  "}}))).unwrap();
+            agents_response(declared_child(Some(("id", "s-child")), cleared_tokens)).unwrap();
         assert_eq!(
             cleared[0].spawned_from_pane_id, None,
             "an empty token is a cleared declaration, not a parent named \"\""
@@ -2044,6 +2133,63 @@ mod tests {
 
         let silent = agents_response(listed_agent(json!({}))).unwrap();
         assert_eq!(silent[0].spawned_from_pane_id, None);
+    }
+
+    #[test]
+    fn a_child_whose_pane_now_hosts_another_session_declares_no_parent() {
+        let reused = agents_response(declared_child(
+            Some(("id", "s-new-agent")),
+            token_set("s-child", "s-parent"),
+        ))
+        .unwrap();
+        assert_eq!(reused[0].spawned_from_pane_id, None);
+        assert_eq!(reused[0].spawned_from_machine_id, None);
+        assert_eq!(reused[0].declared_parent_session, None);
+        // The agent itself is still listed, running under its own session.
+        assert_eq!(
+            reused[0].agent_session.as_ref().unwrap().value,
+            "s-new-agent"
+        );
+    }
+
+    #[test]
+    fn a_pane_reported_without_a_session_cannot_prove_the_relationship() {
+        let silent_child =
+            agents_response(declared_child(None, token_set("s-child", "s-parent"))).unwrap();
+        assert_eq!(
+            silent_child[0].spawned_from_pane_id, None,
+            "no session is no proof, so the pane is drawn as a root while the tokens stay for when it reports one"
+        );
+        let back = agents_response(declared_child(
+            Some(("id", "s-child")),
+            token_set("s-child", "s-parent"),
+        ))
+        .unwrap();
+        assert_eq!(back[0].spawned_from_pane_id.as_deref(), Some("w1:p1"));
+    }
+
+    #[test]
+    fn tokens_written_before_sessions_were_recorded_declare_no_parent() {
+        let old = agents_response(declared_child(
+            Some(("id", "s-child")),
+            json!({"parent_pane": "w1:p1", "parent_machine": "machine-parent"}),
+        ))
+        .unwrap();
+        assert_eq!(
+            old[0].spawned_from_pane_id, None,
+            "hcoord rewrites the full set within one reconcile interval; until then the child is a root"
+        );
+    }
+
+    #[test]
+    fn a_session_recorded_as_a_path_is_compared_like_an_id() {
+        let long_path = format!("/sessions/{}/rollout.jsonl", "d".repeat(120));
+        let declared = agents_response(declared_child(
+            Some(("path", &long_path)),
+            token_set(&long_path, "s-parent"),
+        ))
+        .unwrap();
+        assert_eq!(declared[0].spawned_from_pane_id.as_deref(), Some("w1:p1"));
     }
 
     #[test]

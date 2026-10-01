@@ -288,6 +288,8 @@ mod tests {
             spawned_from_pane_id: None,
             declared_parent_pane_id: None,
             spawned_from_machine_id: None,
+            declared_parent_session: None,
+            lineage_session: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             waiting_on_descendants: false,

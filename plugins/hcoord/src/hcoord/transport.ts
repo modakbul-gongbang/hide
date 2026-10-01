@@ -13,7 +13,7 @@ import { notifyHuman, notifyText } from "./platform";
 import { createFailureLog } from "./failure-log";
 import { isLocalMachine, remoteCall, remoteCallAsync, requireRemoteHerdr, remoteOutcome, savedMachine, type Raw } from "./remote";
 import { reconcileAlert, recordClean, recordReady, recordStart } from "./health";
-import { lineageCurrent, readRouteLineage, writeLineage, type LineageWrite } from "./lineage";
+import { carriesLineage, clearLineage, hostsAnotherSession, lineageCurrent, readRouteLineage, writeLineage, type LineageWrite } from "./lineage";
 import { machineId } from "./identity";
 import { HCOORD_VERSION } from "./version";
 
@@ -364,7 +364,8 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       const key = `${child.machine}\u0000${child.hostScope}`;
       routes.set(key, [...(routes.get(key) ?? []), child]);
     }
-    let scanned = 0, filled = 0, failed = 0;
+    let scanned = 0, filled = 0, failed = 0, ended = 0;
+    const endedChildren: { participant: string; parent: string; pane: string; session: string; observed: string }[] = [];
     for (const [key, children] of routes) {
       const { machine, hostScope } = children[0]!;
       const local = isLocalMachine(machine);
@@ -383,7 +384,23 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
         const parent = own(ledger.participants, child.parent!);
         const pane = panes.get(child.pane!);
         if (!parent || parent.pane === null || !pane) continue;
-        if (!sameExecution(child, { machine, hostScope, pane: child.pane, session: pane.session, instance: pane.instance })) continue;
+        if (!sameExecution(child, { machine, hostScope, pane: child.pane, session: pane.session, instance: pane.instance })) {
+          // The pane now hosts another agent: the relationship ended with the session it was
+          // written for, and its tokens would hand the new agent a parent it never had.
+          if (!hostsAnotherSession(child, pane) || !carriesLineage(pane) || (writeRetryAt.get(child.id) ?? 0) > now) continue;
+          let cleared: ReturnType<typeof clearLineage>;
+          try { cleared = clearLineage(child); }
+          catch (error) { cleared = { status: "failed", message: error instanceof Error ? error.message : "lineage token clear failed" }; }
+          if (cleared.status === "cleared") {
+            ended += 1; writeRetryAt.delete(child.id);
+            endedChildren.push({ participant: child.id, parent: parent.id, pane: child.pane!, session: child.session, observed: pane.session! });
+            continue;
+          }
+          failed += 1;
+          writeRetryAt.set(child.id, now + LINEAGE_WRITE_RETRY_MS);
+          process.stderr.write(`${JSON.stringify({ event: "hcoord.lineage_clear_failed", at: new Date(now).toISOString(), participant: child.id, parent: parent.id, machine: child.machine, reason: cleared.message.slice(0, 300) })}\n`);
+          continue;
+        }
         scanned += 1;
         if (lineageCurrent(parent, child, pane) || (writeRetryAt.get(child.id) ?? 0) > now) continue;
         let result: LineageWrite;
@@ -395,9 +412,11 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
         process.stderr.write(`${JSON.stringify({ event: "hcoord.lineage_write_failed", at: new Date(now).toISOString(), participant: child.id, parent: parent.id, machine: child.machine, reason: result.message.slice(0, 300) })}\n`);
       }
     }
-    if (filled > 0) {
+    if (filled > 0 || ended > 0) {
       const next = structuredClone(ledger);
-      event(next, new Date(now).toISOString(), "lineage.reconciled", "daemon", null, { scanned, filled, failed });
+      const at = new Date(now).toISOString();
+      for (const entry of endedChildren) event(next, at, "lineage.ended", entry.participant, null, { parent: entry.parent, pane: entry.pane, recordedSession: entry.session, observedSession: entry.observed });
+      if (filled > 0) event(next, at, "lineage.reconciled", "daemon", null, { scanned, filled, failed });
       saveLedger(next, home); ledger = next;
     }
   };

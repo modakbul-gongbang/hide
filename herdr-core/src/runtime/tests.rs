@@ -284,7 +284,7 @@ fn assert_owner_conflict_observes_and_reconnects(owner_conflict: &str) {
 }
 
 fn context_payload() -> SessionSnapshotPayload {
-    serde_json::from_value(serde_json::json!({
+    serde_json::from_value(crate::sidebar::lineage_fixture_value(serde_json::json!({
         "agents": [
             {"pane_id":"w1:p1", "agent":"codex", "agent_status":"working", "state_change_seq":10,
              "cwd":"/tmp/hide-context-alpha", "tokens":{"activity":"1788871000000"}},
@@ -301,7 +301,7 @@ fn context_payload() -> SessionSnapshotPayload {
             {"workspace_id":"w2","tab_id":"w2:t1","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},
              "focused_pane_id":"w2:p1","panes":[{"pane_id":"w2:p1","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}
         ]
-    })).unwrap()
+    }))).unwrap()
 }
 
 pub(super) fn runtime() -> Runtime {

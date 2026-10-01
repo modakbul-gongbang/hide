@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
+import { startHerdr, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
@@ -212,7 +212,7 @@ test("Delegated canvas returns to its normal tab and its tab menu keeps the Agen
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
+    declareParent(herdr, child, parent);
     const chip = page.locator(`[data-child-chip="${child}"]`).first();
     await expect(chip).toBeVisible({ timeout: 20_000 });
     // The chip shows once the lineage is known; the delegated canvas exists

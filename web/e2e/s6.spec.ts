@@ -7,10 +7,9 @@
 // whose file is gone marked unavailable (B19, B20).
 
 import { expect, test, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { herdrHasFocus, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { choosePanel, countSent, screenshot } from "./wire";
 
@@ -18,11 +17,6 @@ test.describe.configure({ timeout: 120_000 });
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-}
-
-/** Declares `child` as spawned by `parent`, the way a spawner's hook does; report-metadata prints nothing. */
-function declareChild(herdr: HerdrFixture, child: string, parent: string): void {
-  execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
 }
 
 test("Main, Overview and a Workspace with its side panel, tools and delegated child", async ({ page }) => {
@@ -348,7 +342,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     // moves the delegated pane to its own tab, so the chip crosses tabs with
     // one tracked focus, and the child's Return comes back the same way
     // (B14-B16).
-    declareChild(herdr, child, parent);
+    declareParent(herdr, child, parent);
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0, { timeout: 20_000 });
     const chip = page.locator(`[data-pane-children="${parent}"] [data-child-chip="${child}"]`);
     await expect(chip).toBeVisible({ timeout: 20_000 });
