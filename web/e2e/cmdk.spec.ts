@@ -81,12 +81,13 @@ test("⌘K lists what is connected to the agent in front, goes to an agent by na
     await page.keyboard.press("Enter");
     await expect(input(page)).toHaveCount(0);
     await expect.poll(() => last.get("focus_pane")?.pane_id).toBe(one);
-
-    // B22: a command that ⌘K used to carry is not found by its name. A query is
-    // matched as a subsequence, so a trailing run no fixture path or title can
-    // hold keeps the check about the command, not about a runner's directory names.
+    // Reopening ⌘K at once must keep every key: the pane's focus lands when the
+    // core answers, and it may not take the keyboard from the palette (CI once
+    // dropped the first letters of the next query to it).
+    // B22: a command that ⌘K used to carry is not found by its name.
     await openSearch(page);
-    await page.keyboard.type("Split right zzqx");
+    await page.keyboard.type("Split right");
+    await expect(input(page)).toHaveValue("Split right");
     await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("일치하는 항목 없음");
     await expect(page.locator('[data-palette-row^="command:"]')).toHaveCount(0);
     // B16: no GitHub project on this Mac, so no GitHub search row to offer.
