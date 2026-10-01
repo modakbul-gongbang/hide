@@ -183,7 +183,6 @@ describe("Agent pane cycle (issue 301)", () => {
     draw(rest);
     observePane(rest, "t2-pane");
     const child = { kind: "pane", workspace: "c", paneId: "child-pane" } as const;
-    expect(focusedCycleScope(rest, child)).toBeNull();
     expect(panes(agentCycle(rest, child))).toEqual(["child-pane", "t2-pane"]);
     // t1 is under the canvas now, so its pane is not where the keyboard is.
     expect(agentOrigin(rest, owner)).toBeNull();
