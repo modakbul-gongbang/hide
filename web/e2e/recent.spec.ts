@@ -1,5 +1,5 @@
 // Recent navigation on an isolated pinned Herdr and hided
-// (docs/UI_BEHAVIOR.md, Recent navigation): Recent Panels (⌥` in a browser)
+// (docs/UI_BEHAVIOR.md, Recent navigation): explicitly bound global Recent Panels
 // walks one order over Herdr tabs and View displays across checkouts and
 // commits one event on releasing ⌥; Recent Projects (⌥Tab) brings the
 // previous project back on the surface it was last used on.
@@ -47,6 +47,15 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     const canvas = page.locator("[data-canvas]").first();
     const cycleRow = page.locator("[data-cycle] [aria-selected=true]");
 
+    // Global Recent Panels is separate and unbound by default.
+    await page.locator("[data-open-settings]").click();
+    await page.locator('[data-settings-tab="shortcuts"]').click();
+    await page.locator('[data-shortcut-record="recent_panel"]').click();
+    await page.keyboard.press("Alt+KeyG");
+    await page.locator('[data-shortcut-apply="recent_panel"]').click();
+    await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText("⌥G");
+    await page.keyboard.press("Escape");
+
     // plan.txt pinned in the fixture Workspace's View area, the keyboard in it.
     await showExplorer(page);
     await page.locator(`[data-explorer-row="${path.join(root, "plan.txt")}"]`).dblclick();
@@ -64,7 +73,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // ⌥` once, held: the previous surface is the other checkout's display.
     const focusCheckouts = sent.get("focus_checkout") ?? 0;
     await page.keyboard.down("Alt");
-    await page.keyboard.press("Backquote");
+    await page.keyboard.press("KeyG");
     await expect(cycleRow).toHaveAttribute("data-cycle-row", display!);
     await expect(cycleRow).toHaveAttribute("data-cycle-kind", "file");
     await expect(page.locator("[data-cycle=panels]")).toContainText("Recent Panels");
@@ -83,7 +92,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // ⌥` again goes straight back to beta's tab: one focus_tab across checkouts.
     const focusTabs = sent.get("focus_tab") ?? 0;
     await page.keyboard.down("Alt");
-    await page.keyboard.press("Backquote");
+    await page.keyboard.press("KeyG");
     await expect(cycleRow).toHaveAttribute("data-cycle-row", betaTab);
     await page.keyboard.up("Alt");
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
@@ -106,7 +115,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // agent it is, the neutral mark for a tab of several, a file's own mark.
     const quiet = [sent.get("focus_checkout") ?? 0, sent.get("focus_tab") ?? 0];
     await page.keyboard.down("Alt");
-    await page.keyboard.press("Backquote");
+    await page.keyboard.press("KeyG");
     await expect(page.locator("[data-cycle=panels]")).toBeVisible();
     const marks = (row: string) => page.locator(`[data-cycle=panels] [data-cycle-row="${row}"] [data-cycle-marks]`);
     await expect(marks(betaTab)).toHaveAttribute("data-cycle-marks", "codex");

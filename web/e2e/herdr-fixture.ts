@@ -17,6 +17,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { ownUntilWorkerExit } from "./worker-owned";
 
 export type HerdrFixture = {
   bin: string;
@@ -240,7 +241,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
 
   const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
   const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });
-  const stop = () => {
+  const { stop } = ownUntilWorkerExit(() => {
     spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
     if (server.exitCode === null) server.kill("SIGKILL");
     for (const file of [socket, socket.replace(/\.sock$/, "-client.sock")]) {
@@ -265,7 +266,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       }
     }
     fs.rmSync(root, { recursive: true, force: true });
-  };
+  });
   try {
     await waitFor(() => fs.existsSync(socket), `herdr socket ${socket}`);
     const snapshot = herdr(env, bin, ["api", "snapshot"]) as {

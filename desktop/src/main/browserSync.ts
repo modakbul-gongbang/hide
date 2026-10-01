@@ -15,7 +15,7 @@ export const MAX_LIVE_VIEWS = 12;
 export const MAX_POPUPS = 4;
 const MAX_TEXT = 8192;
 const MAX_EXTENT = 100_000;
-const COMMANDS: ReadonlySet<string> = new Set<BrowserCommand>(["back", "forward", "reload", "stop"]);
+const COMMANDS: ReadonlySet<string> = new Set<BrowserCommand>(["back", "forward", "reload", "stop", "focus"]);
 const LOADABLE_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:", "file:"]);
 /** Schemes Chromium answers itself (with every `chrome` one): a page never reaches them, and they are never another app's. */
 const BROWSER_PROTOCOLS: ReadonlySet<string> = new Set([

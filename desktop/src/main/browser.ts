@@ -16,12 +16,12 @@
 // window that keeps its opener, belongs to that page and closes with it; a
 // link to another app leaves only after the operator agrees.
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, WebContentsView, type BrowserWindowConstructorOptions, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session, type WebContents, type WindowOpenHandlerResponse } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, WebContentsView, type BrowserWindowConstructorOptions, type Input, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session, type WebContents, type WindowOpenHandlerResponse } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
-import type { CommandId } from "../../../web/src/shortcuts";
-import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
+import { hostChord, isCycleCommand, matchHost, releaseModifier, REGISTRY, type Command, type CommandId } from "../../../web/src/shortcuts";
+import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
 import { appScheme, browserPartition, isPopup, loadable, MAX_LIVE_VIEWS, MAX_POPUPS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, popupBounds, remoteRequest, toBounds, viewKey, type PageZoom } from "./browserSync";
 import type { HostLog } from "./log";
 import { accelerator } from "./menu";
@@ -68,6 +68,17 @@ export class BrowserViews {
   private asking: symbol | null = null;
   /** Contents whose app link the operator declined; they ask again only after their next navigation. */
   private readonly declined = new Set<number>();
+  private registry: readonly Command[] = REGISTRY;
+  private cycleInput: { page: Page; release: string; cycleId: number } | null = null;
+  private cycleSequence = 0;
+
+  setRegistry(registry: readonly Command[]): void { this.registry = registry; }
+
+  private cancelCycle(): void {
+    const held = this.cycleInput;
+    this.cycleInput = null;
+    if (held) this.emit({ kind: "cycle-cancel", cycleId: held.cycleId, workspace: held.page.workspace, id: held.page.id });
+  }
 
   constructor(
     private readonly log: HostLog,
@@ -78,6 +89,10 @@ export class BrowserViews {
     /** Shows a popup window the way the host shows its own, so a test run never activates the app. */
     private readonly present: (window: BrowserWindow, focus: boolean) => void,
   ) {
+    ipcMain.on(BROWSER_CYCLE_END_CHANNEL, (event, cycleId: unknown) => {
+      if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "cycle_end" });
+      if (this.cycleInput?.cycleId === cycleId) this.cycleInput = null;
+    });
     ipcMain.on(BROWSER_SYNC_CHANNEL, (event, value: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "sync" });
       const sync = parseSync(value);
@@ -104,7 +119,9 @@ export class BrowserViews {
       const page = target ? this.pages.get(viewKey(target.workspace, target.id)) : undefined;
       if (!page || !command) return;
       const contents = page.view.webContents;
-      if (command === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+      if (command === "focus") {
+        if (page.visible && this.window?.isFocused()) contents.focus();
+      } else if (command === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
       else if (command === "forward" && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
       else if (command === "stop") contents.stop();
       else if (command === "reload") {
@@ -118,12 +135,26 @@ export class BrowserViews {
   /** The window the pages are drawn in. A new window starts with no pages. */
   attach(window: BrowserWindow): void {
     this.window = window;
+    // Once a native page starts a hold, its shell input uses the same IPC
+    // route. Even a quick release cannot overtake the forwarded first chord.
+    window.webContents.on("before-input-event", (event, input) => this.routeCycleInput(event, input));
     // A shell that loads again, or moves to another daemon, has not placed
     // anything yet: its pages hide until it says where they go.
     window.webContents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) this.hideAll();
     });
+    window.on("blur", () => {
+      const held = this.cycleInput;
+      this.cancelCycle();
+      // The hold moved the native responder to the shell. When the window
+      // comes back, the page that started it takes the keyboard again, as
+      // it would after Escape, unless it has since been hidden or closed.
+      if (held) window.once("focus", () => {
+        if (held.page.visible && this.pages.get(held.page.key) === held.page) held.page.view.webContents.focus();
+      });
+    });
     window.on("closed", () => {
+      this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");
       if (this.window === window) this.window = null;
     });
@@ -298,6 +329,7 @@ export class BrowserViews {
       void contents.setVisualZoomLevelLimits(...PINCH_ZOOM_LIMITS).catch((error: unknown) => this.log.event("browser.pinch_zoom_failed", { detail: String(error) }));
     });
     contents.on("before-input-event", (event, input) => {
+      if (this.routeCycleInput(event, input, page)) return;
       // ⌘+ reaches no menu item (the menu's zoom in is ⌘=), so the page
       // answers it here unless the operator bound that chord to a command.
       if (input.type !== "keyDown" || input.code !== "Equal" || !input.meta || !input.shift || input.alt || input.control) return;
@@ -314,10 +346,13 @@ export class BrowserViews {
       this.update(page, { url: this.sourceAddress(page, url), loading: false, failure: description || `Load failed (${code})` });
     });
     contents.on("render-process-gone", (_event, details) => {
+      if (this.cycleInput?.page === page) this.cancelCycle();
       this.log.event("browser.page_gone", { reason: details.reason });
       this.update(page, { loading: false, failure: `The page stopped (${details.reason})` });
     });
-    contents.on("focus", () => this.emit({ kind: "focus", workspace: page.workspace, id: page.id }));
+    contents.on("focus", () => {
+      if (page.visible) this.emit({ kind: "focus", workspace: page.workspace, id: page.id });
+    });
     this.guard(page, contents);
   }
 
@@ -493,6 +528,33 @@ export class BrowserViews {
     }
   }
 
+  /** One held origin and one ordered delivery route, independent of overlay coverage. */
+  private routeCycleInput(event: { preventDefault(): void }, input: Input, page?: Page): boolean {
+    const held = this.cycleInput;
+    if (!held && !page) return false;
+    const eventLike = { code: input.code, metaKey: input.meta, altKey: input.alt, shiftKey: input.shift, ctrlKey: input.control };
+    const command = input.type === "keyDown" && !input.isComposing ? matchHost(eventLike, this.registry, "electron") : null;
+    const starts = !held && command && isCycleCommand(command.id) && page?.visible && page.view.webContents.isFocused();
+    const continues = held && command && isCycleCommand(command.id);
+    const ends = held && ((input.type === "keyUp" && input.key === held.release) || (input.type === "keyDown" && input.key === "Escape"));
+    if (!starts && !continues && !ends) return false;
+    const chord = command && hostChord(command, "electron");
+    const release = chord && releaseModifier(chord);
+    if (starts && release && page) {
+      this.cycleSequence = (this.cycleSequence + 1) % Number.MAX_SAFE_INTEGER;
+      this.cycleInput = { page, release, cycleId: this.cycleSequence };
+    }
+    const cycle = held ?? this.cycleInput;
+    if (!cycle) return false;
+    if (ends) this.cycleInput = null;
+    event.preventDefault();
+    this.emit({ kind: "cycle-input", cycleId: cycle.cycleId, workspace: cycle.page.workspace, id: cycle.page.id, type: input.type as "keyDown" | "keyUp", key: input.key, code: input.code, control: input.control, alt: input.alt, meta: input.meta, shift: input.shift });
+    // The overlay can be outside the originating page. Transfer its native
+    // response at the start, while its logical owner stays frozen in the shell.
+    if (starts && this.window?.isFocused()) this.window.webContents.focus();
+    return true;
+  }
+
   private update(page: Page, change: Partial<BrowserPageState>): void {
     page.state = { ...page.state, ...change };
     if (page.report) return;
@@ -531,8 +593,12 @@ export class BrowserViews {
 
   private show(page: Page, visible: boolean): void {
     if (page.visible === visible) return;
+    // A hidden WebContentsView is no longer a native keyboard responder.
+    // Keep the held cycle's remaining OS input in this same window: the
+    // shell preserves its logical page owner and consumes release/Escape.
     page.visible = visible;
     page.view.setVisible(visible);
+    if (!visible && this.cycleInput?.page === page && this.window?.isFocused()) this.window.webContents.focus();
   }
 
   private hideAll(): void {
@@ -541,6 +607,7 @@ export class BrowserViews {
 
   private destroy(page: Page, reason: "closed" | "evicted" | "window_closed"): void {
     if (reason === "evicted") this.emit({ kind: "gone", workspace: page.workspace, id: page.id, load: page.applied, url: page.state.url });
+    if (this.cycleInput?.page === page) this.cancelCycle();
     this.pages.delete(page.key);
     this.release(page.workspace, page.id, page.applied);
     if (page.report) clearTimeout(page.report);

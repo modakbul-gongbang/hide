@@ -1591,26 +1591,26 @@ function buildWorkspace(tokens) {
   // The panel never resizes it while it floats over it.
   function agentArea(key, active = true, remote = false) {
     return frame(`ws-agentarea-${key}`, 'Agent area', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, fill: '$--background', clip: true, ...(remote ? {stroke: '$--device-remote', strokeWidth: 2, strokeAlignment: 'inner'} : {})}, [
-      frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+      frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', fill: active ? '$--background' : '$--card'}, [
         screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', active ? '탭 이름과 구성 개선' : '검증 결과 확인', active, 'claude'),
         screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
         screenIconButton(`ws-agtabadd-${key}`, 'plus', {size: 20}),
       ]),
       screenPaneHeader(`ws-panehdr-${key}`, {label: 'w2:p1', status: 'Working', width: 'fill_container'}),
       // The xterm viewport takes --background in either theme (commit 7052afa).
-      frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
+      frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', stroke: active ? '$--primary' : '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
         TERMINAL.map(([line, fill], index) => text(`ws-term${index}-${key}`, line, {fill, mono: true, size: '$--text-caption'}))),
     ]);
   }
 
-  function agentColumn(key, count, groups = false, remote = null) {
+  function agentColumn(key, count, groups = false, remote = null, keyboard = true) {
     const areas = groups
       ? frame(`ws-agentareas-${key}`, 'Two Agent areas', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [
         agentArea(`${key}-left`),
         frame(`ws-agentdivider-${key}`, 'Agent area divider', {width: '$--size-resize-handle', height: 'fill_container', fill: '$--border'}),
         agentArea(`${key}-right`, false),
       ])
-      : agentArea(key, true, Boolean(remote));
+      : agentArea(key, keyboard, Boolean(remote));
     return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [toolbar(key, count, remote), areas]);
   }
 
@@ -1652,7 +1652,7 @@ function buildWorkspace(tokens) {
       text(`ws-line${index}n-${key}`, String(index), {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
       text(`ws-line${index}t-${key}`, code, {mono: true, size: '$--text-caption'}),
     ]);
-    const views = frame(`ws-sp-views-${key}`, 'View areas', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0}, [
+    const views = frame(`ws-sp-views-${key}`, 'View areas', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, stroke: '$--primary', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
       docHeader,
       frame(`ws-editor-${key}`, 'Editor body', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', clip: true},
         ['# 한글 노트', '', '작업 공간의 사이드 패널은 에이전트 위에 뜹니다.', 'Pin 하면 에이전트 옆에 고정됩니다.'].map((code, index) => line(index + 1, code))),
@@ -1699,7 +1699,7 @@ function buildWorkspace(tokens) {
       {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
     const main = open
-      ? frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip: true}, [{...agentColumn(key, 0), x: 0, y: 0}, sidePanel(key)])
+      ? frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip: true}, [{...agentColumn(key, 0, false, null, false), x: 0, y: 0}, sidePanel(key)])
        : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip:true}, [{...agentColumn(key, 2, groups), x:0, y:0}, ...(groups ? [] : [frame(`ws-server-picker-${key}`, 'Open server picker', {x:MAIN_W-332,y:ROW+4,width:320,layout:'vertical',gap:'$--spacing-xs',padding:'$--spacing-sm',fill:'$--popover',cornerRadius:'$--radius-md',stroke:'$--border',strokeWidth:HAIR}, [
           text(`ws-server-title-${key}`, 'Open server', {size:'$--text-caption',fill:'$--muted-foreground'}),
           ...['127.0.0.1:3000','[::1]:5173'].map((address,index)=>frame(`ws-server-option${index}-${key}`, address, {width:'fill_container',layout:'horizontal',gap:'$--spacing-sm',padding:'$--spacing-sm',alignItems:'center',fill:index===0?'$--accent':'$--popover',cornerRadius:'$--radius-sm'}, [icon(`ws-server-globe${index}-${key}`,'globe'),text(`ws-server-address${index}-${key}`,address,{mono:true,size:'$--text-caption'}),icon(`ws-server-arrow${index}-${key}`,'arrow-up-right')]))
@@ -1733,7 +1733,22 @@ function buildWorkspace(tokens) {
       ]),
     ]);
   }
-  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), workspace(`${suffix}g`, false, true), remoteWorkspace(`${suffix}r`), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false)];
+  function focusComparison(suffix) {
+    const area = (active, at) => {
+      const key = `focus-${suffix}-${at}`;
+      return frame(`ws-${key}`, active ? 'Keyboard owner' : 'Other area, retained selection', {width: 'fill_container', height: 'fill_container', layout: 'vertical'}, [
+        frame(`ws-${key}-bar`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', fill: active ? '$--background' : '$--card'}, [
+          themedXref(`ws-${key}-tab1`, 'view-tab', 'Selected Korean tab', {fill: active ? '$--background' : '$--secondary', ...(active ? {stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {})}, {'view-tab-title': {content: '한글 노트.md', fill: '$--foreground'}, 'view-tab-close': {enabled: true}}),
+          screenViewTab(`ws-${key}-tab2`, {title: '검증 결과.md', active: false}),
+        ]),
+        frame(`ws-${key}-body`, 'Readable Korean content', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: '$--spacing-sm', fill: '$--background', ...(active ? {stroke: '$--primary', strokeWidth: HAIR, strokeAlignment: 'inner'} : {})}, [
+          text(`ws-${key}-text`, '# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인', {mono: true, size: '$--text-caption', width: 'fill_container'}),
+        ]),
+      ]);
+    };
+    return frame(`ws-focus-${suffix}`, 'One keyboard area, other selections readable', {width: 960, height: 440, layout: 'horizontal', fill: '$--background'}, [area(true, 1), frame(`ws-focus-divider-${suffix}`, 'Area divider', {width: '$--size-resize-handle', height: 'fill_container', fill: '$--border'}), area(false, 2)]);
+  }
+  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), workspace(`${suffix}g`, false, true), remoteWorkspace(`${suffix}r`), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false), focusComparison(suffix)];
   return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and carries Open server as a globe, reusing attributed listeners, with one opening directly and multiple addresses in a small picker; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping. Below them a remote device in front (PRD home-device-rail D-15): the toolbar starts with a band in the device color (--device-remote) carrying the server glyph and the device name ahead of the path, and the agent pane is framed in the same color; This Mac in front has neither.', build, build);
 }
 

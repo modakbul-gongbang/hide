@@ -474,10 +474,11 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     // A checkout chip's click is its Workspace (B24).
     await overview.locator(`[data-lens-node="${askingPane}"] [data-lens-checkout-chip]`).click();
     await expect(workspace).toBeVisible();
-    // ⌥` brings back the Overview as it was left: lineage mode, 정리할 것 open (B11).
-    await page.keyboard.down("Alt");
-    await page.keyboard.press("Backquote");
-    await page.keyboard.up("Alt");
+    // Recent Panels brings back the Overview as it was left: lineage mode,
+    // 정리할 것 open (B11). ⌥` now cycles the focused area, so the global
+    // command runs from ⌘K (focused-area-tab-cycle D-05).
+    await page.keyboard.press("Meta+KeyK");
+    await page.locator('[data-palette-row="command:navigation:recent_panel"]').click();
     await expect(overview).toBeVisible();
     await expect(overview).toHaveAttribute("data-agents-mode", "lineage");
     await expect(overview.locator('[data-lens-mode=lineage] [data-lens-fold="cleanup"]')).toHaveAttribute("aria-expanded", "true");
