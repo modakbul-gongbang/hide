@@ -160,6 +160,11 @@ export class Flow {
     if (this.timer === null) this.timer = setInterval(() => this.advance(), this.options.stepMs);
   }
 
+  /** The system's motion setting changed: start again if the dashes may move now. */
+  resume(): void {
+    this.set(this.paths);
+  }
+
   private advance(): void {
     if (this.options.reduced()) {
       this.stop();

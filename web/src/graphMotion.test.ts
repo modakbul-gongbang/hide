@@ -146,5 +146,11 @@ describe("the flowing dashes", () => {
     expect(vi.getTimerCount()).toBe(0);
     flow.set([a]);
     expect(vi.getTimerCount()).toBe(0);
+    // The setting is turned off again: the dashes go on from where the line is.
+    reduced = false;
+    flow.resume();
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(250);
+    expect(a.offsets.at(-1)).toBe("-4.5");
   });
 });

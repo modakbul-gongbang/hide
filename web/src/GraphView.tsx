@@ -249,13 +249,17 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, selected
     if (changed && settled.current) for (const key of added) enter(index.current, key);
     settled.current = true;
   }, [section, targets, geometry, motionMs, flowTiming, hasCanvas]);
-  useLayoutEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    // A working line's dashes stop under reduced motion and start again when the setting is turned off.
+    const setting = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const changed = () => flow.current?.resume();
+    setting.addEventListener("change", changed);
+    return () => {
+      setting.removeEventListener("change", changed);
       tween.current?.dispose();
       flow.current?.dispose();
-    },
-    [],
-  );
+    };
+  }, []);
 
   const names = useMemo(() => new Map([...section.rows.values()].map((row) => [row.paneId, row.value.agent.identity_label])), [section]);
   const label = (kind: FoldKind) => FOLD_LABEL[kind];

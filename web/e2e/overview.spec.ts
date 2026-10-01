@@ -563,6 +563,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.emulateMedia({ reducedMotion: "reduce" });
     await expect(overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`)).toHaveCSS("display", "none");
     await page.emulateMedia({ reducedMotion: "no-preference" });
+    // ...and turning the setting off lets the dashes step again, a few times a second (B9, B34).
+    const flowPath = overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`);
+    const seen = new Set<string | null>();
+    await expect.poll(async () => (seen.add(await flowPath.getAttribute("stroke-dashoffset")), seen.size), { timeout: 5000 }).toBeGreaterThan(2);
 
     // ⌥` brings back the Overview as it was left: the filter and the open fold stay (B29).
     await chip("working").click();
