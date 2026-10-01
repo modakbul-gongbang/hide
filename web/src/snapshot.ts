@@ -312,6 +312,13 @@ export type PaneRow = {
   sleep_action?: AgentSleepAction;
 };
 
+/** What a pane is called: its agent, else what its program or Herdr calls it. */
+export function paneTitle(pane: PaneRow): string {
+  // A remote pane's id is scoped to its device (`remote:<device>:pane:w1:p2`);
+  // the device is already on screen, so the header names the host's own id.
+  return pane.identity_label ?? pane.terminal_title ?? pane.herdr_label ?? pane.id.replace(/^remote:.+?:pane:/, "");
+}
+
 export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_label">;
 
 export type Tab = {

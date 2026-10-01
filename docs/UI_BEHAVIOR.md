@@ -921,13 +921,20 @@ A Home agent reads and edits the projects through their links, the change shows 
 
 Web owner: `web/src/recent.ts`, `web/src/areaCycle.ts`, `web/src/viewFocus.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
 
-Focused-area cycling (⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser) walks the tabs of the exact area holding the keyboard, in recent-use order.
-The scope includes device, checkout, Agent or View, and area ID, so identical area IDs in the two columns or another checkout cannot widen the cycle.
-A terminal pane or Agent tab bar names its normal Agent area; a document, diff, View tab bar or visible native browser page names its View area.
-A delegated canvas outside the area's normal strip, hidden View, tool, search, Settings, dialog or Overview supplies no scope; zero or one tab is a no-op.
-Holding the chord's actual modifier freezes the order and scope and previews in Recent Agent tabs or Recent View tabs without moving the committed tab, layout or keyboard owner.
-Repeated forward and backward chords walk that frozen order; releasing the modifier commits one in-place selection, and Escape or losing the window cancels without a selection event.
-Closed or moved tabs leave the frozen candidates; removal of the origin area or checkout cancels, and no other area replaces it.
+Focused-area cycling (⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser) follows where the keyboard is.
+In a View area it walks the tabs of that exact area, in recent-use order.
+The View scope includes device, checkout and area ID, so an Agent area with the same ID or another checkout cannot widen it.
+A document, diff, View tab bar or visible native browser page names its View area.
+In the Agent area it walks the terminal panes the keyboard has been in this session, one row per pane, across every device, project and checkout, in recent-use order (issue #301).
+A terminal pane, a delegated child's canvas or an Agent tab bar of the Workspace in front puts the keyboard in the Agent area; from a tab bar the pane in use is the one the core focuses in that tab.
+A pane joins the order the first time the keyboard is in it, and a commit's passing frames on the way to its pane are not visits; a pane that closes leaves the order.
+A pane row is titled by the agent it runs, else by its tab's label when it is the tab's only pane, else by the pane's own title, with `project · checkout · Terminal` beneath and the agent's status mark; View displays, Overviews and projects are never rows.
+A hidden View, tool, search, Settings, dialog or Overview supplies no scope; a View area of zero or one tab, or an Agent area with no other visited pane, is a no-op.
+Holding the chord's actual modifier freezes the order and scope and previews in Recent Agent panes or Recent View tabs without moving the committed tab, layout or keyboard owner.
+Repeated forward and backward chords walk that frozen order; Escape or losing the window cancels without a selection event.
+Releasing the modifier on a View tab commits one in-place selection; on a pane it brings the pane's device, project, tab and pane forward with one event, as choosing it in the Agents list does, and the pane receives the keyboard.
+Closed or moved View tabs leave the frozen candidates; removal of the origin area or checkout cancels, and no other area replaces it.
+Closed panes leave the frozen Agent candidates; a highlight that closed moves to the next surviving pane, and with none left the cycle ends.
 
 Global Recent Panels is a separate, named command, unbound by default and assignable in Settings alongside the focused-area commands.
 It walks every unified surface in recent-use order across projects, checkouts and connected devices: terminal tabs, View files, diffs and browser displays, plus every visited Home and Project Overview.
@@ -936,8 +943,9 @@ A Global Recent Panels commit shows an Overview at once or brings one Workspace 
 Menu and palette invocations of either family select the next or previous valid target immediately, with no held modifier or second selection.
 A bound Global Recent Panels chord keeps the same hold, release and cancellation behavior.
 Recent Projects (⌥Tab / ⌥⇧Tab) retains its global project order and restores each Project's last Workspace surface, never its Overview.
-Both global lists carry a device chip on a row outside the device in front and move the rail, sidebar and center together when committed.
-The session uses one bounded recent-surface history; the area cycle filters it and appends normal area tabs not yet visited.
+Both global lists and the Agent pane cycle carry a device chip on a row outside the device in front and move the rail, sidebar and center together when committed.
+The session uses one bounded recent-surface history; the View area cycle filters it and appends normal area tabs not yet visited.
+The Agent pane cycle reads a second session-local order of pane visits, bounded by the panes that exist.
 The shown tab of the recorded keyboard area is the current visit, including native browser pages; intermediate commit frames are not visits.
 
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.

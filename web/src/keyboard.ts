@@ -17,13 +17,13 @@
 // store, so an unrevealed hold renders nothing. Losing the window, a page
 // going hidden, a layer opening or any key pressed during the hold ends it.
 
-import { areaCycle, focusedCycleScope, focusedSurface, scopedSurfaces } from "./areaCycle";
+import { agentCycle, agentOrigin, areaCycle, focusedCycleScope, focusedSurface, scopedSurfaces } from "./areaCycle";
 import type { Actions } from "./actions";
 import { focusBrowserDisplay } from "./browserViews";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { browserBridge, hostBridge, hostKind } from "./host";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
-import { availableEntries, currentEntry, expectSurface, observeEntries, observeProject, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
+import { availableEntries, currentEntry, expectPane, expectSurface, observeEntries, observePane, observeProject, paneItem, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
 import { projectsOf, remoteContext, remoteView } from "./remote";
 import { hostChord, hostRegistry, isNumberedCommand, releaseModifier, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
 import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest, type Workspace } from "./snapshot";
@@ -74,6 +74,7 @@ export function projectCycle(rest: SnapshotRest | null): Cycle | null {
 export function observeRecent(rest: SnapshotRest | null, moved: boolean) {
   const surface = focusedSurface(rest, focusedCycleScope(rest));
   observeEntries(rest, moved ? surface ?? currentEntry(useUiStore.getState().screen, rest, keyboardOwner().kind === "view") : null);
+  observePane(rest, moved ? (agentOrigin(rest)?.paneId ?? null) : null);
   if (moved) observeProject(remoteContext(rest)?.session?.focused_workspace_id ?? rest?.navigator?.focused_workspace_id);
 }
 
@@ -82,11 +83,15 @@ export function reconcileHeldCycle(cycle: Cycle, rest: SnapshotRest | null): Cyc
   const membership = cycle.scope ? scopedSurfaces(rest, cycle.scope) : null;
   if (cycle.kind === "area" && !membership) return null;
   const alive = cycle.kind === "area" ? new Set(membership!.surfaces.map((surface) => surface.key)) :
-    cycle.kind === "projects"
-      ? new Set(allProjects(rest).map((workspace) => workspace.id))
-      : new Set(availableEntries(rest, recentEntries()).map((entry) => entry.key));
+    cycle.kind === "agents"
+      ? new Set(cycle.items.filter((item) => item.target.kind === "pane" && paneItem(rest, item.target.paneId)).map((item) => item.key))
+      : cycle.kind === "projects"
+        ? new Set(allProjects(rest).map((workspace) => workspace.id))
+        : new Set(availableEntries(rest, recentEntries()).map((entry) => entry.key));
   const kept = reconcileCycle(cycle.items, cycle.index, (item) => alive.has(item.key));
-  return kept && kept.items.length > 1 ? { ...cycle, ...kept } : null;
+  // An Agent pane cycle that started away from every row may hold one.
+  const fewest = cycle.kind === "agents" && !cycle.items.some((item) => item.key === cycle.originKey) ? 1 : 2;
+  return kept && kept.items.length >= fewest ? { ...cycle, ...kept } : null;
 }
 
 /**
@@ -123,18 +128,25 @@ export function numberedTarget(family: NumberedFamily, number: Digit, state: { r
 /** Commits the chosen item; false when nothing moved: the cycle chose its origin, or a target that left its scope. */
 export function commitCycle(cycle: Cycle, actions: Actions): boolean {
   const chosen = cycle.items[cycle.index];
-  if (!chosen || (cycle.originKey ? chosen.key === cycle.originKey : cycle.index === 0)) return false;
+  const atOrigin = cycle.kind === "panels" || cycle.kind === "projects" ? cycle.index === 0 : chosen?.key === cycle.originKey;
+  if (!chosen || atOrigin) return false;
   if (cycle.scope) {
     const membership = scopedSurfaces(useShellStore.getState().rest, cycle.scope);
     if (chosen.target.kind !== "surface" || !membership?.surfaces.some((surface) => surface.key === chosen.key)) return false;
-    if (cycle.scope.kind === "view") actions.focusView(chosen.target.surface.id, true);
-    else actions.focusTab(chosen.target.surface.id, true);
+    actions.focusView(chosen.target.surface.id, true);
     return true;
   }
   const target = chosen.target;
   switch (target.kind) {
     case "surface":
       actions.openSurface(target.surface);
+      return true;
+    case "pane":
+      // The tab and the pane both wait for the keyboard to land, so the frames on the way are not visits.
+      expectSurface(target.surface.key);
+      expectPane(target.paneId);
+      // As an agent chosen from the Agents list: its Workspace, device and pane in one event.
+      actions.openAgent(target.paneId);
       return true;
     case "screen":
       // Expected like any commit, so an earlier commit still on its way cannot keep this from being the visit.
@@ -151,6 +163,7 @@ export function commitCycle(cycle: Cycle, actions: Actions): boolean {
 
 function advance(cycle: Cycle, backward: boolean): Cycle {
   const count = cycle.items.length;
+  if (cycle.index < 0) return { ...cycle, index: backward ? count - 1 : 0 };
   return { ...cycle, index: (cycle.index + (backward ? -1 : 1) + count) % count };
 }
 
@@ -160,7 +173,7 @@ export function installKeyboard(actions: Actions): () => void {
   const removeKeyboardOwner = installKeyboardOwner();
   const unsubscribeOwner = subscribeKeyboardOwner(() => {
     const rest = useShellStore.getState().rest;
-    if (focusedCycleScope(rest)) observeRecent(rest, true);
+    if (focusedCycleScope(rest) || agentOrigin(rest)) observeRecent(rest, true);
   });
   // The modifier whose release commits the running cycle: ⌥ for the ⌥ family,
   // ⌃ for the desktop app's ⌃Tab.
@@ -203,11 +216,14 @@ export function installKeyboard(actions: Actions): () => void {
       case "previous_recent_project": {
         const backward = id.startsWith("previous");
         const rest = useShellStore.getState().rest;
-        const kind = id.endsWith("area_tab") ? "area" : id.endsWith("panel") ? "panels" : "projects";
+        const family = id.endsWith("area_tab") ? "area" : id.endsWith("panel") ? "panels" : "projects";
         const current = ui().cycle;
-        if (event && current && current.kind !== kind) return;
-        const fresh = () => kind === "area" ? areaCycle(rest, event ? keyboardOwner() : keyboardCommandOwner()) : kind === "panels" ? panelCycle(rest) : projectCycle(rest);
-        const cycle = event && current?.kind === kind ? reconcileHeldCycle(current, rest) : fresh();
+        const held = current && (current.kind === "agents" ? "area" : current.kind) === family;
+        if (event && current && !held) return;
+        const owner = event ? keyboardOwner() : keyboardCommandOwner();
+        // The Agent area and a View area never both hold the keyboard, so at most one of these is a cycle.
+        const fresh = () => family === "area" ? (agentCycle(rest, owner) ?? areaCycle(rest, owner)) : family === "panels" ? panelCycle(rest) : projectCycle(rest);
+        const cycle = event && held ? reconcileHeldCycle(current, rest) : fresh();
         if (!cycle) return;
         const next = advance(cycle, backward);
         if (!event) { endNativeCycle(); ui().setCycle(null); commitCycle(next, actions); return; }

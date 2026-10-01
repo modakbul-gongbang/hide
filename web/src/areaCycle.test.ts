@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { areaCycle, focusedCycleScope } from "./areaCycle";
+import { agentCycle, agentOrigin, areaCycle, focusedCycleScope } from "./areaCycle";
 import { noteAreaFrame } from "./areaFrames";
 import { areaGeometry } from "./areaLayout";
 import { createActions } from "./actions";
 import { commitCycle, reconcileHeldCycle } from "./keyboard";
-import { observeEntries, resetRecent, tabSurface } from "./recent";
+import { expectPane, observeEntries, observePane, resetRecent, tabSurface } from "./recent";
 import type { SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -34,54 +34,144 @@ const owner = { kind: "pane", workspace: "c", paneId: "t1-pane" } as const;
 
 describe("focused-area recent tabs", () => {
   beforeEach(() => { resetRecent(); useUiStore.setState({ screen: { kind: "workspace" }, cycle: null }); noteAreaFrame("agent", null); noteAreaFrame("view", null); });
-  it("uses exact Agent membership and MRU despite colliding area IDs and other checkouts", () => {
+  it("narrows a View area to its own tabs despite an Agent area with the same ID", () => {
     const rest = world(); draw(rest);
     const checkout = rest.navigator!.workspaces![0]!.checkouts[0]!;
     observeEntries(rest, tabSurface(checkout, "t2"));
-    observeEntries(rest, tabSurface(checkout, "outside"));
-    observeEntries(rest, tabSurface(checkout, "t3"));
-    expect(ids(areaCycle(rest, owner))).toEqual(["t1", "t3", "t2"]);
-    expect(ids(areaCycle(rest, { kind: "agent", workspace: "c", areaId: "a1" }))).toEqual(["t1", "t3", "t2"]);
     expect(ids(areaCycle(rest, { kind: "view", workspace: "c", areaId: "a1" }))).toEqual(["d1", "d2"]);
+    // The Agent area walks panes instead (see the Agent pane cycle below).
+    expect(areaCycle(rest, owner)).toBeNull();
+    expect(areaCycle(rest, { kind: "agent", workspace: "c", areaId: "a1" })).toBeNull();
+    expect(agentCycle(rest, { kind: "view", workspace: "c", areaId: "a1" })).toBeNull();
   });
-  it("commits exactly one in-place selection and never dispatches a preview", () => {
+  it("commits exactly one in-place View selection and never dispatches a preview", () => {
     const rest = world(); draw(rest);
     const sent: unknown[] = [];
     const actions = createActions((event) => { sent.push(event); });
-    const cycle = areaCycle(rest, owner)!;
-    expect(sent).toEqual([]);
-    commitCycle(cycle, actions);
-    expect(sent).toEqual([]);
-    commitCycle({ ...cycle, index: 1 }, actions);
-    expect(sent).toEqual([expect.objectContaining({ kind: "focus_tab", payload: expect.objectContaining({ tab_id: "t2", in_place: true }) })]);
-    sent.length = 0;
     const views = areaCycle(rest, { kind: "view", workspace: "c", areaId: "a1" })!;
+    commitCycle(views, actions);
+    expect(sent).toEqual([]);
     commitCycle({ ...views, index: 1 }, actions);
     expect(sent).toEqual([expect.objectContaining({ kind: "view_layout", payload: expect.objectContaining({ action: "focus", display_id: "d2" }) })]);
     expect(useUiStore.getState().viewFocusRequest).toEqual({ workspace: "local\u0000/fixture", displayId: "d2", from: null });
   });
-  it("prunes a moved tab using the new snapshot, keeps the frozen order and cancels a removed origin", () => {
+  it("prunes a moved View tab using the new snapshot, keeps the frozen order and cancels a removed origin", () => {
     const rest = world(); draw(rest);
-    const held = { ...areaCycle(rest, owner)!, index: 1 };
-    const root = rest.workspace_view!.agent_layout!.root;
-    if (!("split" in root)) throw new Error("fixture split missing");
-    root.split.first = { area: { id: "a1", active: "t1", displays: [{ id: "t1" }, { id: "t3" }] } };
-    expect(ids(reconcileHeldCycle(held, rest))).toEqual(["t1", "t3"]);
+    const viewOwner = { kind: "view", workspace: "c", areaId: "a1" } as const;
+    const area = (displays: string[], id = "a1") => ({ area: { id, active: "d1", displays: displays.map((name) => ({ id: name, kind: "browser", label: name, url: "about:blank", state: "open", tab_id: null })) } });
+    rest.workspace_view!.layout!.root = area(["d1", "d2", "d3"]) as never;
+    draw(rest);
+    const held = { ...areaCycle(rest, viewOwner)!, index: 1 };
+    rest.workspace_view!.layout!.root = area(["d1", "d3"]) as never;
+    expect(ids(reconcileHeldCycle(held, rest))).toEqual(["d1", "d3"]);
     expect(reconcileHeldCycle(held, rest)?.index).toBe(1);
-    root.split.first = { area: { id: "new-area", active: "t1", displays: [{ id: "t1" }, { id: "t3" }] } };
+    rest.workspace_view!.layout!.root = area(["d1", "d3"], "new-area") as never;
     expect(reconcileHeldCycle(held, rest)).toBeNull();
   });
   it("never falls back from a tool, outside owner, Overview, hidden View or delegated canvas", () => {
     const rest = world(); draw(rest);
+    observePane(rest, "t2-pane");
     expect(areaCycle(rest, { kind: "tool", workspace: "c" })).toBeNull();
+    expect(agentCycle(rest, { kind: "tool", workspace: "c" })).toBeNull();
     expect(areaCycle(rest, { kind: "view", workspace: "other", areaId: "a1" })).toBeNull();
+    expect(agentCycle(rest, { kind: "pane", workspace: "other", paneId: "other-tab-pane" })).toBeNull();
     useUiStore.setState({ screen: { kind: "main" } });
     expect(areaCycle(rest, owner)).toBeNull();
+    expect(agentCycle(rest, owner)).toBeNull();
     useUiStore.setState({ screen: { kind: "workspace" } });
     rest.workspace_view!.panel = "closed";
     expect(areaCycle(rest, { kind: "view", workspace: "c", areaId: "a1" })).toBeNull();
     rest.workspace_view!.agent_layout!.canvases.a1 = "outside";
     expect(focusedCycleScope(rest, { kind: "pane", workspace: "c", paneId: "outside-pane" })?.areaId).toBe("a2");
     expect(focusedCycleScope(rest, owner)).toBeNull();
+  });
+});
+
+// Two devices, three checkouts: fixture (c) and other on this Mac, and a
+// checkout on the mini. The fixture's t1 is split into two panes and runs a
+// Claude in the first; the mini runs a Codex.
+function devices(): SnapshotRest {
+  const rest = world();
+  const nav = rest.navigator!;
+  const fixture = nav.workspaces![0]!.checkouts[0]!;
+  fixture.tabs[0]!.panes = [{ id: "t1-pane" }, { id: "t1-side", terminal_title: "vite" }] as never;
+  nav.workspaces![0]!.checkouts[1]!.tabs[0]!.panes = [{ id: "other-tab-pane" }] as never;
+  nav.devices!.push({ id: "mini", label: "mini", kind: "remote", state: "connected" } as never);
+  nav.agents = [{ id: "a", pane_id: "t1-pane", identity_label: "planner", agent_kind: "claude", symbol: "●", status_label: "Working" }] as never;
+  const miniTab = { id: "remote:mini:tab:m1", label: "m1", panes: [{ id: "remote:mini:pane:p1" }], workspace_id: "remote:mini:workspace:w", checkout_id: "remote:mini:checkout:c", empty: false, delegated: false };
+  const miniCheckout = { id: "remote:mini:checkout:c", workspace_id: "remote:mini:workspace:w", path: "/mini", label: "api", tabs: [miniTab], active_tab_id: miniTab.id, strip: [] };
+  rest.status = { remote: [{ target_id: "mini", state: "connected", session: { workspaces: [{ id: "remote:mini:workspace:w", label: "api", device_id: "mini", checkouts: [miniCheckout] }], agents: [{ id: "b", pane_id: "remote:mini:pane:p1", identity_label: "reviewer", agent_kind: "codex", symbol: "●", status_label: "Working" }], active_tab_ids: {}, focused_workspace_id: null, focused_checkout_id: null, focused_tab_id: null, focused_pane_id: null, pane_layouts: [] } }] } as never;
+  return rest;
+}
+const panes = (cycle: ReturnType<typeof agentCycle>) => cycle?.items.map((row) => row.target.kind === "pane" ? row.target.paneId : "wrong-kind");
+
+describe("Agent pane cycle (issue 301)", () => {
+  beforeEach(() => { resetRecent(); useUiStore.setState({ screen: { kind: "workspace" }, cycle: null }); noteAreaFrame("agent", null); noteAreaFrame("view", null); });
+
+  it("walks the panes visited on every device, project and checkout, one row per pane, most recent first", () => {
+    const rest = devices(); draw(rest);
+    for (const pane of ["remote:mini:pane:p1", "other-tab-pane", "t1-side", "t2-pane", "t1-pane"]) observePane(rest, pane);
+    const cycle = agentCycle(rest, owner)!;
+    expect(cycle.kind).toBe("agents");
+    expect(panes(cycle)).toEqual(["t1-pane", "t2-pane", "t1-side", "other-tab-pane", "remote:mini:pane:p1"]);
+    expect(cycle.index).toBe(0);
+    // Never visited: t3 and outside stay out, as do the View area's displays.
+    const rows = Object.fromEntries(cycle.items.map((row) => [row.target.kind === "pane" ? row.target.paneId : row.key, row]));
+    expect(rows["t1-pane"]).toMatchObject({ title: "planner", detail: "fixture · Terminal", chip: null, agent: expect.objectContaining({ agent_kind: "claude" }) });
+    expect(rows["t1-side"]).toMatchObject({ title: "vite", agent: null });
+    expect(rows["t2-pane"]).toMatchObject({ title: "t2", agent: null });
+    expect(rows["remote:mini:pane:p1"]).toMatchObject({ title: "reviewer", detail: "api · Terminal", chip: { label: "mini", local: false } });
+  });
+
+  it("commits one event naming the pane, through the device it is on, and nothing for the origin or a preview", () => {
+    const rest = devices(); draw(rest);
+    for (const pane of ["remote:mini:pane:p1", "other-tab-pane", "t1-pane"]) observePane(rest, pane);
+    const sent: { kind: string; payload: Record<string, unknown> }[] = [];
+    const actions = createActions((event) => { sent.push(event as never); });
+    const cycle = agentCycle(rest, owner)!;
+    expect(commitCycle(cycle, actions)).toBe(false);
+    expect(sent).toEqual([]);
+    commitCycle({ ...cycle, index: 1 }, actions);
+    expect(sent).toEqual([expect.objectContaining({ kind: "focus_pane", payload: expect.objectContaining({ pane_id: "other-tab-pane", focus_device: false }) })]);
+    sent.length = 0;
+    commitCycle({ ...cycle, index: 2 }, actions);
+    expect(sent).toEqual([expect.objectContaining({ kind: "remote_control", payload: expect.objectContaining({ target_id: "mini", action: "focus_pane", pane_id: "remote:mini:pane:p1", focus_device: true }) })]);
+  });
+
+  it("does not take a commit's passing frames for visits", () => {
+    const rest = devices(); draw(rest);
+    for (const pane of ["t2-pane", "t1-pane"]) observePane(rest, pane);
+    expectPane("other-tab-pane");
+    observePane(rest, "t3-pane");
+    observePane(rest, "other-tab-pane");
+    observePane(rest, "t3-pane");
+    expect(panes(agentCycle(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" }))).toEqual(["t3-pane", "other-tab-pane", "t1-pane", "t2-pane"]);
+  });
+
+  it("starts before the most recent pane when the keyboard is in no pane, and drops a closed pane while held", () => {
+    const rest = devices(); draw(rest);
+    for (const pane of ["t2-pane", "t3-pane"]) observePane(rest, pane);
+    const bar = { kind: "agent", workspace: "c", areaId: "a1" } as const;
+    // The core reports no focused pane, so the tab bar is in no pane.
+    expect(agentOrigin(rest, bar)).toEqual({ paneId: null });
+    const cycle = agentCycle(rest, bar)!;
+    expect(panes(cycle)).toEqual(["t3-pane", "t2-pane"]);
+    expect(cycle.index).toBe(-1);
+    rest.focused = { pane_id: "t1-side" };
+    expect(agentOrigin(rest, bar)).toEqual({ paneId: "t1-side" });
+    const held = { ...cycle, index: 0 };
+    rest.navigator!.workspaces![0]!.checkouts[0]!.tabs = rest.navigator!.workspaces![0]!.checkouts[0]!.tabs.filter((tab) => tab.id !== "t3");
+    expect(panes(reconcileHeldCycle(held, rest))).toEqual(["t2-pane"]);
+    rest.navigator!.workspaces![0]!.checkouts[0]!.tabs = rest.navigator!.workspaces![0]!.checkouts[0]!.tabs.filter((tab) => tab.id !== "t2");
+    expect(reconcileHeldCycle(held, rest)).toBeNull();
+  });
+
+  it("counts a delegated child's canvas as the Agent area", () => {
+    const rest = devices(); draw(rest);
+    observePane(rest, "t2-pane");
+    rest.workspace_view!.agent_layout!.canvases.a1 = "outside";
+    const child = { kind: "pane", workspace: "c", paneId: "outside-pane" } as const;
+    expect(focusedCycleScope(rest, child)?.areaId).toBe("a2");
+    expect(panes(agentCycle(rest, child))).toEqual(["outside-pane", "t2-pane"]);
   });
 });

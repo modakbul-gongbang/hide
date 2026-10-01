@@ -227,6 +227,6 @@ describe("grouping (issue 154)", () => {
 
 it("offers distinct focused-area, global panel and project commands in the palette", () => {
   const entries = searchEntries(REST).filter((entry) => entry.id.startsWith("command:navigation:"));
-  expect(entries.map((entry) => entry.title)).toEqual(["Next recent tab in focused area", "Previous recent tab in focused area", "Next global recent panel", "Previous global recent panel", "Next recent project", "Previous recent project"]);
+  expect(entries.map((entry) => entry.title)).toEqual(["Next recent Agent pane or View tab", "Previous recent Agent pane or View tab", "Next global recent panel", "Previous global recent panel", "Next recent project", "Previous recent project"]);
   expect(entries.find((entry) => entry.id === "command:navigation:recent_panel")?.command).toEqual({ navigation: "recent_panel" });
 });

@@ -9,7 +9,9 @@
 // operator has been on them.
 // Recent Panels walks it; Recent Projects walks the projects in the order
 // they were used and restores each one's last Workspace surface, which is
-// this same order narrowed to the project. The core reports what is in
+// this same order narrowed to the project. Beside it, one recent-use order
+// of the terminal panes the keyboard has been in, on every device, project
+// and checkout, which the Agent area's cycle walks (issue 301). The core reports what is in
 // front, not what was before, and the screens are the page's own navigation,
 // so the order is the shell's convenience: nothing here is authority, and a
 // reload rebuilds it from use.
@@ -17,7 +19,7 @@
 import { frontDeviceId, localDeviceId } from "./devices";
 import { allProjectsCount } from "./navigation";
 import { remoteContext, remoteView } from "./remote";
-import { catalogWorkspaces, type AgentRow, type Checkout, type SnapshotRest, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
+import { catalogWorkspaces, paneTitle, type AgentRow, type Checkout, type PaneRow, type SnapshotRest, type Tab, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
 import type { Screen } from "./ui";
 import { activeDisplay, areasOf } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
@@ -147,10 +149,11 @@ export function currentEntry(screen: Screen | null, rest: SnapshotRest | null, v
 }
 
 /**
- * What the core has in front: the device, checkout, visible tab, and the
- * front Workspace's panel state and active display. Only a change here, or the
- * keyboard moving between a checkout's areas, is a visit; an agent's status
- * or a sidebar click that has not landed yet moves none of it.
+ * What the core has in front: the device, checkout, visible tab and the pane
+ * focused in it, and the front Workspace's panel state and active display.
+ * Only a change here, or the keyboard moving between a checkout's areas, is a
+ * visit; an agent's status or a sidebar click that has not landed yet moves
+ * none of it.
  */
 export function focusSignature(rest: SnapshotRest | null): string {
   const navigator = rest?.navigator;
@@ -158,7 +161,7 @@ export function focusSignature(rest: SnapshotRest | null): string {
   const layout = checkout ? frontLayoutOf(rest, checkout) : null;
   const display = layout ? activeDisplay(layout)?.display.id : null;
   const device = remoteView(remoteContext(rest)?.session ?? null);
-  return [navigator?.focused_device_id, checkout?.id, checkout?.active_tab_id, device?.checkout.id, device?.tab?.id, workspaceViewOf(rest)?.panel, display].join("\u0000");
+  return [navigator?.focused_device_id, checkout?.id, checkout?.active_tab_id, rest?.focused?.pane_id, device?.checkout.id, device?.tab?.id, device?.focusedPaneId, workspaceViewOf(rest)?.panel, display].join("\u0000");
 }
 
 /**
@@ -187,8 +190,12 @@ export function availableEntries(rest: SnapshotRest | null, remembered: readonly
 
 let entries: RecentEntry[] = [];
 let projects: string[] = [];
+/** Pane ids, the one the keyboard is in first; remote ids are scoped to their device, so one id names one pane. */
+let panes: string[] = [];
 /** The entry a Recent Panels or Recent Projects commit asked for, until the page shows it (see `expectSurface`). */
 let expected: string | null = null;
+/** The pane an Agent pane commit asked for, until the keyboard is in it (see `expectPane`). */
+let expectedPane: string | null = null;
 
 /**
  * Brings the order up to date with what the session holds and moves the
@@ -226,6 +233,31 @@ export function observeEntries(rest: SnapshotRest | null, current: RecentEntry |
   entries = [visited, ...entries.filter((entry) => entry.key !== visited.key)];
 }
 
+/**
+ * Brings the pane order up to date and moves the pane the keyboard is in to
+ * its front. Panes that are gone leave, and a pane joins only once the
+ * keyboard has been in it, so the order is bounded by the panes that exist.
+ * A commit's own frames (the checkout arriving before its pane is focused)
+ * are not visits, as for `observeEntries`.
+ */
+export function observePane(rest: SnapshotRest | null, current: string | null) {
+  const alive = new Set(allPanes(rest).map((row) => row.pane.id));
+  panes = panes.filter((id) => alive.has(id));
+  if (expectedPane && current !== expectedPane) return;
+  expectedPane = null;
+  if (!current || !alive.has(current)) return;
+  panes = [current, ...panes.filter((id) => id !== current)];
+}
+
+/** Marks the pane a commit is bringing forward: pane visits are not recorded until the keyboard is in it or the operator acts. */
+export function expectPane(paneId: string | null) {
+  expectedPane = paneId;
+}
+
+export function recentPanes(): readonly string[] {
+  return panes;
+}
+
 /** The project in front, first in the Recent Projects order. */
 export function observeProject(workspaceId: string | null | undefined) {
   if (!workspaceId || projects[0] === workspaceId) return;
@@ -257,7 +289,9 @@ export function recentProjectOrder(existing: readonly string[]): string[] {
 export function resetRecent() {
   entries = [];
   projects = [];
+  panes = [];
   expected = null;
+  expectedPane = null;
 }
 
 // --- rows -----------------------------------------------------------------
@@ -266,6 +300,8 @@ export function resetRecent() {
 export type CycleTarget =
   /** A Workspace surface, in its own checkout, on its own device. */
   | { kind: "surface"; surface: Surface }
+  /** One terminal pane, with the tab it is in, which comes forward with it. */
+  | { kind: "pane"; paneId: string; surface: Surface }
   /** A device's Home Overview or a Project's Overview, which the page shows itself once the device is in front. */
   | { kind: "screen"; screen: PageScreen; deviceId: string }
   /** A project with no surface to restore, on its checkout and device. */
@@ -310,6 +346,39 @@ function findCheckout(rest: SnapshotRest | null, checkoutId: string) {
 function agentsOf(rest: SnapshotRest | null, deviceId: string): AgentRow[] {
   if (deviceId === localDeviceId(rest)) return rest?.navigator?.agents ?? [];
   return rest?.status?.remote?.find((status) => status.target_id === deviceId)?.session?.agents ?? [];
+}
+
+/** A terminal pane with where it is. */
+type DevicePane = DeviceCheckout & { tab: Tab; pane: PaneRow };
+
+/** Every terminal pane of every checkout `allCheckouts` holds. */
+function allPanes(rest: SnapshotRest | null): DevicePane[] {
+  return allCheckouts(rest).flatMap((row) => row.checkout.tabs.flatMap((tab) => tab.panes.map((pane) => ({ ...row, tab, pane }))));
+}
+
+export function paneKey(paneId: string): string {
+  return `pane\u0000${paneId}`;
+}
+
+/**
+ * An Agent pane row: called by the agent the pane runs, else by its tab's
+ * label when it is the tab's only pane, as the strip names it, else by the
+ * pane's own title; the place and the device chip read as Recent Panels'.
+ */
+export function paneItem(rest: SnapshotRest | null, paneId: string): CycleItem | null {
+  const place = allPanes(rest).find((row) => row.pane.id === paneId);
+  if (!place?.tab.id) return null;
+  const agent = agentsOf(rest, place.deviceId).find((row) => row.pane_id === paneId) ?? null;
+  const title = agent?.identity_label ?? (place.tab.panes.length === 1 ? place.tab.label : null) ?? paneTitle(place.pane);
+  return {
+    key: paneKey(paneId),
+    title,
+    detail: `${place.workspace.is_home ? "Home" : placeLabel(place.workspace, place.checkout)} · ${KIND_LABEL[AGENT_SURFACE]}`,
+    kind: AGENT_SURFACE,
+    chip: deviceChip(rest, place.deviceId),
+    agent,
+    target: { kind: "pane", paneId, surface: tabSurface(place.checkout, place.tab.id, place.deviceId) },
+  };
 }
 
 /**

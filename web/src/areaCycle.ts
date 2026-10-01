@@ -1,8 +1,11 @@
-// Focused-area cycling narrows the existing page MRU to one exact drawn area.
-// No second history or committed selection lives here.
+// The focused-area cycle. In a View area it narrows the page MRU to that one
+// drawn area; in the Agent area it walks every terminal pane the keyboard has
+// been in, across devices, projects and checkouts (issue 301).
+// No committed selection lives here.
 import { areaFrame } from "./areaFrames";
 import { areasOf, findArea } from "./areaLayout";
-import { displaySurface, panelItem, recentEntries, tabSurface, type CycleItem, type Surface } from "./recent";
+import { displaySurface, paneItem, paneKey, panelItem, recentEntries, recentPanes, tabSurface, type CycleItem, type Surface } from "./recent";
+import { remoteContext, remoteView } from "./remote";
 import { frontCheckout, type SnapshotRest } from "./snapshot";
 import { workspaceViewOf } from "./workspace";
 import { useUiStore, type Cycle } from "./ui";
@@ -51,9 +54,10 @@ export function focusedSurface(rest: SnapshotRest | null, scope: CycleScope | nu
   return membership ? membership.surfaces.find((surface) => surface.id === membership.active) ?? null : null;
 }
 
+/** The View area cycle: that area's tabs, most recent first, then the ones never visited. */
 export function areaCycle(rest: SnapshotRest | null, owner?: KeyboardOwner): Cycle | null {
   const scope = focusedCycleScope(rest, owner);
-  const membership = scope && scopedSurfaces(rest, scope);
+  const membership = scope?.kind === "view" ? scopedSurfaces(rest, scope) : null;
   if (!scope || !membership || membership.surfaces.length < 2) return null;
   const current = membership.surfaces.find((surface) => surface.id === membership.active);
   if (!current) return null;
@@ -66,4 +70,39 @@ export function areaCycle(rest: SnapshotRest | null, owner?: KeyboardOwner): Cyc
   order.push(...membership.surfaces.filter((surface) => !ordered.has(surface.key)));
   const items = order.map((surface) => panelItem(rest, surface)).filter((item): item is CycleItem => item !== null);
   return items.length > 1 ? { kind: "area", scope, originKey: current.key, items, index: 0 } : null;
+}
+
+/**
+ * Where the keyboard is while the front Workspace's Agent area holds it: the
+ * pane it is in, or for a tab bar the pane the core focused in the tab that
+ * area shows. Null when the keyboard is anywhere else. A delegated child's
+ * canvas counts, since its pane is an Agent pane like any other.
+ */
+export function agentOrigin(rest: SnapshotRest | null, owner: KeyboardOwner = keyboardOwner()): { paneId: string | null } | null {
+  const checkout = frontCheckout(rest);
+  if (!checkout || (owner.kind !== "pane" && owner.kind !== "agent") || owner.workspace !== checkout.id || useUiStore.getState().screen?.kind !== "workspace") return null;
+  const holds = (paneId: string | null | undefined, tabId?: string | null) =>
+    paneId && checkout.tabs.some((tab) => (tabId === undefined || tab.id === tabId) && tab.panes.some((pane) => pane.id === paneId)) ? paneId : null;
+  if (owner.kind === "pane") return holds(owner.paneId) ? { paneId: owner.paneId } : null;
+  const tabId = focusedSurface(rest, focusedCycleScope(rest, owner))?.id ?? checkout.active_tab_id;
+  const remote = remoteContext(rest);
+  const focused = remote ? remoteView(remote.session)?.focusedPaneId : rest?.focused?.pane_id;
+  return { paneId: holds(focused, tabId) };
+}
+
+/**
+ * The Agent area cycle: the pane in use, then every pane the keyboard has
+ * been in, most recent first, on any device, project or checkout. With no
+ * pane in use the first chord lands on the most recent one, so the cycle
+ * starts before it.
+ */
+export function agentCycle(rest: SnapshotRest | null, owner?: KeyboardOwner): Cycle | null {
+  const origin = agentOrigin(rest, owner);
+  if (!origin) return null;
+  const ids = [...(origin.paneId ? [origin.paneId] : []), ...recentPanes().filter((id) => id !== origin.paneId)];
+  const items = ids.map((id) => paneItem(rest, id)).filter((item): item is CycleItem => item !== null);
+  const originKey = origin.paneId ? paneKey(origin.paneId) : undefined;
+  const atOrigin = items[0] !== undefined && items[0].key === originKey;
+  if (items.length < (atOrigin ? 2 : 1)) return null;
+  return { kind: "agents", originKey, items, index: atOrigin ? 0 : -1 };
 }

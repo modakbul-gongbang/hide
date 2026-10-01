@@ -1006,7 +1006,7 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | ⌘⇧T |
 | Add project | ⌘⇧N | none (a browser tab has no folder picker, so it offers no Add project) | ⌘⇧N |
 | Start agent (the start panel) | - | none (Chrome keeps ⌘N); ⌘K `에이전트 시작…` opens it | ⌘N, also File › Start agent |
-| Next / previous recent tab in focused area | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
+| Next / previous recent Agent pane or View tab (focused area) | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
 | Next / previous global recent panel | none by default | none by default; bindable in Settings | none by default; menu and palette select immediately |
 | Next / previous recent project (Recent Projects) | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
 | Search, Open file, Toggle side panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |

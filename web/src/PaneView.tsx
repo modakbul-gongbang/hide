@@ -10,7 +10,7 @@ import { hostKind } from "./host";
 import { ChildChipRow, ReturnToParent, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { sleepCaption, wakingLine } from "./sleep";
-import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
+import { paneTitle, type AgentSleep, type PaneRow, type TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
 import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale, terminalSelectionText } from "./terminals";
 
@@ -20,12 +20,6 @@ import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScal
  * too, and its wheel moves Herdr's viewport.
  */
 const LIVE_STATES = new Set(["connected", "controlling", "observing", "idle"]);
-
-export function paneTitle(pane: PaneRow): string {
-  // A remote pane's id is scoped to its device (`remote:<device>:pane:w1:p2`);
-  // the device is already on screen, so the header names the host's own id.
-  return pane.identity_label ?? pane.terminal_title ?? pane.herdr_label ?? pane.id.replace(/^remote:.+?:pane:/, "");
-}
 
 /**
  * The caption a non-live transport state gets, and whether a click asks the

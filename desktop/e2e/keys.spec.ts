@@ -137,35 +137,37 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
     const canvas = page.locator("[data-canvas]").first();
     const cycleRow = (kind: string) => page.locator(`[data-cycle=${kind}] [aria-selected=true]`);
 
-    // Recent order third, second, first: the first tab is current.
+    // Recent order third, second, first: the first tab's focused pane is current.
+    const paneOf = new Map<string, string>();
     for (const tab of [tabs[2]!, tabs[1]!, tabs[0]!]) {
       await page.locator(`[data-tab="${tab}"]`).click();
       await expect(canvas).toHaveAttribute("data-canvas", tab);
+      paneOf.set(tab, (await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view"))!);
     }
 
-    // ⌃Tab twice with ⌃ held walks two back; releasing ⌃ commits one focus_tab.
-    let focused = sent.get("focus_tab") ?? 0;
+    // ⌃Tab twice with ⌃ held walks two Agent panes back; releasing ⌃ commits one focus_pane.
+    let focused = sent.get("focus_pane") ?? 0;
     await page.keyboard.down("Control");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
-    await expect(cycleRow("area")).toHaveAttribute("data-cycle-row", tabs[2]!);
-    expect(sent.get("focus_tab") ?? 0).toBe(focused);
+    await expect(cycleRow("agents")).toHaveAttribute("data-cycle-row", paneOf.get(tabs[2]!)!);
+    expect(sent.get("focus_pane") ?? 0).toBe(focused);
     await page.keyboard.up("Control");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await expect(canvas).toHaveAttribute("data-canvas", tabs[2]!);
-    await exactlyOnce(sent, "focus_tab", focused + 1, page);
+    await exactlyOnce(sent, "focus_pane", focused + 1, page);
 
     // ⌃⇧Tab walks back toward the start: from third, two forward then one
-    // back is first, the order Recent Panels holds across every checkout.
-    focused = sent.get("focus_tab") ?? 0;
+    // back is first.
+    focused = sent.get("focus_pane") ?? 0;
     await page.keyboard.down("Control");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Shift+Tab");
-    await expect(cycleRow("area")).toHaveAttribute("data-cycle-row", tabs[0]!);
+    await expect(cycleRow("agents")).toHaveAttribute("data-cycle-row", paneOf.get(tabs[0]!)!);
     await page.keyboard.up("Control");
     await expect(canvas).toHaveAttribute("data-canvas", tabs[0]!);
-    await exactlyOnce(sent, "focus_tab", focused + 1, page);
+    await exactlyOnce(sent, "focus_pane", focused + 1, page);
 
     // Recent Projects gamma, beta, fixture: fixture is current.
     await page.locator('[data-sidebar-mode="projects"]').click();
