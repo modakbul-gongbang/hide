@@ -79,6 +79,10 @@ pub(super) struct BrowserOpenPayload {
     url: String,
     #[serde(default)]
     area_id: Option<String>,
+    /// The page whose own new tab this is: the new page opens beside it, so
+    /// the page that asked stays in view.
+    #[serde(default)]
+    beside_display: Option<String>,
     #[serde(default)]
     workspace: Option<ViewWorkspace>,
     #[serde(default)]
@@ -1160,8 +1164,15 @@ impl Runtime {
             pane_id,
             request_id,
             area_id,
+            beside_display,
         } = payload;
-        let outcome = self.place_browser(&url, workspace, pane_id.as_deref(), area_id.as_deref());
+        let outcome = self.place_browser(
+            &url,
+            workspace,
+            pane_id.as_deref(),
+            area_id.as_deref(),
+            beside_display.as_deref(),
+        );
         if let Err(message) = &outcome {
             self.set_error("browser.open_refused", message.clone(), false);
         }
@@ -1199,6 +1210,7 @@ impl Runtime {
         workspace: Option<ViewWorkspace>,
         pane_id: Option<&str>,
         area_id: Option<&str>,
+        beside_display: Option<&str>,
     ) -> Result<(WorkspaceKey, String), String> {
         if !self.separate_view_areas() {
             return Err("This shell does not draw View areas".to_owned());
@@ -1239,9 +1251,40 @@ impl Runtime {
                     }
                     return Ok((display_id, true));
                 }
-                let area = area_id.unwrap_or(&layout.active_area().id).to_owned();
                 let display = layout.new_browser_display(url, load);
                 let display_id = display.id.clone();
+                // A page's own new tab stands beside that page (Open to the
+                // side's order): in the area next to it, else in a new area
+                // to its right. With no room for one, or with the page gone,
+                // it opens where any page would.
+                let opener = beside_display
+                    .and_then(|opener| layout.area_of(opener))
+                    .map(|area| area.id.clone());
+                if let Some(base) = opener {
+                    if let Some(target) = BESIDE_ORDER
+                        .iter()
+                        .find_map(|edge| layout.neighbour(&base, *edge))
+                    {
+                        layout.insert(&target, display, stamp)?;
+                        return Ok((display_id, true));
+                    }
+                    match layout.can_split(&base, Edge::Right) {
+                        Ok(()) => {
+                            layout.split_new(&base, Edge::Right, display, stamp)?;
+                        }
+                        Err(error) => {
+                            crate::diagnostic!(serde_json::json!({
+                                "component": "view_areas",
+                                "kind": "browser.beside_refused",
+                                "device": key.0,
+                                "reason": error.kind(),
+                            }));
+                            layout.insert(&base, display, stamp)?;
+                        }
+                    }
+                    return Ok((display_id, true));
+                }
+                let area = area_id.unwrap_or(&layout.active_area().id).to_owned();
                 layout.insert(&area, display, stamp)?;
                 Ok((display_id, true))
             })

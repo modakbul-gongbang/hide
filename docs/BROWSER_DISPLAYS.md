@@ -33,7 +33,8 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
   The CLI returns one JSON line, exits nonzero on refusal, and never starts Hide.
 - Open in Browser in the Explorer's menu on an HTML file of a local or connected device checkout.
   The device host must have file access consent for a remote page to load.
-- A page that opens a tab, a `target=_blank` link, a shift-click or `window.open` without window features, gets another browser display in the same Workspace.
+- A page that opens a tab, a `target=_blank` link (an image a page wraps in one), a shift-click or `window.open` without window features, gets another browser display in the same Workspace, beside that page so the page that asked stays in view.
+  The shell names the page (`beside_display`), and the core places the new display in the View area next to the page's area in Open to the side's order (right, left, down, up), else in a new area to its right; with no room for another area, or with the page gone, it opens where any page would.
   A sized popup, `window.open` with window features the way a sign-in button opens one, is not a display; see Popups below.
   A remote page's routed loopback address is translated back to its source device address before that request reaches the core.
 - The address field in the display's toolbar loads what was typed into that display.

@@ -2029,6 +2029,74 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
         .map(|error| error.kind.as_str())
 }
 
+/// A page's own new tab (a `target=_blank` link, an image a page wraps in
+/// one) opens beside that page, so the page that asked stays in view: in a
+/// new area to its right the first time, then in that area, and never a
+/// third area. With the page gone it opens where any page would.
+#[test]
+fn a_pages_new_tab_opens_beside_it_and_keeps_it_in_view() {
+    let (mut runtime, _, _directory) = views_runtime("browser-beside");
+    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    assert!(browser_open(
+        &mut runtime,
+        serde_json::json!({"url": "https://a.test/pr"})
+    ));
+    let [opener] = browser_displays(&mut runtime).try_into().expect("one page");
+    let shown = |runtime: &mut Runtime| {
+        areas(&tree(runtime))
+            .into_iter()
+            .map(|(_, active, displays)| {
+                let urls = displays
+                    .iter()
+                    .filter_map(|display| display.url.clone())
+                    .collect::<Vec<_>>();
+                let active = displays
+                    .iter()
+                    .find(|display| Some(&display.id) == active.as_ref())
+                    .and_then(|display| display.url.clone());
+                (urls, active)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    for url in ["https://a.test/image.png", "https://a.test/other.png"] {
+        assert!(browser_open(
+            &mut runtime,
+            serde_json::json!({"url": url, "beside_display": opener.id})
+        ));
+        assert_eq!(runtime.snapshot.status.last_error, None);
+    }
+    assert_eq!(
+        shown(&mut runtime),
+        vec![
+            (
+                vec!["https://a.test/pr".to_owned()],
+                Some("https://a.test/pr".to_owned())
+            ),
+            (
+                vec![
+                    "https://a.test/image.png".to_owned(),
+                    "https://a.test/other.png".to_owned()
+                ],
+                Some("https://a.test/other.png".to_owned())
+            ),
+        ],
+        "the page stays in view and its tabs gather beside it"
+    );
+
+    assert!(browser_open(
+        &mut runtime,
+        serde_json::json!({"url": "https://a.test/third.png", "beside_display": "closed-page"})
+    ));
+    let after = shown(&mut runtime);
+    assert_eq!(after.len(), 2, "a gone page adds no area: {after:?}");
+    assert!(
+        after
+            .iter()
+            .any(|(urls, _)| urls.contains(&"https://a.test/third.png".to_owned()))
+    );
+}
+
 /// A page opens in the Workspace of the pane that asked, in its area in
 /// use, and opens the side panel; the same address again shows that
 /// page and loads it again rather than opening a second one. A request that
