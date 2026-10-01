@@ -72,7 +72,7 @@ export function badgeText(count: number): string {
  * first one capitalized. The name itself is the tile's hint.
  */
 export function tileMonogram(label: string): string {
-  const [first = "", second = ""] = label.split(/[\s._-]+/).filter(Boolean);
+  const [first = "", second = ""] = label.normalize("NFC").split(/[\s._-]+/).filter(Boolean);
   const initial = (word: string) => Array.from(word)[0] ?? "";
   return initial(first).toLocaleUpperCase() + initial(second);
 }

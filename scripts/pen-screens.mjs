@@ -2459,7 +2459,8 @@ function buildProjectsSidebar(tokens) {
   }
 
   // The sidebar's full-height left column: This Mac and the registered devices in
-  // order, and + directly under the last one; the sidebar beside it follows the
+  // order, and + directly under the last one, 44 apart as in the app (each frame
+  // carries the ring's 4 above and below the tile, so the gap is 4, not 12); the sidebar beside it follows the
   // selected tile. `tiles` overrides the three-device set.
   function deviceRail(p, selected, {miniOff = false, tiles} = {}) {
     const set = tiles ?? [
@@ -2467,7 +2468,7 @@ function buildProjectsSidebar(tokens) {
       ['mini', {selected: selected === 'mini', needs: miniOff ? 0 : 12, off: miniOff}],
       ['build', {selected: selected === 'build', off: true}],
     ];
-    return frame(`${p}-rail`, 'Device rail', {width: railWidth, height: WIN_H, layout: 'vertical', gap: '$--spacing-md', padding: [RAIL_TOP - 2 * RING, 0, 4, 0], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
+    return frame(`${p}-rail`, 'Device rail', {width: railWidth, height: WIN_H, layout: 'vertical', gap: '$--spacing-xs', padding: [RAIL_TOP - 2 * RING, 0, 4, 0], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
       ...set.map(([key, options], i) => railTile(`${p}-rt${i}`, key, options)),
       railTile(`${p}-radd`, 'add'),
     ]);

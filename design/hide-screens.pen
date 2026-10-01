@@ -1292,10 +1292,6 @@
       "type": "number",
       "value": 16
     },
-    "--size-badge-wide": {
-      "type": "number",
-      "value": 20
-    },
     "--size-recent-location-max": {
       "type": "number",
       "value": 112
@@ -83589,7 +83585,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -88705,7 +88701,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -90074,7 +90070,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -91498,7 +91494,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -91909,7 +91905,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -94279,7 +94275,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -99395,7 +99391,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -100764,7 +100760,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -102188,7 +102184,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,
@@ -102599,7 +102595,7 @@
                               "width": 48,
                               "height": 720,
                               "layout": "vertical",
-                              "gap": "$--spacing-md",
+                              "gap": "$--spacing-xs",
                               "padding": [
                                 8,
                                 0,

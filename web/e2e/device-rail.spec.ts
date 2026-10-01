@@ -108,6 +108,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     expect(Math.round(railBox.width)).toBe(48);
     expect(Math.round(contentBox.width)).toBe(292);
     expect(Math.round(sidebarBox.width)).toBe(48 + 292);
+    expect(Math.round(railBox.x)).toBe(Math.round(sidebarBox.x));
     expect(Math.round(railBox.y)).toBe(Math.round(sidebarBox.y));
     expect(Math.round(railBox.height)).toBe(Math.round(sidebarBox.height));
     expect(Math.round((await page.locator("[data-sidebar-title]").boundingBox())!.x)).toBe(Math.round(railBox.x + railBox.width));

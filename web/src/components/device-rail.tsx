@@ -10,8 +10,8 @@ import { Hint } from "./ui/tooltip";
 
 export type Tile = { id: string; label: string; icon: "local" | "remote" };
 
-/** The rounded square every tile is, the add tile included; a tile's marks hang off its corners. */
-const TILE = "relative flex size-(--size-icon-button-standard) shrink-0 items-center justify-center rounded-md outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+/** The rounded square every tile is, the add tile included; a tile's marks hang off its corners, and the focus outline stands outside the selected ring. */
+const TILE = "relative flex size-(--size-icon-button-standard) shrink-0 items-center justify-center rounded-md outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring";
 
 /** A mark's cut-out: a ring of the rail's own fill, so the mark reads as notched into the tile. */
 const CUTOUT = "ring-2 ring-sidebar";

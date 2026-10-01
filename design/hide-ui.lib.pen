@@ -35916,10 +35916,6 @@
       "type": "number",
       "value": 1160
     },
-    "--size-badge-wide": {
-      "type": "number",
-      "value": 20
-    },
     "--size-rail-badge": {
       "type": "number",
       "value": 15
