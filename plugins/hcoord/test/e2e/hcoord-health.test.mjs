@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import test from "node:test";
 import { createFakeRemote } from "../helpers/fake-remote.mjs";
 import { hq } from "../helpers/hcoord-hq.mjs";
+import { spawnOwned } from "../helpers/owned-children.mjs";
 import { daemonPlist } from "../../dist/hcoord/platform.js";
 
 const CLI = path.resolve(import.meta.dirname, "../../dist/hcoord/cli.js");
@@ -19,7 +19,7 @@ test("the LaunchAgent restarts only unsuccessful exits", () => {
 test("three unexpected exits in ten minutes raise one Herdr notification and a warning on every command", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   for (let crash = 0; crash < 3; crash += 1) { await coordinator.start(); await coordinator.stop("SIGKILL"); }
   await coordinator.start();
   await coordinator.until(() => fake.notifications().length > 0, "the restarted daemon sends a Herdr notification");
@@ -37,7 +37,7 @@ test("three unexpected exits in ten minutes raise one Herdr notification and a w
 test("clean stops never count as instability", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   for (let restart = 0; restart < 4; restart += 1) { await coordinator.start(); await coordinator.stop("SIGTERM"); }
   await coordinator.start();
   assert.equal(coordinator.run("status").stderr, "");
@@ -49,12 +49,12 @@ test("clean stops never count as instability", async (t) => {
 test("a stop signal during startup still ends with a clean mark", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   const healthFile = path.join(coordinator.dir, "health.json");
   const starts = () => { try { return JSON.parse(fs.readFileSync(healthFile, "utf8")).starts; } catch { return []; } };
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const before = starts().length;
-    const daemon = spawn(process.execPath, [CLI, "daemon", "run"], { env: coordinator.env, stdio: "ignore" });
+    const daemon = spawnOwned(`startup daemon ${attempt}`, process.execPath, [CLI, "daemon", "run"], { env: coordinator.env, stdio: "ignore" });
     const exited = new Promise((resolve) => daemon.once("exit", (code, signal) => resolve({ code, signal })));
     while (starts().length === before && daemon.exitCode === null) await new Promise((resolve) => setImmediate(resolve));
     daemon.kill("SIGTERM");
@@ -66,7 +66,7 @@ test("a stop signal during startup still ends with a clean mark", async (t) => {
 test("a start that never answers for a minute warns even without a request, and ten ready minutes clear it", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   fs.mkdirSync(coordinator.dir, { recursive: true });
   fs.writeFileSync(path.join(coordinator.dir, "health.json"), JSON.stringify({ starts: [{ pid: 999999, at: minutesAgo(2), readyAt: null, cleanAt: null }] }));
   const down = coordinator.run("inbox");
@@ -86,7 +86,7 @@ test("a start that never answers for a minute warns even without a request, and 
 test("a corrupt health record is reported, not read as a healthy daemon", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   fs.mkdirSync(coordinator.dir, { recursive: true });
   fs.writeFileSync(path.join(coordinator.dir, "alert.json"), "{not json");
   assert.match(coordinator.run("inbox").stderr, /^hcoord warning: daemon health is unknown: .*alert\.json is unreadable/);

@@ -1824,6 +1824,8 @@ pub struct EditorTabSnapshot {
     /// Whether a Markdown file tab draws its formatting in place (Live) or
     /// shows the source editor. Per tab; a reopened tab starts Live.
     pub markdown_live: bool,
+    /// Whether a file or diff tab wraps long lines. Per tab; a new or
+    /// reopened tab starts wrapped.
     pub wrap: bool,
     pub dirty: bool,
     /// The checkout's one replaceable preview tab (VS Code's model): opened by

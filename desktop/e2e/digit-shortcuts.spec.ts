@@ -16,7 +16,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, test, type Isolated } from "./fixture";
+import { hostLog, isolate, launchShell, test, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -92,10 +92,11 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
   ]) as { result: { tab: { tab_id: string } } };
   tabs.push(made.result.tab.tab_id);
   try {
-    ({ app } = await launch(run.env));
-    const page = await app.firstWindow();
+    const launched = await launchShell(run.env);
+    app = launched.app;
+    const page = launched.page;
     const sent = countSent(page);
-    // Observe the new live socket before it connects, including with an already-loaded shell.
+    // Observe the new live socket before it connects, reloading the shell the host has already loaded.
     // The exactly-once expectations below still assert the real outgoing events.
     await Promise.all([
       page.waitForEvent("websocket", { predicate: (socket) => new URL(socket.url()).pathname === "/ws", timeout: 5_000 }),
