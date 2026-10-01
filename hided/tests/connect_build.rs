@@ -26,18 +26,27 @@ fn isolated(program: &Path, home: &Path, state: &Path) -> Command {
     command
 }
 
-fn connect(cli: &Path, home: &Path, state: &Path) -> Value {
+fn try_connect(cli: &Path, home: &Path, state: &Path) -> (bool, Value) {
     let output: Output = isolated(cli, home, state)
         .arg("connect")
         .stderr(Stdio::inherit())
         .output()
         .expect("hide connect runs");
-    assert!(
-        output.status.success(),
-        "hide connect failed: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    serde_json::from_slice(&output.stdout).expect("hide connect prints one JSON line")
+    let line = serde_json::from_slice(&output.stdout).expect("hide connect prints one JSON line");
+    (output.status.success(), line)
+}
+
+fn connect(cli: &Path, home: &Path, state: &Path) -> Value {
+    let (ok, line) = try_connect(cli, home, state);
+    assert!(ok, "hide connect failed: {line}");
+    line
+}
+
+fn state_pid(state: &Path) -> i64 {
+    let bytes = std::fs::read(state.join("hided.json")).expect("a daemon state");
+    serde_json::from_slice::<Value>(&bytes).unwrap()["pid"]
+        .as_i64()
+        .unwrap()
 }
 
 fn alive(pid: i32) -> bool {
@@ -54,6 +63,8 @@ fn wait_gone(pid: i32) -> bool {
 
 /// A copy of `hide` beside a `hided` whose bytes differ from the cargo-built
 /// one only in its ad-hoc signature, as a package of the same source does.
+/// `dir` decides whether it is the app's own: an app bundle's
+/// `Contents/Resources`, or anywhere else.
 fn other_build(dir: &Path) -> PathBuf {
     let built = Path::new(env!("CARGO_BIN_EXE_hided"));
     let cli = dir.join("hide");
@@ -93,7 +104,7 @@ impl Drop for StopOnDrop<'_> {
 }
 
 #[test]
-fn connect_replaces_a_daemon_of_another_build_and_keeps_one_of_its_own() {
+fn the_apps_hide_replaces_a_daemon_of_another_build_and_keeps_one_of_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let state = dir.path().join("state");
@@ -113,12 +124,12 @@ fn connect_replaces_a_daemon_of_another_build_and_keeps_one_of_its_own() {
         "the same build attaches to the running daemon"
     );
 
-    let other = other_build(&dir.path().join("other"));
-    let replaced = connect(&other, &home, &state);
+    let app = other_build(&dir.path().join("Hide.app/Contents/Resources"));
+    let replaced = connect(&app, &home, &state);
     let replaced_pid = replaced["pid"].as_i64().unwrap() as i32;
     assert_ne!(
         replaced_pid, first_pid,
-        "another build starts its own daemon"
+        "the app's build starts its own daemon"
     );
     assert!(
         wait_gone(first_pid),
@@ -127,4 +138,75 @@ fn connect_replaces_a_daemon_of_another_build_and_keeps_one_of_its_own() {
 
     let _ = isolated(&cargo_cli, &home, &state).arg("stop").status();
     assert!(wait_gone(replaced_pid), "hide stop ends the replacement");
+}
+
+/// A `hide` outside an app bundle (a dev build, a copy) never stops the
+/// daemon it finds; it names the mismatch and attaches to nothing.
+#[test]
+fn a_hide_outside_the_app_refuses_a_daemon_of_another_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&home).unwrap();
+    let cargo_cli = Path::new(env!("CARGO_BIN_EXE_hided")).with_file_name("hide");
+    let _stop = StopOnDrop {
+        cli: &cargo_cli,
+        home: &home,
+        state: &state,
+    };
+    let running = connect(&cargo_cli, &home, &state);
+
+    let copy = other_build(&dir.path().join("copy"));
+    let (ok, line) = try_connect(&copy, &home, &state);
+
+    assert!(!ok, "{line}");
+    assert_eq!(line["reason"], "other_build", "{line}");
+    assert!(alive(running["pid"].as_i64().unwrap() as i32));
+    assert_eq!(state_pid(&state), running["pid"].as_i64().unwrap());
+}
+
+/// Two app connects that both find a daemon of another build leave one
+/// daemon, the one the state names, and both attach to it.
+#[test]
+fn two_connects_at_once_leave_one_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&home).unwrap();
+    let cargo_cli = Path::new(env!("CARGO_BIN_EXE_hided")).with_file_name("hide");
+    let _stop = StopOnDrop {
+        cli: &cargo_cli,
+        home: &home,
+        state: &state,
+    };
+    let old = connect(&cargo_cli, &home, &state)["pid"].as_i64().unwrap() as i32;
+    let app = other_build(&dir.path().join("Hide.app/Contents/Resources"));
+
+    let racers: Vec<_> = (0..2)
+        .map(|_| {
+            let (app, home, state) = (app.clone(), home.clone(), state.clone());
+            std::thread::spawn(move || connect(&app, &home, &state))
+        })
+        .collect();
+    let pids: Vec<i64> = racers
+        .into_iter()
+        .map(|racer| racer.join().unwrap()["pid"].as_i64().unwrap())
+        .collect();
+
+    assert!(wait_gone(old), "the old build's daemon is gone");
+    assert_eq!(pids[0], pids[1], "both connects attach to one daemon");
+    assert_eq!(state_pid(&state), pids[0]);
+    // Every daemon of this state folder holds its instance lock open.
+    let holders = Command::new("/usr/sbin/lsof")
+        .arg("-t")
+        .arg(state.join("hided.lock"))
+        .output()
+        .unwrap();
+    let holders: Vec<i64> = String::from_utf8_lossy(&holders.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse().ok())
+        .collect();
+    assert_eq!(holders, [pids[0]], "one daemon holds the instance lock");
+    let _ = isolated(&cargo_cli, &home, &state).arg("stop").status();
+    assert!(wait_gone(pids[0] as i32));
 }

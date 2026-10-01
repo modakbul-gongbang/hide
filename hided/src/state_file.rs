@@ -51,9 +51,39 @@ pub fn read_state(dir: &Path) -> io::Result<Option<DaemonState>> {
     }
 }
 
-pub fn remove_state(dir: &Path) {
-    let _ = fs::remove_file(state_path(dir));
-    let _ = fs::remove_file(lock_path(dir));
+/// Removes the state file when it still names `pid`, the daemon a caller
+/// just stopped. The instance lock file is never unlinked here: a daemon
+/// started since holds its lock on that file, and unlinking it would let a
+/// third daemon take a fresh one beside it.
+pub fn forget_daemon(dir: &Path, pid: u32) {
+    if read_state(dir)
+        .ok()
+        .flatten()
+        .is_some_and(|state| state.pid == pid)
+    {
+        let _ = fs::remove_file(state_path(dir));
+    }
+}
+
+/// Serializes `hide connect`s on one state folder: held from looking at the
+/// running daemon until the one to attach to answers. The file persists;
+/// the lock is released with the returned handle.
+pub fn lock_connect(dir: &Path) -> io::Result<File> {
+    use std::os::fd::AsRawFd;
+    fs::create_dir_all(dir)?;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(dir.join("connect.lock"))?;
+    // SAFETY: flock on a descriptor `file` owns; dropping it releases.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(file)
 }
 
 pub fn new_token() -> String {

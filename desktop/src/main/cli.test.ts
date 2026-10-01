@@ -144,6 +144,12 @@ describe("the hide CLI's answers", () => {
     expect(parseConnect(result("", { code: 2, stderr: "unknown command: connect" }))).toMatchObject({ kind: "failed", reason: "start_failed" });
     expect(parseConnect(result("", { spawnError: "spawn EACCES" }))).toMatchObject({ reason: "start_failed", detail: "spawn EACCES" });
     expect(parseConnect(result("", { timedOut: true, code: null }))).toMatchObject({ reason: "no_response" });
+    // A dev hide meeting the app's daemon of another build names it rather than replacing it.
+    expect(parseConnect(result('{"ok":false,"reason":"other_build","detail":"another build"}', { code: 2 }))).toEqual({
+      kind: "failed",
+      reason: "other_build",
+      detail: "another build",
+    });
   });
 
   it("refuses a URL that is not the daemon's loopback origin with a token", () => {

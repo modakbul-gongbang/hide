@@ -35,7 +35,7 @@ use crate::core::CoreHandle;
 use crate::env::Env;
 use crate::index::IndexService;
 use crate::server::AppState;
-use crate::state_file::{DaemonState, acquire_lock, new_token, remove_state, write_state};
+use crate::state_file::{DaemonState, acquire_lock, forget_daemon, new_token, write_state};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -172,7 +172,9 @@ pub async fn run_daemon(env: Env) -> Result<(), String> {
     // leaves it to the next start's reconcile (PRD D-07).
     running.mobile.shutdown().await;
     drop(running);
-    remove_state(&state_dir);
+    // Its own state only: the instance lock is released above, so a daemon
+    // started since may already have written its own.
+    forget_daemon(&state_dir, std::process::id());
     Ok(())
 }
 
@@ -412,7 +414,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
                 serde_json::json!({"component":"hided","kind":"server.exit","message": error})
             );
         }
-        remove_state(&env_state_dir);
+        forget_daemon(&env_state_dir, std::process::id());
     });
     Ok(RunningDaemon {
         port,

@@ -641,6 +641,9 @@ pub enum ConnectError {
     StartFailed(String),
     /// A daemon was started but never answered its health check.
     NoResponse(String),
+    /// A daemon of another build runs here and this `hide` is not the app's,
+    /// so it neither replaces nor attaches to it.
+    OtherBuild(String),
 }
 
 impl ConnectError {
@@ -648,12 +651,15 @@ impl ConnectError {
         match self {
             ConnectError::StartFailed(_) => "start_failed",
             ConnectError::NoResponse(_) => "no_response",
+            ConnectError::OtherBuild(_) => "other_build",
         }
     }
 
     fn detail(&self) -> &str {
         match self {
-            ConnectError::StartFailed(detail) | ConnectError::NoResponse(detail) => detail,
+            ConnectError::StartFailed(detail)
+            | ConnectError::NoResponse(detail)
+            | ConnectError::OtherBuild(detail) => detail,
         }
     }
 }
@@ -663,18 +669,45 @@ impl ConnectError {
 /// that loads the shell itself can never start a second daemon.
 ///
 /// A live daemon of another build than the `hided` beside this CLI is
-/// stopped and replaced (PRD labels-in-hided D-19): the app and its daemon
-/// are always one build. It is never attached to instead; a daemon that
-/// will not stop is a start failure. Only the daemon of this state folder
-/// is looked at, so a dev or e2e daemon elsewhere is never replaced, and
-/// stopping it leaves Herdr, its panes and their agents running.
+/// stopped and replaced (PRD labels-in-hided D-19) when this `hide` is the
+/// app's own, the one in an app bundle's `Contents/Resources`: the app and
+/// its daemon are always one build. Any other `hide` (a dev build, a copy)
+/// refuses with the mismatch named and attaches to nothing, because the
+/// installed app's daemon is the operator's. A daemon that will not stop
+/// is a start failure. Only the daemon of this state folder is looked at,
+/// so a dev or e2e daemon elsewhere is never replaced, and stopping it
+/// leaves Herdr, its panes and their agents running.
+///
+/// The whole look-and-replace holds this state folder's connect lock, so
+/// two connects never both stop a daemon and start their own.
 fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
     let build = crate::build_id::of_file(&daemon_binary().map_err(ConnectError::StartFailed)?)
         .map_err(ConnectError::StartFailed)?;
+    let _serialized = state_file::lock_connect(&env.state_dir)
+        .map_err(|error| ConnectError::StartFailed(format!("the connect lock: {error}")))?;
     if let Some((state, health)) = healthy_daemon(env) {
         let running = health.get("build").and_then(serde_json::Value::as_str);
         if running == Some(build.as_str()) {
             return Ok(state);
+        }
+        let from_app = std::env::current_exe()
+            .ok()
+            .as_deref()
+            .and_then(hide_kit::bundled_kit_dir)
+            .is_some();
+        if !from_app {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "hide", "kind": "daemon.other_build_refused",
+                    "pid": state.pid, "running_build": running, "build": build,
+                })
+            );
+            return Err(ConnectError::OtherBuild(format!(
+                "a hided of another build is running (pid {}, build {}); this hide is not the app's (build {build}) and neither replaces nor attaches to it",
+                state.pid,
+                running.unwrap_or("unknown"),
+            )));
         }
         eprintln!(
             "{}",
@@ -770,7 +803,6 @@ fn stop(env: &Env) -> Result<(), String> {
     if let Some(state) = state_file::read_state(&env.state_dir).map_err(|e| e.to_string())? {
         stop_daemon(env, &state)?;
     }
-    state_file::remove_state(&env.state_dir);
     Ok(())
 }
 
@@ -781,7 +813,7 @@ fn stop_daemon(env: &Env, state: &DaemonState) -> Result<(), String> {
     // A damaged state's pid names no daemon (`send_signal` refuses it), so
     // the state is only cleared.
     if send_signal(state.pid, 0).is_err_and(|error| error.kind() == io::ErrorKind::InvalidInput) {
-        state_file::remove_state(&env.state_dir);
+        state_file::forget_daemon(&env.state_dir, state.pid);
         return Ok(());
     }
     let _ = send_signal(state.pid, libc::SIGTERM);
@@ -806,7 +838,9 @@ fn stop_daemon(env: &Env, state: &DaemonState) -> Result<(), String> {
             state.pid
         ));
     }
-    state_file::remove_state(&env.state_dir);
+    // Only the state of the daemon stopped here: another connect may have
+    // started its own since, and its state and lock stay.
+    state_file::forget_daemon(&env.state_dir, state.pid);
     Ok(())
 }
 
