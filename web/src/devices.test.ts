@@ -63,6 +63,8 @@ describe("the device rail's facts (quick device-rail-badges)", () => {
 
   it("draws a device's monogram from the first letters of its first two words", () => {
     expect(["Mac mini", "Mac Studio", "mini", "build-box", "연구실 빌드 서버", "  spaced  out "].map(tileMonogram)).toEqual(["Mm", "MS", "M", "Bb", "연빌", "So"]);
+    // A name macOS hands over decomposed still yields whole syllables.
+    expect(tileMonogram("연구실 빌드".normalize("NFD"))).toBe("연빌");
   });
 
   it("names a tile for assistive technology by device, connection and each count it marks (B4)", () => {
