@@ -225,6 +225,7 @@ impl LabelWorker {
                 changed = true;
             }
             let seq_moved = record.state_change_seq != observed.state_change_seq;
+            let was_stopped = matches!(record.agent_status.as_deref(), Some("idle" | "done"));
             if seq_moved {
                 record.state_change_seq = observed.state_change_seq;
                 record.changed_unix_ms = now_unix_ms;
@@ -241,8 +242,14 @@ impl LabelWorker {
                 self.dirty = true;
             }
             // A running agent is not waiting on anyone: the question and the
-            // reply it asked for are over, and the turn's end writes anew.
-            if status == "working" && (record.question || !record.expected_reply.is_empty()) {
+            // reply it asked for are over, and the turn's end writes anew. A
+            // stopped agent whose state moved and is stopped again (or at a
+            // permission prompt) ran in between, even when its working state
+            // came and went inside one burst of Herdr events and was never
+            // seen here.
+            let ran = status == "working"
+                || (seq_moved && was_stopped && matches!(status.as_str(), "idle" | "done" | "blocked"));
+            if ran && (record.question || !record.expected_reply.is_empty()) {
                 record.question = false;
                 record.expected_reply.clear();
                 self.dirty = true;

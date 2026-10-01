@@ -340,6 +340,33 @@ fn a_running_agent_is_not_asking_anything() {
 }
 
 #[test]
+fn a_turn_that_ran_between_two_looks_ends_the_question() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "배포할까?"), ("assistant", "A와 B 중 고르세요")],
+    );
+    harness
+        .backend
+        .answer("배포 방식 결정 작업", "question", "A/B 선택");
+    let asking = agent(&path, "idle", 3);
+    observe(&mut worker, &asking);
+    settle(&mut worker, &woken);
+    assert!(shown(&worker, &asking).unwrap().question);
+
+    // Herdr went working and then done inside one burst: only the done and
+    // its sequence two changes on are seen.
+    let finished = agent(&path, "done", 5);
+    worker.observe(std::slice::from_ref(&finished), None, Instant::now(), 2_000);
+    let label = shown(&worker, &finished).unwrap();
+    assert!(!label.question);
+    assert_eq!(label.expected_reply, None);
+    assert_eq!(label.task.as_deref(), Some("배포 방식 결정 작업"));
+}
+
+#[test]
 fn another_session_shows_nothing_of_the_last_one_until_it_is_proven() {
     let harness = Harness::new();
     let (mut worker, woken, _) = harness.worker(harness.store());
