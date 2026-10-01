@@ -76,7 +76,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
 }
 
-test("the sidebar's row menus: pin an unregistered project, open a tab, move the default, copy a session id", async ({ page }) => {
+test("the sidebar's row menus: pin an unregistered project, open a tab, move the default, copy a session id", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/308" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
