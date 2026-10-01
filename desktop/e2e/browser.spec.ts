@@ -548,10 +548,9 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
   // Two View areas side by side need the Workspace's width: in this run's
   // window the side panel is expanded over it, as the first test does.
-  await page.keyboard.press("Meta+KeyK");
-  await page.keyboard.type("Expand side panel");
-  await page.locator('[data-palette-row="command:panel:expanded"]').click();
-  await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
   await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
   await expect.poll(async () => (await views()).filter((view) => view.visible).map((view) => view.url).sort()).toEqual([`${origin}/c.html`, signin].sort());
   expect(await windows()).toBe(1);
