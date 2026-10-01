@@ -94,7 +94,12 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         return Err("label_session_reference_missing".to_owned());
     }
     let path = SessionLocator::new(home)
-        .locate("label", request.agent, Some(&identity), request.cwd.as_deref())
+        .locate(
+            "label",
+            request.agent,
+            Some(&identity),
+            request.cwd.as_deref(),
+        )
         .map_err(|error| match error {
             SessionError::SessionFileMissing => "session_file_missing".to_owned(),
             _ => "label_session_location_unavailable".to_owned(),
@@ -150,7 +155,9 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         checkpoint: cursor.checkpoint(),
         anchor,
         has_more: cursor.has_more(),
-        rescanned: parsed.rescan_reason.map(|reason| reason.as_str().to_owned()),
+        rescanned: parsed
+            .rescan_reason
+            .map(|reason| reason.as_str().to_owned()),
         skipped_lines: parsed.skipped_lines,
         skipped_reasons: parsed
             .skipped_reasons
@@ -205,10 +212,8 @@ mod tests {
         assert!(first.anchor.is_some());
 
         let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
-        file.write_all(
-            claude_line("assistant", "s1", "done", "2026-10-01T00:00:02Z").as_bytes(),
-        )
-        .unwrap();
+        file.write_all(claude_line("assistant", "s1", "done", "2026-10-01T00:00:02Z").as_bytes())
+            .unwrap();
         let second = read(root.path(), &request(&path, Some(first.checkpoint.clone()))).unwrap();
         assert_eq!(second.events.len(), 1);
         assert_eq!(second.events[0].text, "done");
@@ -255,7 +260,10 @@ mod tests {
         )
         .unwrap();
         let answer = read(root.path(), &request(&path, None)).unwrap();
-        assert_eq!(answer.skipped_reasons.get("non_conversation_capacity"), Some(&1));
+        assert_eq!(
+            answer.skipped_reasons.get("non_conversation_capacity"),
+            Some(&1)
+        );
         assert_eq!(answer.events.last().unwrap().text, "after the tool");
 
         let sentence = root.path().join("sentence.jsonl");
@@ -274,6 +282,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut request = request(&root.path().join("missing.jsonl"), None);
         request.reference_kind = "pid".to_owned();
-        assert_eq!(read(root.path(), &request).unwrap_err(), "session_kind_unsupported");
+        assert_eq!(
+            read(root.path(), &request).unwrap_err(),
+            "session_kind_unsupported"
+        );
     }
 }
