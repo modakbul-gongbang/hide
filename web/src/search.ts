@@ -326,14 +326,14 @@ export function searchEntries(rest: SnapshotRest | null): SearchEntry[] {
   return entries;
 }
 
-/** The digits of `273` or `#273`, which name an issue or a pull request, else null. */
+/** The digits of `273` or a hash-prefixed `273`, which name an issue or a pull request, else null. */
 export function numberQuery(query: string): number | null {
   const match = /^#?(\d{1,9})$/.exec(query.trim());
   return match ? Number(match[1]) : null;
 }
 
 /**
- * The entries matching `query`, best first. A number (`273`, `#273`) puts the
+ * The entries matching `query`, best first. A number (`273`, or with a hash) puts the
  * issues and then the pull requests numbered exactly that ahead of every title
  * match, each as its own row (PRD B12); the other rows must hold the digits.
  */

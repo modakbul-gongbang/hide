@@ -109,6 +109,16 @@ export async function showTool(page: Page, tool: "explorer" | "changes"): Promis
   await expect(shown).toBeVisible();
 }
 
+/**
+ * Chooses the side panel's state from the Workspace toolbar's menu, the one
+ * place that names all three states (the palette no longer does).
+ */
+export async function choosePanel(page: Page, state: "closed" | "open" | "expanded"): Promise<void> {
+  await page.locator("[data-workspace-toolbar]").click({ button: "right" });
+  await page.locator(`[data-menu-item="panel:${state}"]`).click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+}
+
 export async function showExplorer(page: Page): Promise<void> {
   await showTool(page, "explorer");
 }
