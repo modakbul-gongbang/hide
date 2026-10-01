@@ -8,8 +8,7 @@
 // child that goes away while the list is open leaves it.
 
 import { expect, test, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
-import { elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflow } from "./wire";
 
@@ -18,10 +17,6 @@ test.describe.configure({ timeout: 150_000 });
 // The longest title the core keeps (30 characters), still wider than a row.
 const LONG_TITLE = "사이드바 가독성과 행 높이 고정 확인용 긴 작업 제목";
 const QUESTION = "PR 병합 전 검증을 다시 돌려도 될까요?";
-
-function declareChild(herdr: HerdrFixture, child: string, parent: string): void {
-  execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
-}
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
@@ -46,7 +41,7 @@ test("a root waiting on its child, the badge's child list, and the progress line
     await finishFixtureTurn(herdr, parent, elsewhereTab(herdr));
     labelAgent(herdr, child, { task: "Agent two", progress: "계보 투영 구현 중" });
     await setFixtureLifecycle(herdr, child, "working");
-    declareChild(herdr, child, parent);
+    declareParent(herdr, child, parent);
     const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
     await expect(page.locator(`[data-agent-group="working"] [data-pane="${parent}"]`)).toBeVisible();

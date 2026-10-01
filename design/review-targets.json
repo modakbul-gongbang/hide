@@ -167,5 +167,55 @@
     "judgment": [
       "Korean snippet, role/time and selected message are legible; copied-history controls fit the existing list without hiding metadata fallback."
     ]
+  },
+  "area-focus": {
+    "description": "Keyboard ownership across two View areas using the shared Agent/View area renderer.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-workspace",
+    "scene": "area-focus",
+    "selector": "[data-gallery-scene=area-focus]",
+    "measurement": "web/e2e/area-focus-geometry.mjs",
+    "frames": [
+      {
+        "node": "ws-focus-l",
+        "theme": "light",
+        "width": 960,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "ws-focus-d",
+        "theme": "dark",
+        "width": 960,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        960,
+        720
+      ],
+      "contents": [
+        "reference"
+      ]
+    },
+    "states": {
+      "rest": "First area owns the keyboard; each area retains its selected tab."
+    },
+    "rules": {
+      "areaFocus": true
+    },
+    "judgment": [
+      "Does exactly one area read as the keyboard owner while the other selected tab remains recognizable?",
+      "Are Korean text and the native page content readable in the app, including narrow and expanded panels?",
+      "Compare the readable treatment with the local weak blur experiment and its measured cost."
+    ]
   }
 }

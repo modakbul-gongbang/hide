@@ -154,8 +154,14 @@ class BrowserSyncLoop {
   private frame = 0;
   private lastSent = "";
   private watching = false;
+  private focus: { workspace: string; id: string } | null = null;
 
   constructor(private readonly bridge: BrowserBridge) {}
+
+  requestFocus(workspace: string, id: string): void {
+    this.focus = { workspace, id };
+    this.schedule();
+  }
 
   setFront(front: Front | null, retained: { workspace: string; id: string }[]): void {
     if (front?.workspace !== this.front?.workspace) {
@@ -229,6 +235,11 @@ class BrowserSyncLoop {
       this.lastSent = text;
       this.bridge.sync(sync);
     }
+    const focus = this.focus;
+    this.focus = null;
+    if (focus?.workspace === sync.workspace && sync.displays.some(row => row.id === focus.id && row.visible && row.rect)) {
+      this.bridge.command(focus.workspace, focus.id, "focus");
+    }
     // A layer that stays open can still move (a popover following its
     // anchor, a dragged tab); follow it while one is drawn over a page.
     if (overlays.length > 0 && rects.size > 0) this.schedule();
@@ -293,6 +304,11 @@ export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLa
 /** A display's page slot: the host places the page over this element. */
 export function registerBrowserSlot(id: string, element: HTMLElement): () => void {
   return syncLoop()?.register(id, element) ?? (() => undefined);
+}
+
+/** One focus intent, delivered after the host has the current visible slots. */
+export function focusBrowserDisplay(workspace: string, id: string): void {
+  syncLoop()?.requestFocus(workspace, id);
 }
 
 /** Records what a page says and places it again, since a failed page gives its place to a notice. */

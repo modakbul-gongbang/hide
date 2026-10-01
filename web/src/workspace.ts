@@ -36,11 +36,11 @@ export type WorkspaceView = {
   agent_layout?: import("./agentLayout").AgentLayout;
 };
 
-/** The three panel states, in the order the toolbar menu and the palette offer them: the menu's name for each, and the palette's command to reach it. */
-export const PANEL_STATES: readonly { panel: PanelState; label: string; command: string }[] = [
-  { panel: "closed", label: "Side panel closed", command: "Close side panel" },
-  { panel: "open", label: "Side panel open", command: "Open side panel" },
-  { panel: "expanded", label: "Side panel expanded", command: "Expand side panel" },
+/** The three panel states, in the order the toolbar menu offers them, with the menu's name for each. */
+export const PANEL_STATES: readonly { panel: PanelState; label: string }[] = [
+  { panel: "closed", label: "Side panel closed" },
+  { panel: "open", label: "Side panel open" },
+  { panel: "expanded", label: "Side panel expanded" },
 ];
 
 /** The bounds the core keeps the panel's share in (`MIN_VIEWS_OVER_SHARE`, `MAX_VIEWS_OVER_SHARE`). */

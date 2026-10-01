@@ -30,13 +30,27 @@ async function settledFocus(page: Page, paneId: string): Promise<void> {
   }
 }
 
+/**
+ * Copies what the focused pane has selected, the way the system's copy chord
+ * does. Playwright binds its editing commands, copy among them, to the host
+ * system's chord: ⌘C on macOS, which is what the app's users press. Elsewhere
+ * that press is not a copy and Ctrl+C reaches the terminal as an interrupt, so
+ * the browser's own copy command runs instead; both raise the same `copy`
+ * event the pane's handler answers.
+ */
+async function copy(page: Page): Promise<void> {
+  if (process.platform === "darwin") await page.keyboard.press("Meta+KeyC");
+  else await page.evaluate(() => document.execCommand("copy"));
+}
+
 async function screen(page: Page): Promise<string> {
   return page.evaluate(() => window.__hideProbe?.screenText() ?? "");
 }
 
 test.describe.configure({ timeout: 90_000 });
 
-test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, context }) => {
+// @platform: Presses ⌘C, the copy chord macOS users type, and splits and closes through the platform's Herdr.
+test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" }, async ({ page, context }) => {
   // A Workspace opens with the Explorer beside its agents; the room keeps
   // the split panes wide enough that typed lines do not wrap.
   await page.setViewportSize({ width: 1680, height: 900 });
@@ -91,15 +105,18 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await page.locator("[data-go-main]").click();
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
-    await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-lens-lane]')).toHaveCount(1);
+    await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-graph-box]')).toHaveCount(1);
     await firstRow.click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
+    // The fixture's first tab runs two Claude agents; the one focused is the agent pane the keyboard was last in.
+    const lastAgentPane = (await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view"))!;
 
     // Tab switch: the previous tab's instances are gone, the new one's mounted.
     await page.locator(`[data-tab="${tabs[1]}"]`).click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);
     await expect(page.locator("[data-pane-view]")).toHaveCount(1);
+    const secondTabShell = (await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!;
     await expect.poll(() => sent.get("agent_layout.focus")).toBe(1);
     await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
 
@@ -114,15 +131,18 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect(page.locator("[role=tab][aria-selected=true]")).toHaveAttribute("data-tab", labelled()!);
     await expect.poll(() => sent.get("create_tab")).toBe(1);
 
-    // ⌥` walks Recent Panels: the previous surface (the second tab) is the first candidate.
-    const panelFocusEvents = sent.get("focus_tab") ?? 0;
+    // ⌥` in the Agent area walks the recent agent panes. The new tab and the
+    // second one run plain shells, so the first candidate is the agent pane
+    // left in the first tab.
+    const paneFocusEvents = sent.get("focus_pane") ?? 0;
     await page.keyboard.down("Alt");
     await page.keyboard.press("Backquote");
-    await expect(page.locator("[data-cycle=panels] [aria-selected=true]")).toHaveAttribute("data-cycle-row", tabs[1]);
+    await expect(page.locator("[data-cycle=agents] [aria-selected=true]")).toHaveAttribute("data-cycle-row", lastAgentPane);
+    await expect(page.locator(`[data-cycle=agents] [data-cycle-row="${secondTabShell}"]`)).toHaveCount(0);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
-    await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);
-    await expect.poll(() => sent.get("focus_tab")).toBe(panelFocusEvents + 1);
+    await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
+    await expect.poll(() => sent.get("focus_pane")).toBe(paneFocusEvents + 1);
 
     // Back on the split tab: ⌘D splits the focused pane (second split), ⌘⌥↩ zooms it.
     await page.locator(`[data-tab="${herdr.tab}"]`).click();
@@ -252,7 +272,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, shellPaneId)).toBe(`${wrapped}\nshort\n`);
     expect(sent.get("terminal_click") ?? 0).toBe(clicksBeforeDrag);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.keyboard.press("Meta+KeyC");
+    await copy(page);
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${wrapped}\nshort\n`);
     // Lines that share a margin lose it and keep their relative indentation.
     const indentFrom = shellCell(shellGrid.cols - 2, 5);
@@ -262,7 +282,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await page.mouse.move(indentTo.x - shellScreen.width / shellGrid.cols, indentTo.y, { steps: 8 });
     await page.mouse.up();
     await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, shellPaneId)).toBe("in\n  deeper");
-    await page.keyboard.press("Meta+KeyC");
+    await copy(page);
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("in\n  deeper");
 
     // Of three panes, the one holding the keyboard is outlined, and only it.
@@ -386,8 +406,11 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     // families (Select tab 1-9, Select agent 1-9) fold into one row each,
     // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
     // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st,
-    // and Toggle device rail (no default chord, bindable) the 32nd.
-    await expect(page.locator("[data-shortcut]")).toHaveCount(32);
+    // Toggle device rail (no default chord, bindable) the 32nd, the
+    // focused-area cycle pair the 33rd and 34th (they carry ⌥` and its Chrome
+    // move; the global Recent Panels pair has no default chord), and the eight
+    // Agent and View area commands (no default chord either) the 35th to 42nd.
+    await expect(page.locator("[data-shortcut]")).toHaveCount(42);
     await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(7);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");

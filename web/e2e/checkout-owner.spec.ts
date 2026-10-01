@@ -110,7 +110,8 @@ test("With no workspace bound, Herdr binds the unbound one already at the checko
   }
 });
 
-test("A new tab in a linked worktree with no workspace opens one bound to it, named by its branch, and the next tab reuses it", async ({ page }) => {
+// @platform: A linked worktree's path: macOS reaches /tmp through a symlink and ignores case.
+test("A new tab in a linked worktree with no workspace opens one bound to it, named by its branch, and the next tab reuses it", { tag: "@platform" }, async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr({ agents: false });

@@ -225,6 +225,21 @@ pub(super) struct InactiveProjectsTogglePayload {
     pub(super) device_id: String,
 }
 
+/// Folds or unfolds a project's checkouts in the Projects list. Absent
+/// `expanded` flips the fold; present, it sets it, so a retry of the same
+/// intent lands on the same state.
+#[derive(Debug, Deserialize)]
+pub(super) struct ProjectCheckoutsFoldPayload {
+    pub(super) workspace_id: String,
+    #[serde(default)]
+    pub(super) expanded: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CheckoutAgentsTogglePayload {
+    pub(super) checkout_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct RemoveWorkspacePayload {
     pub(super) workspace_id: String,
@@ -584,15 +599,12 @@ pub(super) struct UiStateUpdatePayload {
     /// Absent keeps the devices' expansion: an older client does not carry it.
     #[serde(default)]
     pub(super) device_expanded_paths: Option<BTreeMap<String, Vec<String>>>,
-    #[serde(default)]
-    pub(super) collapsed_workspace_ids: Vec<String>,
+    /// The project, checkout and agent-lineage folds are not here: each has
+    /// its own event (`project_checkouts_fold`, `checkout_agents_toggle`,
+    /// `agent_tree_toggle`), because a fold computed from the shell's last
+    /// snapshot and sent as a set loses a toggle the core has not echoed yet.
     #[serde(default)]
     pub(super) collapsed_checkout_ids: Option<Vec<String>>,
-    /// Absent keeps the web's opened checkouts: an older client does not carry them.
-    #[serde(default)]
-    pub(super) expanded_checkout_ids: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) expanded_agent_pane_ids: Option<Vec<String>>,
     pub(super) selected_path: Option<String>,
     pub(super) selected_pane_id: Option<String>,
     #[serde(default)]
@@ -845,6 +857,15 @@ pub(super) struct IssueCreatePayload {
 pub(super) struct IssueDetailRequestPayload {
     pub(super) workspace_id: String,
     pub(super) task_key: String,
+}
+
+/// `github_search`: pull requests and issues of this Mac's GitHub projects
+/// matching `query`, answered in `issue_work.search` under `request_id`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct GithubSearchPayload {
+    pub(super) request_id: String,
+    pub(super) query: String,
 }
 
 /// `local_issue_update`: a Local issue's title and body, edited in its panel.
@@ -1149,6 +1170,8 @@ pub(super) enum Event {
     FocusDevice(FocusDevicePayload),
     InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
     InactiveProjectsToggle(InactiveProjectsTogglePayload),
+    ProjectCheckoutsFold(ProjectCheckoutsFoldPayload),
+    CheckoutAgentsToggle(CheckoutAgentsTogglePayload),
     WorkspacePinSet(WorkspacePinSetPayload),
     SetPrimaryCheckout(SetPrimaryCheckoutPayload),
     RemoveWorkspace(RemoveWorkspacePayload),
@@ -1223,6 +1246,7 @@ pub(super) enum Event {
     IssueSettingsSet(IssueSettingsSetPayload),
     IssueCreate(IssueCreatePayload),
     IssueDetailRequest(IssueDetailRequestPayload),
+    GithubSearch(GithubSearchPayload),
     WorktreeNameSuggest(WorktreeNameSuggestPayload),
     IssueSetOpen(IssueSetOpenPayload),
     LocalIssueUpdate(LocalIssueUpdatePayload),
@@ -1260,8 +1284,10 @@ pub(super) enum Event {
 /// The web shell rebinds a handful of pane commands; the bound keeps a
 /// malformed client from growing the persisted state without limit.
 // The desktop host checks a reported set against the same caps
-// (desktop/src/main/menu.ts); change them together.
-const BINDINGS_CAP: usize = 16;
+// (desktop/src/main/menu.ts); change them together. 32 holds every editable
+// pane command (the area focus and resize commands made it 17) with room to
+// spare, and the desktop test fails before a new one would not fit.
+const BINDINGS_CAP: usize = 32;
 const BINDING_TEXT_CAP: usize = 64;
 
 /// Whether a stored shortcut map is within the caps a host's set may use;
@@ -1335,6 +1361,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         }
         "inactive_projects_toggle" => {
             decode!(InactiveProjectsTogglePayload, InactiveProjectsToggle)
+        }
+        "project_checkouts_fold" => {
+            decode!(ProjectCheckoutsFoldPayload, ProjectCheckoutsFold)
+        }
+        "checkout_agents_toggle" => {
+            decode!(CheckoutAgentsTogglePayload, CheckoutAgentsToggle)
         }
         "set_primary_checkout" => decode!(SetPrimaryCheckoutPayload, SetPrimaryCheckout),
         "workspace_pin_set" => decode!(WorkspacePinSetPayload, WorkspacePinSet),
@@ -1414,6 +1446,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "issue_settings_set" => decode!(IssueSettingsSetPayload, IssueSettingsSet),
         "issue_create" => decode!(IssueCreatePayload, IssueCreate),
         "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
+        "github_search" => decode!(GithubSearchPayload, GithubSearch),
         "worktree_name_suggest" => decode!(WorktreeNameSuggestPayload, WorktreeNameSuggest),
         "issue_set_open" => decode!(IssueSetOpenPayload, IssueSetOpen),
         "local_issue_update" => decode!(LocalIssueUpdatePayload, LocalIssueUpdate),
@@ -2040,6 +2073,36 @@ impl Runtime {
                 self.bring_device_forward(payload.device_id);
                 true
             }
+            Event::ProjectCheckoutsFold(payload) => {
+                let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
+                let was_expanded = !ids.contains(&payload.workspace_id);
+                let expanded = payload.expanded.unwrap_or(!was_expanded);
+                if expanded == was_expanded {
+                    return false;
+                }
+                ids.retain(|id| id != &payload.workspace_id);
+                if !expanded {
+                    ids.push(payload.workspace_id);
+                    ids.sort();
+                }
+                Self::apply_workspace_expansion(
+                    &mut self.snapshot.navigator.workspaces,
+                    &self.snapshot.ui_state.collapsed_workspace_ids,
+                );
+                self.persist_ui_state();
+                true
+            }
+            Event::CheckoutAgentsToggle(payload) => {
+                let ids = &mut self.snapshot.ui_state.expanded_checkout_ids;
+                if ids.contains(&payload.checkout_id) {
+                    ids.retain(|id| id != &payload.checkout_id);
+                } else {
+                    ids.push(payload.checkout_id);
+                    ids.sort();
+                }
+                self.persist_ui_state();
+                true
+            }
             Event::InactiveCheckoutsToggle(payload) => {
                 let Some(group) = self
                     .snapshot
@@ -2606,16 +2669,13 @@ impl Runtime {
                 }
             }
             Event::FileView(payload) => {
-                let Some(tab) = self
-                    .snapshot
-                    .editor
-                    .tabs
-                    .iter_mut()
-                    .find(|tab| tab.id == payload.tab_id && tab.kind == EditorTabKind::File)
-                else {
+                let Some(tab) = self.snapshot.editor.tabs.iter_mut().find(|tab| {
+                    tab.id == payload.tab_id
+                        && matches!(tab.kind, EditorTabKind::File | EditorTabKind::Diff)
+                }) else {
                     self.set_error(
                         "file.view_rejected",
-                        "The file tab is no longer open",
+                        "The file or diff tab is no longer open",
                         false,
                     );
                     return true;
@@ -3115,6 +3175,7 @@ impl Runtime {
             Event::IssueSettingsSet(payload) => self.set_issue_settings(payload),
             Event::IssueCreate(payload) => self.create_issue(payload),
             Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
+            Event::GithubSearch(payload) => self.request_github_search(payload),
             Event::WorktreeNameSuggest(payload) => self.suggest_worktree_name(payload),
             Event::IssueSetOpen(payload) => self.set_issue_open(payload),
             Event::LocalIssueUpdate(payload) => self.update_local_issue(payload),
@@ -3302,21 +3363,17 @@ impl Runtime {
                     device_expanded_paths: payload
                         .device_expanded_paths
                         .unwrap_or(current.device_expanded_paths),
-                    collapsed_workspace_ids: payload.collapsed_workspace_ids,
+                    collapsed_workspace_ids: current.collapsed_workspace_ids,
                     collapsed_checkout_ids: payload
                         .collapsed_checkout_ids
                         .unwrap_or(current.collapsed_checkout_ids),
-                    expanded_checkout_ids: payload
-                        .expanded_checkout_ids
-                        .unwrap_or(current.expanded_checkout_ids),
+                    expanded_checkout_ids: current.expanded_checkout_ids,
                     expanded_inactive_checkout_project_paths: current
                         .expanded_inactive_checkout_project_paths,
                     expanded_inactive_project_device_ids: current
                         .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
-                    expanded_agent_pane_ids: payload
-                        .expanded_agent_pane_ids
-                        .unwrap_or(current.expanded_agent_pane_ids),
+                    expanded_agent_pane_ids: current.expanded_agent_pane_ids,
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
                     shortcut_bindings: if bindings_fit(&payload.shortcut_bindings) {

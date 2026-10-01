@@ -114,7 +114,7 @@ fn tab_order_is_unchanged_by_a_tab_switch() {
 }
 
 #[test]
-fn file_view_mode_is_per_open_tab_and_reopen_starts_live() {
+fn file_view_mode_is_per_open_tab_and_reopen_starts_live_and_wrapped() {
     let (mut runtime, checkout_id, directory) = strip_checkout("file-view-mode");
     let first = directory.join("notes.md");
     let second = directory.join("second.md");
@@ -122,9 +122,10 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_live() {
     std::fs::write(&second, "# Second").unwrap();
     open_file(&mut runtime, &checkout_id, &first);
     let first_id = runtime.snapshot.editor.active_tab_id.clone().unwrap();
+    assert!(runtime.snapshot.editor.tabs.last().unwrap().wrap);
     let event = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION, "kind": "file_view",
-        "payload": {"tab_id": first_id, "markdown_live": false, "wrap": true}
+        "payload": {"tab_id": first_id, "markdown_live": false, "wrap": false}
     }))
     .unwrap();
     assert!(runtime.dispatch_json(&event));
@@ -133,7 +134,9 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_live() {
         "repeated selection publishes no change"
     );
     open_file(&mut runtime, &checkout_id, &second);
-    assert!(runtime.snapshot.editor.tabs.last().unwrap().markdown_live);
+    let second_tab = runtime.snapshot.editor.tabs.last().unwrap();
+    assert!(second_tab.markdown_live);
+    assert!(second_tab.wrap);
     open_file(&mut runtime, &checkout_id, &first);
     let tab = runtime
         .snapshot
@@ -143,14 +146,48 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_live() {
         .find(|tab| tab.id == first_id)
         .unwrap();
     assert!(!tab.markdown_live);
-    assert!(tab.wrap);
+    assert!(!tab.wrap);
     let close = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION, "kind": "file_close", "payload": {"tab_id": first_id}
     }))
     .unwrap();
     runtime.dispatch_json(&close);
     open_file(&mut runtime, &checkout_id, &first);
-    assert!(runtime.snapshot.editor.tabs.last().unwrap().markdown_live);
+    let reopened = runtime.snapshot.editor.tabs.last().unwrap();
+    assert!(reopened.markdown_live);
+    assert!(reopened.wrap);
+}
+
+#[test]
+fn diff_tab_opens_wrapped_and_keeps_its_wrap_choice() {
+    let (mut runtime, checkout_id, directory) = strip_checkout("diff-wrap");
+    let file = directory.join("notes.md");
+    runtime.show_diff_tab(
+        "workspace:order",
+        &checkout_id,
+        &file.to_string_lossy(),
+        false,
+        false,
+    );
+    let tab_id = runtime.snapshot.editor.active_tab_id.clone().unwrap();
+    let wrap = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .unwrap()
+            .wrap
+    };
+    assert!(wrap(&runtime));
+    let event = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "file_view",
+        "payload": {"tab_id": tab_id, "markdown_live": true, "wrap": false}
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&event));
+    assert!(!wrap(&runtime));
 }
 
 #[test]

@@ -7,7 +7,7 @@
 // `menuBindings` resolves with the rules the shell's listener runs.
 
 import type { MenuItemConstructorOptions } from "electron";
-import { effectiveRegistry, isNumberedCommand, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
+import { AREA_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
   Enter: "Return",
@@ -43,11 +43,9 @@ export function accelerator(chord: Chord): string {
 
 /**
  * Which commands each menu carries, in order; null is a separator. The
- * cycles (held-modifier ⌃Tab and ⌥Tab walks), Move to Trash (a chord the
- * terminal keeps) and the numbered ⌘1-9 / ⌥1-9 selections (whose target is
- * the screen order the page knows, so the page answers them and no
- * accelerator here may take the press first) have no click form and stay
- * keyboard-only.
+ * numbered ⌘1-9 / ⌥1-9 selections and Move to Trash stay keyboard-only.
+ * Cycles have an immediate click form, with input owned by the renderer or
+ * native page rather than an app-menu accelerator.
  */
 export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pane" | "Help", readonly (CommandId | null)[]>> = {
   app: ["settings"],
@@ -57,6 +55,10 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "search",
     "open_file",
     "project_home",
+    null,
+    "recent_area_tab", "previous_recent_area_tab",
+    "recent_panel", "previous_recent_panel",
+    "recent_project", "previous_recent_project",
     null,
     "toggle_left_sidebar",
     "toggle_sidebar_view",
@@ -68,28 +70,26 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "text_smaller",
     "text_reset",
   ],
-  Pane: ["split_right", "split_down", "toggle_zoom", null, "keep_open"],
+  Pane: ["split_right", "split_down", "toggle_zoom", null, "keep_open", null, ...AREA_COMMANDS],
   Help: ["shortcuts"],
 };
 
 export const KEYBOARD_ONLY: readonly CommandId[] = [
-  "recent_panel",
-  "previous_recent_panel",
-  "recent_project",
-  "previous_recent_project",
   "move_to_trash",
   ...REGISTRY.map((command) => command.id).filter(isNumberedCommand),
 ];
 
 function commandItem(command: Command, send: (id: CommandId) => void): MenuItemConstructorOptions {
   // A command with no chord (the sidebar switch until the operator binds one) is a plain item.
-  return { id: command.id, label: command.title, accelerator: command.electron ? accelerator(command.electron) : undefined, click: () => send(command.id) };
+  return { id: command.id, label: command.title, accelerator: command.electron && !isCycleCommand(command.id) ? accelerator(command.electron) : undefined, click: () => send(command.id) };
 }
 
-// A reported set is a few pane commands; anything past these caps is not one.
-// The core refuses a stored set past the same caps (`BINDINGS_CAP` and
-// `BINDING_TEXT_CAP` in herdr-core/src/runtime/events.rs); change them together.
-const BINDINGS_CAP = 16;
+// A reported set is the editable commands the operator rebound; anything past
+// these caps is not one. The core refuses a stored set past the same caps
+// (`BINDINGS_CAP` and `BINDING_TEXT_CAP` in herdr-core/src/runtime/events.rs);
+// change them together. The cap holds every editable command with room to
+// spare: `menu.test.ts` fails when a new one would no longer fit.
+export const BINDINGS_CAP = 32;
 const BINDING_TEXT_CAP = 64;
 
 /**

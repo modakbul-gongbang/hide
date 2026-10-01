@@ -717,3 +717,362 @@ fn a_refused_issue_edit_keeps_the_issue_and_says_why() {
         ("r4", "failed")
     );
 }
+
+fn search_event(request_id: &str, query: &str) -> Vec<u8> {
+    event(
+        "github_search",
+        serde_json::json!({"request_id": request_id, "query": query}),
+    )
+}
+
+/// What `request_github_search` leaves while a worker runs, without starting
+/// one: the tests have no worker and must never run `gh`.
+fn searching(runtime: &mut Runtime, run: u64, request_id: &str, query: &str) {
+    runtime.github_search.runs = run;
+    runtime.github_search.active = Some(crate::runtime::issues::ActiveSearch {
+        run,
+        request: crate::runtime::issues::SearchRequest {
+            request_id: request_id.into(),
+            query: query.into(),
+        },
+        note: None,
+    });
+    runtime.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot::working(
+        request_id.into(),
+        query.into(),
+    ));
+}
+
+fn search_slot(runtime: &Runtime) -> (String, String, String, Option<String>) {
+    let slot = runtime.snapshot.issue_work.search.clone().unwrap();
+    (slot.request_id, slot.query, slot.phase, slot.message)
+}
+
+fn found(number: u32) -> crate::model::GithubSearchResult {
+    crate::model::GithubSearchResult {
+        kind: "pr".into(),
+        repository: "acme/project".into(),
+        number,
+        title: format!("PR {number}"),
+        state: "open".into(),
+        url: format!("https://github.com/acme/project/pull/{number}"),
+        is_draft: false,
+    }
+}
+
+/// A Mac with no registered GitHub project has nothing to search: the answer
+/// is `ready` and empty, on the event, with the query as trimmed.
+#[test]
+fn a_search_with_no_github_project_answers_ready_with_no_results() {
+    let mut runtime = runtime();
+    assert!(runtime.dispatch_json(&search_event("s1", "  reader  ")));
+    let slot = runtime.snapshot().issue_work.search.clone().unwrap();
+    assert_eq!(
+        (
+            slot.request_id.as_str(),
+            slot.query.as_str(),
+            slot.phase.as_str()
+        ),
+        ("s1", "reader", "ready")
+    );
+    assert!(slot.results.is_empty() && slot.message.is_none());
+    assert!(runtime.github_search.active.is_none());
+
+    // A project that reads Local issues is not a GitHub project.
+    let mut local = issue_runtime();
+    assert!(local.dispatch_json(&event(
+        "issue_source_set",
+        serde_json::json!({"project_path": "/repo", "source": "local"}),
+    )));
+    assert!(local.dispatch_json(&search_event("s2", "reader")));
+    assert_eq!(search_slot(&local).2, "ready");
+}
+
+/// The targets are this Mac's GitHub projects once each by `owner/name` when
+/// it is known, in catalog order: not a device's, not a Local project's, and
+/// the cap says so.
+#[test]
+fn a_search_covers_each_local_github_repository_once() {
+    let mut runtime = issue_runtime();
+    let base = runtime.snapshot.navigator.workspaces[0].clone();
+    let with = |id: &str, repository: Option<&str>| {
+        let mut workspace = base.clone();
+        workspace.id = id.into();
+        workspace.path = format!("/{id}");
+        workspace.home_issues.repository = repository.map(str::to_owned);
+        workspace
+    };
+    let mut device = with("device", Some("acme/on-device"));
+    device.remote_target_id = Some("mini".into());
+    let mut plain = with("plain", Some("acme/plain"));
+    plain.is_git = false;
+    runtime.snapshot.navigator.workspaces = vec![
+        base.clone(),
+        with("same", Some("ACME/Project")),
+        with("other", Some("acme/other")),
+        with("unread", None),
+        with("odd", Some("not a repository")),
+        device,
+        plain,
+    ];
+    let (targets, note) = runtime.github_search_targets();
+    let described: Vec<_> = targets
+        .iter()
+        .map(|target| {
+            (
+                target.root.to_str().unwrap().to_owned(),
+                target.repository.clone(),
+            )
+        })
+        .collect();
+    // The unread and the malformed one are searched too: the worker resolves them.
+    assert_eq!(
+        described,
+        vec![
+            ("/repo".to_owned(), base.home_issues.repository.clone()),
+            ("/other".to_owned(), Some("acme/other".to_owned())),
+            ("/unread".to_owned(), None),
+            ("/odd".to_owned(), None),
+        ]
+    );
+    assert_eq!(note, None);
+
+    runtime.snapshot.navigator.workspaces = (0..25)
+        .map(|n| with(&format!("w{n}"), Some(&format!("acme/r{n}"))))
+        .collect();
+    let (targets, note) = runtime.github_search_targets();
+    assert_eq!(targets.len(), 20);
+    assert_eq!(targets[19].repository.as_deref(), Some("acme/r19"));
+    assert_eq!(note.as_deref(), Some("저장소 25개 중 20개만 검색했습니다."));
+}
+
+/// A core built without a worker says so, and the next search is not wedged
+/// by it.
+#[test]
+fn a_search_without_a_worker_fails_and_leaves_the_next_search_free() {
+    let mut runtime = issue_runtime();
+    assert!(runtime.dispatch_json(&search_event("s1", "reader")));
+    let (id, query, phase, message) = search_slot(&runtime);
+    assert_eq!(
+        (id.as_str(), query.as_str(), phase.as_str()),
+        ("s1", "reader", "failed")
+    );
+    assert!(message.unwrap().contains("No worker"));
+    assert!(runtime.github_search.active.is_none());
+    assert!(runtime.dispatch_json(&search_event("s2", "other")));
+    assert_eq!(search_slot(&runtime).0, "s2");
+}
+
+/// An empty or over-long query is refused in the slot, never answered as
+/// nothing found, and a request waiting behind the running one is moot.
+#[test]
+fn a_refused_query_fails_in_the_slot_and_drops_the_pending_request() {
+    let mut runtime = issue_runtime();
+    searching(&mut runtime, 1, "s1", "reader");
+    assert!(runtime.dispatch_json(&search_event("s2", "other")));
+    assert!(runtime.github_search.pending.is_some());
+    assert!(runtime.dispatch_json(&search_event("s3", "   ")));
+    let (id, _, phase, message) = search_slot(&runtime);
+    assert_eq!((id.as_str(), phase.as_str()), ("s3", "failed"));
+    assert!(message.unwrap().contains("검색어"));
+    assert!(runtime.github_search.pending.is_none());
+
+    let long = "가".repeat(201);
+    assert!(runtime.dispatch_json(&search_event("s4", &long)));
+    let slot = runtime.snapshot.issue_work.search.clone().unwrap();
+    assert_eq!(
+        (slot.request_id.as_str(), slot.phase.as_str()),
+        ("s4", "failed")
+    );
+    assert_eq!(slot.query.chars().count(), 200, "the echo is capped too");
+    // The running search's answer no longer has a slot to land in.
+    assert!(!runtime.ingest_github_search(1, Ok(vec![found(1)])));
+    assert_eq!(search_slot(&runtime).2, "failed");
+    assert!(runtime.github_search.active.is_none());
+
+    // 200 characters is allowed: it is not refused for its length.
+    assert!(runtime.dispatch_json(&search_event("s5", &"가".repeat(200))));
+    let slot = runtime.snapshot.issue_work.search.clone().unwrap();
+    assert_eq!(slot.request_id, "s5");
+    assert!(slot.message.unwrap().contains("No worker"));
+
+    assert!(runtime.dispatch_json(&search_event("", "reader")));
+    assert!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .is_some_and(|error| error.kind == "github_search.invalid_request")
+    );
+}
+
+/// A request for the running search's query, or with its request id, joins
+/// it: the slot shows the newest id and no second worker starts.
+#[test]
+fn a_request_for_the_running_query_joins_it_without_a_second_worker() {
+    let mut runtime = issue_runtime();
+    searching(&mut runtime, 1, "s1", "reader");
+    assert!(runtime.dispatch_json(&search_event("s2", " reader ")));
+    assert_eq!(
+        search_slot(&runtime),
+        ("s2".into(), "reader".into(), "working".into(), None)
+    );
+    assert!(runtime.github_search.pending.is_none());
+    assert_eq!(runtime.github_search.runs, 1);
+    assert_eq!(
+        runtime
+            .github_search
+            .active
+            .as_ref()
+            .unwrap()
+            .request
+            .request_id,
+        "s2"
+    );
+
+    // The same request id with another query is a repeat, not a new search.
+    assert!(runtime.dispatch_json(&search_event("s2", "other")));
+    assert_eq!(search_slot(&runtime).1, "reader");
+    assert!(runtime.github_search.pending.is_none());
+
+    // The joined request is the one the answer lands on.
+    assert!(runtime.ingest_github_search(1, Ok(vec![found(7), found(8)])));
+    let slot = runtime.snapshot().issue_work.search.clone().unwrap();
+    assert_eq!(
+        (
+            slot.request_id.as_str(),
+            slot.phase.as_str(),
+            slot.results.len()
+        ),
+        ("s2", "ready", 2)
+    );
+    assert!(runtime.github_search.active.is_none());
+}
+
+/// Another query waits as the one pending request, a newer one replaces it,
+/// and the slot shows the newest at once; the running search's answer is
+/// dropped as stale and the pending request starts after it.
+#[test]
+fn the_latest_other_query_waits_behind_the_running_search_and_starts_after_it() {
+    let mut runtime = issue_runtime();
+    searching(&mut runtime, 1, "s1", "first");
+    assert!(runtime.dispatch_json(&search_event("s2", "second")));
+    assert!(runtime.dispatch_json(&search_event("s3", "third")));
+    assert_eq!(
+        search_slot(&runtime),
+        ("s3".into(), "third".into(), "working".into(), None)
+    );
+    assert_eq!(
+        runtime.github_search.pending.as_ref().unwrap().request_id,
+        "s3"
+    );
+    assert_eq!(runtime.github_search.runs, 1, "nothing started yet");
+    assert_eq!(
+        runtime.github_search.active.as_ref().unwrap().request.query,
+        "first"
+    );
+
+    // The first answer is for a request the slot no longer shows.
+    assert!(runtime.ingest_github_search(1, Ok(vec![found(1)])));
+    assert!(runtime.github_search.pending.is_none());
+    // The pending one started; this core has no worker, so it says so.
+    let (id, query, phase, message) = search_slot(&runtime);
+    assert_eq!(
+        (id.as_str(), query.as_str(), phase.as_str()),
+        ("s3", "third", "failed")
+    );
+    assert!(message.unwrap().contains("No worker"));
+    assert!(
+        runtime
+            .snapshot
+            .issue_work
+            .search
+            .as_ref()
+            .unwrap()
+            .results
+            .is_empty()
+    );
+    assert_eq!(runtime.github_search.runs, 2);
+}
+
+/// With nothing to search, a pending request is answered when it comes up.
+#[test]
+fn a_pending_search_with_nothing_to_search_is_answered_when_the_running_one_ends() {
+    let mut runtime = runtime();
+    searching(&mut runtime, 1, "s1", "first");
+    assert!(runtime.dispatch_json(&search_event("s2", "second")));
+    assert!(runtime.github_search.pending.is_some());
+    assert!(runtime.ingest_github_search(1, Err("late".into())));
+    assert_eq!(
+        search_slot(&runtime),
+        ("s2".into(), "second".into(), "ready".into(), None)
+    );
+}
+
+/// An answer that is not the running worker's changes nothing.
+#[test]
+fn an_answer_from_no_running_search_is_dropped() {
+    let mut runtime = issue_runtime();
+    assert!(!runtime.ingest_github_search(1, Ok(vec![found(1)])));
+    assert!(runtime.snapshot.issue_work.search.is_none());
+    searching(&mut runtime, 2, "s1", "reader");
+    assert!(!runtime.ingest_github_search(1, Ok(vec![found(1)])));
+    assert_eq!(search_slot(&runtime).2, "working");
+    assert!(runtime.github_search.active.is_some());
+}
+
+/// A failed call fails the search with a short sentence; why stays in the
+/// log, and a note about a partial search rides a `ready` answer.
+#[test]
+fn a_failed_search_says_it_failed_and_keeps_the_reason_out_of_the_slot() {
+    let mut runtime = issue_runtime();
+    searching(&mut runtime, 1, "s1", "reader");
+    assert!(runtime.ingest_github_search(
+        1,
+        Err("gh search prs in acme/project: HTTP 403 rate limit".into())
+    ));
+    let slot = runtime.snapshot().issue_work.search.clone().unwrap();
+    assert_eq!(
+        (slot.request_id.as_str(), slot.phase.as_str()),
+        ("s1", "failed")
+    );
+    assert_eq!(slot.message.as_deref(), Some("GitHub 검색에 실패했습니다."));
+    assert!(slot.results.is_empty());
+
+    searching(&mut runtime, 2, "s2", "reader");
+    runtime.github_search.active.as_mut().unwrap().note = Some("일부만 검색했습니다.".into());
+    assert!(runtime.ingest_github_search(2, Ok(Vec::new())));
+    let slot = runtime.snapshot().issue_work.search.clone().unwrap();
+    assert_eq!(
+        (
+            slot.phase.as_str(),
+            slot.message.as_deref(),
+            slot.results.len()
+        ),
+        ("ready", Some("일부만 검색했습니다."), 0)
+    );
+}
+
+/// The slot is on the wire only once a search has been asked for, and then in
+/// the shape the shell reads.
+#[test]
+fn the_search_slot_rides_the_snapshot_only_after_a_search() {
+    let mut runtime = issue_runtime();
+    let wire =
+        |runtime: &mut Runtime| serde_json::to_value(&runtime.snapshot().issue_work).unwrap();
+    assert!(wire(&mut runtime).get("search").is_none());
+    searching(&mut runtime, 1, "s1", "reader");
+    assert!(runtime.ingest_github_search(1, Ok(vec![found(5)])));
+    assert_eq!(
+        wire(&mut runtime)["search"],
+        serde_json::json!({
+            "request_id": "s1", "query": "reader", "phase": "ready", "message": null,
+            "results": [{
+                "kind": "pr", "repository": "acme/project", "number": 5, "title": "PR 5",
+                "state": "open", "url": "https://github.com/acme/project/pull/5",
+                "is_draft": false,
+            }],
+        })
+    );
+}

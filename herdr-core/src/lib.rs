@@ -12,6 +12,8 @@ mod disk;
 mod disk_layers;
 pub mod domain;
 mod environment;
+#[cfg(all(test, unix))]
+mod executable_fixture;
 #[cfg(test)]
 mod fake_herdr;
 mod files;

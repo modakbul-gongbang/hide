@@ -246,6 +246,28 @@ export type IssueWork = {
   name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
   /** The answer to a Local issue's edit, by the web's request id. */
   update?: { request_id: string; task_key: string; phase: "ready" | "failed"; message: string | null } | null;
+  /** ⌘K's explicit GitHub search, by the web's request id (`github_search`). */
+  search?: GithubSearch | null;
+};
+
+/** One pull request or issue the core found on GitHub for ⌘K's search (`GithubSearchResultSnapshot`). */
+export type GithubSearchResult = {
+  kind: "pr" | "issue";
+  repository: string;
+  number: number;
+  title: string;
+  state: string;
+  url: string;
+  is_draft?: boolean;
+};
+
+/** The answer to the latest `github_search`: working while it runs, then ready with its results or failed. */
+export type GithubSearch = {
+  request_id: string;
+  query: string;
+  phase: "working" | "ready" | "failed";
+  results: GithubSearchResult[];
+  message: string | null;
 };
 
 /** A pull request linked to an issue (`PrLinkSnapshot`): the issue made, Hide's link, then `Closes #N` in the body. */

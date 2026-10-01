@@ -9,7 +9,7 @@ import { sectionCount, sectionTree, directChildren, type TreeRow } from "./agent
 import type { BoardProject } from "./projectBoard";
 import { folderCheckout } from "./projects";
 import { projectsOf } from "./remote";
-import { entryLane } from "./overviewLens";
+import { entryBox } from "./agentGraph";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 import { entryLens, useUiStore, type Screen } from "./ui";
 
@@ -164,7 +164,8 @@ export function agentPlaces(
   return (device, paneId) => byDevice.get(device)?.get(paneId) ?? null;
 }
 
-function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
+/** Where each pane sits, as `project › branch` (Home, or the project alone for a plain folder), keyed by pane id. */
+export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
   const places = new Map<string, string>();
   for (const workspace of workspaces) {
     const folder = folderCheckout(workspace) !== null;
@@ -480,13 +481,13 @@ export function agentListRows(tree: AgentTree): TreeRow[] {
 
 /**
  * A Project's Overview as every way in opens it (PRD overview-lenses-tiles-agents
- * D-04, D-17, B11, B12): Agents › checkouts with the lane of the checkout in
+ * D-04, D-17, B11, B12): the Agents graph with the box of the checkout in
  * front selected, or the primary checkout's when the front is elsewhere.
  * Only Recent Panels brings back a lens as it was left.
  */
 export function overviewScreen(rest: SnapshotRest | null, projectId: string): Extract<Screen, { kind: "overview" }> {
   const workspace = catalogWorkspaces(rest).find((row) => row.id === projectId);
-  return { kind: "overview", projectId, lens: entryLens(entryLane(workspace, frontCheckout(rest)?.id), useUiStore.getState().tasksMode) };
+  return { kind: "overview", projectId, lens: entryLens(entryBox(workspace, frontCheckout(rest)?.id), useUiStore.getState().tasksMode) };
 }
 
 /**

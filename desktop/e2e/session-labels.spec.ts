@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { claudeProjects, setFixtureSession, startHerdr, writeFixtureTranscript } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { isolate, launch, test } from "./fixture";
+import { isolate, launchShell, test } from "./fixture";
 
 const A = "세션 A의 한글 작업";
 const A_REPLY = "현재 세션 답변 요청";
@@ -59,7 +59,7 @@ test("a label belongs to its session: never shown for another, restored for its 
   try {
     setFixtureSession(herdr, pane, "session-a");
     const open = async () => {
-      const launched = await launch(run.env);
+      const launched = await launchShell(run.env);
       app = launched.app;
       const page = launched.page;
       const cdp = await page.context().newCDPSession(page);

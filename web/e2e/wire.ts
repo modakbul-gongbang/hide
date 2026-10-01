@@ -51,9 +51,9 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
 /**
  * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
  * through its Project's Overview (the one named `project`, else the first)
- * to that Project's first Workspace: the Overview opens on the Agents lens,
- * whose first lane head is a checkout's Workspace (overview-lenses B11, B17);
- * a project whose only worktrees have no agent shows no lane, so it goes
+ * to that Project's first Workspace: the Overview opens on the Agents graph,
+ * whose first box head is a checkout's Workspace (agents-graph-view B1, B15);
+ * a project that draws no box goes
  * through the sidebar's project list, put back on the list it showed. A page
  * that already shows a Workspace is left where it is.
  */
@@ -65,8 +65,8 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   await main.locator('[data-main-tab="projects"]').click();
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
   const overview = page.locator("[data-overview-screen]");
-  const head = overview.locator("[data-lens-lane] [data-lens-head-open]").first();
-  await expect(head.or(overview.locator("[data-lens-empty], [data-lens-fold]")).first()).toBeVisible();
+  const head = overview.locator("[data-graph-box] [data-graph-head-open]").first();
+  await expect(head.or(overview.locator("[data-graph-empty], [data-graph-fold]")).first()).toBeVisible();
   if ((await head.count()) > 0) {
     await head.click();
   } else {
@@ -107,6 +107,34 @@ export async function showTool(page: Page, tool: "explorer" | "changes"): Promis
   if (!(await tab.isVisible())) await page.locator('[data-tools-toggle="off"]').click();
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
   await expect(shown).toBeVisible();
+}
+
+/**
+ * Chooses the side panel's state from the Workspace toolbar's menu, the one
+ * place that names all three states (the palette no longer does).
+ */
+export async function choosePanel(page: Page, state: "closed" | "open" | "expanded"): Promise<void> {
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator(`[data-menu-item="panel:${state}"]`).click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+}
+
+/**
+ * Binds a chord to a command that has none by default in Settings, Shortcuts
+ * (the area commands and the global Recent Panels pair have no other way to run
+ * in a browser tab), then closes Settings.
+ */
+export async function bindChordlessCommand(page: Page, id: string, chord: string): Promise<void> {
+  await page.keyboard.press("Alt+Comma");
+  await page.locator('[data-settings-tab="shortcuts"]').click();
+  await expect(page.locator(`[data-shortcut-effective="${id}"]`)).toHaveText("-");
+  await page.locator(`[data-shortcut-record="${id}"]`).click();
+  await page.keyboard.press(chord);
+  await expect(page.locator(`[data-shortcut-problem="${id}"]`)).toHaveCount(0);
+  await page.locator(`[data-shortcut-apply="${id}"]`).click();
+  await expect(page.locator(`[data-shortcut-effective="${id}"]`)).not.toHaveText("-");
+  await page.locator("[data-settings-close]").click();
+  await expect(page.locator("[data-settings]")).toHaveCount(0);
 }
 
 export async function showExplorer(page: Page): Promise<void> {

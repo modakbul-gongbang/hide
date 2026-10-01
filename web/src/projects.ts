@@ -334,8 +334,8 @@ export function filesText(count: number): string {
 }
 
 /**
- * The card an Overview lane head opens (PRD overview-lenses-tiles-agents
- * B16): the checkout card with where the branch stands against its base
+ * The card an Agents graph box head opens (PRD agents-graph-view
+ * B15): the checkout card with where the branch stands against its base
  * (`↑` commits of its own, `↓` behind its upstream) and how many files it
  * changed, each only once Git has said so. Lines added and removed are not
  * in the snapshot, so the card does not draw them (design 10).

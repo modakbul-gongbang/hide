@@ -1202,6 +1202,9 @@ fn a_device_pane_carries_its_children_and_its_path_to_the_parent() {
         .agents;
         let mut agent = agents.remove(0);
         agent.spawned_from_pane_id = spawned_from.map(str::to_owned);
+        agent.lineage_session = Some(crate::sidebar::fixture_lineage_session());
+        agent.declared_parent_session =
+            spawned_from.map(|_| crate::sidebar::fixture_lineage_session());
         agent
     };
     raw.agents = vec![row(&parent, None), row(&child, Some(&parent))];
@@ -1270,6 +1273,7 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
     )
     .agents;
     raw.agents[1].declared_parent_pane_id = Some("t1".to_owned());
+    raw.agents[1].declared_parent_session = Some(crate::sidebar::fixture_lineage_session());
     runtime.ingest_remote_session(TARGET, Ok(raw));
     let descendants = |runtime: &Runtime| {
         runtime.snapshot.status.remote[0]

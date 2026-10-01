@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { REGISTRY } from "../../../web/src/shortcuts";
-import { accelerator, KEYBOARD_ONLY, MENU_LAYOUT, menuBindings, menuTemplate } from "./menu";
+import { EDITABLE_PANE_COMMANDS, REGISTRY } from "../../../web/src/shortcuts";
+import { accelerator, BINDINGS_CAP, KEYBOARD_ONLY, MENU_LAYOUT, menuBindings, menuTemplate } from "./menu";
 
 describe("the app menu (B9)", () => {
   it("writes registry chords as Electron accelerators", () => {
@@ -12,11 +12,25 @@ describe("the app menu (B9)", () => {
     expect(() => accelerator({ code: "IntlRo", meta: true })).toThrow();
   });
 
-  it("places every clickable command exactly once, and the cycles nowhere", () => {
+  it("places every clickable command exactly once, including the immediate navigation commands", () => {
     const placed = Object.values(MENU_LAYOUT).flat().filter((id) => id !== null);
     expect(new Set(placed).size).toBe(placed.length);
     const expected = REGISTRY.map((command) => command.id).filter((id) => !KEYBOARD_ONLY.includes(id));
     expect([...placed].sort()).toEqual([...expected].sort());
+  });
+
+  it("holds every editable command in the reported set, so binding them all is never refused", () => {
+    expect(BINDINGS_CAP).toBeGreaterThanOrEqual(EDITABLE_PANE_COMMANDS.length);
+  });
+
+  it("lists the Agent and View area commands in the Pane menu, with no chord until one is set", () => {
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false });
+    const pane = template.find((menu) => menu.label === "Pane");
+    const items = Array.isArray(pane?.submenu) ? pane.submenu : [];
+    for (const id of ["focus_next_agent_area", "shrink_agent_area", "focus_next_view_area", "grow_view_area"]) {
+      expect(items.find((item) => item.id === id)?.accelerator).toBeUndefined();
+      expect(items.some((item) => item.id === id)).toBe(true);
+    }
   });
 
   it("shows each item with its electron chord and sends its id when clicked", () => {
@@ -27,6 +41,11 @@ describe("the app menu (B9)", () => {
     expect(newTab?.accelerator).toBe("Command+T");
     const closeTab = items.find((item) => item.id === "close_tab");
     expect(closeTab?.accelerator).toBe("Command+W");
+    const cycle = items.find((item) => item.id === "recent_area_tab");
+    expect(cycle?.accelerator).toBeUndefined();
+    (cycle?.click as () => void)();
+    expect(sent).toEqual(["recent_area_tab"]);
+    sent.length = 0;
     (newTab?.click as () => void)();
     expect(sent).toEqual(["new_tab"]);
     // No standard item claims a chord the registry owns.
@@ -49,7 +68,7 @@ describe("the app menu (B9)", () => {
     expect(menuBindings(null)).toEqual({ refused: "not a map" });
     expect(menuBindings(["command+d"])).toEqual({ refused: "not a map" });
     expect(menuBindings({ split_right: 4 })).toEqual({ refused: "not short strings" });
-    expect(menuBindings(Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`k${index}`, "command+d"])))).toEqual({ refused: "too many entries" });
+    expect(menuBindings(Object.fromEntries(Array.from({ length: BINDINGS_CAP + 1 }, (_, index) => [`k${index}`, "command+d"])))).toEqual({ refused: "too many entries" });
     const unusable = menuBindings({ split_right: "command+t" });
     expect("refused" in unusable ? null : unusable.registry).toBe(REGISTRY);
   });

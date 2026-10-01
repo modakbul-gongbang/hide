@@ -284,7 +284,6 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
             "kind": "ui_state_update",
             "payload": {
                 "expanded_paths": [],
-                "collapsed_workspace_ids": [],
                 "focused_checkout_id": checkout_id,
                 "right_panel_visible": true,
                 "right_panel_section": "changes"

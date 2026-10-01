@@ -6,6 +6,41 @@ pub(super) struct UnconfirmedIssueToken {
     pub observed: bool,
 }
 
+/// Most repositories one GitHub search covers: each is one more `--repo` on
+/// the two `gh search` calls, and the cap bounds the projects resolved too.
+const SEARCH_REPOSITORY_LIMIT: usize = crate::github::SEARCH_REPOSITORY_LIMIT;
+
+/// Longest request id a search echoes back.
+const SEARCH_REQUEST_ID_LIMIT: usize = 128;
+
+/// What the web is told when a search fails; the real reason is in the log.
+const SEARCH_FAILED_MESSAGE: &str = "GitHub 검색에 실패했습니다.";
+
+pub(super) struct SearchRequest {
+    pub(super) request_id: String,
+    pub(super) query: String,
+}
+
+pub(super) struct ActiveSearch {
+    /// Which worker this is, so only its answer is taken as the running
+    /// search's (`GithubSearchWork::runs`).
+    pub(super) run: u64,
+    /// The latest request the worker answers: a request for the same query
+    /// joins it rather than starting another.
+    pub(super) request: SearchRequest,
+    /// Said beside a `ready` answer, when the search did not cover everything.
+    pub(super) note: Option<String>,
+}
+
+/// The `github_search` in flight (PRD cmdk-navigation): at most one worker,
+/// and at most one request waiting for it, the latest.
+#[derive(Default)]
+pub(super) struct GithubSearchWork {
+    pub(super) runs: u64,
+    pub(super) active: Option<ActiveSearch>,
+    pub(super) pending: Option<SearchRequest>,
+}
+
 impl Runtime {
     /// Pure projection over the accepted catalog and metadata. No reader is
     /// scheduled unless the chosen identity changes or a user refreshes it.
@@ -856,6 +891,234 @@ impl Runtime {
         }
         *slot = crate::model::IssueDetailSnapshot::answered(key.to_owned(), result);
         true
+    }
+
+    /// The projects a search covers: this Mac's registered projects whose
+    /// source is GitHub, in the catalog's order, once each by `owner/name`
+    /// when the reader has resolved it (GitHub names ignore case); a project
+    /// it has not read yet is resolved by the search's own worker. The cap
+    /// leaves some out with the note to say so.
+    pub(super) fn github_search_targets(
+        &self,
+    ) -> (Vec<crate::github::SearchTarget>, Option<String>) {
+        let mut targets: Vec<crate::github::SearchTarget> = Vec::new();
+        for workspace in &self.snapshot.navigator.workspaces {
+            if workspace.remote_target_id.is_some()
+                || !workspace.is_git
+                || self.project_source_kind(workspace) != crate::tasks::SourceKind::Github
+            {
+                continue;
+            }
+            let repository = workspace
+                .home_issues
+                .repository
+                .as_deref()
+                .filter(|repository| crate::issues::is_repository(repository))
+                .map(str::to_owned);
+            if let Some(repository) = &repository
+                && targets.iter().any(|known| {
+                    known
+                        .repository
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(repository))
+                })
+            {
+                continue;
+            }
+            targets.push(crate::github::SearchTarget {
+                root: std::path::PathBuf::from(&workspace.path),
+                repository,
+            });
+        }
+        let total = targets.len();
+        if total <= SEARCH_REPOSITORY_LIMIT {
+            return (targets, None);
+        }
+        targets.truncate(SEARCH_REPOSITORY_LIMIT);
+        let note = format!("저장소 {total}개 중 {SEARCH_REPOSITORY_LIMIT}개만 검색했습니다.");
+        (targets, Some(note))
+    }
+
+    /// `github_search`: pull requests and issues of this Mac's GitHub
+    /// projects matching a query, answered in `issue_work.search` (PRD
+    /// cmdk-navigation B16-B19). It runs only on this event, never on a timer.
+    /// One search runs at a time: a request for the running search's query (or
+    /// with its request id) joins it, any other waits as the one pending
+    /// request, which a newer request replaces, and starts when the running
+    /// search ends. The slot always shows the latest request as `working`.
+    pub(super) fn request_github_search(&mut self, payload: GithubSearchPayload) -> bool {
+        let request_id = payload.request_id;
+        if request_id.is_empty() || request_id.chars().count() > SEARCH_REQUEST_ID_LIMIT {
+            self.set_error(
+                "github_search.invalid_request",
+                "A GitHub search needs a request id of up to 128 characters",
+                false,
+            );
+            return true;
+        }
+        let query = payload.query.trim();
+        let query_chars = query.chars().count();
+        crate::diagnostic!(serde_json::json!({
+            "component": "issues", "kind": "github_search.requested",
+            "request_id": request_id, "query_chars": query_chars,
+        }));
+        let refused = if query.is_empty() {
+            Some("검색어를 입력하세요.")
+        } else if query_chars > crate::github::SEARCH_QUERY_LIMIT {
+            Some("검색어는 200자까지 입력할 수 있습니다.")
+        } else {
+            None
+        };
+        if let Some(message) = refused {
+            // The refusal is the latest request, so one waiting is stale.
+            self.github_search.pending = None;
+            let echoed = query
+                .chars()
+                .take(crate::github::SEARCH_QUERY_LIMIT)
+                .collect();
+            self.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot::failed(
+                request_id, echoed, message,
+            ));
+            return true;
+        }
+        let request = SearchRequest {
+            request_id,
+            query: query.to_owned(),
+        };
+        match self.github_search.active.as_mut() {
+            Some(active)
+                if active.request.request_id == request.request_id
+                    || active.request.query == request.query =>
+            {
+                active.request.request_id = request.request_id.clone();
+                self.github_search.pending = None;
+                self.snapshot.issue_work.search =
+                    Some(crate::model::GithubSearchSnapshot::working(
+                        request.request_id,
+                        active.request.query.clone(),
+                    ));
+            }
+            Some(_) => {
+                self.snapshot.issue_work.search =
+                    Some(crate::model::GithubSearchSnapshot::working(
+                        request.request_id.clone(),
+                        request.query.clone(),
+                    ));
+                self.github_search.pending = Some(request);
+            }
+            None => {
+                self.start_github_search(request);
+            }
+        }
+        true
+    }
+
+    /// Starts one search worker for `request`, or answers it at once when
+    /// there is nothing to search or no worker to search with.
+    fn start_github_search(&mut self, request: SearchRequest) {
+        let (targets, note) = self.github_search_targets();
+        if note.is_some() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "issues", "kind": "github_search.capped",
+                "request_id": request.request_id, "limit": SEARCH_REPOSITORY_LIMIT,
+            }));
+        }
+        if targets.is_empty() {
+            self.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot {
+                phase: "ready".into(),
+                ..crate::model::GithubSearchSnapshot::working(request.request_id, request.query)
+            });
+            return;
+        }
+        self.github_search.runs = self.github_search.runs.wrapping_add(1).max(1);
+        let run = self.github_search.runs;
+        self.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot::working(
+            request.request_id.clone(),
+            request.query.clone(),
+        ));
+        let query = request.query.clone();
+        self.github_search.active = Some(ActiveSearch { run, request, note });
+        let spawned = self.spawn_issue_worker(
+            "github-search",
+            move || {
+                // A worker that unwound would leave the one search slot taken
+                // for good, so a panic is a failed search like any other.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    crate::github::search(&targets, &query)
+                }))
+                .unwrap_or_else(|_| Err("the search worker panicked".to_owned()))
+            },
+            move |runtime, result| runtime.ingest_github_search(run, result),
+        );
+        if let Err(reason) = spawned
+            && let Some(active) = self.github_search.active.take()
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "issues", "kind": "github_search.failed",
+                "request_id": active.request.request_id, "reason": reason,
+            }));
+            self.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot::failed(
+                active.request.request_id,
+                active.request.query,
+                reason,
+            ));
+        }
+    }
+
+    /// A search worker's answer. It ends the running search; the slot takes
+    /// it only while the slot still shows that search's request, so an answer
+    /// for a request a newer one replaced is dropped. The pending request,
+    /// if any, starts after it.
+    pub(crate) fn ingest_github_search(
+        &mut self,
+        run: u64,
+        result: Result<Vec<crate::model::GithubSearchResult>, String>,
+    ) -> bool {
+        if self
+            .github_search
+            .active
+            .as_ref()
+            .is_none_or(|active| active.run != run)
+        {
+            return false;
+        }
+        let Some(finished) = self.github_search.active.take() else {
+            return false;
+        };
+        if let Err(reason) = &result {
+            crate::diagnostic!(serde_json::json!({
+                "component": "issues", "kind": "github_search.failed",
+                "request_id": finished.request.request_id, "reason": reason,
+            }));
+        }
+        let mut changed = false;
+        if let Some(slot) = self.snapshot.issue_work.search.as_mut().filter(|slot| {
+            slot.request_id == finished.request.request_id && slot.phase == "working"
+        }) {
+            let answered = match result {
+                Ok(results) => crate::model::GithubSearchSnapshot {
+                    phase: "ready".into(),
+                    results,
+                    message: finished.note,
+                    ..crate::model::GithubSearchSnapshot::working(
+                        finished.request.request_id,
+                        finished.request.query,
+                    )
+                },
+                Err(_) => crate::model::GithubSearchSnapshot::failed(
+                    finished.request.request_id,
+                    finished.request.query,
+                    SEARCH_FAILED_MESSAGE,
+                ),
+            };
+            *slot = answered;
+            changed = true;
+        }
+        if let Some(next) = self.github_search.pending.take() {
+            self.start_github_search(next);
+            changed = true;
+        }
+        changed
     }
 
     /// `worktree_name_suggest`: the background AI names the worktree. Off

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
+import { ownUntilWorkerExit } from "./worker-owned";
 
 /**
  * `restart` stops the daemon and starts it again on the same state directory
@@ -44,7 +45,8 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   for (const key of ["HERDR_SOCKET_PATH", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"]) delete env[key];
   const statePath = path.join(dir, "hide", "hided.json");
   fs.rmSync(statePath, { force: true });
-  const child = spawn(path.resolve("..", "target", "debug", "hided"), [], {
+  const binary = path.resolve("..", "target", "debug", "hided");
+  const child = spawn(binary, [], {
     env: {
       ...env,
       HOME: home,
@@ -65,6 +67,12 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // A daemon that cannot be spawned (no debug build in this worktree) is an
+  // error event; unheard, it kills the worker before any test cleanup runs.
+  let spawnFailed = null as Error | null;
+  child.once("error", (error) => {
+    spawnFailed = error;
+  });
   const logDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (logDir) {
     const log = fs.createWriteStream(path.join(logDir, `hided-${label}-${path.basename(dir)}.log`), { flags: "a" });
@@ -76,7 +84,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     child.once("close", () => log.end());
   }
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  const stop = () => {
+  const { stop, disown } = ownUntilWorkerExit(() => {
     child.kill();
     // The daemon may still be writing its state file (and, with S3, staged
     // files) as it dies; removing the directory under it fails with ENOTEMPTY.
@@ -89,8 +97,12 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
       }
     }
     fs.rmSync(dir, { recursive: true, force: true });
-  };
+  });
   for (let i = 0; i < 50; i += 1) {
+    if (spawnFailed) {
+      stop();
+      throw new Error(`hided did not start from ${binary}: ${spawnFailed.message}; run cargo build -p hided in this worktree`);
+    }
     if (fs.existsSync(statePath)) {
       try {
         // The file may be mid-write on the first read; the next tick reads it whole.
@@ -102,6 +114,8 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
             child.kill();
             await exited;
             await beforeStart?.(path.join(dir, "hide"));
+            // The next daemon takes over the directory and its removal.
+            disown();
             return launch(herdr, label, dir, home, String(state.port), extraEnv);
           };
           return { pid: child.pid!, origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };

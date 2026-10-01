@@ -1,5 +1,5 @@
 import { areaFrame } from "./areaFrames";
-import { AGENT_WORDS, agentCommands, agentMenu, type AgentCommand } from "./agentLayout";
+import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
 import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
 // Every shell command in one place, so a shortcut, a button and a menu run
 // the same code against the same snapshot. Each action is one core event
@@ -61,17 +61,16 @@ import {
   areasOf,
   displaysOfDocument,
   findArea,
-  isMenuCommand,
   locateDisplay,
   menuEdge,
   neighbourArea,
   resizeTarget,
   shownTool,
-  viewCommands,
+  viewAreaStepUnavailable,
   viewLayoutPayload,
   workspaceKey,
   type Edge,
-  type ViewCommandId,
+  type ViewAreaStep,
   type ViewFrame,
   type ViewMenuId,
   type ViewWorkspace,
@@ -133,23 +132,39 @@ export function createActions(dispatch: DispatchFn) {
    * own them and the core keeps them when they are absent, so an echo of an
    * older snapshot can never undo a registration that landed after it.
    * Sidebar width is also patch-only: echoing it could undo a completed drag
-   * while its snapshot is still in flight.
+   * while its snapshot is still in flight. The folds (`collapsed_workspace_ids`,
+   * `expanded_checkout_ids`, `expanded_agent_pane_ids`) are left out for the
+   * same reason: the core owns them through `project_checkouts_fold`,
+   * `checkout_agents_toggle` and `agent_tree_toggle`.
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
     if (!state) return;
-    const { workspace_registrations: _workspaces, device_registrations: _devices, sidebar_width: _width, ...owned } = state;
+    const {
+      workspace_registrations: _workspaces,
+      device_registrations: _devices,
+      sidebar_width: _width,
+      collapsed_workspace_ids: _projectFolds,
+      expanded_checkout_ids: _checkoutFolds,
+      expanded_agent_pane_ids: _lineageFolds,
+      ...owned
+    } = state;
     void _workspaces;
     void _devices;
     void _width;
+    void _projectFolds;
+    void _checkoutFolds;
+    void _lineageFolds;
     dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
   };
 
-  const setProjectExpanded = (workspace: Workspace, expanded: boolean) => {
-    const collapsed = new Set(rest()?.ui_state?.collapsed_workspace_ids ?? []);
-    if (expanded) collapsed.delete(workspace.id);
-    else collapsed.add(workspace.id);
-    updateUiState({ collapsed_workspace_ids: [...collapsed].sort() });
+  /**
+   * The core applies the fold against its own set, so two folds sent before
+   * the first one's snapshot arrives still land one after the other.
+   * `expanded` absent flips it.
+   */
+  const foldProject = (workspace: Workspace, expanded?: boolean) => {
+    dispatch({ schema_version: 2, kind: "project_checkouts_fold", payload: { workspace_id: workspace.id, ...(expanded === undefined ? {} : { expanded }) } });
   };
 
   /**
@@ -467,9 +482,11 @@ export function createActions(dispatch: DispatchFn) {
     ui().setViewFocusRequest({ workspace, displayId: target.displayId, from: located ? { areaId: located.area.id, index: located.index } : null });
   };
 
-  const focusView = (displayId: string) => {
+  const focusView = (displayId: string, moveKeyboard = false) => {
     const frame = frameFor("focus");
-    if (frame) viewLayout(frame, { action: "focus", display_id: displayId });
+    if (!frame) return;
+    if (moveKeyboard) ui().setViewFocusRequest({ workspace: workspaceKey(frame.workspace), displayId, from: null });
+    viewLayout(frame, { action: "focus", display_id: displayId });
   };
 
   const focusViewArea = (areaId: string) => {
@@ -736,35 +753,23 @@ export function createActions(dispatch: DispatchFn) {
   };
 
   /**
-   * A View command from the palette (S7 B20): a menu command on the active
-   * view, or a focus or resize of the active area. One that cannot run now
-   * is not sent; the palette shows its reason.
+   * The View area commands (PRD cmdk-navigation D-05): focus to the next or
+   * previous area, or grow or shrink the one in use. One that cannot run now
+   * is not sent and says why in the diagnostic log.
    */
-  const runViewCommand = (id: ViewCommandId) => {
-    const frame = frameFor(id);
+  const runViewArea = (step: ViewAreaStep) => {
+    const frame = frameFor(step);
     if (!frame) return;
     const drawn = drawnViews();
-    const command = viewCommands(frame.layout, drawn).find((row) => row.id === id);
-    if (!command || command.unavailable) return diagnostic(`view command ${id}: ${command?.unavailable ?? "unknown"}`);
-    if (isMenuCommand(id)) {
-      const active = activeDisplay(frame.layout);
-      if (active) runViewMenu(id, active.display.id);
+    const reason = viewAreaStepUnavailable(frame.layout, drawn, step);
+    if (reason) return diagnostic(`view area ${step}: ${reason}`);
+    if (step === "focus_next" || step === "focus_previous") {
+      const next = adjacentInOrder(frame.layout.root, frame.layout.active_area, step === "focus_next" ? 1 : -1);
+      if (next) focusViewArea(next.id);
       return;
     }
-    switch (id) {
-      case "focus_next":
-      case "focus_previous": {
-        const next = adjacentInOrder(frame.layout.root, frame.layout.active_area, id === "focus_next" ? 1 : -1);
-        if (next) focusViewArea(next.id);
-        return;
-      }
-      case "grow":
-      case "shrink": {
-        const target = resizeTarget(frame.layout, drawn?.geometry ?? null, id === "grow");
-        if ("ratio" in target) resizeViewSplit(target.splitId, target.ratio);
-        return;
-      }
-    }
+    const target = resizeTarget(frame.layout, drawn?.geometry ?? null, step === "grow");
+    if ("ratio" in target) resizeViewSplit(target.splitId, target.ratio);
   };
 
   const createTab = (areaId?: string) => {
@@ -810,8 +815,14 @@ export function createActions(dispatch: DispatchFn) {
     const frame = areaFrame("agent");
     if (!frame) return;
     const id = tabId ?? activeAgentDisplay(frame.layout)?.display.id;
-    const entry = (tabId ? agentMenu(frame, tabId) : agentCommands(frame)).find((row) => row.id === command);
-    if (!entry || entry.unavailable) return;
+    // The area steps are the keyboard's and name no tab; every other command is a tab menu's.
+    const step = command === "focus_next" || command === "focus_previous" || command === "grow" || command === "shrink" ? (command as AgentAreaStep) : null;
+    if (step) {
+      if (agentAreaStepUnavailable(frame, step)) return;
+    } else {
+      const entry = tabId ? agentMenu(frame, tabId).find((row) => row.id === command) : undefined;
+      if (!entry || entry.unavailable) return;
+    }
     if (command === "new_tab") return createTab(id ? locateAgentTab(frame.layout.root, id)?.area.id : undefined);
     if (command === "focus_next" || command === "focus_previous") {
       const area = adjacentAgentArea(frame.layout.root, frame.layout.active_area, command === "focus_next" ? 1 : -1);
@@ -1172,6 +1183,24 @@ export function createActions(dispatch: DispatchFn) {
     /** A pull request's row on its Project's PRs tab, unfolded (PRD overview-lenses-prs B21); ⌘-click stays GitHub's. */
     openPullRequestRow(projectId: string, number: number | null) {
       ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, number));
+    },
+
+    /**
+     * ⌘K's pick of a project, an issue or a pull request: the device that
+     * holds it comes forward (the rail and sidebar follow) and its Project's
+     * Overview shows, as one action. The screen is this page's own state, so
+     * the only event is the device's (PRD cmdk-navigation B20).
+     */
+    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number }) {
+      if ((rest()?.navigator?.focused_device_id ?? "local") !== deviceId) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
+      if (lens && "pullRequest" in lens) return ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, lens.pullRequest));
+      const screen = overviewScreen(rest(), projectId);
+      ui().setScreen(lens ? { ...screen, lens: { ...screen.lens, tab: "issues", focusTask: lens.issue, panel: lens.issue } } : screen);
+    },
+
+    /** ⌘K's `GitHub에서 "…" 검색` row: one search of this Mac's GitHub projects, answered in `issue_work.search` by `requestId`. */
+    searchGithub(requestId: string, query: string) {
+      dispatch({ schema_version: 2, kind: "github_search", payload: { request_id: requestId, query } });
     },
 
     /** Closes or reopens a Local issue; a GitHub one closes on GitHub. */
@@ -1624,7 +1653,7 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Folds or unfolds a project's checkouts in the Projects list; the core keeps the choice and says it back as `expanded`. */
     toggleProjectCheckouts(workspace: Workspace) {
-      setProjectExpanded(workspace, workspace.expanded === false);
+      foldProject(workspace);
     },
 
     /**
@@ -1634,14 +1663,12 @@ export function createActions(dispatch: DispatchFn) {
      */
     openProject(workspace: Workspace, expanded: boolean | undefined) {
       ui().setScreen(overviewScreen(rest(), workspace.id));
-      if (expanded !== undefined && expanded !== (workspace.expanded !== false)) setProjectExpanded(workspace, expanded);
+      if (expanded !== undefined && expanded !== (workspace.expanded !== false)) foldProject(workspace, expanded);
     },
 
     /** Opens or closes the agent rows under a checkout in the Projects list; they start closed and the core keeps the choice. */
     toggleCheckoutAgents(checkoutId: string) {
-      const expanded = new Set(rest()?.ui_state?.expanded_checkout_ids ?? []);
-      if (!expanded.delete(checkoutId)) expanded.add(checkoutId);
-      updateUiState({ expanded_checkout_ids: [...expanded].sort() });
+      dispatch({ schema_version: 2, kind: "checkout_agents_toggle", payload: { checkout_id: checkoutId } });
     },
 
     toggleLeftSidebar() {
@@ -1692,17 +1719,6 @@ export function createActions(dispatch: DispatchFn) {
 
     showTool,
     setToolsShown,
-
-    /**
-     * A palette command for one tool: showing it swaps the column onto it
-     * (B10), hiding it hides the column. Showing a tool a narrow panel's
-     * overlay kept out of sight opens the overlay without an event when the
-     * open panel already stores it shown (S7 B12, B13).
-     */
-    setTool(tool: Tool, visible: boolean) {
-      if (visible) return showTool(tool);
-      setToolsShown(false);
-    },
 
     /** A History row's diff in the active View area's preview (a single click) or pinned (a double click). */
     selectChange(path: string, committed: boolean, preview: boolean) {
@@ -1797,11 +1813,6 @@ export function createActions(dispatch: DispatchFn) {
       openInFront(path, false, "file_open", true);
     },
 
-    /** "Open file to the side" from the palette: ⌘P's list, whose pick opens beside. */
-    openFilePaletteBeside() {
-      ui().openOverlay("file_palette_beside");
-    },
-
     /** Registers a folder on `deviceId`; a device's own helper judges it against that device's home. */
     createWorkspace(path: string, label: string, deviceId = "local") {
       dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...deviceField(deviceId), path, label, initialize_git: false } });
@@ -1859,13 +1870,18 @@ export function createActions(dispatch: DispatchFn) {
 
     /**
      * A browser display of `url` in a Workspace (issue 155): the front one,
-     * or the one a page that asked for a new window belongs to. An address
-     * the Workspace already shows is focused and loaded again.
+     * or the one a page that opened a tab belongs to, beside that page
+     * (`besideDisplay`) so it stays in view. An address the Workspace
+     * already shows is focused and loaded again.
      */
-    openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string) {
+    openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string, besideDisplay?: string) {
       const target = workspace ?? frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
-      dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path }, ...(areaId ? { area_id: areaId } : {}) } });
+      dispatch({
+        schema_version: 2,
+        kind: "browser_open",
+        payload: { url, workspace: { device_id: target.device_id, path: target.path }, ...(areaId ? { area_id: areaId } : {}), ...(besideDisplay ? { beside_display: besideDisplay } : {}) },
+      });
     },
 
     /**
@@ -1966,7 +1982,7 @@ export function createActions(dispatch: DispatchFn) {
     closeView,
     closeViewWithoutSaving,
     runViewMenu,
-    runViewCommand,
+    runViewArea,
 
     /** Re-reads an unavailable display's file (S7 B16). */
     retryView(displayId: string) {

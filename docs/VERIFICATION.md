@@ -43,6 +43,8 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
 - Set each fixture's `HCOORD_HOME` to its private `HOME/.hcoord`; a private `HOME` alone leaves hcoord on the account's shared launchd label.
   The desktop fixture refuses a mismatched coordinator before launching a candidate.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
+- Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so it ends with the Playwright worker even when the worker dies before a test's `finally` runs.
+  A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
 - Herdr starts a pane's shell from the server's `SHELL`, so a fixture sets `SHELL=/bin/zsh` beside its private `HOME`.
   The CI runner's login shell is bash, where a prompt planted in the fixture's `.zshrc` never appears; reproduce that with `SHELL=/bin/bash pnpm --dir web e2e`.
 - A private `HOME` has no Claude or Codex login, because each CLI keys its credential to `HOME`.
@@ -112,6 +114,22 @@ osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); ObjC.deepUnwrap(ObjC.ca
 - Missing Screen Recording or Accessibility permission (`ocu doctor`) blocks the check.
   The grant has been seen to stop matching after the installed app was replaced; report the check as blocked rather than focusing the window to work around it.
 - Artifacts go under `agents/runs/<slug>/` ([AGENTS.md](../AGENTS.md#evidence-belongs-outside-the-repository)); the pull request states what was observed, how, and what was not.
+
+### Focused-area navigation
+
+`web/src/areaCycle.test.ts` checks full device/checkout/area identity for View areas, the Agent pane order across devices and checkouts, commit events, and no-op ownership boundaries.
+`web/e2e/recent.spec.ts` commits an Agent pane in another project on a real isolated Herdr, and `desktop/e2e/keys.spec.ts` walks ⌃Tab over Agent panes in the desktop host.
+The `area-focus` design-review target measures the production area renderer with Korean document fixtures in both themes and two widths, including unchanged geometry when keyboard ownership moves.
+These checks do not prove native browser input or terminal readability.
+The `area cycle native` case in `desktop/e2e/browser.spec.ts` is tagged `@needs-focus`: it uses real macOS modifier input into the isolated candidate's page, counts core selection events, checks page key consumption and captures that exact native window.
+It covers the default chord and a rebound two-modifier chord, whose Control is released while Option is still down, and types into the page the release selected.
+Its keys are CGEvents posted at the HID tap, each refused unless the candidate is frontmost.
+System Events' `key down control` posts no flags-changed event, so no page ever sees Control go down or come up and a release case fails for a reason the product does not have.
+Typed keys are digits, because a key code passes through the operator's input source: under Korean 2-set a letter becomes a jamo and leaves a composition open.
+Input the run did not send, such as an operator typing while the candidate is frontmost, reaches the candidate and spoils the run, so the slot must be one where nobody uses the keyboard.
+Run it only in an agreed foreground QA slot, using `pnpm --dir desktop exec playwright test browser.spec.ts --project needs-focus --no-deps --grep 'area cycle native'` after building this worktree's web and desktop output.
+Record the candidate PID/window, private daemon/server/profile and build head beside the captures.
+Compare any temporary weak-blur proposal against the readable treatment in the actual terminal, document and native page, with idle and driven measurements, before choosing it.
 
 ## A device check
 

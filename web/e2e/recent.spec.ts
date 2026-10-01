@@ -1,8 +1,10 @@
 // Recent navigation on an isolated pinned Herdr and hided
-// (docs/UI_BEHAVIOR.md, Recent navigation): Recent Panels (⌥` in a browser)
+// (docs/UI_BEHAVIOR.md, Recent navigation): explicitly bound global Recent Panels
 // walks one order over Herdr tabs and View displays across checkouts and
 // commits one event on releasing ⌥; Recent Projects (⌥Tab) brings the
-// previous project back on the surface it was last used on.
+// previous project back on the surface it was last used on. In the Agent
+// area ⌥` walks the Agent panes the keyboard has been in, across projects
+// (issue 301).
 
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -47,6 +49,15 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     const canvas = page.locator("[data-canvas]").first();
     const cycleRow = page.locator("[data-cycle] [aria-selected=true]");
 
+    // Global Recent Panels is separate and unbound by default.
+    await page.locator("[data-open-settings]").click();
+    await page.locator('[data-settings-tab="shortcuts"]').click();
+    await page.locator('[data-shortcut-record="recent_panel"]').click();
+    await page.keyboard.press("Alt+KeyG");
+    await page.locator('[data-shortcut-apply="recent_panel"]').click();
+    await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText("⌥G");
+    await page.keyboard.press("Escape");
+
     // plan.txt pinned in the fixture Workspace's View area, the keyboard in it.
     await showExplorer(page);
     await page.locator(`[data-explorer-row="${path.join(root, "plan.txt")}"]`).dblclick();
@@ -64,7 +75,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // ⌥` once, held: the previous surface is the other checkout's display.
     const focusCheckouts = sent.get("focus_checkout") ?? 0;
     await page.keyboard.down("Alt");
-    await page.keyboard.press("Backquote");
+    await page.keyboard.press("KeyG");
     await expect(cycleRow).toHaveAttribute("data-cycle-row", display!);
     await expect(cycleRow).toHaveAttribute("data-cycle-kind", "file");
     await expect(page.locator("[data-cycle=panels]")).toContainText("Recent Panels");
@@ -83,7 +94,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // ⌥` again goes straight back to beta's tab: one focus_tab across checkouts.
     const focusTabs = sent.get("focus_tab") ?? 0;
     await page.keyboard.down("Alt");
-    await page.keyboard.press("Backquote");
+    await page.keyboard.press("KeyG");
     await expect(cycleRow).toHaveAttribute("data-cycle-row", betaTab);
     await page.keyboard.up("Alt");
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
@@ -106,7 +117,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // agent it is, the neutral mark for a tab of several, a file's own mark.
     const quiet = [sent.get("focus_checkout") ?? 0, sent.get("focus_tab") ?? 0];
     await page.keyboard.down("Alt");
-    await page.keyboard.press("Backquote");
+    await page.keyboard.press("KeyG");
     await expect(page.locator("[data-cycle=panels]")).toBeVisible();
     const marks = (row: string) => page.locator(`[data-cycle=panels] [data-cycle-row="${row}"] [data-cycle-marks]`);
     await expect(marks(betaTab)).toHaveAttribute("data-cycle-marks", "codex");
@@ -123,6 +134,37 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await page.keyboard.up("Alt");
     expect([sent.get("focus_checkout") ?? 0, sent.get("focus_tab") ?? 0]).toEqual(quiet);
+
+    // The Agent area's ⌥` crosses projects: the keyboard in beta's Codex,
+    // then in the pane the fixture opens on, and the first candidate is
+    // beta's pane, which one focus_pane brings back with its project.
+    const betaPane = beta.result.root_pane.pane_id;
+    await page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first().click();
+    await expect(canvas).toHaveAttribute("data-canvas", betaTab);
+    await page.locator(`[data-pane-view="${betaPane}"]`).click();
+    await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();
+    await expect(canvas).not.toHaveAttribute("data-canvas", betaTab);
+    const fixturePane = (await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view"))!;
+    // The fixture's View panel stays open over the agents' right side.
+    await page.locator(`[data-pane-view="${fixturePane}"]`).click({ position: { x: 30, y: 60 } });
+    const paneFocuses = sent.get("focus_pane") ?? 0;
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("Backquote");
+    const agents = page.locator("[data-cycle=agents]");
+    await expect(agents).toContainText("Recent Agent panes");
+    await expect(agents.locator("[role=option]").first()).toHaveAttribute("data-cycle-row", fixturePane);
+    await expect(cycleRow).toHaveAttribute("data-cycle-row", betaPane);
+    await expect(cycleRow).toContainText("beta · Terminal");
+    await expect(cycleRow).toHaveAttribute("aria-label", /codex agent/);
+    // Only panes: no View display, Overview or project rows.
+    await expect(agents.locator('[role=option]:not([data-cycle-kind="herdr"])')).toHaveCount(0);
+    await screenshot(page, "recent-agent-panes");
+    expect(sent.get("focus_pane") ?? 0).toBe(paneFocuses);
+    await page.keyboard.up("Alt");
+    await expect(page.locator("[data-cycle]")).toHaveCount(0);
+    await expect.poll(() => sent.get("focus_pane") ?? 0).toBe(paneFocuses + 1);
+    expect(last.get("focus_pane")).toMatchObject({ pane_id: betaPane });
+    await expect(canvas).toHaveAttribute("data-canvas", betaTab);
   } finally {
     daemon?.stop();
     herdr.stop();

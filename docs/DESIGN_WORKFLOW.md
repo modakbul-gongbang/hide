@@ -11,6 +11,7 @@ Three files each own one kind of truth, and none of them restates another's valu
 - **Visual authority** is the Pen library, [design/hide-ui.lib.pen](../design/hide-ui.lib.pen).
   Its `System /` sheets are shadcn parts drawn 1:1 with the dev gallery: same name, same variants, one sheet per part with `Light` and `Dark` frames and one node per state.
   Its `Component /` sheets are hide composites built on top of `System /` masters (menus, rows, panels) that do not exist in shadcn.
+  `Component / Agent graph box` is the one generated `Component /` sheet besides the two folded legacy masters: `componentSheets` in `scripts/pen-system.mjs` draws its master (a head and three rows a state turns on) and its states (primary, a worktree with an asking row, resting and dimmed, a row with a tucked badge, selected) as refs of that master, Light and Dark, and a new sheet lands where its `at` says until a person moves it.
   Only `System /` and `Component /` top-level sheets belong in this file; screen proposals, audits, and scratch never do.
 - **Numeric authority** is [design/tokens.json](../design/tokens.json): shadcn-named tokens (`--background`, `--foreground`, `--card`, `--popover`, `--primary`/`--primary-foreground`, `--secondary`, `--muted`/`--muted-foreground`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, `--sidebar-*`, and the four `--accent-choice-*` picks) each carrying a Dark value and a Light value, plus aliases.
   `node scripts/gen-tokens.mjs` writes `web/src/tokens.css` (Tailwind v4 `@theme`, `:root`/`.light`, `.dark`) and `web/src/generated/accents.ts`.
@@ -79,7 +80,8 @@ A design change is judged against the design that was chosen, not against whatev
 The `workspace-servers` and `session-search` gallery scenes render the production Workspace toolbar and Sessions screen with invented local history and reachable-address fixtures.
 A frame may name `referenceNode` when the approved scratch uses a different node ID; baseline exports that reference node while review exports the committed `node`, retaining both identities and their actual dimensions in the comparison.
 A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
-A target exists for `projects-sidebar`; add one when a change touches another screen, not before.
+Targets exist for `projects-sidebar`, `workspace-servers`, `session-search` and `area-focus`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
+`area-focus` measures the production shared area renderer and View tabs with read-only Korean content, enforcing one keyboard area, retained selections, stable geometry and unfiltered content; real terminal and native browser behavior still requires an isolated app capture.
 
 ### Keep the chosen design: `baseline`
 
@@ -138,21 +140,24 @@ Each sheet carries a `Light` and a `Dark` frame and uses realistic content, incl
 Because the file is generated and several megabytes of JSON, `.gitattributes` marks it `-diff linguist-generated=true`: `git diff` reports only that it changed and GitHub folds it in a pull request, so review reads `scripts/pen-screens.mjs`; `git diff --text` still shows its lines when they are needed.
 
 The Overview of every project is `Screen / Main`, named after its web file and screen kind.
-It draws the agent and project sidebar beside the Overview, the sidebar's Home row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents, whose view is the Project Overview's lanes or lineage over every project.
+It draws the agent and project sidebar beside the Overview, the sidebar's Home row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents, whose view is the Project Overview's graph over every project.
 Its Tasks board holds every project's issues in `백로그 · 진행 중 · 리뷰 · 완료`, each card an issue with its project beside its id, `시작` on a backlog card under the pointer, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count.
 Below it, the Dependencies mode draws an arrow that crosses projects, with the blocker named by its repository on the lock line.
 The sidebar there is the one-device window's: the device rail with This Mac alone, and the sidebar's top line over the `Projects | Agents` strip with the Home row in the list.
 Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
 
 Project Overview is `Screen / Project Overview`.
-Each frame carries its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line of worktrees, disk, behind and merged with the view's mode control at its right end, and the tiles `Agents · Issues · PRs · Sessions`, the chosen one outlined.
-Its first frame is Agents › 체크아웃 as every entry opens it: a lane per checkout with its head (glyph and branch, purpose, issue and PR chips, `↑N ↓N`, files), main pinned on top with a lane selected, delegation lines down across lanes in the Observer's column, the operator's turn in a yellow node, a merged lane dimmed with `정리`, and the two fold lines.
-Under it is Agents › 계보: the `Observer · Implementor · 하위 에이전트` columns, a row per lineage with the asking one first, each node's checkout, issue and PR chips, and the two fold lines.
+Each frame carries its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line of worktrees, disk, behind and merged with the view's control at its right end (the filter on Agents: the status chips `내 차례 · 일하는 중 · 쉬는 중` and a search field, no device control while one device is in view), and the tiles `Agents · Issues · PRs · Sessions`, the chosen one outlined.
+Its first frame is Agents as every entry opens it: a box per checkout with its head (glyph and branch, purpose, issue and PR chips, `↑N ↓N`, files), main's box first with a box selected, delegation lines between boxes coloured by the child's state, the operator's turn as a row with its question in warning, a merged box dimmed with `정리`, a row with a tucked badge, and the fold lines.
+The graph's sizes are the `--graph-*` tokens in `design/tokens.json`, and the layout reads them at run time, so a frame draws a box from the tokens and not from numbers of its own.
+The graph is three columns here: main's Observer delegates to a worktree that asks (an orange line) and, through an Implementor that waits on a reviewer (a pale blue line), to a worktree that works (a blue line with still dashes, since a Pen path has no dash animation); below it sit the line colours in words and the three fold lines `에이전트 없는 워크트리 N · 정리할 것 N · 쉬는 체크아웃 N`.
+Below the graph the box states stand side by side (the primary box, a worktree with its issue and PR chips with CI mark and `변경 요청`, a merged box dimmed with `정리`, an asking row with its question line, a row with a tucked badge, the selected box), then the filter that matches nothing: a header with `내 차례` lit and a search typed, and the one line `필터에 맞는 에이전트가 없습니다` with `필터 해제`.
+The boxes and lines are drawn on local tokens in this sheet, not as refs of `Component / Agent graph box`, because the lines have to stand level with the rows that send them.
 Beside them are Issues › Board (PRD overview-lenses-issues), the facts line carrying the filter beside the mode control and the four columns `백로그 · 진행 중 · 리뷰 · 완료` of issue cards only (백로그 with `+` and a card offering `시작` under the pointer, the operator's turn in the warning border, the checkout and PR chips, `이슈 없는 워크트리 N` and `이슈 없는 PR N` at the foot of 진행 중 and 리뷰, 완료 folded to one line per issue with the pull request that closed it), Issues › Card states (each stage's buttons in the id line's slot, a Local issue's edit, the operator's turn, blocked, a failed source read, the card whose panel is open, and the id's preview), and Issues › Dependencies (a chain of cards with stage words and arrows, blocked cards dimmed, unrelated issues below).
 The issue panel frames stand beside the board in the width it leaves: a GitHub issue in progress (properties, 이 이슈로 한 일, the Markdown body and comments), a Local issue, a Local issue edited in place, and a GitHub issue whose read failed with `재시도`.
 The PRs frames (PRD overview-lenses-prs) are PRs with its groups, a row unfolded to its agents and icon buttons, a blocked row under the pointer with `▷ 맡기기` in the time slot and `최근 머지` folded, then 이슈 잇기's confirmation over a row whose empty issue cell has turned into the link icon.
 The issue card and panel, the pull request row and its confirmation are drawn on local tokens and library refs in this sheet, not as `Component /` masters, because each is one screen's part (`web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx`) rather than a composite under `web/src/components`.
-Its web files are `web/src/ProjectOverview.tsx`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/IssuesView.tsx`, `web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx` and `web/src/projectBoard.ts`; a card's agent rows are `web/src/components/agent-row.tsx`.
+Its web files are `web/src/ProjectOverview.tsx`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/GraphView.tsx`, `web/src/agentGraph.ts`, `web/src/IssuesView.tsx`, `web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx` and `web/src/projectBoard.ts`; a card's agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
 It draws the side panel (`Component / Side panel`) open at the Workspace's full height over the agent column, then the panel closed with two views still open.
@@ -170,8 +175,9 @@ The Mobile tab sits after Devices; its strip and content are drawn on `Screen / 
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
-It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette with its grouped two-line results and its no-match and nothing-to-search states, and the ⌘P file palette on the same shell.
-Its web files are `web/src/Palette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
+It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette's wide list-and-detail layout with its relation list, grouped results, collapsed, no-match and GitHub states, and the ⌘P file palette on the same shell.
+`/gallery?scene=search-palette` is the real ⌘K over `web/src/gallery/cmdkSceneData.ts` (`front=agent|agent-short|terminal|none`, `github=results|pending|failed|empty`), which answers `github_search` as the core would.
+Its web files are `web/src/Palette.tsx`, `web/src/SearchPalette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 
 Dialogs and Sheets is `Screen / Dialogs and Sheets`.
 It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, Add a project, Keyboard shortcuts, New issue (with `만들고 바로 시작` unchecked and checked), and Start from an issue; the committed sheet still draws the removed sidebar New workspace panel in Add a project's place until the screen is redrawn.
@@ -185,7 +191,7 @@ Its web files are `web/src/entry-menu.tsx` and the start panel under `web/src/`.
 
 Projects Sidebar is `Screen / Projects Sidebar`.
 It draws the sidebar that follows the device rail.
-The rail stands left of it with This Mac and each registered device, and `+` directly under the last tile; each tile carries up to three circles stacked down from its top right (Needs You, unseen Done, Working, a zero taking no slot, `9+` from ten), the selected one the pill at the rail's edge, and an unreachable device is dimmed with a cross and no circle.
+The rail is its full-height left column with This Mac and each registered device as 32 tiles with no name under them (the laptop glyph or the device's monogram), and `+` directly under the last tile; the selected tile is ringed, one mark at a tile's top-right shows the most urgent state (the Needs You count, `9+` from ten, else a dot for unseen Done), Working has no mark, and an unreachable device dims its glyph and wears a cross at the bottom-right with no mark.
 The rest frame is This Mac in front: a header line with the device name, Add project and Search over the `Projects | Agents` strip, then the Needs You group, the Home row with the project count where the Overview row stood (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects.
 Five more frames draw the Agents tab (this device's agents by state with the three counts above, no device chip), a remote device in front with the `9+` pill, a device that is not connected (its name, `연결 안 됨` and one reconnect action, no tree), the one-device window (the rail with This Mac alone), and the rail hidden (the name with a chevron over the open device menu).
 In the list, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
@@ -211,6 +217,12 @@ Its web files are `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts` and `
 3. Run `node scripts/gen-pen.mjs` to carry the same value into the Pen library's `Mode` variables and Foundations sheet.
 4. Reference the token from Tailwind classes or CSS custom properties in `web/src` (`check-web-tokens.mjs` refuses a literal hex, `rgb()`/`hsl()` or `px` value anywhere in a source, including a CodeMirror theme object or another stylesheet, and Tailwind's own default spacing/text scales, since those are also unchosen literals).
 5. A visual case the token system does not cover is a proposed addition, reviewed and approved before use, never settled with a one-off value.
+
+## How to remove a token
+
+1. Delete the entry from `design/tokens.json` once nothing in `web/`, `scripts/` or `docs/` reads it (`rg` the name).
+2. Run `node scripts/gen-tokens.mjs`; the token leaves `web/src/tokens.css` and `design/hide-screens.pen`'s local variables with it.
+3. Generation never deletes a canvas variable on its own, so list the name in `retired` in `scripts/pen-token-map.json`, run `node scripts/gen-pen.mjs` to drop it from `design/hide-ui.lib.pen`, then delete the entry from `retired`.
 
 ## How to add a System part
 

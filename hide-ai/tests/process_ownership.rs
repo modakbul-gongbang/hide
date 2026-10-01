@@ -9,22 +9,32 @@
 //!   when the schema gains one, demanding the per-turn close instead).
 
 use std::path::PathBuf;
+
+// The descendant-count and kill-the-owner tests below read the process tree
+// through `libproc` and `pgrep -P`, which is the macOS arrangement the
+// crate's cap measures; everything they alone use is gated with them, so the
+// Linux build of this file carries only the schema guard.
+#[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::sync::{Arc, Mutex};
+#[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
 
-use std::sync::Mutex;
-
+#[cfg(target_os = "macos")]
 use hide_ai::{
     AiBackend, AiLogEvent, AiLogSink, AiRequest, AiRouter, CancelToken, CodexAppServerBackend,
     CodexConfig, NoopLogSink, ProcessMeasurement, RequestId, RouterConfig,
 };
+#[cfg(target_os = "macos")]
 use serde_json::json;
 
 /// Counts router events by name so a test can prove the cap actually engaged.
+#[cfg(target_os = "macos")]
 #[derive(Default)]
 struct Recorder(Mutex<Vec<&'static str>>);
 
+#[cfg(target_os = "macos")]
 impl AiLogSink for Recorder {
     fn log(&self, event: AiLogEvent) {
         self.0
@@ -34,6 +44,7 @@ impl AiLogSink for Recorder {
     }
 }
 
+#[cfg(target_os = "macos")]
 impl Recorder {
     fn count(&self, name: &str) -> usize {
         self.0
@@ -45,10 +56,12 @@ impl Recorder {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-app-server.py")
 }
 
+#[cfg(target_os = "macos")]
 fn request(n: usize) -> AiRequest {
     AiRequest {
         feature_id: "process_ownership",

@@ -132,17 +132,27 @@ export function renamed(document) {
 // failure this check exists to catch: a variable the design carries that neither
 // side accounts for, drifting silently from both.
 export function unclaimed(map, document, expected) {
-  const excused = new Set(Object.keys(map.authored));
+  const excused = new Set([...Object.keys(map.authored), ...retiredNames(map)]);
   return Object.keys(document.variables).filter(name => !expected.has(name) && !excused.has(name));
+}
+
+// A token removed from tokens.json leaves its variable behind in the canvas, and
+// generation never deletes a variable on its own (that is how a hand-made one
+// would vanish). `retired` names the removed tokens whose variables the next
+// generation drops; once every canvas has been regenerated an entry has done its
+// work and is deleted from the map.
+export function retiredNames(map) {
+  return map.retired ?? [];
 }
 
 // The generated document, as text. Both entrypoints go through this one function so
 // the check compares against exactly what the generator would have written.
 // Existing variables keep their position, because the rest of the file is the
 // designer's and a reordered diff hides the change that matters.
-export function apply(document, expected) {
+export function apply(document, expected, retired = []) {
   const variables = {};
   for (const [name, variable] of Object.entries(document.variables)) {
+    if (retired.includes(name) && !expected.has(name)) continue;
     variables[name] = expected.has(name) ? expected.get(name) : variable;
   }
   for (const name of [...expected.keys()].filter(name => !(name in variables)).sort()) {

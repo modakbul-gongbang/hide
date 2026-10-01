@@ -73,12 +73,18 @@ pub(super) struct ViewWorkspace {
 /// area of a Workspace, which need not be the one in front: the one named,
 /// else the one the pane `pane_id` works in (`hide browser open` from an
 /// agent's pane), else the one in front. A Workspace already showing `url`
-/// shows that page again, loaded again, rather than a second one.
+/// shows that page again, loaded again, rather than a second one. A page's
+/// own new tab names that page (`beside_display`) and opens beside it, in
+/// place of `area_id`.
 #[derive(Debug, Deserialize)]
 pub(super) struct BrowserOpenPayload {
     url: String,
     #[serde(default)]
     area_id: Option<String>,
+    /// The page whose own new tab this is: the new page opens beside it, so
+    /// the page that asked stays in view.
+    #[serde(default)]
+    beside_display: Option<String>,
     #[serde(default)]
     workspace: Option<ViewWorkspace>,
     #[serde(default)]
@@ -1160,8 +1166,15 @@ impl Runtime {
             pane_id,
             request_id,
             area_id,
+            beside_display,
         } = payload;
-        let outcome = self.place_browser(&url, workspace, pane_id.as_deref(), area_id.as_deref());
+        let outcome = self.place_browser(
+            &url,
+            workspace,
+            pane_id.as_deref(),
+            area_id.as_deref(),
+            beside_display.as_deref(),
+        );
         if let Err(message) = &outcome {
             self.set_error("browser.open_refused", message.clone(), false);
         }
@@ -1199,6 +1212,7 @@ impl Runtime {
         workspace: Option<ViewWorkspace>,
         pane_id: Option<&str>,
         area_id: Option<&str>,
+        beside_display: Option<&str>,
     ) -> Result<(WorkspaceKey, String), String> {
         if !self.separate_view_areas() {
             return Err("This shell does not draw View areas".to_owned());
@@ -1239,9 +1253,29 @@ impl Runtime {
                     }
                     return Ok((display_id, true));
                 }
-                let area = area_id.unwrap_or(&layout.active_area().id).to_owned();
                 let display = layout.new_browser_display(url, load);
                 let display_id = display.id.clone();
+                // A page's own new tab stands beside that page (Open to the
+                // side's order): in the area next to it, else, its area being
+                // the only one, in a new area to its right, which the area cap
+                // always leaves room for. With the page gone it opens where
+                // any page would.
+                let opener = beside_display
+                    .and_then(|opener| layout.area_of(opener))
+                    .map(|area| area.id.clone());
+                if let Some(base) = opener {
+                    match BESIDE_ORDER
+                        .iter()
+                        .find_map(|edge| layout.neighbour(&base, *edge))
+                    {
+                        Some(target) => layout.insert(&target, display, stamp)?,
+                        None => {
+                            layout.split_new(&base, Edge::Right, display, stamp)?;
+                        }
+                    }
+                    return Ok((display_id, true));
+                }
+                let area = area_id.unwrap_or(&layout.active_area().id).to_owned();
                 layout.insert(&area, display, stamp)?;
                 Ok((display_id, true))
             })

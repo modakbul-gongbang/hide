@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { filterEntries, fuzzyScore, groupEntries, searchEntries, type SearchEntry } from "./search";
-import type { SnapshotRest, ViewNode } from "./snapshot";
-import { viewGeometry } from "./viewLayout";
+import { CHILD, RICH } from "./gallery/cmdkSceneData";
+import { filterEntries, fuzzyScore, groupEntries, numberQuery, searchEntries, type SearchEntry } from "./search";
+import type { SnapshotRest } from "./snapshot";
 
 describe("fuzzy score", () => {
   it("needs the query's characters in order", () => {
@@ -49,24 +49,29 @@ describe("search entries", () => {
     expect(entries[3]).toMatchObject({ kind: "checkout", workspaceId: "w1", checkoutId: "c1" });
   });
 
-  it("heads each entry in the search view's form, an agent under the project holding its pane (issue 154)", () => {
+  it("heads each entry under its kind: Agents, Projects, Checkouts (PRD cmdk-navigation B11)", () => {
     const heads = Object.fromEntries(without(searchEntries(REST)).map((entry) => [entry.id, entry.group.label]));
     expect(heads).toEqual({
-      "agent:p1": "fixture > AGENTS",
-      "agent:p9": "AGENTS",
-      "project:w1": "WORKSPACES > PROJECTS",
-      "checkout:c1": "WORKSPACES > CHECKOUTS",
+      "agent:p1": "Agents",
+      "agent:p9": "Agents",
+      "project:w1": "Projects",
+      "checkout:c1": "Checkouts",
     });
   });
 
-  it("gives an agent row its mark's kind and its state sentence, else the status word", () => {
+  it("offers 에이전트 시작… as the only command, on every snapshot (B22)", () => {
+    expect(searchEntries(REST).filter((entry) => entry.kind === "command")).toEqual([expect.objectContaining({ id: START_AGENT, title: "에이전트 시작…", command: "start_agent" })]);
+  });
+
+  it("gives an agent row its mark's kind, where it works and its state sentence, else the status word", () => {
     const [one, elsewhere] = without(searchEntries(REST));
-    expect(one).toMatchObject({ agentKind: "claude", subtitle: "Working" });
+    expect(one).toMatchObject({ agentKind: "claude", subtitle: "fixture · Working" });
+    // A pane no checkout holds has no place, and none is made up.
     expect(elsewhere).toMatchObject({ agentKind: "codex", subtitle: "Waiting for review" });
   });
 
   it("filters by the fuzzy score and keeps the best first", () => {
-    const group = { id: "projects", label: "WORKSPACES > PROJECTS" };
+    const group = { id: "projects", label: "Projects" };
     const entries: SearchEntry[] = [
       { id: "1", title: "Alpha", subtitle: "/a", kind: "project", group },
       { id: "2", title: "Beta", subtitle: "/b", kind: "project", group },
@@ -138,79 +143,16 @@ describe("search entries across devices (PRD home-device-rail B40)", () => {
   });
 });
 
-describe("workspace commands", () => {
-  const rest = { workspace_view: { device_id: "local", path: "/repo", panel: "open", pinned: false, tool: "explorer", tools: true, views_over_share: 0.6 } } as unknown as SnapshotRest;
-  const wide = { drawn: null, placement: "column" } as const;
-
-  it("offers the side panel's other states, its pin, and each tool by what it would do (issue 170)", () => {
-    expect(without(searchEntries(rest, wide)).map((entry) => entry.title)).toEqual(["Close side panel", "Expand side panel", "Pin side panel", "Hide Explorer", "Show History"]);
-    const closed = { workspace_view: { ...(rest.workspace_view as object), panel: "closed", pinned: true } } as unknown as SnapshotRest;
-    expect(without(searchEntries(closed, wide)).map((entry) => entry.title)).toEqual(["Open side panel", "Expand side panel", "Unpin side panel", "Show Explorer", "Show History"]);
-  });
-
-  it("offers a tool a narrow window's closed overlay keeps out of sight as one to show (S7 B12)", () => {
-    const explorer = (placement: "closed" | "open") => searchEntries(rest, { drawn: null, placement }).find((entry) => entry.id === "command:tool:explorer");
-    expect(explorer("closed")).toMatchObject({ title: "Show Explorer", command: { tool: "explorer", visible: true } });
-    expect(explorer("open")).toMatchObject({ title: "Hide Explorer", command: { tool: "explorer", visible: false } });
-  });
-
-  it("heads every Workspace command as one commands group", () => {
-    expect(new Set(without(searchEntries(rest, wide)).map((entry) => entry.group.label))).toEqual(new Set(["WORKSPACE > COMMANDS"]));
-  });
-
-  it("offers no Workspace command when no Workspace is on screen", () => {
-    expect(without(searchEntries(rest, null))).toEqual([]);
-  });
-
-  it("offers 에이전트 시작… on every screen, Workspace or not (PRD home-device-rail B33)", () => {
-    for (const screen of [null, wide]) {
-      expect(searchEntries(rest, screen).find((entry) => entry.id === START_AGENT)).toMatchObject({ title: "에이전트 시작…", kind: "command", command: { startAgent: true } });
-    }
-    expect(searchEntries(REST).find((entry) => entry.id === START_AGENT)).toBeDefined();
-  });
-
-  it("offers every View tab menu command and the area commands, with the reason one cannot run now", () => {
-    const display = { id: "d1", tab_id: "file:a", path: "/repo/a.md", label: "a.md", kind: "file", committed: null, preview: true, state: "open", reason: null };
-    const layout = { root: { area: { id: "a1", active: "d1", displays: [display] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: 1 };
-    const withViews = { workspace_view: { ...(rest.workspace_view as object), layout } } as unknown as SnapshotRest;
-    const sizes = { areaMinWidth: 224, areaMinHeight: 144, divider: 2, tabStrip: 32 };
-    const drawn = { geometry: viewGeometry(layout.root as ViewNode, { x: 0, y: 0, width: 1000, height: 600 }, sizes), sizes };
-    const commands = searchEntries(withViews, { drawn, placement: "column" }).filter((entry) => entry.subtitle === "View areas");
-    expect(commands.map((entry) => entry.title)).toEqual([
-      "Keep open",
-      "Split right",
-      "Split left",
-      "Split up",
-      "Split down",
-      "Move right",
-      "Move left",
-      "Move up",
-      "Move down",
-      "Copy path",
-      "Reveal in Explorer",
-      "Close view",
-      "Focus next view area",
-      "Focus previous view area",
-      "Grow view area",
-      "Shrink view area",
-      "Open file to the side",
-    ]);
-    expect(commands.find((entry) => entry.title === "Split right")?.unavailable).toBe("This is the only view in its area.");
-    expect(commands.find((entry) => entry.title === "Move up")?.unavailable).toBe("There is no view area above.");
-    expect(commands.find((entry) => entry.title === "Keep open")?.unavailable).toBeNull();
-  });
-});
-
 describe("grouping (issue 154)", () => {
   const agentsHere = { id: "agents:w1", label: "herdr-ide > AGENTS" };
   const agentsThere = { id: "agents:w2", label: "sasu > AGENTS" };
-  const projects = { id: "projects", label: "WORKSPACES > PROJECTS" };
+  const projects = { id: "projects", label: "Projects" };
   const entry = (id: string, group: SearchEntry["group"]): SearchEntry => ({ id, title: id, subtitle: "", kind: "agent", group });
 
   it("stands each group where its best entry ranked and keeps the rank inside it", () => {
     const ranked = [entry("a", agentsHere), entry("p", projects), entry("b", agentsThere), entry("c", agentsHere), entry("q", projects)];
     const sections = groupEntries(ranked);
-    expect(sections.map((section) => section.group.label)).toEqual(["herdr-ide > AGENTS", "WORKSPACES > PROJECTS", "sasu > AGENTS"]);
+    expect(sections.map((section) => section.group.label)).toEqual(["herdr-ide > AGENTS", "Projects", "sasu > AGENTS"]);
     expect(sections.map((section) => section.entries.map((row) => row.id))).toEqual([["a", "c"], ["p", "q"], ["b"]]);
   });
 
@@ -221,5 +163,59 @@ describe("grouping (issue 154)", () => {
   it("keeps the best match first once grouped", () => {
     const ranked = filterEntries(searchEntries(REST), "fixture");
     expect(groupEntries(ranked)[0]?.entries[0]?.id).toBe(ranked[0]?.id);
+  });
+});
+
+describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
+  const found = (query: string) => filterEntries(searchEntries(RICH), query).map((entry) => entry.id);
+
+  it("holds this Mac's issues and pull requests, a pull request once however many places name it", () => {
+    const entries = searchEntries(RICH);
+    expect(entries.filter((entry) => entry.kind === "pr").map((entry) => entry.id)).toEqual(["pr:w1:275", "pr:w1:260"]);
+    expect(entries.filter((entry) => entry.kind === "issue").map((entry) => entry.id)).toEqual(["issue:github:acme/herdr-ide#273"]);
+  });
+
+  it("finds a pull request by number, title or branch and an issue by number or title, not by words only a body would hold (B13)", () => {
+    expect(found("#275")).toContain("pr:w1:275");
+    expect(found("sandbox refusals")).toContain("pr:w1:275");
+    expect(found("sandbox-letters")).toContain("pr:w1:275");
+    expect(found("273")).toContain("issue:github:acme/herdr-ide#273");
+    expect(found("internal")).toContain("issue:github:acme/herdr-ide#273");
+    expect(found("zzzzz")).toEqual([]);
+  });
+
+  it("puts the exact number first, an issue and a pull request of the same number each as its own row (B12)", () => {
+    const withTwin = structuredClone(RICH) as typeof RICH;
+    withTwin.navigator!.workspaces![0]!.pull_requests = [{ ...(RICH.navigator!.workspaces![0]!.pull_requests![0]!), number: 273, title: "Unrelated 275 title" }];
+    const ranked = filterEntries(searchEntries(withTwin), "#273").map((entry) => entry.id);
+    expect(ranked.slice(0, 2)).toEqual(["issue:github:acme/herdr-ide#273", "pr:w1:273"]);
+    // A bare number holds only rows whose text holds the digits.
+    expect(filterEntries(searchEntries(RICH), "273").every((entry) => `${entry.title} ${entry.subtitle}`.includes("273"))).toBe(true);
+  });
+
+  it("reads #273 and 273 as numbers and nothing else", () => {
+    expect(numberQuery("#273")).toBe(273);
+    expect(numberQuery(" 273 ")).toBe(273);
+    expect(numberQuery("#273a")).toBeNull();
+    expect(numberQuery("sandbox")).toBeNull();
+  });
+
+  it("carries the pull request's CI rollup only when it has one", () => {
+    const [open, merged] = searchEntries(RICH).filter((entry) => entry.kind === "pr");
+    expect(open?.ci).toEqual({ tone: "pending", label: "CI 진행 중" });
+    expect(merged?.ci).toEqual({ tone: "done", label: "CI 통과" });
+    const unknown = structuredClone(RICH) as typeof RICH;
+    unknown.navigator!.workspaces![0]!.pull_requests![0]!.checks = "unknown";
+    expect(searchEntries(unknown).find((entry) => entry.id === "pr:w1:275")?.ci).toBeUndefined();
+  });
+
+  it("keeps the 80 row cap", () => {
+    const many = structuredClone(RICH) as typeof RICH;
+    many.navigator!.workspaces![0]!.tasks!.tasks = Array.from({ length: 120 }, (_, index) => ({ key: `github:acme/herdr-ide#${index + 1000}`, source: "github", id: `#${index + 1000}`, url: null, title: `sandbox issue ${index}`, open: true }));
+    expect(filterEntries(searchEntries(many), "sandbox").length).toBe(80);
+  });
+
+  it("finds an agent by where it works", () => {
+    expect(found("sandbox").includes(`agent:${CHILD.pane_id}`)).toBe(true);
   });
 });

@@ -72,7 +72,8 @@ async function showTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   );
 }
 
-test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktree after one confirmation", async ({ page }) => {
+// @platform: Disk measuring and removal, and Trash, on the platform's filesystem.
+test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktree after one confirmation", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;

@@ -71,6 +71,7 @@ import {
   type SettingsTab,
 } from "./settings";
 import {
+  AREA_COMMANDS,
   EDITABLE_PANE_COMMANDS,
   bindingProblem,
   chordEquals,
@@ -1144,41 +1145,50 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
     actions.setPaneShortcuts(host, bindings);
   };
   const current = (): Record<string, string> => ({ ...(diagnostic ? {} : (stored ?? {})) });
+  const rowsFor = (ids: readonly CommandId[]) =>
+    ids.map((id) => (
+      <ShortcutRow
+        key={id}
+        id={id}
+        host={host}
+        registry={registry}
+        overridden={!diagnostic && stored?.[storedKey(id, host)] !== undefined}
+        onApply={(chord) => {
+          const next = current();
+          const fallback = defaultChord(id, host);
+          const text = serializeStoredChord(chord, host);
+          if ((fallback && chordEquals(fallback, chord)) || text === null) delete next[storedKey(id, host)];
+          else next[storedKey(id, host)] = text;
+          apply(next);
+        }}
+        onReset={() => {
+          const next = current();
+          delete next[storedKey(id, host)];
+          apply(next);
+        }}
+      />
+    ));
   return (
     <>
       <Group
-        title="Pane chords"
+        title="Pane and navigation chords"
         note={
           host === "electron"
-            ? "The macOS app's pane chords: this desktop app and the macOS app share them. A chord needs ⌘, and one macOS or the app menu keeps is refused before it is saved."
+            ? "The macOS app's pane chords: this desktop app and the macOS app share them. Pane chords need ⌘; navigation can use ⌃ or ⌥ as well. A chord that macOS or the app menu keeps is refused before it is saved."
             : "These chords are this browser host's own; the macOS and desktop apps keep their own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
         }
       >
-        {EDITABLE_PANE_COMMANDS.map((id) => (
-          <ShortcutRow
-            key={id}
-            id={id}
-            host={host}
-            registry={registry}
-            overridden={!diagnostic && stored?.[storedKey(id, host)] !== undefined}
-            onApply={(chord) => {
-              const next = current();
-              const fallback = defaultChord(id, host);
-              const text = serializeStoredChord(chord, host);
-              if ((fallback && chordEquals(fallback, chord)) || text === null) delete next[storedKey(id, host)];
-              else next[storedKey(id, host)] = text;
-              apply(next);
-            }}
-            onReset={() => {
-              const next = current();
-              delete next[storedKey(id, host)];
-              apply(next);
-            }}
-          />
-        ))}
+        {rowsFor(EDITABLE_PANE_COMMANDS.filter((id) => !(AREA_COMMANDS as readonly CommandId[]).includes(id)))}
         <Row label={<span className="text-subtle-foreground">Toggle Conversation</span>}>
           <Status tone="muted">macOS app only; the web shell has no conversation view</Status>
         </Row>
+      </Group>
+      <Group
+        title="Area commands"
+        note="Moving between Agent areas or View areas and resizing the one in use. They have no chord until you set one, and the desktop app lists them in its Pane menu."
+        data-settings-group="area-commands"
+      >
+        {rowsFor(AREA_COMMANDS)}
       </Group>
       <Group
         title="Numbered chords"

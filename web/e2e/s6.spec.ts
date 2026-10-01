@@ -7,22 +7,16 @@
 // whose file is gone marked unavailable (B19, B20).
 
 import { expect, test, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { choosePanel, countSent, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-}
-
-/** Declares `child` as spawned by `parent`, the way a spawner's hook does; report-metadata prints nothing. */
-function declareChild(herdr: HerdrFixture, child: string, parent: string): void {
-  execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
 }
 
 test("Main, Overview and a Workspace with its side panel, tools and delegated child", async ({ page }) => {
@@ -53,13 +47,13 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(project.locator("[data-workspace-count]")).toHaveText(/1 workspace/);
     await screenshot(page, "s6-main");
 
-    // Its Overview opens on the Agents lens, whose checkout lanes list both
+    // Its Overview opens on the Agents graph, whose rows list both
     // agents, and an agent enters the Workspace at that pane (B2).
     await project.click();
     await expect(page.locator('[data-overview-screen][data-overview-view="agents"]')).toBeVisible();
-    await expect(page.locator("[data-overview-screen] [data-lens-open]")).toHaveCount(2);
+    await expect(page.locator("[data-overview-screen] [data-graph-open]")).toHaveCount(2);
     await screenshot(page, "s6-overview");
-    await page.locator(`[data-overview-screen] [data-lens-open="${parent}"]`).click();
+    await page.locator(`[data-overview-screen] [data-graph-open="${parent}"]`).click();
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     // A new Workspace starts with its agents alone: the side panel is
@@ -69,7 +63,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator("[data-side-panel]")).toHaveCount(0);
     await expect(page.locator("[data-workspace-toolbar] :is([data-tool-toggle], [data-tools-toggle], [data-tool-tab])")).toHaveCount(0);
 
-    // The toolbar toggle and the palette choose the panel's state; each is
+    // The toolbar toggle and the toolbar's menu choose the panel's state; each is
     // one workspace_view. With no view open the panel is only as wide as the
     // Explorer column.
     const panel = page.locator("[data-side-panel]");
@@ -82,9 +76,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     const toolColumn = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-panel-ideal")));
     // The card is the column, its hairlines inside the token (issue 170).
     expect((await panel.locator("[data-panel-card]").boundingBox())!.width).toBeCloseTo(toolColumn, 0);
-    await page.keyboard.press("Meta+KeyK");
-    await page.keyboard.type("Close side panel");
-    await page.keyboard.press("Enter");
+    await choosePanel(page, "closed");
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     expect(sent.get("workspace_view")).toBe(before + 2);
     expect(last.get("workspace_view")).toEqual({ panel: "closed" });
@@ -101,9 +93,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(panel.locator('[data-tool-tab="changes"]')).toHaveAttribute("aria-selected", "true");
     // Hiding the only content closes the panel. Reopening keeps History.
-    await page.keyboard.press("Meta+KeyK");
-    await page.keyboard.type("Hide History");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Meta+KeyE");
     await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
     await expect(panel).toHaveCount(0);
     await page.keyboard.press("Meta+KeyE");
@@ -232,7 +222,14 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await agentTab.click();
     await expect(agentTab).toHaveAttribute("aria-selected", "true");
     await expect(workspace).toHaveAttribute("data-panel", "open");
+    // A click on the agent pane reaches its PTY as a mouse report, a moment
+    // after the click returns; counting from before it is what keeps that
+    // report out of what ⌘F is expected to send.
+    const mouseReports = () => fs.readFileSync(herdr.inputLogs[1], "latin1").split("\x1b[<0;").length - 1;
+    const reportsBefore = mouseReports();
     await childHost.click({ position: { x: 40, y: 60 } });
+    // Press and release.
+    await expect.poll(mouseReports, { timeout: 10_000 }).toBe(reportsBefore + 2);
     expect(resizes()).toBe(resizesBefore);
     // The pane is an agent with its own find and no history in Herdr, so ⌘F
     // opens the agent's search in that pane, never the document's; any
@@ -333,14 +330,19 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect(page.locator('[data-panel-toggle="off"]')).toBeVisible();
     expect(await agentArea.boundingBox()).toEqual(agentBox);
+    // Two focus requests in flight can be applied by Herdr in either order, and
+    // the later one then reads as Herdr's own move (issue #299, a product race);
+    // the second goes out once Herdr holds the first.
+    await expect.poll(() => herdrHasFocus(herdr, child), { timeout: 15_000 }).toBe(true);
     await page.locator(`[data-agent-open="${parent}"]`).first().click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
+    await expect.poll(() => herdrHasFocus(herdr, parent), { timeout: 15_000 }).toBe(true);
 
     // A declared child shows as a chip under its parent's header; the core
     // moves the delegated pane to its own tab, so the chip crosses tabs with
     // one tracked focus, and the child's Return comes back the same way
     // (B14-B16).
-    declareChild(herdr, child, parent);
+    declareParent(herdr, child, parent);
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0, { timeout: 20_000 });
     const chip = page.locator(`[data-pane-children="${parent}"] [data-child-chip="${child}"]`);
     await expect(chip).toBeVisible({ timeout: 20_000 });
@@ -377,9 +379,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
 
     // A restart brings the Workspace back with its side panel and View
     // tabs; the file that went away stays as an unavailable tab (B19, B20).
-    await page.keyboard.press("Meta+KeyK");
-    await page.keyboard.type("Expand side panel");
-    await page.keyboard.press("Enter");
+    await choosePanel(page, "expanded");
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     fs.rmSync(path.join(herdr.root, "fixture", "gone.txt"));
     daemon = await daemon.restart();

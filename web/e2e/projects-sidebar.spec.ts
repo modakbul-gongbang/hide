@@ -12,7 +12,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
 
@@ -328,7 +328,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     // descendant badge, and the parent keeps an always-shown chevron.
     // Unfolding is one agent_tree_toggle and nothing else, the C line gives way
     // to the child row under its parent, and its own checkout still lists it.
-    execFileSync(herdr.bin, ["pane", "report-metadata", rowsPane, "--source", "e2e-lineage", "--token", `parent_pane=${mainPane}`], { env: herdr.env, timeout: 30_000 });
+    declareParent(herdr, rowsPane, mainPane);
     await primaryToggle.click();
     const parentRow = primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"]`);
     await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0, { timeout: 20_000 });
@@ -376,7 +376,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await projectToggle.click();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
     const moved = [...sent].filter(([kind, count]) => count !== (quiet.get(kind) ?? 0)).map(([kind]) => kind);
-    expect(moved.filter((kind) => !["agent_tree_toggle", "ui_state_update", "ui_state_update.usage_hint"].includes(kind))).toEqual([]);
+    expect(moved.filter((kind) => !["agent_tree_toggle", "checkout_agents_toggle", "project_checkouts_fold", "ui_state_update", "ui_state_update.usage_hint"].includes(kind))).toEqual([]);
     expect(await page.locator("[data-workspace-screen]").count()).toBe(screenBefore);
     await expect(folderRow).toHaveAttribute("aria-current", "true");
 
@@ -397,8 +397,8 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
     await expect(overview).toHaveAttribute("aria-current", "page");
-    expect((sent.get("ui_state_update") ?? 0) - (beforeRow.get("ui_state_update") ?? 0)).toBe(1);
-    expect(last.get("ui_state_update")?.collapsed_workspace_ids).not.toContain(await project.getAttribute("data-project"));
+    expect((sent.get("project_checkouts_fold") ?? 0) - (beforeRow.get("project_checkouts_fold") ?? 0)).toBe(1);
+    expect(last.get("project_checkouts_fold")).toEqual({ workspace_id: await project.getAttribute("data-project"), expanded: true });
     expect(sent.get("focus_checkout") ?? 0).toBe(beforeRow.get("focus_checkout") ?? 0);
     await projectRow.click();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");

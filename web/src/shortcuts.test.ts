@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DIGITS,
+  AREA_COMMANDS,
   EDITABLE_PANE_COMMANDS,
   REGISTRY,
   bindingProblem,
@@ -31,7 +32,7 @@ describe("shortcut registry", () => {
 
   it("marks exactly the seven moved chords", () => {
     const moved = REGISTRY.filter((command) => command.moved).map((command) => command.id).sort();
-    expect(moved).toEqual(["close_pane", "close_tab", "new_tab", "previous_recent_panel", "recent_panel", "reopen_closed_tab", "settings"].sort());
+    expect(moved).toEqual(["close_pane", "close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "settings"].sort());
   });
 
   it("offers Add project only in the desktop app, which has the folder picker", () => {
@@ -51,8 +52,10 @@ describe("shortcut registry", () => {
       new_tab: "⌘T",
       close_tab: "⌘W",
       reopen_closed_tab: "⇧⌘T",
-      recent_panel: "⌃⇥",
-      previous_recent_panel: "⌃⇧⇥",
+      recent_area_tab: "⌃⇥",
+      recent_panel: "",
+      previous_recent_panel: "",
+      previous_recent_area_tab: "⌃⇧⇥",
       new_workspace: "⇧⌘N",
       start_agent: "⌘N",
       recent_project: "⌥⇥",
@@ -80,6 +83,8 @@ describe("shortcut registry", () => {
       move_to_trash: "⌘⌫",
       settings: "⌘,",
       shortcuts: "⌘/",
+      // The area commands have no chord until the operator binds one (PRD cmdk-navigation D-05).
+      ...Object.fromEntries(AREA_COMMANDS.map((id) => [id, ""])),
       // ⌘n selects the nth tab and ⌥n the nth Agents row (electron-digit-shortcuts-hints D-02).
       ...Object.fromEntries(DIGITS.map((digit) => [`select_tab_${digit}`, `⌘${digit}`])),
       ...Object.fromEntries(DIGITS.map((digit) => [`select_agent_${digit}`, `⌥${digit}`])),
@@ -146,7 +151,7 @@ describe("shortcut registry", () => {
     expect(matchHost(press("KeyT", { meta: true }), REGISTRY, "electron")?.id).toBe("new_tab");
     expect(matchHost(press("KeyW", { meta: true }), REGISTRY, "electron")?.id).toBe("close_tab");
     expect(matchHost(press("KeyT", { meta: true, shift: true }), REGISTRY, "electron")?.id).toBe("reopen_closed_tab");
-    expect(matchHost(press("Tab", { ctrl: true }), REGISTRY, "electron")?.id).toBe("recent_panel");
+    expect(matchHost(press("Tab", { ctrl: true }), REGISTRY, "electron")?.id).toBe("recent_area_tab");
     expect(matchHost(press("KeyT", { alt: true }), REGISTRY, "electron")).toBeNull();
     expect(matchHost(press("Backspace", { meta: true }), REGISTRY, "electron")).toBeNull();
     // B12: the browser host still runs its own column.
@@ -180,7 +185,7 @@ describe("shortcut registry", () => {
     expect(matchHost({ code: "KeyT", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("new_tab");
     expect(matchHost({ code: "KeyT", metaKey: false, altKey: true, shiftKey: true, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("reopen_closed_tab");
     expect(matchHost({ code: "KeyT", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")).toBeNull();
-    expect(matchHost({ code: "Backquote", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("recent_panel");
+    expect(matchHost({ code: "Backquote", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("recent_area_tab");
     expect(matchHost({ code: "Slash", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("shortcuts");
     expect(matchHost({ code: "Backspace", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")).toBeNull();
     expect(chordEquals({ code: "KeyA" }, { code: "KeyA", meta: false })).toBe(true);
@@ -239,11 +244,28 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect(effectiveRegistry({ split_right: "alt+KeyR", split_down: "alt+KeyR" }).registry).toBe(REGISTRY);
   });
 
-  it("edits the seven pane commands the browser host runs, the sidebar switch and the device rail toggle", () => {
+  it("edits the pane commands, the cycle commands, the sidebar switch, the device rail toggle and the eight area commands", () => {
     expect([...EDITABLE_PANE_COMMANDS].sort()).toEqual(
-      ["close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "toggle_sidebar_view", "toggle_zoom"].sort(),
+      [
+        "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
+        "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "toggle_sidebar_view", "toggle_zoom",
+        "focus_next_agent_area", "focus_previous_agent_area", "grow_agent_area", "shrink_agent_area",
+        "focus_next_view_area", "focus_previous_view_area", "grow_view_area", "shrink_view_area",
+      ].sort(),
     );
     for (const id of EDITABLE_PANE_COMMANDS) expect(REGISTRY.some((command) => command.id === id)).toBe(true);
+  });
+
+  it("leaves the area commands unbound on every host until the operator binds one (PRD cmdk-navigation B24)", () => {
+    for (const id of AREA_COMMANDS) {
+      for (const host of ["browser", "electron"] as const) expect(displayCommand(id, host), `${id} ${host}`).toBe("");
+    }
+    const bound = effectiveRegistry({ grow_view_area: "meta+alt+KeyG", focus_next_agent_area: "alt+KeyJ" });
+    expect(bound.diagnostic).toBeNull();
+    expect(displayCommand("grow_view_area", "browser", bound.registry)).toBe("⌥⌘G");
+    const desktop = effectiveRegistry({ shrink_agent_area: "command+option+h" }, "electron");
+    expect(desktop.diagnostic).toBeNull();
+    expect(displayCommand("shrink_agent_area", "electron", desktop.registry)).toBe("⌥⌘H");
   });
 
   it("runs the Explorer on ⌘E and leaves the sidebar switch unbound until the operator binds it (issue 170)", () => {
@@ -281,7 +303,8 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     expect(parseMacosChord("command+=")).toEqual({ code: "Equal", meta: true });
     expect(parseMacosChord("command+command+d")).toBeNull();
     expect(parseMacosChord("d")).toBeNull();
-    expect(parseMacosChord("command+tab")).toBeNull();
+    expect(parseMacosChord("control+tab")).toEqual({ code: "Tab", ctrl: true });
+    expect(bindingProblem("recent_area_tab", { code: "Tab", meta: true }, REGISTRY, "electron")).toContain("kept by macOS");
     expect(serializeMacosChord({ code: "Enter", meta: true, shift: true, alt: true, ctrl: true })).toBe("command+control+option+shift+return");
     expect(serializeMacosChord({ code: "ArrowUp", meta: true })).toBeNull();
     expect(storedKey("text_larger", "electron")).toBe("increase_text_size");

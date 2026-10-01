@@ -214,6 +214,39 @@ export async function shellPage(app: ElectronApplication): Promise<Page> {
 }
 
 /**
+ * Sizes the first window to what a layout needs, within the primary work
+ * area: a CI runner's screen is 1024 points wide and its usable height
+ * differs by runner (681 on one, 700 or more on another), and macOS clamps a
+ * window to the work area without saying so. The width is the layout's and
+ * must be granted whole; the height is the work area's when that is shorter.
+ * Returns the size macOS granted, so a spec asserts its layout against it.
+ */
+export async function fitWindow(app: ElectronApplication, wanted: { width: number; height: number }): Promise<{ width: number; height: number }> {
+  const { granted, area } = await app.evaluate(({ BrowserWindow, screen }, size) => {
+    const work = screen.getPrimaryDisplay().workArea;
+    const window = BrowserWindow.getAllWindows()[0]!;
+    window.setBounds({ x: work.x, y: work.y, width: size.width, height: Math.min(size.height, work.height) });
+    const bounds = window.getBounds();
+    return { granted: { width: bounds.width, height: bounds.height }, area: { width: work.width, height: work.height } };
+  }, wanted);
+  expect(granted.width, `the screen's work area is ${area.width} wide and this layout needs ${wanted.width}`).toBe(wanted.width);
+  expect(granted.height, "macOS granted a different height than the work area allows").toBe(Math.min(wanted.height, area.height));
+  return granted;
+}
+
+/**
+ * A launch that returns once the host's own navigation from the status page
+ * to the shell has landed, for a spec that reloads or navigates the window
+ * itself. A spec navigation sent while the host's is in flight replaces it:
+ * the host drops a superseded load as not a failure, so the window stays on
+ * the status page with no socket, or the spec's reload is the one aborted.
+ */
+export async function launchShell(env: Record<string, string>): Promise<{ app: ElectronApplication; page: Page }> {
+  const app = await relaunch(env);
+  return { app, page: await shellPage(app) };
+}
+
+/**
  * The built app copied under this run's directory, so an unpackaged launch
  * has no worktree `target/` beside it and searches for `hide` the way an
  * installed app does.

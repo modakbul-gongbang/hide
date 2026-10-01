@@ -795,11 +795,17 @@ fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
                 assert!(runtime.reserve_agent_effect("/agent-groups", "pending-new"));
             }
             let mut local = tab_order_payload("/agent-groups", &refs, &refs, "w-order:t1");
-            local.agents = crate::sidebar::owned_label_fixture(serde_json::json!([{
-                "id":"child", "pane_id":"w-order:t2:p", "agent_status":"working",
-                "state_change_seq":1, "spawned_from_pane_id":"parent",
-                "spawned_from_machine_id":"machine-mini", "tokens":{"task":"Child"}
-            }]))
+            local.agents = serde_json::from_value(
+                crate::sidebar::owned_label_fixture::<serde_json::Value>(
+                    serde_json::json!({"agents": [{
+                        "id":"child", "pane_id":"w-order:t2:p", "agent_status":"working",
+                        "state_change_seq":1, "spawned_from_pane_id":"parent",
+                        "spawned_from_machine_id":"machine-mini", "tokens":{"task":"Child"}
+                    }]}),
+                )
+                .unwrap()["agents"]
+                    .clone(),
+            )
             .unwrap();
             let remote = RemoteSessionSnapshot {
             workspaces: vec![],

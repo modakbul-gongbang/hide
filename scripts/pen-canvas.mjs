@@ -8,7 +8,7 @@
 // returns.
 
 import fs from 'node:fs';
-import {read, loadCanvas, apply, renamed, unclaimed} from './pen-tokens.mjs';
+import {read, loadCanvas, apply, renamed, unclaimed, retiredNames} from './pen-tokens.mjs';
 import {layout, serialize} from './pen-bands.mjs';
 import {foldLegacyMasters} from './pen-system.mjs';
 
@@ -17,7 +17,7 @@ export function generate(root) {
   const {file, document: original} = loadCanvas(root);
   const renamedDocument = renamed(original);
   const orphans = unclaimed(map, renamedDocument, expected);
-  const tokened = JSON.parse(apply(renamedDocument, expected));
+  const tokened = JSON.parse(apply(renamedDocument, expected, retiredNames(map)));
 
   // Pen currently renders variable-bound node opacity as invisible. Materialize
   // only the declared bindings, including instance descendant overrides, while

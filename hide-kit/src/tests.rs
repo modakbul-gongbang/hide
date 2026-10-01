@@ -11,6 +11,11 @@ use serde_json::{Value, json};
 
 use super::*;
 
+/// Whether this system is one the kit installs hcoord on (see
+/// `hcoord::unsupported_system`); the tests that need its shim, its modes or
+/// its removal run only there.
+const HCOORD_INSTALLS: bool = cfg!(target_os = "macos");
+
 /// A Herdr that keeps a plugin registry in memory and answers `plugin.list`
 /// and `plugin.unlink` the way Herdr 0.9.1 does.
 struct FakeHerdr {
@@ -186,17 +191,24 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
 
     let report = apply(&fixture.target, &Scope::Automatic);
 
-    for id in [
-        ComponentId::Cli,
-        ComponentId::ClaudeCodeHook,
-        ComponentId::Hcoord,
-    ] {
+    for id in [ComponentId::Cli, ComponentId::ClaudeCodeHook] {
         assert_eq!(
             state(&report, id),
             ComponentState::Installed,
             "{id:?}: {report:?}"
         );
     }
+    // hcoord keeps its daemon running through launchd, so the kit installs it
+    // on a Mac and reports it absent anywhere else.
+    assert_eq!(
+        state(&report, ComponentId::Hcoord),
+        if HCOORD_INSTALLS {
+            ComponentState::Installed
+        } else {
+            ComponentState::Absent
+        },
+        "{report:?}"
+    );
     assert_eq!(
         state(&report, ComponentId::CodexHook),
         ComponentState::Absent
@@ -219,17 +231,22 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
     // A machine that never had the labels plugin is not asked about it.
     assert!(fixture.herdr.calls.lock().unwrap().is_empty());
     assert!(report.labels_retirement.is_empty());
-    let shim = std::fs::read_to_string(fixture.home().join(".hcoord/bin/hcoord")).unwrap();
-    assert!(shim.starts_with("#!/bin/sh\nHCOORD_TEST='1' exec '/bin/sh' '"));
-    assert!(
-        std::fs::read_to_string(fixture.home().join("ensure.log"))
-            .unwrap()
-            .contains("daemon ensure --json")
-    );
+    if HCOORD_INSTALLS {
+        let shim = std::fs::read_to_string(fixture.home().join(".hcoord/bin/hcoord")).unwrap();
+        assert!(shim.starts_with("#!/bin/sh\nHCOORD_TEST='1' exec '/bin/sh' '"));
+        assert!(
+            std::fs::read_to_string(fixture.home().join("ensure.log"))
+                .unwrap()
+                .contains("daemon ensure --json")
+        );
+    } else {
+        assert!(!fixture.home().join(".hcoord").exists());
+    }
     let record = std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap();
-    for code in ["cli", "claude_code_hook", "hcoord"] {
+    for code in ["cli", "claude_code_hook"] {
         assert!(record.contains(code), "{record}");
     }
+    assert_eq!(record.contains("hcoord"), HCOORD_INSTALLS, "{record}");
     assert!(!record.contains("codex_hook"));
 }
 
@@ -551,6 +568,7 @@ fn a_watcher_that_cannot_be_stopped_keeps_its_state_folder() {
     drop(held);
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn without_a_runtime_for_hcoord_it_fails_and_an_existing_shim_is_left() {
     let mut fixture = Fixture::new();
@@ -576,6 +594,7 @@ fn without_a_runtime_for_hcoord_it_fails_and_an_existing_shim_is_left() {
 /// The kit keeps code that launchd and Herdr run under `~/.hide/kit`: a
 /// fresh folder is the account's alone, and one another account can write to
 /// is refused rather than run from.
+#[cfg(target_os = "macos")]
 #[test]
 fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
     let fixture = Fixture::new();
@@ -648,6 +667,7 @@ fn an_unreadable_record_installs_nothing_missing_on_a_guess() {
     assert_eq!(std::fs::read_to_string(&record).unwrap(), "not a record");
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn removing_the_kit_takes_only_hides_parts_and_leaves_hcoord() {
     let fixture = Fixture::new();
