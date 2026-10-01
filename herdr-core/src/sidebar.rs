@@ -127,13 +127,25 @@ pub struct SessionAgentPayload {
     /// handed to an agent's own fork command.
     #[serde(default)]
     pub agent_session: Option<SessionAgentSessionPayload>,
-    /// The pane this agent was spawned from, as Herdr's own lineage records it.
-    /// Present only on an agent started through `agent.new` with a source pane.
+    /// The pane this agent was spawned from, as hcoord's `parent_pane` token
+    /// declares it (Herdr records no lineage). `wire.rs` leaves it empty when
+    /// the child's own session no longer matches the one the token was
+    /// written for.
     #[serde(default)]
     pub spawned_from_pane_id: Option<String>,
     /// Stable identity of a parent on another machine, recorded by hcoord.
     #[serde(default)]
     pub spawned_from_machine_id: Option<String>,
+    /// The digest of the parent's session the relationship was written for
+    /// (`wire::session_digest`). `apply_lineage` keeps the parent only while
+    /// its pane reports that session; a declared parent without one has
+    /// nothing to be compared with and is a root.
+    #[serde(default)]
+    pub declared_parent_session: Option<String>,
+    /// The digest of this pane's own session (`wire::session_digest`), which
+    /// the rows that declare it as their parent are compared with.
+    #[serde(default)]
+    pub lineage_session: Option<String>,
     #[serde(default)]
     pub state_change_seq: Option<u64>,
     #[serde(default)]
@@ -712,6 +724,23 @@ pub fn apply_lineage(
                 .copied()
         })
         .collect::<Vec<_>>();
+    // A declaration names a pane, and a pane outlives the agent it hosted: it
+    // holds only while that pane still reports the session the declaration
+    // was written for. One that moved on is no declaration at all - not a
+    // line, not an orphan's hint - so its child is a root and the pane's new
+    // agent adopts nobody (the child's own session was checked in `wire.rs`).
+    for index in 0..agents.len() {
+        let Some(parent) = parents[index] else {
+            continue;
+        };
+        if !crate::wire::session_holds(
+            agents[index].declared_parent_session.as_deref(),
+            agents[parent].lineage_session.as_deref(),
+        ) {
+            parents[index] = None;
+            agents[index].spawned_from_pane_id = None;
+        }
+    }
     // Walk parent chains iteratively: depth is data, never a recursion limit.
     let original_parents = parents.clone();
     for index in 0..agents.len() {
@@ -1473,6 +1502,9 @@ fn project_agent(mut agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot,
             .map(str::to_owned),
         spawned_from_machine_id: non_empty(agent.spawned_from_machine_id.as_deref())
             .map(str::to_owned),
+        declared_parent_session: non_empty(agent.declared_parent_session.as_deref())
+            .map(str::to_owned),
+        lineage_session: non_empty(agent.lineage_session.as_deref()).map(str::to_owned),
         delegated: false,
         descendant_counts: crate::model::DescendantCountsSnapshot::default(),
         waiting_on_descendants: false,
@@ -1859,13 +1891,44 @@ fn valid_elapsed(value: &str) -> bool {
         && matches!(suffix, "s" | "m" | "h" | "d")
 }
 
+/// The session every fixture row runs and every fixture declaration was
+/// written for (`wire::session_digest`).
+#[cfg(test)]
+pub(crate) fn fixture_lineage_session() -> String {
+    crate::wire::session_digest("fixture-lineage-session").unwrap()
+}
+
+/// A declared parent is proven by sessions (`wire::session_holds`), and the
+/// fixtures that name parents do not care which session runs where, so each
+/// row runs one shared session and each declaration was written for it:
+/// whichever row a test makes another's parent still holds. A test about the
+/// proof itself sets the sessions it means.
+#[cfg(test)]
+pub(crate) fn lineage_fixture_value(mut value: Value) -> Value {
+    if let Some(agents) = value.get_mut("agents").and_then(Value::as_array_mut) {
+        for agent in agents {
+            if agent.get("lineage_session").is_none() {
+                agent["lineage_session"] = Value::String(fixture_lineage_session());
+            }
+            let declares_parent = agent
+                .get("spawned_from_pane_id")
+                .is_some_and(|parent| !parent.is_null());
+            if declares_parent && agent.get("declared_parent_session").is_none() {
+                agent["declared_parent_session"] = Value::String(fixture_lineage_session());
+            }
+        }
+    }
+    value
+}
+
 /// Existing status/lineage fixtures describe labels belonging to the current
 /// session. Supply the now-required provenance without changing their expected
 /// axes. Isolation regressions intentionally deserialize their raw input.
 #[cfg(test)]
 pub(crate) fn owned_label_fixture<T: serde::de::DeserializeOwned>(
-    mut value: Value,
+    value: Value,
 ) -> Result<T, serde_json::Error> {
+    let mut value = lineage_fixture_value(value);
     if let Some(agents) = value.get_mut("agents").and_then(Value::as_array_mut) {
         for agent in agents {
             let has_labels = agent

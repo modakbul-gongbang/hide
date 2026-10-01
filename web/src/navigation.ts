@@ -164,7 +164,8 @@ export function agentPlaces(
   return (device, paneId) => byDevice.get(device)?.get(paneId) ?? null;
 }
 
-function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
+/** Where each pane sits, as `project › branch` (Home, or the project alone for a plain folder), keyed by pane id. */
+export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
   const places = new Map<string, string>();
   for (const workspace of workspaces) {
     const folder = folderCheckout(workspace) !== null;

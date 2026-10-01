@@ -7,7 +7,7 @@
 // `menuBindings` resolves with the rules the shell's listener runs.
 
 import type { MenuItemConstructorOptions } from "electron";
-import { effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
+import { AREA_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
   Enter: "Return",
@@ -70,7 +70,7 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "text_smaller",
     "text_reset",
   ],
-  Pane: ["split_right", "split_down", "toggle_zoom", null, "keep_open"],
+  Pane: ["split_right", "split_down", "toggle_zoom", null, "keep_open", null, ...AREA_COMMANDS],
   Help: ["shortcuts"],
 };
 
@@ -84,10 +84,12 @@ function commandItem(command: Command, send: (id: CommandId) => void): MenuItemC
   return { id: command.id, label: command.title, accelerator: command.electron && !isCycleCommand(command.id) ? accelerator(command.electron) : undefined, click: () => send(command.id) };
 }
 
-// A reported set is a few pane commands; anything past these caps is not one.
-// The core refuses a stored set past the same caps (`BINDINGS_CAP` and
-// `BINDING_TEXT_CAP` in herdr-core/src/runtime/events.rs); change them together.
-const BINDINGS_CAP = 16;
+// A reported set is the editable commands the operator rebound; anything past
+// these caps is not one. The core refuses a stored set past the same caps
+// (`BINDINGS_CAP` and `BINDING_TEXT_CAP` in herdr-core/src/runtime/events.rs);
+// change them together. The cap holds every editable command with room to
+// spare: `menu.test.ts` fails when a new one would no longer fit.
+export const BINDINGS_CAP = 32;
 const BINDING_TEXT_CAP = 64;
 
 /**

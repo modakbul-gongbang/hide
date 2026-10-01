@@ -65,9 +65,27 @@ export type CommandId =
   | "text_larger"
   | "text_smaller"
   | "text_reset"
+  | AreaCommandId
   | "settings"
   | "shortcuts"
   | NumberedCommandId;
+
+/**
+ * Moving between the Agent areas or the View areas and resizing the one in
+ * use (PRD cmdk-navigation D-05): commands ⌘K used to carry, with no default
+ * chord, bindable in Settings and in the desktop menu.
+ */
+export const AREA_COMMANDS = [
+  "focus_next_agent_area",
+  "focus_previous_agent_area",
+  "grow_agent_area",
+  "shrink_agent_area",
+  "focus_next_view_area",
+  "focus_previous_view_area",
+  "grow_view_area",
+  "shrink_view_area",
+] as const;
+export type AreaCommandId = (typeof AREA_COMMANDS)[number];
 
 export type Digit = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 export const DIGITS: readonly Digit[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -160,6 +178,14 @@ export const REGISTRY: readonly Command[] = [
   { id: "text_larger", title: "Larger text", group: "Panes", browser: { code: "Equal", meta: true }, electron: { code: "Equal", meta: true }, moved: false },
   { id: "text_smaller", title: "Smaller text", group: "Panes", browser: { code: "Minus", meta: true }, electron: { code: "Minus", meta: true }, moved: false },
   { id: "text_reset", title: "Reset text size", group: "Panes", browser: { code: "Digit0", meta: true }, electron: { code: "Digit0", meta: true }, moved: false },
+  { id: "focus_next_agent_area", title: "Focus next Agent area", group: "Panes", browser: null, electron: null, moved: false },
+  { id: "focus_previous_agent_area", title: "Focus previous Agent area", group: "Panes", browser: null, electron: null, moved: false },
+  { id: "grow_agent_area", title: "Grow Agent area", group: "Panes", browser: null, electron: null, moved: false },
+  { id: "shrink_agent_area", title: "Shrink Agent area", group: "Panes", browser: null, electron: null, moved: false },
+  { id: "focus_next_view_area", title: "Focus next View area", group: "Panes", browser: null, electron: null, moved: false },
+  { id: "focus_previous_view_area", title: "Focus previous View area", group: "Panes", browser: null, electron: null, moved: false },
+  { id: "grow_view_area", title: "Grow View area", group: "Panes", browser: null, electron: null, moved: false },
+  { id: "shrink_view_area", title: "Shrink View area", group: "Panes", browser: null, electron: null, moved: false },
   { id: "move_to_trash", title: "Move to Trash", group: "Panes", browser: { code: "Backspace", meta: true }, electron: { code: "Backspace", meta: true }, moved: false, passthrough: "Explorer only; in a terminal ⌘⌫ clears the line" },
   { id: "settings", title: "Settings", group: "Help", browser: { code: "Comma", alt: true }, electron: { code: "Comma", meta: true }, moved: true, movedFrom: "⌘," },
   { id: "shortcuts", title: "Keyboard shortcuts", group: "Help", browser: { code: "Slash", meta: true }, electron: { code: "Slash", meta: true }, moved: false },
@@ -238,6 +264,7 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "text_larger",
   "text_smaller",
   "text_reset",
+  ...AREA_COMMANDS,
 ];
 
 /**

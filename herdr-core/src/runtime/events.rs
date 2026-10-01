@@ -847,6 +847,15 @@ pub(super) struct IssueDetailRequestPayload {
     pub(super) task_key: String,
 }
 
+/// `github_search`: pull requests and issues of this Mac's GitHub projects
+/// matching `query`, answered in `issue_work.search` under `request_id`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct GithubSearchPayload {
+    pub(super) request_id: String,
+    pub(super) query: String,
+}
+
 /// `local_issue_update`: a Local issue's title and body, edited in its panel.
 /// A GitHub issue has no such event; it is edited on GitHub.
 #[derive(Debug, Deserialize)]
@@ -1212,6 +1221,7 @@ pub(super) enum Event {
     IssueSettingsSet(IssueSettingsSetPayload),
     IssueCreate(IssueCreatePayload),
     IssueDetailRequest(IssueDetailRequestPayload),
+    GithubSearch(GithubSearchPayload),
     WorktreeNameSuggest(WorktreeNameSuggestPayload),
     IssueSetOpen(IssueSetOpenPayload),
     LocalIssueUpdate(LocalIssueUpdatePayload),
@@ -1249,8 +1259,10 @@ pub(super) enum Event {
 /// The web shell rebinds a handful of pane commands; the bound keeps a
 /// malformed client from growing the persisted state without limit.
 // The desktop host checks a reported set against the same caps
-// (desktop/src/main/menu.ts); change them together.
-const BINDINGS_CAP: usize = 16;
+// (desktop/src/main/menu.ts); change them together. 32 holds every editable
+// pane command (the area focus and resize commands made it 17) with room to
+// spare, and the desktop test fails before a new one would not fit.
+const BINDINGS_CAP: usize = 32;
 const BINDING_TEXT_CAP: usize = 64;
 
 /// Whether a stored shortcut map is within the caps a host's set may use;
@@ -1402,6 +1414,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "issue_settings_set" => decode!(IssueSettingsSetPayload, IssueSettingsSet),
         "issue_create" => decode!(IssueCreatePayload, IssueCreate),
         "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
+        "github_search" => decode!(GithubSearchPayload, GithubSearch),
         "worktree_name_suggest" => decode!(WorktreeNameSuggestPayload, WorktreeNameSuggest),
         "issue_set_open" => decode!(IssueSetOpenPayload, IssueSetOpen),
         "local_issue_update" => decode!(LocalIssueUpdatePayload, LocalIssueUpdate),
@@ -3095,6 +3108,7 @@ impl Runtime {
             Event::IssueSettingsSet(payload) => self.set_issue_settings(payload),
             Event::IssueCreate(payload) => self.create_issue(payload),
             Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
+            Event::GithubSearch(payload) => self.request_github_search(payload),
             Event::WorktreeNameSuggest(payload) => self.suggest_worktree_name(payload),
             Event::IssueSetOpen(payload) => self.set_issue_open(payload),
             Event::LocalIssueUpdate(payload) => self.update_local_issue(payload),

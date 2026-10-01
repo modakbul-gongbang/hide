@@ -192,6 +192,23 @@ function declareFixtureSession(env: NodeJS.ProcessEnv, bin: string, pane: string
   execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `label_owner=${owner}`, "--token", `status_owner=${owner}`, "--token", "label_generation=fixture", "--token", "status_generation=fixture"], { env, timeout: 30_000 });
 }
 
+/**
+ * Declares `child` as spawned by `parent` the way hcoord writes it: the
+ * parent's pane and the digest of each pane's session, which Hide compares with
+ * the session each pane reports now (docs: plugins/hcoord/docs/pane-tokens.md).
+ * Both panes must already hold an agent session; `herdr agent list` names it.
+ */
+export function declareParent(fixture: Pick<HerdrFixture, "bin" | "env">, child: string, parent: string): void {
+  type Agent = { pane_id: string; agent_session?: { value: string } };
+  const listed = JSON.parse(execFileSync(fixture.bin, ["agent", "list"], { env: fixture.env, encoding: "utf8", timeout: 30_000 })) as { result: { agents: Agent[] } };
+  const session = (pane: string): string => {
+    const value = listed.result.agents.find((agent) => agent.pane_id === pane)?.agent_session?.value;
+    if (!value) throw new Error(`pane ${pane} reports no agent session, so its relationship could not be written`);
+    return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+  };
+  execFileSync(fixture.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`, "--token", `child_session=${session(child)}`, "--token", `parent_session=${session(parent)}`], { env: fixture.env, timeout: 30_000 });
+}
+
 export function setFixtureSession(fixture: HerdrFixture, pane: string, sessionId: string): void {
   declareFixtureSession(fixture.env, fixture.bin, pane, "claude", sessionId, true);
 }
@@ -370,8 +387,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
 
 /**
  * A workspace of its own at `cwd` with one agent in it, recorded as spawned
- * by `parent` the way hcoord records it (a `parent_pane` token) when one is
- * named. Returns the new pane.
+ * by `parent` the way hcoord records it (`declareParent`) when one is named. Returns the new pane.
  */
 export async function spawnAgent(fixture: HerdrFixture, label: string, parent: string | null, cwd = path.join(fixture.root, label)): Promise<string> {
   fs.mkdirSync(cwd, { recursive: true });
@@ -381,6 +397,6 @@ export async function spawnAgent(fixture: HerdrFixture, label: string, parent: s
   const pane = created.result.root_pane.pane_id;
   await waitFor(() => paneText(fixture.env, fixture.bin, pane).includes("fixture %"), `a prompt in pane ${pane}`, 20_000, () => JSON.stringify(paneRead(fixture.env, fixture.bin, pane)));
   fixture.run(["agent", "start", label, "--kind", "claude", "--pane", pane]);
-  if (parent) execFileSync(fixture.bin, ["pane", "report-metadata", pane, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: fixture.env, timeout: 30_000 });
+  if (parent) declareParent(fixture, pane, parent);
   return pane;
 }

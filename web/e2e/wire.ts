@@ -109,6 +109,34 @@ export async function showTool(page: Page, tool: "explorer" | "changes"): Promis
   await expect(shown).toBeVisible();
 }
 
+/**
+ * Chooses the side panel's state from the Workspace toolbar's menu, the one
+ * place that names all three states (the palette no longer does).
+ */
+export async function choosePanel(page: Page, state: "closed" | "open" | "expanded"): Promise<void> {
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator(`[data-menu-item="panel:${state}"]`).click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+}
+
+/**
+ * Binds a chord to a command that has none by default in Settings, Shortcuts
+ * (the area commands and the global Recent Panels pair have no other way to run
+ * in a browser tab), then closes Settings.
+ */
+export async function bindChordlessCommand(page: Page, id: string, chord: string): Promise<void> {
+  await page.keyboard.press("Alt+Comma");
+  await page.locator('[data-settings-tab="shortcuts"]').click();
+  await expect(page.locator(`[data-shortcut-effective="${id}"]`)).toHaveText("-");
+  await page.locator(`[data-shortcut-record="${id}"]`).click();
+  await page.keyboard.press(chord);
+  await expect(page.locator(`[data-shortcut-problem="${id}"]`)).toHaveCount(0);
+  await page.locator(`[data-shortcut-apply="${id}"]`).click();
+  await expect(page.locator(`[data-shortcut-effective="${id}"]`)).not.toHaveText("-");
+  await page.locator("[data-settings-close]").click();
+  await expect(page.locator("[data-settings]")).toHaveCount(0);
+}
+
 export async function showExplorer(page: Page): Promise<void> {
   await showTool(page, "explorer");
 }
