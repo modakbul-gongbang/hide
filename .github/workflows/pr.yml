@@ -7,14 +7,15 @@
 # Runner placement is a capacity decision. This organization's plan runs five
 # macOS jobs at a time across every repository, and on 2026-09-28 one run held
 # all five for 26 minutes, so a second pull request waited up to 70 minutes
-# before its lanes started. The unit suites and the invariant checks run on
-# Linux. The Rust suite, the web end-to-end and the Electron end-to-end stay on
+# before its lanes started. The Rust suite, the unit suites and the invariant
+# checks run on Linux. The web end-to-end and the Electron end-to-end stay on
 # macOS, the platform hide ships on: a Linux web e2e was tried on 2026-09-29
 # and 22 of 87 tests failed on Linux-only behaviour (the daemon's terminal
 # control socket broke its pipe, headless Chromium read an empty clipboard,
-# and a visible scrollbar moved a menu by 20 px). The web end-to-end is split
-# into three shards, so no macOS job holds a slot for more than about ten
-# minutes.
+# and a visible scrollbar moved a menu by 20 px). The Rust suite moved to Linux
+# so its macOS slot could take a fourth web end-to-end shard: the macOS lanes
+# are now four web shards and the Electron end-to-end, which is four of the
+# five slots, and no macOS job holds a slot for more than about ten minutes.
 #
 # Every job and every long step has a timeout a few times its usual length
 # (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that
@@ -37,7 +38,7 @@ concurrency:
 jobs:
   rust:
     name: rust workspace
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -47,7 +48,7 @@ jobs:
           # A cache per pull request ref pushed the repository past the 10 GB
           # cache limit and evicted main's; main's is the one every run reads.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The macos-15 image ships rustfmt and Clippy with its Rust toolchain.
+      # The ubuntu image ships rustfmt and Clippy with its Rust toolchain.
       # The workspace is the core, the hide-ai provider boundary and the
       # context-label plugin; every lane covers all three.
       - name: Check formatting
@@ -117,13 +118,13 @@ jobs:
           pnpm --dir desktop test
 
   web-e2e:
-    name: web e2e ${{ matrix.shard }}/3
+    name: web e2e ${{ matrix.shard }}/4
     runs-on: macos-15
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -162,7 +163,7 @@ jobs:
           HIDE_E2E_TRACE: "1"
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir web exec playwright test --shard=${{ matrix.shard }}/3 --grep-invert @flaky
+          pnpm --dir web exec playwright test --shard=${{ matrix.shard }}/4 --grep-invert @flaky
       - name: Quarantined end-to-end (does not block verify)
         # A test tagged @flaky carries the issue that tracks its cause. It still
         # runs here, once, so a fix shows up as a pass and a regression of the
