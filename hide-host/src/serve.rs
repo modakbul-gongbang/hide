@@ -271,6 +271,28 @@ pub fn handle(call: Call) -> HostResult<Value> {
             cli_dir,
             herdr_socket,
         } => crate::kit::handle(action, &cli_dir, herdr_socket.as_deref()),
+        Call::LabelTranscript { request } => {
+            let home = std::env::var_os("HOME").ok_or_else(|| {
+                HostError::new(ErrorCode::Unsupported, "label_session_home_unavailable")
+            })?;
+            let transcript =
+                hide_session::label_transcript::read(Path::new(&home), &request).map_err(
+                    |reason| {
+                        let code = match reason.as_str() {
+                            "session_file_missing" => ErrorCode::NotFound,
+                            "session_kind_unsupported" => ErrorCode::Unsupported,
+                            reason if reason.starts_with("session_capacity:") => {
+                                ErrorCode::TooLarge
+                            }
+                            _ => ErrorCode::Io,
+                        };
+                        // The message is the stable reason code; it never
+                        // carries a path or transcript text.
+                        HostError::new(code, reason)
+                    },
+                )?;
+            to_value(transcript)
+        }
         Call::WorktreeRemove { removal } => {
             absolute(&removal.repository_root)?;
             absolute(&removal.checkout_path)?;

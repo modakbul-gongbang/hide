@@ -19,7 +19,9 @@ use crate::root::RootIdentity;
 /// 10: `kit` installs, judges and removes the device's install kit (PRD
 /// device-parity); a helper on 9 would refuse it as an unknown operation.
 /// 11: `home_sync` manages Hide's Home folder and its project links.
-pub const PROTOCOL_VERSION: u32 = 11;
+/// 12: `label_transcript` reads a pane's conversation for its label (PRD
+/// labels-in-hided D-03); a helper on 11 would refuse it as unknown.
+pub const PROTOCOL_VERSION: u32 = 12;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -171,6 +173,13 @@ pub enum Call {
         action: KitAction,
         cli_dir: String,
         herdr_socket: Option<String>,
+    },
+    /// One bounded read of a pane's conversation for its label, from the
+    /// checkpoint the caller kept (`hide_session::label_transcript::read`).
+    /// The helper keeps nothing between reads; it answers events and the
+    /// next checkpoint, never a path.
+    LabelTranscript {
+        request: hide_session::label_transcript::LabelTranscriptRequest,
     },
 }
 
