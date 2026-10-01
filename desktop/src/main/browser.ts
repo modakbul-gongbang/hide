@@ -542,7 +542,14 @@ export class BrowserViews {
     const starts = !held && command && isCycleCommand(command.id) && page?.visible && page.view.webContents.isFocused();
     const continues = held && command && isCycleCommand(command.id);
     const ends = held && ((input.type === "keyUp" && input.key === held.release) || (input.type === "keyDown" && input.key === "Escape"));
-    if (!starts && !continues && !ends) return false;
+    if (!starts && !continues && !ends) {
+      // A cycle chord that reached a page and did not start a hold: say which
+      // condition refused it, since the operator sees only a chord that did nothing.
+      if (!held && command && isCycleCommand(command.id) && page) {
+        this.log.event("browser.cycle_start_refused", { page_visible: page.visible, page_focused: page.view.webContents.isFocused(), window_focused: this.window?.isFocused() ?? false });
+      }
+      return false;
+    }
     const chord = command && hostChord(command, "electron");
     const release = chord && releaseModifier(chord);
     if (starts && release && page) {
