@@ -26,7 +26,7 @@ let server: http.Server;
 let origin: string;
 let cliSequence = 0;
 let extraWorkspace: string | null = null;
-let nativeControlOwned = false;
+let nativeModifiers = new Set<string>();
 
 const PAGES: Record<string, string> = {
   "/a.html": '<!doctype html><meta charset="utf-8"><title>Page A</title><body style="background:lavender"><h1>Page A</h1><input id="q" aria-label="query">',
@@ -57,10 +57,10 @@ test.beforeEach(() => {
 
 test.afterEach(async () => {
   let releaseFailure: string | null = null;
-  if (nativeControlOwned) {
-    const released = spawnSync("/usr/bin/osascript", ["-e", 'tell application "System Events" to key up control'], { encoding: "utf8", timeout: 10_000 });
-    nativeControlOwned = false;
-    if (released.status !== 0) releaseFailure = released.stderr || "native modifier release failed";
+  if (nativeModifiers.size) {
+    const released = postKeys(null, [...nativeModifiers].map((name) => `${name} up`));
+    nativeModifiers = new Set();
+    if (released.status !== 0) releaseFailure = String(released.stderr) || "native modifier release failed";
   }
   const info = test.info();
   if (info.status !== info.expectedStatus) console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
@@ -487,16 +487,55 @@ function menuClick(id: string): Promise<void> {
   return app!.evaluate(({ Menu }, id) => Menu.getApplicationMenu()!.getMenuItemById(id)!.click(), id);
 }
 
-/** Real macOS input, refused unless this candidate is the foreground process. */
-function nativeKeys(pid: number, statements: string): void {
-  const script = `tell application "System Events"
-if (unix id of (first application process whose frontmost is true)) is not ${pid} then error "candidate lost foreground"
-${statements}
-end tell`;
-  const result = spawnSync("/usr/bin/osascript", ["-e", script], { encoding: "utf8", timeout: 10_000 });
-  if (statements.includes("key down control")) nativeControlOwned = true;
-  if (result.status === 0 && statements.includes("key up control")) nativeControlOwned = false;
-  expect(result.status, result.stderr).toBe(0);
+/** macOS virtual key codes, and each modifier's flag bit, for the keys these cases press. */
+const MODIFIER_KEYS: Record<string, [code: number, flag: number]> = { control: [59, 0x40000], option: [58, 0x80000], shift: [56, 0x20000] };
+const KEY_CODES: Record<string, number> = { tab: 48, escape: 53, "1": 18, "2": 19, "3": 20 };
+
+/**
+ * Posts real key events at the HID tap, refused event by event unless `pid`
+ * is the foreground process (null skips the check, for releasing modifiers).
+ * A modifier is its own flags-changed event carrying its key code, as a
+ * physical key sends it; System Events' `key down control` sends none, so a
+ * page never sees Control go down or come up and a release proves nothing.
+ */
+function postKeys(pid: number | null, keys: string[]): ReturnType<typeof spawnSync> {
+  const held = new Set(nativeModifiers);
+  const flagsOf = () => [...held].reduce((sum, name) => sum | MODIFIER_KEYS[name]![1], 0);
+  const events: [code: number, down: boolean, modifier: boolean, flags: number][] = [];
+  for (const key of keys) {
+    const [name, direction] = key.split(" ");
+    const modifier = MODIFIER_KEYS[name!];
+    if (modifier) {
+      if (direction === "down") held.add(name!);
+      else held.delete(name!);
+      events.push([modifier[0], direction === "down", true, flagsOf()]);
+      continue;
+    }
+    const code = KEY_CODES[key];
+    if (code === undefined) throw new Error(`no key code for ${key}`);
+    events.push([code, true, false, flagsOf()], [code, false, false, flagsOf()]);
+  }
+  const script = `ObjC.import("CoreGraphics"); ObjC.import("AppKit");
+for (const [code, down, modifier, flags] of ${JSON.stringify(events)}) {
+  if (${pid ?? -1} >= 0 && $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier !== ${pid ?? -1}) throw new Error("candidate lost foreground");
+  const event = $.CGEventCreateKeyboardEvent(null, code, down);
+  if (modifier) $.CGEventSetType(event, 12);
+  $.CGEventSetFlags(event, flags);
+  $.CGEventPost(0, event);
+  delay(0.025);
+}`;
+  // A modifier counts as down once its event may have been posted, so the
+  // test's cleanup releases it even when the script stopped partway.
+  for (const key of keys) if (key.endsWith(" down")) nativeModifiers.add(key.split(" ")[0]!);
+  const result = spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", timeout: 10_000 });
+  if (result.status === 0) nativeModifiers = held;
+  return result;
+}
+
+/** Real macOS input to this candidate, which must be the foreground process. */
+function nativeKeys(pid: number, keys: string[]): void {
+  const result = postKeys(pid, keys);
+  expect(result.status, String(result.stderr)).toBe(0);
 }
 
 test("area cycle native: page input previews one exact area, releases once and cancels", { tag: NEEDS_FOCUS }, async () => {
@@ -551,13 +590,13 @@ test("area cycle native: page input previews one exact area, releases once and c
   const selections = () => page.locator('[data-view-tab-bar] [aria-selected=true]').evaluateAll(tabs => tabs.map(tab => tab.getAttribute("data-display")));
   const before = await selections();
   const commits = sent.get("view_layout") ?? 0;
-  nativeKeys(pid, "key down control\nkey code 48");
+  nativeKeys(pid, ["control down", "tab"]);
   await expect(page.locator('[data-cycle=area] [aria-selected=true]')).toHaveAttribute("data-cycle-row", previousId);
   await expect(page.locator(`[data-cycle-row="${outsideId}"]`)).toHaveCount(0);
   expect(await selections()).toEqual(before);
   expect(sent.get("view_layout") ?? 0).toBe(commits);
   await capture("area-native-preview");
-  nativeKeys(pid, "key up control");
+  nativeKeys(pid, ["control up"]);
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   await expect(tab(page, "Page B")).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => sent.get("view_layout") ?? 0).toBe(commits + 1);
@@ -565,8 +604,11 @@ test("area cycle native: page input previews one exact area, releases once and c
   expect(sent.get("view_layout") ?? 0).toBe(commits + 1);
   expect(await inPage(current, "window.tabKeys")).toBe(0);
   await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);
-  nativeKeys(pid, 'keystroke "z"');
-  expect(await inPage(previous, "document.getElementById('q').value")).toBe("z");
+  // A key code passes through the operator's input source, so the typing
+  // uses digits: a letter is ㅋ under Korean 2-set and leaves a composition
+  // open that turns the next chord into IME input.
+  nativeKeys(pid, ["1"]);
+  expect(await inPage(previous, "document.getElementById('q').value")).toBe("1");
   expect(await inPage(current, "document.querySelector('input').value")).toBe("한글 확인");
 
   // Escape from the actual native page preserves both the selection and owner.
@@ -574,28 +616,59 @@ test("area cycle native: page input previews one exact area, releases once and c
   await inPage(current, "document.querySelector('input').focus()");
   await focus(current);
   const canceled = sent.get("view_layout") ?? 0;
-  nativeKeys(pid, "key down control\nkey code 48");
+  nativeKeys(pid, ["control down", "tab"]);
   await expect(page.locator("[data-cycle=area]")).toBeVisible();
-  nativeKeys(pid, "key code 53\nkey up control");
+  nativeKeys(pid, ["escape", "control up"]);
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
   expect(sent.get("view_layout") ?? 0).toBe(canceled);
   await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
   await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
-  nativeKeys(pid, 'keystroke "e"');
-  expect(await inPage(current, "document.querySelector('input').value")).toContain("e");
+  nativeKeys(pid, ["2"]);
+  expect(await inPage(current, "document.querySelector('input').value")).toBe("한글 확인2");
   await capture("area-native-readable");
 
   // A native-window blur cancels a fresh hold; a later release cannot commit it.
-  nativeKeys(pid, "key down control\nkey code 48");
+  nativeKeys(pid, ["control down", "tab"]);
   await expect(page.locator("[data-cycle=area]")).toBeVisible();
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   await focus(current);
-  nativeKeys(pid, "key up control");
+  nativeKeys(pid, ["control up"]);
   await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
   expect(sent.get("view_layout") ?? 0).toBe(canceled);
   expect(originalId).not.toBe(previousId);
+
+  // A rebound two-modifier chord keeps the release contract: letting go of
+  // Control while Option is still down commits once, and the next typing
+  // reaches the chosen page rather than the page that started the hold.
+  await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="shortcuts"]').click();
+  await page.locator('[data-shortcut-record="recent_area_tab"]').click();
+  await page.keyboard.press("Control+Alt+Tab");
+  await page.locator('[data-shortcut-apply="recent_area_tab"]').click();
+  await expect(page.locator('[data-shortcut-effective="recent_area_tab"]')).toHaveText("⌃⌥⇥");
+  await page.keyboard.press("Escape");
+  await inPage(previous, "document.getElementById('q').value = ''");
+  await inPage(current, "document.querySelector('input').focus()");
+  await focus(current);
+  const rebound = sent.get("view_layout") ?? 0;
+  const originText = await inPage(current, "document.querySelector('input').value");
+  nativeKeys(pid, ["option down", "control down", "tab"]);
+  await expect(page.locator('[data-cycle=area] [aria-selected=true]')).toHaveAttribute("data-cycle-row", previousId);
+  expect(sent.get("view_layout") ?? 0).toBe(rebound);
+  await capture("area-native-rebound-preview");
+  nativeKeys(pid, ["control up"]);
+  await expect(page.locator("[data-cycle]")).toHaveCount(0);
+  await expect(tab(page, "Page B")).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => sent.get("view_layout") ?? 0).toBe(rebound + 1);
+  nativeKeys(pid, ["option up"]);
+  await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);
+  nativeKeys(pid, ["3"]);
+  expect(await inPage(previous, "document.getElementById('q').value")).toBe("3");
+  expect(await inPage(current, "document.querySelector('input').value")).toBe(originText);
+  expect(sent.get("view_layout") ?? 0).toBe(rebound + 1);
+  await capture("area-native-rebound-released");
 });
 
 /** A two-finger pinch at the middle of the page showing `url`, then the page's visual zoom. */
