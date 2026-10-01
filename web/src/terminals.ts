@@ -386,7 +386,7 @@ export function pasteText(paneId: string, text: string) {
   instances.get(paneId)?.term.paste(text);
 }
 
-/** Selects the pane's whole visible text, for Copy to take. */
+/** Selects the pane's whole text, for Copy to take; the pane keeps no scrollback, so that is what it shows. */
 export function selectAllText(paneId: string) {
   instances.get(paneId)?.term.selectAll();
 }

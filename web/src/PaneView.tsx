@@ -270,9 +270,14 @@ export const PaneView = memo(function PaneView({
               variant="ghost"
               size="sm"
               className="shrink-0 gap-xxs px-xs text-caption text-foreground hover:bg-popover"
-              aria-label={hidden > 0 ? `Unzoom pane, ${hidden} more ${hidden === 1 ? "pane" : "panes"} in this tab` : "Unzoom pane"}
+              aria-label={hidden > 0 ? `Unzoom pane (+${hidden} hidden)` : "Unzoom pane"}
               data-pane-zoom={hidden}
-              onClick={() => actions.toggleZoom(paneId)}
+              onClick={() => {
+                actions.toggleZoom(paneId);
+                // The chip goes with the zoom; a remote pane stays mounted,
+                // so the keyboard returns to its terminal rather than the page.
+                focusTerminal(paneId);
+              }}
             >
               <Maximize2Icon aria-hidden="true" />
               {hidden > 0 ? <span>+{hidden}</span> : null}

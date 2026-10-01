@@ -237,6 +237,8 @@ export function terminalMenuItems(pane: PaneRow, title: string, context: Termina
 
 type MenuOpen = { x: number; y: number; items: MenuEntry<PaneMenuId>[] };
 
+const noteDiagnostic = (message: string) => useShellStore.getState().noteDiagnostic(message);
+
 export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
   const [open, setOpen] = useState<MenuOpen | null>(null);
   const select = (id: PaneMenuId) => {
@@ -250,26 +252,29 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
         return actions.sleepAgent(pane.id);
       case "copy": {
         const text = terminalSelectionText(pane.id);
-        if (text !== null) void navigator.clipboard?.writeText(text).catch(() => useShellStore.getState().noteDiagnostic("pane menu copy: clipboard write refused"));
+        if (text === null) return;
+        if (!navigator.clipboard) return noteDiagnostic("pane menu copy: no clipboard in this host");
+        void navigator.clipboard.writeText(text).catch(() => noteDiagnostic("pane menu copy: clipboard write refused"));
         return;
       }
       case "paste":
+        if (!navigator.clipboard) return noteDiagnostic("pane menu paste: no clipboard in this host");
         void navigator.clipboard
-          ?.readText()
+          .readText()
           .then((text) => {
             if (text) pasteText(pane.id, text);
           })
-          .catch(() => useShellStore.getState().noteDiagnostic("pane menu paste: clipboard read refused"));
+          .catch(() => noteDiagnostic("pane menu paste: clipboard read refused"));
         return;
       case "select_all":
         return selectAllText(pane.id);
-      // The right-click focused this pane, so the focused-pane commands act on it.
+      // The right-click focused this pane; each command still names it.
       case "find":
-        return actions.openFind();
+        return actions.openFind(pane.id);
       case "split_right":
-        return actions.split("right");
+        return actions.split("right", pane.id);
       case "split_down":
-        return actions.split("down");
+        return actions.split("down", pane.id);
       case "toggle_zoom":
         return actions.toggleZoom(pane.id);
     }

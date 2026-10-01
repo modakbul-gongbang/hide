@@ -36,21 +36,15 @@ type PaneProps = {
   actions: Actions;
 };
 
-const NO_AGENTS: AgentRow[] = [];
-
-/** The agents of the context on screen, by pane: what a pane header draws as its mark and logo. */
+/** The agents of the context on screen, by pane, as the sidebar reads them: what a pane header draws as its mark and logo. */
 function useAgentsByPane(): Map<string, AgentRow> {
-  const agents = useShellStore((s) => contextAgents(s.rest, s.rest?.navigator?.agents ?? NO_AGENTS));
+  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   return new Map(agents.map((agent) => [agent.pane_id, agent]));
 }
 
 /** The header's agent facts as plain values, so a pane redraws only when they change. */
 function agentProps(agent: AgentRow | undefined) {
   return { agentKind: agent?.agent_kind ?? null, markSymbol: agent?.symbol ?? null, markTone: agent ? markTone(agent) : "" };
-}
-
-function paneCountOf(node: LayoutNode): number {
-  return node.type === "pane" ? 1 : paneCountOf(node.first) + paneCountOf(node.second);
 }
 
 export function PaneCanvas({ actions, tab }: { actions: Actions; tab: Tab | null }) {
@@ -124,7 +118,7 @@ export function RemotePaneCanvas({
                 scale={scales[frame.pane_id] ?? 1}
                 actions={actions}
                 {...agentProps(agents.get(frame.pane_id))}
-                paneCount={layout.frames.length}
+                paneCount={tab.panes.length}
                 zoomed={layout.zoomed}
                 local={false}
                 offline={!connected}
@@ -163,7 +157,7 @@ const TabCanvas = memo(function TabCanvas({
     scales,
     focusedPaneId: focusedPaneId ?? "",
     agents,
-    paneCount: paneCountOf(layout.root),
+    paneCount: tab.panes.length,
     zoomed: layout.zoomed,
     actions,
   };
