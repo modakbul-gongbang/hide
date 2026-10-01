@@ -46,18 +46,29 @@ pub(crate) struct LabelServices {
 impl LabelServices {
     /// Opens the store beside `state_dir` and starts the analyzer, which
     /// reads the operator's provider choice from the runtime before each
-    /// analysis.
+    /// analysis, or from the saved file while the runtime has not read it
+    /// yet, so no conversation goes to a provider the operator did not
+    /// choose.
     pub(crate) fn start(
         state_dir: Option<&Path>,
         home: Option<PathBuf>,
         runtime: Weak<Mutex<Runtime>>,
     ) -> Result<Self, String> {
         let store = Arc::new(LabelStore::open(state_dir, home.as_deref()));
+        let settings_home = home.clone();
         let analyzer = LabelAnalyzer::spawn(Box::new(move || {
-            runtime
-                .upgrade()
-                .and_then(|runtime| runtime.lock().ok().map(|guard| guard.label_ai_settings()))
-                .unwrap_or_default()
+            let loaded = runtime.upgrade().and_then(|runtime| {
+                runtime
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.label_ai_settings())
+            });
+            loaded.unwrap_or_else(|| {
+                settings_home
+                    .as_deref()
+                    .and_then(|home| hide_ai::settings::load(home).ok())
+                    .unwrap_or_default()
+            })
         }))?;
         Ok(Self {
             store,

@@ -1323,10 +1323,9 @@ impl Runtime {
         true
     }
 
-    /// The provider choice label analyses run with: the operator's, or the
-    /// defaults until the settings file has been read.
-    pub(crate) fn label_ai_settings(&self) -> hide_ai::AiSettings {
-        self.ai_settings.clone().unwrap_or_default()
+    /// The operator's provider choice once the settings file has been read.
+    pub(crate) fn label_ai_settings(&self) -> Option<hide_ai::AiSettings> {
+        self.ai_settings.clone()
     }
 
     pub(crate) fn install_label_services(
