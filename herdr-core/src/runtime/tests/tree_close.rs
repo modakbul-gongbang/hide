@@ -77,7 +77,7 @@ fn tree_payload_in(
             "tokens": {"task": format!("Task {pane}")}
         }));
     }
-    serde_json::from_value(serde_json::json!({
+    serde_json::from_value(crate::sidebar::lineage_fixture_value(serde_json::json!({
         "agents": agents,
         "focused_workspace_id": "w1",
         "focused_pane_id": "w1:p1",
@@ -88,7 +88,7 @@ fn tree_payload_in(
         "tabs": tabs,
         "panes": panes,
         "layouts": layouts
-    }))
+    })))
     .expect("tree session payload")
 }
 

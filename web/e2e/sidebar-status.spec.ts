@@ -9,7 +9,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { startHerdr, type HerdrFixture, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflow } from "./wire";
 
@@ -23,10 +23,6 @@ function report(herdr: HerdrFixture, pane: string, set: Record<string, string>, 
   for (const [name, value] of Object.entries(set)) args.push("--token", `${name}=${value}`);
   for (const name of clear) args.push("--clear-token", name);
   execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
-}
-
-function declareChild(herdr: HerdrFixture, child: string, parent: string): void {
-  execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
 }
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
@@ -50,7 +46,7 @@ test("a root waiting on its child, the badge's child list, and the progress line
     // B1: the parent finished its own turn and its child is working.
     report(herdr, parent, { status_done: "✓", progress: "하위 작업 위임 후 대기", elapsed: "12m" });
     report(herdr, child, { status_working: "●", progress: "계보 투영 구현 중", elapsed: "3m" });
-    declareChild(herdr, child, parent);
+    declareParent(herdr, child, parent);
     const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
     await expect(page.locator(`[data-agent-group="working"] [data-pane="${parent}"]`)).toBeVisible();

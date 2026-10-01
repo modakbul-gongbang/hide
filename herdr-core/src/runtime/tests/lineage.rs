@@ -71,8 +71,9 @@ fn remote_lineage_agent<'a>(runtime: &'a Runtime, pane: &str) -> &'a SidebarAgen
         .unwrap()
 }
 
-#[test]
-fn machine_identity_resolves_lineage_in_both_directions_and_restores_after_reconnect() {
+/// A local pair and a pair on the device `mini`, each child declared by the
+/// other machine's parent, with every machine identity known.
+fn cross_machine_runtime() -> Runtime {
     let mut runtime = runtime();
     runtime.local_machine_id = Some("machine-local".to_owned());
     runtime
@@ -114,7 +115,12 @@ fn machine_identity_resolves_lineage_in_both_directions_and_restores_after_recon
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
     });
+    runtime
+}
 
+#[test]
+fn machine_identity_resolves_lineage_in_both_directions_and_restores_after_reconnect() {
+    let mut runtime = cross_machine_runtime();
     assert!(runtime.refresh_agent_lineage());
     assert_eq!(
         local_lineage_agent(&runtime, "local-child")
@@ -151,6 +157,94 @@ fn machine_identity_resolves_lineage_in_both_directions_and_restores_after_recon
         Some("remote:mini:pane:remote-parent")
     );
     assert!(runtime.unresolved_machine_lineage.is_empty());
+}
+
+/// The local child declared its remote parent for `s-remote-parent`, and the
+/// remote child its local parent for `s-local-parent`; each pane runs the
+/// session the relationship was written for.
+fn attest_cross_machine_sessions(runtime: &mut Runtime) {
+    let digest = |session: &str| crate::wire::session_digest(session);
+    for agent in &mut runtime.snapshot.navigator.agents {
+        match agent.pane_id.as_str() {
+            "local-parent" => agent.lineage_session = digest("s-local-parent"),
+            _ => {
+                agent.lineage_session = digest("s-local-child");
+                agent.declared_parent_session = digest("s-remote-parent");
+            }
+        }
+    }
+    for agent in &mut runtime.snapshot.status.remote[0]
+        .session
+        .as_mut()
+        .unwrap()
+        .agents
+    {
+        match agent.pane_id.as_str() {
+            "remote:mini:pane:remote-parent" => agent.lineage_session = digest("s-remote-parent"),
+            _ => {
+                agent.lineage_session = digest("s-remote-child");
+                agent.declared_parent_session = digest("s-local-parent");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_cross_machine_relationship_holds_while_both_panes_run_the_sessions_it_was_written_for() {
+    let mut runtime = cross_machine_runtime();
+    attest_cross_machine_sessions(&mut runtime);
+    runtime.refresh_agent_lineage();
+    assert_eq!(
+        local_lineage_agent(&runtime, "local-child")
+            .lineage_parent_pane_id
+            .as_deref(),
+        Some("remote:mini:pane:remote-parent")
+    );
+    assert_eq!(
+        remote_lineage_agent(&runtime, "remote:mini:pane:remote-child")
+            .lineage_parent_pane_id
+            .as_deref(),
+        Some("local-parent")
+    );
+}
+
+#[test]
+fn a_parent_pane_on_another_machine_reused_by_another_agent_adopts_no_local_child() {
+    let mut runtime = cross_machine_runtime();
+    attest_cross_machine_sessions(&mut runtime);
+    for agent in &mut runtime.snapshot.status.remote[0]
+        .session
+        .as_mut()
+        .unwrap()
+        .agents
+    {
+        if agent.pane_id == "remote:mini:pane:remote-parent" {
+            agent.lineage_session = crate::wire::session_digest("s-another-agent");
+        }
+    }
+    runtime.refresh_agent_lineage();
+
+    let child = local_lineage_agent(&runtime, "local-child");
+    assert_eq!(child.lineage_parent_pane_id, None);
+    assert!(!child.delegated);
+    assert!(
+        !child.lineage_orphan,
+        "a reused pane is not an ended parent"
+    );
+    assert_eq!(child.lineage_hint, None);
+    let parent = remote_lineage_agent(&runtime, "remote:mini:pane:remote-parent");
+    assert!(parent.lineage_child_pane_ids.is_empty());
+    assert!(
+        parent.descendant_counts == crate::model::DescendantCountsSnapshot::default(),
+        "no badge for a child it never had"
+    );
+    assert_eq!(
+        remote_lineage_agent(&runtime, "remote:mini:pane:remote-child")
+            .lineage_parent_pane_id
+            .as_deref(),
+        Some("local-parent"),
+        "the other direction is untouched"
+    );
 }
 
 #[test]
@@ -228,6 +322,7 @@ fn lineage_depth_is_not_capped_and_cycles_are_visible_orphans() {
     crate::sidebar::apply_lineage(&mut rows, &[], &[]);
     assert_eq!(rows[63].lineage_depth, 63);
     rows[0].spawned_from_pane_id = Some("p1".into());
+    rows[0].declared_parent_session = rows[1].declared_parent_session.clone();
     crate::sidebar::apply_lineage(&mut rows, &[], &[]);
     assert!(rows[0].lineage_orphan && rows[1].lineage_orphan);
     assert_eq!(rows[2].lineage_depth, 1);
@@ -743,7 +838,7 @@ fn split_lineage_payload() -> crate::sidebar::SessionSnapshotPayload {
 /// A parent and its delegated child split in one tab, as Herdr reports them
 /// before Hide moves the child.
 pub(super) fn split_lineage_json() -> serde_json::Value {
-    serde_json::json!({
+    crate::sidebar::lineage_fixture_value(serde_json::json!({
         "agents": [
             {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
              "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture",
@@ -768,7 +863,7 @@ pub(super) fn split_lineage_json() -> serde_json::Value {
             "splits":[{"direction":"right","ratio":0.5,
                        "rect":{"x":0,"y":0,"width":80,"height":24}}]
         }]
-    })
+    }))
 }
 
 #[test]

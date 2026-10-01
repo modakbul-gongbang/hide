@@ -1980,3 +1980,168 @@ fn remote_missing_reference_restores_only_without_a_concrete_replacement() {
         }
     }
 }
+
+/// What the operator sees of a Herdr `agent.list` that carries hcoord's lineage
+/// tokens: the rows the replica projects for a device, joined into the lineage
+/// the sidebar draws. Panes `w1:p1` (the parent) and `w1:p2` (the child) share
+/// one device, so the declared parent is scoped to it like any pane id.
+mod lineage_sessions {
+    use super::*;
+    use crate::model::SidebarAgentSnapshot;
+
+    fn digest(session: &str) -> String {
+        wire::session_digest(session).expect("a session names itself")
+    }
+
+    fn listed(pane: &str, session: Option<&str>, tokens: Value) -> Value {
+        let mut agent = json!({
+            "pane_id": pane, "workspace_id": "w1", "tab_id": "w1:t1",
+            "agent": "claude", "agent_status": "working", "focused": false,
+            "terminal_id": format!("terminal-{pane}"), "revision": 0,
+            "tokens": tokens
+        });
+        if let Some(session) = session {
+            agent["agent_session"] = json!({"source": "herdr:claude", "agent": "claude", "kind": "id", "value": session});
+        }
+        agent
+    }
+
+    /// The tokens hcoord writes on the child of `parent_session` that runs
+    /// `child_session`.
+    fn declared(child_session: &str, parent_session: &str) -> Value {
+        json!({
+            "parent_pane": "w1:p1",
+            "child_session": digest(child_session),
+            "parent_session": digest(parent_session),
+        })
+    }
+
+    /// The lineage rows of one device's `agent.list`, parent first.
+    fn lineage(parent: Value, child: Value) -> Vec<SidebarAgentSnapshot> {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let agents =
+            wire::agents_response(json!({"type": "agent_list", "agents": [parent, child]}))
+                .expect("an agent list");
+        replica.replace_agents(agents);
+        replica.refresh_published_state().expect("published");
+        let (mut remote, excluded) = replica.project_remote("mini").expect("remote projection");
+        assert!(excluded.is_empty(), "{excluded:?}");
+        crate::sidebar::apply_lineage(&mut remote.agents, &[], &[]);
+        remote.agents
+    }
+
+    fn row<'a>(rows: &'a [SidebarAgentSnapshot], pane: &str) -> &'a SidebarAgentSnapshot {
+        rows.iter()
+            .find(|row| row.pane_id == format!("remote:mini:pane:{pane}"))
+            .expect("the agent is listed")
+    }
+
+    fn assert_root_with_no_trace_of_a_parent(rows: &[SidebarAgentSnapshot]) {
+        let child = row(rows, "w1:p2");
+        assert_eq!(child.lineage_parent_pane_id, None, "no line to a parent");
+        assert!(!child.delegated, "the operator's own work again");
+        assert!(
+            !child.lineage_orphan,
+            "not an orphan of a parent that never was"
+        );
+        assert_eq!(
+            child.lineage_hint, None,
+            "no 'from an agent Hide can't see' hint either"
+        );
+        let parent = row(rows, "w1:p1");
+        assert!(
+            parent.lineage_child_pane_ids.is_empty(),
+            "the pane's agent adopts no one"
+        );
+        assert!(
+            parent.descendant_counts == crate::model::DescendantCountsSnapshot::default(),
+            "no descendant badge"
+        );
+    }
+
+    #[test]
+    fn a_child_and_a_parent_that_still_run_their_sessions_are_a_tree() {
+        let rows = lineage(
+            listed("w1:p1", Some("s-parent"), json!({})),
+            listed("w1:p2", Some("s-child"), declared("s-child", "s-parent")),
+        );
+        let child = row(&rows, "w1:p2");
+        assert_eq!(
+            child.lineage_parent_pane_id.as_deref(),
+            Some("remote:mini:pane:w1:p1")
+        );
+        assert!(child.delegated);
+        assert_eq!(
+            row(&rows, "w1:p1").lineage_child_pane_ids,
+            ["remote:mini:pane:w1:p2"]
+        );
+        assert_eq!(row(&rows, "w1:p1").descendant_counts.working, 1);
+    }
+
+    #[test]
+    fn a_pane_reused_by_another_agent_is_a_root_not_the_old_childs_row() {
+        let rows = lineage(
+            listed("w1:p1", Some("s-parent"), json!({})),
+            listed(
+                "w1:p2",
+                Some("s-different-agent"),
+                declared("s-child", "s-parent"),
+            ),
+        );
+        assert_root_with_no_trace_of_a_parent(&rows);
+    }
+
+    #[test]
+    fn a_parent_pane_reused_by_another_agent_adopts_none_of_the_old_children() {
+        let rows = lineage(
+            listed("w1:p1", Some("s-different-agent"), json!({})),
+            listed("w1:p2", Some("s-child"), declared("s-child", "s-parent")),
+        );
+        assert_root_with_no_trace_of_a_parent(&rows);
+    }
+
+    #[test]
+    fn a_pane_reporting_no_session_cannot_prove_a_relationship_on_either_side() {
+        let silent_child = lineage(
+            listed("w1:p1", Some("s-parent"), json!({})),
+            listed("w1:p2", None, declared("s-child", "s-parent")),
+        );
+        assert_root_with_no_trace_of_a_parent(&silent_child);
+        let silent_parent = lineage(
+            listed("w1:p1", None, json!({})),
+            listed("w1:p2", Some("s-child"), declared("s-child", "s-parent")),
+        );
+        assert_root_with_no_trace_of_a_parent(&silent_parent);
+    }
+
+    #[test]
+    fn a_parent_declared_before_sessions_were_recorded_is_a_root_until_hcoord_rewrites_it() {
+        let rows = lineage(
+            listed("w1:p1", Some("s-parent"), json!({})),
+            listed("w1:p2", Some("s-child"), json!({"parent_pane": "w1:p1"})),
+        );
+        assert_root_with_no_trace_of_a_parent(&rows);
+    }
+
+    #[test]
+    fn a_parent_whose_pane_is_gone_still_leaves_its_child_an_orphan_with_its_hint() {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let agents = wire::agents_response(json!({"type": "agent_list", "agents": [
+            listed("w1:p2", Some("s-child"), declared("s-child", "s-parent"))
+        ]}))
+        .expect("an agent list");
+        replica.replace_agents(agents);
+        replica.refresh_published_state().expect("published");
+        let (mut remote, _) = replica.project_remote("mini").expect("remote projection");
+        crate::sidebar::apply_lineage(&mut remote.agents, &[], &[]);
+        let child = &remote.agents[0];
+        assert!(
+            child.lineage_orphan,
+            "the parent ended, which is not the pane being reused"
+        );
+        assert_eq!(
+            child.lineage_hint.as_deref(),
+            Some("↳ from an agent Hide can't see")
+        );
+    }
+}

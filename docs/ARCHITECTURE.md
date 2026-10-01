@@ -224,7 +224,8 @@ The hook helper reports it through the `pane.report_metadata` socket method, whi
 A count Hide cannot read is reported as unknown, never as zero.
 
 A pane's parent travels the same channel, and it is the only lineage there is: Herdr records none.
-hcoord is the sole writer of the `parent_pane` and optional `parent_machine` tokens through `pane.report_metadata`; the complete contract is [plugins/hcoord/docs/pane-tokens.md](../plugins/hcoord/docs/pane-tokens.md).
+hcoord is the sole writer of the `parent_pane`, optional `parent_machine`, `child_session` and `parent_session` tokens through `pane.report_metadata`; the complete contract is [plugins/hcoord/docs/pane-tokens.md](../plugins/hcoord/docs/pane-tokens.md).
+Those tokens die with the pane, not with the agent, so a relationship holds only while both panes still report the sessions it was written for: `wire.rs` compares the child's, `sidebar::apply_lineage` the parent's, and an agent that took over a pane is a root.
 Hide's fork calls the fixed hcoord binary only after `pane.split` and `agent.start` have produced the real child pane, and a registration failure preserves that pane and records a diagnostic instead of inventing an edge.
 `wire.rs` is the only token conversion boundary.
 The runtime reads every connected device's hcoord identity on the remote worker, outside `Mutex<Runtime>`, then resolves all local and remote rows into one machine-qualified lineage.
