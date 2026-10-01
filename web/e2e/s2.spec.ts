@@ -116,6 +116,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.locator(`[data-tab="${tabs[1]}"]`).click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);
     await expect(page.locator("[data-pane-view]")).toHaveCount(1);
+    const secondTabShell = (await page.locator("[data-pane-view]").getAttribute("data-pane-view"))!;
     await expect.poll(() => sent.get("agent_layout.focus")).toBe(1);
     await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
 
@@ -137,6 +138,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.keyboard.down("Alt");
     await page.keyboard.press("Backquote");
     await expect(page.locator("[data-cycle=agents] [aria-selected=true]")).toHaveAttribute("data-cycle-row", lastAgentPane);
+    await expect(page.locator(`[data-cycle=agents] [data-cycle-row="${secondTabShell}"]`)).toHaveCount(0);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);

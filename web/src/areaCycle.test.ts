@@ -152,6 +152,20 @@ describe("Agent pane cycle (issue 301)", () => {
     expect(sent).toEqual([expect.objectContaining({ kind: "remote_control", payload: expect.objectContaining({ target_id: "mini", action: "focus_pane", pane_id: "remote:mini:pane:p1", focus_device: true }) })]);
   });
 
+  it("keeps the one other row when the origin's own agent ends while held", () => {
+    const rest = devices(); draw(rest);
+    for (const pane of ["t2-pane", "t1-pane"]) observePane(rest, pane);
+    const held = { ...agentCycle(rest, owner)!, index: 1 };
+    expect(panes(held)).toEqual(["t1-pane", "t2-pane"]);
+    rest.navigator!.agents = rest.navigator!.agents!.filter((row) => row.pane_id !== "t1-pane");
+    const kept = reconcileHeldCycle(held, rest);
+    expect(panes(kept)).toEqual(["t2-pane"]);
+    expect(kept?.index).toBe(0);
+    const sent: { kind: string; payload: Record<string, unknown> }[] = [];
+    commitCycle(kept!, createActions((event) => { sent.push(event as never); }));
+    expect(sent).toEqual([expect.objectContaining({ kind: "focus_pane", payload: expect.objectContaining({ pane_id: "t2-pane" }) })]);
+  });
+
   it("does not take a commit's passing frames for visits", () => {
     const rest = devices(); draw(rest);
     for (const pane of ["t2-pane", "outside-pane"]) observePane(rest, pane);

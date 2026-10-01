@@ -89,9 +89,10 @@ export function reconcileHeldCycle(cycle: Cycle, rest: SnapshotRest | null): Cyc
         ? new Set(allProjects(rest).map((workspace) => workspace.id))
         : new Set(availableEntries(rest, recentEntries()).map((entry) => entry.key));
   const kept = reconcileCycle(cycle.items, cycle.index, (item) => alive.has(item.key));
-  // An Agent pane cycle that started away from every row may hold one.
-  const fewest = cycle.kind === "agents" && !cycle.items.some((item) => item.key === cycle.originKey) ? 1 : 2;
-  return kept && kept.items.length >= fewest ? { ...cycle, ...kept } : null;
+  if (!kept) return null;
+  // An Agent pane cycle whose origin is not, or is no longer, a row may hold one: that row is still somewhere to go.
+  const fewest = cycle.kind === "agents" && !kept.items.some((item) => item.key === cycle.originKey) ? 1 : 2;
+  return kept.items.length >= fewest ? { ...cycle, ...kept } : null;
 }
 
 /**
