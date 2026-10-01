@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProbedPath } from "./host";
 import type { CellRow } from "./selection";
+import { useShellStore } from "./store";
 import { linkCandidates } from "./terminalLinks";
-import { PROBE_CACHE_CAP, PROBE_TTL_MS, clearProbeCache, owningCheckout, pathLookups, probePaths, resolveGroups } from "./terminalLinkProvider";
+import { PROBE_CACHE_CAP, PROBE_NEW_LIMIT, PROBE_TTL_MS, clearProbeCache, owningCheckout, pathLookups, probePaths, resolveGroups } from "./terminalLinkProvider";
 
 function row(text: string, width: number): CellRow {
-  const cells: CellRow = [...text];
+  const cells: CellRow = [];
+  for (const char of text) { cells.push(char); if (/\p{Script=Hangul}/u.test(char)) cells.push(null); }
   while (cells.length < width) cells.push(" ");
   return cells;
 }
@@ -78,7 +80,9 @@ describe("probePaths", () => {
     const paths = Array.from({ length: PROBE_CACHE_CAP + 10 }, (_, index) => `/p${index}`);
     await probePaths(paths, probe, 0);
     expect(probe.mock.calls.every(([batch]) => batch.length <= 64)).toBe(true);
-    // The oldest answers left, so the first path is asked again.
+    expect(probe.mock.calls.flatMap(([batch]) => batch)).toHaveLength(PROBE_NEW_LIMIT);
+    // A later call fills the cache past its cap and evicts the oldest answer.
+    await probePaths(["/extra"], probe, 1);
     probe.mockClear();
     await probePaths(["/p0"], probe, 1);
     expect(probe).toHaveBeenCalledTimes(1);
@@ -117,5 +121,126 @@ describe("owningCheckout", () => {
   it("gives nothing for a path outside every checkout or beside one with a shared prefix", () => {
     expect(owningCheckout("/tmp/out.png", checkouts, roots)).toBeNull();
     expect(owningCheckout("/w/project-two/a.ts", checkouts, roots)).toBeNull();
+  });
+});
+
+
+describe("original spelling and bounded hover work", () => {
+  it("records logical lookups separately from cache misses only in the opt-in QA seam", async () => {
+    const probe = host(["/w/a.md"]);
+    vi.stubGlobal("window", { __hideProbe: {} });
+    try {
+      await probePaths(["/w/a.md", "/w/a.md", "/w/b.md"], probe, 100);
+      expect(useShellStore.getState().diagnostics.at(-1)).toBe("terminal link: path_probe unique=2 cache_hits=0 cache_misses=2 admitted=2 skipped=0");
+      await probePaths(["/w/a.md", "/w/b.md"], probe, 101);
+      expect(useShellStore.getState().diagnostics.at(-1)).toBe("terminal link: path_probe unique=2 cache_hits=2 cache_misses=0 admitted=0 skipped=0");
+      expect(probe).toHaveBeenCalledTimes(1);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it.each([
+    ["docs/a.md)에", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
+    ["docs/a.md)에", ["docs/a.md", "docs/a.md)", "docs/a.md)에"], "docs/a.md)에"],
+    ["(docs/a.md)에", ["docs/a.md", "docs/a.md)에"], "docs/a.md)에"],
+    ["(docs/a.md)에", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
+    ["docs/a.md)에.", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
+    ["(docs/a.md)에", ["docs/a.md", "docs/a.md)", "(docs/a.md)"], "(docs/a.md)"],
+    ["(docs/a.md)에.", ["docs/a.md", "docs/a.md)", "(docs/a.md)"], "(docs/a.md)"],
+    ["(docs/a.md)에,", ["docs/a.md", "docs/a.md)", "(docs/a.md)"], "(docs/a.md)"],
+    ["(src/a.ts:12:4)에", ["src/a.ts", "src/a.ts:12:4"], "src/a.ts:12:4"],
+    ["src/a.ts:12:4)에", ["src/a.ts", "src/a.ts:12:4"], "src/a.ts:12:4"],
+    ["docs/a.md)", ["docs/a.md", "docs/a.md)"], "docs/a.md)"],
+    ["src/a.ts:12:4", ["src/a.ts", "src/a.ts:12:4"], "src/a.ts:12:4"],
+    ["src/a.ts:12:4", ["src/a.ts"], "src/a.ts"],
+    ["docs/a(b).md", ["docs/a(b).md"], "docs/a(b).md"],
+    ['docs/a"b.md', ['docs/a"b.md'], 'docs/a"b.md'],
+    ["docs/a.md)없는말", ["docs/a.md"], null],
+  ])("resolves %s to the longest real spelling", async (token, files, expected) => {
+    const chosen = await resolveGroups(linkCandidates([row(token, 80)], 0), { cwd: "/w", root: "/r" }, host(files.map((file) => "/w/" + file)));
+    expect(chosen.map(({ resolved }) => resolved.found!.real)).toEqual(expected ? ["/w/" + expected] : []);
+    if (chosen[0]?.resolved.target.kind === "path") {
+      expect(chosen[0].resolved.target.line).toBe(expected === "src/a.ts" ? 12 : null);
+      expect(chosen[0].resolved.target.column).toBe(expected === "src/a.ts" ? 4 : null);
+    }
+  });
+
+  it("chooses each composite literal before shorter spellings or a location, with exact cells", async () => {
+    const spellings = ["(src/a.ts:12:5)에", "src/a.ts:12:5)에", "(src/a.ts:12:5)", "src/a.ts:12:5)", "src/a.ts:12:5", "src/a.ts"];
+    for (let index = 0; index < spellings.length; index += 1) {
+      clearProbeCache();
+      const chosen = await resolveGroups(linkCandidates([row(spellings[0]!, 40)], 0), { cwd: "/w", root: "/r" }, host(spellings.slice(index).map((file) => "/w/" + file)));
+      expect(chosen).toHaveLength(1);
+      const { candidate, resolved } = chosen[0]!;
+      expect(resolved.found!.real).toBe("/w/" + spellings[index]);
+      expect(resolved.target).toMatchObject({ line: index === 5 ? 12 : null, column: index === 5 ? 5 : null });
+      const text = index === 5 ? spellings[4]! : spellings[index]!;
+      const start = text.startsWith("(") ? 0 : 1;
+      expect(candidate.spans).toEqual([{ row: 0, start, end: start + text.length + (text.endsWith("에") ? 1 : 0) }]);
+    }
+  });
+
+  it("keeps raw leading and closing literals with a location and trailing sentence punctuation", async () => {
+    for (const punctuation of [".", ",", ")", "]", "!", "?"]) {
+      clearProbeCache();
+      const token = "(src/a.ts:12:5)에" + punctuation;
+      const groups = linkCandidates([row(token, 40)], 0);
+      expect(groups[0]).toHaveLength(6);
+      const chosen = await resolveGroups(groups, { cwd: "/w", root: "/r" }, host(["/w/(src/a.ts:12:5)", "/w/src/a.ts:12:5)", "/w/src/a.ts:12:5", "/w/src/a.ts"]));
+      expect(chosen[0]!.resolved.found!.real).toBe("/w/(src/a.ts:12:5)");
+      expect(chosen[0]!.candidate.spans).toEqual([{ row: 0, start: 0, end: 15 }]);
+    }
+  });
+
+  it("does not substitute a shorter file after a higher-precedence check failed", async () => {
+    const probe = vi.fn(async (paths: string[]): Promise<ProbedPath[]> => {
+      if (paths.includes("/w/docs/a.md)에")) throw new Error("unavailable");
+      return paths.map((real) => ({ real, kind: "file" }));
+    });
+    expect(await resolveGroups(linkCandidates([row("docs/a.md)에", 40)], 0), { cwd: "/w", root: "/w" }, probe)).toEqual([]);
+  });
+
+  it("waits for the original spelling when shorter filesystem answers arrive first", async () => {
+    const releases = new Map<string, () => void>();
+    let settled = false;
+    const probe = (paths: string[]) => Promise.all(paths.map((real) => new Promise<ProbedPath>((resolve) => {
+      releases.set(real, () => resolve({ real, kind: "file" }));
+    })));
+    const pending = resolveGroups(linkCandidates([row("docs/a.md)에", 40)], 0), { cwd: "/w", root: "/w" }, probe).then((chosen) => { settled = true; return chosen; });
+    releases.get("/w/docs/a.md")!();
+    releases.get("/w/docs/a.md)")!();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releases.get("/w/docs/a.md)에")!();
+    expect((await pending)[0]?.resolved.found?.real).toBe("/w/docs/a.md)에");
+  });
+
+  it("spends the row budget on originals before interpretations and reports overflow without paths", async () => {
+    const text = Array.from({ length: 300 }, (_, index) => "docs/f" + index + ".md)에").join(" ");
+    const probe = host([]);
+    const chosen = await resolveGroups(linkCandidates([row(text, text.length * 2)], 0), { cwd: "/w", root: "/r" }, probe);
+    expect(chosen).toEqual([]);
+    const sent = probe.mock.calls.flatMap(([batch]) => batch);
+    expect(sent).toHaveLength(512);
+    expect(new Set(sent).size).toBe(512);
+    expect(probe.mock.calls).toHaveLength(8);
+    expect(sent.every((path) => path.endsWith(")에"))).toBe(true);
+    expect(useShellStore.getState().diagnostics.at(-1)).toBe("terminal link: path_budget_exceeded unique=1800 cache_misses=1800 limit=512 skipped=1288");
+  });
+
+  it("does not select inferred cache hits when an original was skipped", async () => {
+    await probePaths(["/w/docs/end.md"], host(["/w/docs/end.md"]));
+    const text = [...Array.from({ length: 512 }, (_, index) => "docs/f" + index + ".md"), "docs/end.md)에"].join(" ");
+    const chosen = await resolveGroups(linkCandidates([row(text, text.length * 2)], 0), { cwd: "/w", root: "/w" }, host([]));
+    expect(chosen).toEqual([]);
+  });
+
+  it("charges only cache misses and keeps warm work at zero host calls", async () => {
+    const paths = Array.from({ length: 512 }, (_, index) => "/p" + index);
+    const probe = host([]);
+    await probePaths(paths, probe, 0);
+    probe.mockClear();
+    const answers = await probePaths([...paths, "/new"], probe, 1);
+    expect(answers.size).toBe(513);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(["/new"]);
   });
 });
