@@ -310,6 +310,15 @@ export function fixtureSessionId(pane: string): string {
   return `fixture-${pane.replaceAll(":", "-")}`;
 }
 
+/** The native session id `pane`'s agent reports now. */
+export function sessionOf(fixture: Pick<HerdrFixture, "run">, pane: string): string {
+  type Agent = { pane_id: string; agent_session?: { value: string } };
+  const listed = fixture.run(["agent", "list"]) as { result: { agents: Agent[] } };
+  const value = listed.result.agents.find((agent) => agent.pane_id === pane)?.agent_session?.value;
+  if (!value) throw new Error(`pane ${pane} reports no agent session`);
+  return value;
+}
+
 /** The last session sequence each pane declared; a replacement must be newer. */
 const sessionSeqs = new Map<string, number>();
 

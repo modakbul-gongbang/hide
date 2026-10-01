@@ -22,7 +22,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { agentsIn, declareParent, labelAgent, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
+import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, sessionOf, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, screenshot } from "./wire";
 
@@ -570,7 +570,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await chip("turn").click();
     await expect(rows).toHaveCount(4);
 
-    // Nothing moves when the picture is the same, and a changed one moves once (B33, B39).
+    // Nothing moves while the picture is the same, and a changed one moves once (B33, B39);
+    // that new text alone keeps the picture is the graph unit test's (D-26).
     // The graph's own relayouts and animation frames are counted on its canvas;
     // the last glide (a chip just changed the picture) is let finish first.
     await atRest(page);
@@ -579,14 +580,15 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const frames = async () => Number(await canvas.getAttribute("data-graph-frames"));
     const revisionBefore = await revision();
     const framesBefore = await frames();
-    execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "progress=한 번 더 바뀐 말: 사이드바 규칙을 정리했습니다."], { env: herdr.env, timeout: 30_000 });
     await page.waitForTimeout(1500);
     expect(await revision()).toBe(revisionBefore);
     expect(await frames()).toBe(framesBefore);
     // The Implementor asks: its row grows a second line, its line turns orange, the graph is laid out once and glides.
-    execFileSync(herdr.bin, ["pane", "report-metadata", workingPane, "--source", "e2e", "--token", "expected_reply=이 줄을 그대로 둬도 될까요?"], { env: herdr.env, timeout: 30_000 });
+    // Its own session asks, so the relationship declared for it holds.
+    continueFixtureTranscript(herdr, sessionOf(herdr, workingPane), { task: "웹 디자인 시스템 리셋 구현", reply: "이 줄을 그대로 둬도 될까요?" });
     await setFixtureLifecycle(herdr, workingPane, "blocked");
     await expect(edge).toHaveAttribute("data-edge-kind", "ask", { timeout: 20_000 });
+    await expect(row(workingPane).locator(`[data-graph-row-line="${workingPane}"]`)).toHaveText("이 줄을 그대로 둬도 될까요?", { timeout: 20_000 });
     await expect.poll(revision).toBeGreaterThan(revisionBefore);
     await expect(row(workingPane)).toHaveAttribute("data-attention", "0");
     await setFixtureLifecycle(herdr, workingPane, "working");

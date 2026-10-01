@@ -198,14 +198,14 @@ mod tests {
     #[test]
     fn another_home_takes_nothing_of_the_process_codex_home() {
         let report = validate_with(|key| match key {
-            HOME_KEY => Some(OsString::from("/Users/operator")),
-            CODEX_HOME_KEY => Some(OsString::from("/Users/operator/custom-codex")),
+            HOME_KEY => Some(OsString::from("/Users/example")),
+            CODEX_HOME_KEY => Some(OsString::from("/Users/example/custom-codex")),
             _ => None,
         });
-        let same = report.clone().with_home(PathBuf::from("/Users/operator"));
+        let same = report.clone().with_home(PathBuf::from("/Users/example"));
         assert_eq!(
             same.codex_home.as_deref(),
-            Some(Path::new("/Users/operator/custom-codex"))
+            Some(Path::new("/Users/example/custom-codex"))
         );
         let private = report.with_home(PathBuf::from("/private/tmp/test-home"));
         assert_eq!(

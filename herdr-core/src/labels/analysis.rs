@@ -550,7 +550,7 @@ mod tests {
     #[test]
     fn masking_removes_secrets_emails_and_home_paths_and_keeps_prose() {
         let context = analysis_context(&[human(
-            "token=abc123 메일 me@example.com 파일 /Users/someone/project 그대로 두기",
+            "token=abc123 메일 me@example.com 파일 /Users/example/project 그대로 두기",
             1,
         )]);
         assert!(context.contains("[redacted-secret]"));
