@@ -7,9 +7,10 @@ import { useUiStore, type SidebarMode } from "./ui";
 
 function header({
   mode = "projects" as SidebarMode,
-  rail = false,
+  rail = true,
   title = { name: "This Mac", note: null as string | null },
   addProject = true,
+  tabs = true,
   switchChord = null as string | null,
   canAdd = true,
 } = {}) {
@@ -21,8 +22,18 @@ function header({
         rail,
         title,
         addProject,
+        tabs,
         mode,
-        home: createElement("li", { "data-home-row": "true" }, "Home"),
+        deviceMenu: {
+          devices: [
+            { id: "local", label: "This Mac", remote: false, connected: true },
+            { id: "mini", label: "mini", remote: true, connected: true },
+          ],
+          frontId: "local",
+          onSelect: () => undefined,
+          onAddDevice: () => undefined,
+          onShowRail: () => undefined,
+        },
         switchChord,
         searchChord: "⌘K",
         newWorkspaceChord: "⇧⌘N",
@@ -53,28 +64,32 @@ describe("sidebar header (PRD sidebar-shell)", () => {
     expect(tag(html, 'data-sidebar-mode="agents"')).toContain('aria-pressed="false"');
   });
 
-  it("heads the pane with the Home row above the tab strip when there is no rail, and no Overview row (B7, B11)", () => {
-    const html = header();
-    expect(html.indexOf("data-home-row")).toBeLessThan(html.indexOf("data-sidebar-strip"));
-    expect(html).not.toContain("data-overview-destination");
-    expect(html).not.toContain("data-sidebar-title");
-  });
-
-  it("with the rail, is one line naming what is in front with Add project and Search, and no tabs or Home row (B7)", () => {
-    const html = header({ rail: true, title: { name: "mini", note: "Remote" } });
+  it("is the device's name with Add project and Search, then the tab strip, for every device (B3)", () => {
+    const html = header({ title: { name: "mini", note: "Remote" } });
     expect(texts(html, "data-sidebar-title-name")).toEqual(["mini"]);
     expect(html).toContain("Remote");
-    expect(html).not.toContain("data-sidebar-mode");
-    expect(html).not.toContain("data-home-row");
+    expect(html.indexOf("data-sidebar-title")).toBeLessThan(html.indexOf("data-sidebar-strip"));
     expect(html.indexOf("data-sidebar-new-workspace")).toBeLessThan(html.indexOf("data-sidebar-search"));
-    // The Inbox has no Add project: it is not a place a project is added to.
-    const inbox = header({ rail: true, title: { name: "Inbox", note: "모든 기기" }, addProject: false });
-    expect(inbox).toContain("모든 기기");
-    expect(inbox).not.toContain("data-sidebar-new-workspace");
-    expect(tag(inbox, "data-sidebar-search")).toContain('aria-label="Search"');
+    expect(html).not.toContain("data-home-row");
+    expect(html).not.toContain("data-sidebar-device-menu");
   });
 
-  it("puts Search at the strip's end, and Add project before it on Projects only (B4, B5)", () => {
+  it("draws no tab strip and no Add project for a device that cannot be read (B3)", () => {
+    const html = header({ title: { name: "mini", note: "Remote" }, tabs: false, addProject: false });
+    expect(html).not.toContain("data-sidebar-strip");
+    expect(html).not.toContain("data-sidebar-mode");
+    expect(html).not.toContain("data-sidebar-new-workspace");
+    expect(tag(html, "data-sidebar-search")).toContain('aria-label="Search"');
+  });
+
+  it("turns the name into the device menu while the rail is hidden (B6)", () => {
+    const html = header({ rail: false });
+    expect(tag(html, "data-sidebar-device-menu")).toContain('aria-label="This Mac, 기기 전환"');
+    expect(texts(html, "data-sidebar-title-name")).toEqual(["This Mac"]);
+    expect(header({ rail: true })).not.toContain("data-sidebar-device-menu");
+  });
+
+  it("puts Search at the line's end, and Add project before it where the caller offers it, on Projects only (B4, B5)", () => {
     const projects = header();
     const newWorkspace = tag(projects, "data-sidebar-new-workspace");
     const search = tag(projects, "data-sidebar-search");
@@ -83,7 +98,7 @@ describe("sidebar header (PRD sidebar-shell)", () => {
     expect(header({ canAdd: false })).not.toContain("data-sidebar-new-workspace");
     expect(search).toContain('aria-label="Search"');
     expect(projects.indexOf("data-sidebar-new-workspace")).toBeLessThan(projects.indexOf("data-sidebar-search"));
-    const agents = header({ mode: "agents" });
+    const agents = header({ mode: "agents", addProject: false });
     expect(agents).not.toContain("data-sidebar-new-workspace");
     expect(tag(agents, "data-sidebar-search")).toContain('aria-label="Search"');
     // No Search field: the chord is the hint's, never typed in the strip, and nothing takes text.

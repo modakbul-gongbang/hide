@@ -1,13 +1,15 @@
-// The device rail on an isolated pinned Herdr and hided (PRD home-device-rail
-// B1-B13, B41): with no remote device there is no rail, the Home row heads the
-// sidebar above the Projects | Agents tabs (no Overview row), and the footer's
-// laptop button offers `기기 추가…`. Registering one device that cannot be
-// reached (an alias no SSH config knows) shows the rail with This Mac selected
-// and the center where it was, the new tile dimmed with a cross and no badge,
+// The device rail on an isolated pinned Herdr and hided (quick
+// device-rail-badges B1-B6, replacing PRD home-device-rail B1-B13): the rail
+// is shown with This Mac alone and has no Inbox or footer device button, its
+// `+` opens Settings > Devices > Add device, and each device's sidebar is its
+// name over Projects | Agents with the Home row in Projects. A right-click
+// hides the rail, the name on the top line becomes the device menu, and the
+// choice survives a reload. Registering one device that cannot be reached (an
+// alias no SSH config knows) adds a dimmed tile with a cross and no badge,
 // and, selected, the sidebar reduced to its name, `연결 안 됨` and `다시 연결`.
-// Removing it brings the footer button back. Every Add device entry opens the
-// one form. The Add project dialog's Host list entry needs the desktop host's
-// folder picker, so it is proved in desktop/e2e, not in a browser tab.
+// Removing it leaves This Mac's rail. The Add project dialog's Host list entry
+// needs the desktop host's folder picker, so it is proved in desktop/e2e, not
+// in a browser tab.
 
 import { expect, test, type Page } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
@@ -36,39 +38,73 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(page.locator(CENTER).first()).toBeVisible({ timeout: 20_000 });
     const sidebar = page.locator("nav[data-sidebar]");
 
-    // B11: no remote device, no rail. The Home row heads the sidebar in place of an Overview row, above the tabs.
-    await expect(page.locator("[data-device-rail]")).toHaveCount(0);
-    await expect(page.locator("[data-overview-destination]")).toHaveCount(0);
-    await expect(page.locator("[data-home-destination]")).toContainText("Home");
+    // B1: the rail is shown with This Mac alone, and there is no Inbox tile and no footer device button.
+    const rail = page.locator("[data-device-rail]");
+    await expect(rail).toBeVisible();
+    await expect(rail.locator("[data-rail-tile]")).toHaveCount(1);
+    await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(rail.locator('[data-rail-tile="inbox"]')).toHaveCount(0);
+    await expect(page.locator("[data-footer-device]")).toHaveCount(0);
+    // B3: the device's sidebar is its name over Projects | Agents, with the Home row in Projects and no Overview row.
+    await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
     await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
+    await expect(page.locator("[data-overview-destination]")).toHaveCount(0);
+    await expect(page.locator("[data-project-list] [data-home-destination]")).toContainText("Home");
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    await expect(page.locator("[data-agent-list], [data-agents-empty]").first()).toBeVisible();
+    await expect(page.locator("[data-project-list]")).toHaveCount(0);
+    await page.locator('[data-sidebar-mode="projects"]').click();
 
-    // B11, B13: the footer's laptop button offers This Mac and 기기 추가…, which opens Settings › Devices › Add device.
-    await page.locator("[data-footer-device]").click();
-    const menu = page.locator("[data-footer-device-menu]");
-    await expect(menu).toContainText("This Mac · 이 기기");
-    await menu.locator("[data-footer-device-add]").click();
+    // B6: a right-click on the rail offers 레일 숨기기; hidden, the name is the device menu with 기기 추가… and 레일 표시.
+    await rail.click({ button: "right", position: { x: 10, y: 400 } });
+    const railMenu = page.locator('[data-device-rail-menu][role="menu"]');
+    await expect(railMenu).toContainText("레일 숨기기");
+    await railMenu.locator('[data-menu-item="hide"]').click();
+    await expect(rail).toHaveCount(0);
+    await expect(page.locator("[data-sidebar-device-menu]")).toContainText("This Mac");
+    // The choice is the core's, so it survives a reload.
+    await page.reload();
+    await expect(page.locator(CENTER).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator("[data-device-rail]")).toHaveCount(0);
+    await screenshot(page, "device-rail-hidden");
+    await page.locator("[data-sidebar-device-menu]").click();
+    const deviceMenu = page.locator("[data-device-menu]");
+    await expect(deviceMenu.locator('[data-device-menu-item="local"]')).toBeVisible();
+    await screenshot(page, "device-rail-hidden-menu");
+    // B1: 기기 추가… opens Settings > Devices > Add device.
+    await deviceMenu.locator("[data-device-menu-add]").click();
+    await openAddDeviceForm(page);
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+    await page.locator("[data-sidebar-device-menu]").click();
+    await page.locator("[data-device-menu-show-rail]").click();
+    await expect(rail).toBeVisible();
+
+    // B1: `+` sits directly under the last device tile and opens the same form.
+    const addBox = (await rail.locator("[data-rail-add]").boundingBox())!;
+    const lastBox = (await rail.locator('[data-rail-tile="local"]').boundingBox())!;
+    expect(addBox.y).toBeGreaterThan(lastBox.y + lastBox.height - 1);
+    expect(addBox.y - (lastBox.y + lastBox.height)).toBeLessThan(24);
+    await rail.locator("[data-rail-add]").click();
     await openAddDeviceForm(page);
 
-    // B12: registering the first device, even an unreachable one, shows the rail and takes the footer button away.
+    // Registering a device, even an unreachable one, adds its tile; the center stays where it was.
     const centerBefore = await page.locator("[data-main-screen]").count();
     await page.locator("[data-device-label]").fill("연구실 빌드 서버 자동화 장비");
     await page.locator("[data-device-alias]").fill(ALIAS);
     await page.locator("[data-add-device]").click();
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-    const rail = page.locator("[data-device-rail]");
-    await expect(rail).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator("[data-footer-device]")).toHaveCount(0);
-    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
-    await expect(rail.locator("[data-rail-tile]")).toHaveCount(3);
+    await expect(rail.locator("[data-rail-tile]")).toHaveCount(2, { timeout: 20_000 });
+    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
     const ids = await rail.locator("[data-rail-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-rail-tile")));
-    expect(ids).toEqual(["inbox", "local", ALIAS]);
+    expect(ids).toEqual(["local", ALIAS]);
     // The rail is its own fixed column beside the content column: the stored width stays the content's, and the rail adds to it.
     const railBox = (await rail.boundingBox())!;
     const contentBox = (await page.locator("[data-sidebar-content]").boundingBox())!;
-    expect(Math.round(railBox.width)).toBe(52);
+    expect(Math.round(railBox.width)).toBe(64);
     expect(Math.round(contentBox.width)).toBe(292);
-    expect(Math.round((await sidebar.boundingBox())!.width)).toBe(52 + 292);
+    expect(Math.round((await sidebar.boundingBox())!.width)).toBe(64 + 292);
     // This Mac is the selection, and the center is where it was.
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
     expect(await page.locator("[data-main-screen]").count()).toBe(centerBefore);
@@ -103,6 +139,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(disconnected.locator("[data-device-disconnected-name]")).toHaveText("연구실 빌드 서버 자동화 장비");
     await expect(page.locator("[data-project-list]")).toHaveCount(0);
     await expect(page.locator("[data-home-destination]")).toHaveCount(0);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     await expect(page.locator("[data-sidebar-title-name]")).toContainText("연구실");
     await screenshot(page, "device-rail-not-connected");
     const retried = sent.get("retry_connect") ?? 0;
@@ -118,24 +155,16 @@ test("the rail follows the registered devices; a device that cannot be reached i
     }
     expect(await tile.locator("[data-rail-label]").evaluate((label) => label.scrollWidth > label.clientWidth)).toBe(true);
 
-    // B4: the Inbox is a page state; the center does not change.
-    await rail.locator('[data-rail-tile="inbox"]').click();
-    await expect(rail.locator('[data-rail-tile="inbox"]')).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator("[data-sidebar-title-name]")).toHaveText("Inbox");
-    await expect(page.locator("[data-agent-list], [data-agents-empty]").first()).toBeVisible();
-    await expect(page.locator("[data-sidebar-new-workspace]")).toHaveCount(0);
-    expect(await page.locator("[data-main-screen]").count()).toBe(centerBefore);
-
     // B13: the rail's + opens the same Add device form.
     await rail.locator("[data-rail-add]").click();
     await openAddDeviceForm(page);
 
-    // B10, B12: removing the only device takes the rail away, the footer button returns, and This Mac is in front.
+    // B10: removing the only remote device leaves This Mac's rail, with This Mac in front.
     await page.locator(`[data-device-remove="${ALIAS}"]`).click();
     await page.locator("[data-device-remove-go]").click();
-    await expect(page.locator("[data-device-rail]")).toHaveCount(0, { timeout: 20_000 });
+    await expect(rail.locator("[data-rail-tile]")).toHaveCount(1, { timeout: 20_000 });
     await page.keyboard.press("Escape");
-    await expect(page.locator("[data-footer-device]")).toBeVisible();
+    await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
     await expect(page.locator("[data-home-destination]")).toBeVisible();
     await expect(page.locator(CENTER).first()).toBeVisible();

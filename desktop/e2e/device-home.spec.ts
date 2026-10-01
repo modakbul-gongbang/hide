@@ -1,5 +1,6 @@
 // A device's Home and the device rail over real SSH (PRD home-device-rail
-// B1, B2, B4, B10, B12, B15, B18, B25, B38, B46). Run with an isolated sshd
+// B2, B10, B15, B18, B25, B38, B46, with the rail rework of quick
+// device-rail-badges B1, B3, B6). Run with an isolated sshd
 // whose port, key and known_hosts are supplied in HIDE_E2E_SSH_*, and whose
 // sessions get HIDE_E2E_DEVICE_HOME as HOME, so the device's `~/hide` is made
 // there and never in the account's own home. Both Herdr servers, the daemon,
@@ -131,22 +132,29 @@ test("a device's Home is made on its first start, the rail follows registration,
     await enterWorkspace(page, "fixture");
     const nav = page.locator("nav[data-sidebar]");
 
-    // B11: one device, no rail; the Home row and the footer device button.
-    await expect(nav).toHaveAttribute("data-sidebar-rail", "none");
-    await expect(page.locator("[data-home-destination]")).toBeVisible();
-    await expect(page.locator("[data-footer-device]")).toBeVisible();
+    // B1: one device, and the rail still shows (This Mac alone, no Inbox); the Home row heads Projects.
+    await expect(nav).toHaveAttribute("data-sidebar-rail", "device");
+    await expect(page.locator("[data-rail-tile]")).toHaveCount(1);
+    await expect(page.locator("[data-project-list] [data-home-destination]")).toBeVisible();
+    await expect(page.locator("[data-footer-device]")).toHaveCount(0);
     await capture(page, app, "device-home-one-device");
+
+    // B6: View > Toggle device rail hides the rail, the name becomes the device menu, and the menu item brings it back.
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById("toggle_device_rail")!.click());
+    await expect(nav).toHaveAttribute("data-sidebar-rail", "none");
+    await expect(page.locator("[data-sidebar-device-menu]")).toBeVisible();
+    await capture(page, app, "device-home-rail-hidden");
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById("toggle_device_rail")!.click());
+    await expect(nav).toHaveAttribute("data-sidebar-rail", "device");
 
     const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { port: number; token: string };
     await sendFrame(page, state, { kind: "register_device", payload: {
       id: DEVICE, label: DEVICE_LABEL, ssh_alias: "isolated-device", herdr_socket_path: device.socket, host_consent: true,
     } });
 
-    // B1, B12: the rail appears with This Mac still in front and the same screen; the footer button is gone.
-    await expect(nav).toHaveAttribute("data-sidebar-rail", "device");
-    await expect(page.locator('[data-rail-tile="inbox"]')).toBeVisible();
+    // B1: the device's tile joins the rail with This Mac still in front and the same screen.
+    await expect(page.locator("[data-rail-tile]")).toHaveCount(2);
     await expect(page.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator("[data-footer-device]")).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(page.locator(`[data-rail-tile="${DEVICE}"]`)).toHaveAttribute("data-rail-connected", "true", { timeout: 120_000 });
     // A device Home start needs the helper, which installs after the route connects.
@@ -186,16 +194,18 @@ test("a device's Home is made on its first start, the rail follows registration,
     await expect.poll(() => paneRunning(device, "체크아웃 지시 확인")?.info ?? "", { timeout: 60_000 }).toContain("claude");
     await expect(page.locator(`[data-device-band="${DEVICE}"]`)).toBeVisible();
 
-    // B4: the Inbox lists both devices' agents with a chip on the device's rows, and the center stays.
-    await page.locator('[data-rail-tile="inbox"]').click();
-    await expect(nav).toHaveAttribute("data-sidebar-rail", "inbox");
-    await expect(page.locator(`[data-device-band="${DEVICE}"]`)).toBeVisible();
-    await capture(page, app, "device-home-inbox");
+    // B3: the device's Agents tab lists only its own agents with no device chip, and its tile counts them.
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    await expect(page.locator("[data-agent-list]")).toBeVisible();
+    await expect(page.locator("[data-agent-list] [data-device-chip]")).toHaveCount(0);
+    await expect(page.locator("[data-agent-counts]")).toContainText(/Working|Needs You|Done/);
+    await expect(page.locator(`[data-rail-tile="${DEVICE}"] [data-rail-badge]`).first()).toBeVisible();
+    await capture(page, app, "device-home-device-agents");
 
-    // B10, B12: removing the device in front moves the front to This Mac and the rail goes; the device keeps ~/hide and its agents.
+    // B10: removing the device in front moves the front to This Mac; the rail stays with its one tile, and the device keeps ~/hide and its agents.
     await sendFrame(page, state, { kind: "remove_device", payload: { device_id: DEVICE } });
-    await expect(nav).toHaveAttribute("data-sidebar-rail", "none", { timeout: 30_000 });
-    await expect(page.locator("[data-footer-device]")).toBeVisible();
+    await expect(page.locator("[data-rail-tile]")).toHaveCount(1, { timeout: 30_000 });
+    await expect(nav).toHaveAttribute("data-sidebar-rail", "device");
     await expect(page.locator(`[data-device-band="${DEVICE}"]`)).toHaveCount(0);
     expect(fs.existsSync(path.join(deviceHome, "hide", ".hide-home.json"))).toBe(true);
     expect(paneRunning(device, "홈에서 첫 지시 확인")).not.toBeNull();

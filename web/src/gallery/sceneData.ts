@@ -12,15 +12,15 @@ import type { AgentRow, Checkout, MarkCounts, PullRequest, SnapshotRest, Workspa
 export type SceneContent = "reference" | "long";
 
 /**
- * How many devices the scene registers: This Mac alone (no rail, the Home row
- * above the tabs, the footer's laptop button), or This Mac, a connected `mini`
- * and a disconnected one with a long Korean name (the rail, PRD
- * home-device-rail).
+ * How many devices the scene registers: This Mac alone (the rail still
+ * shows, with one tile), This Mac, a connected `mini` and a disconnected one
+ * with a long Korean name (quick device-rail-badges), or that fixture with
+ * `mini` busy enough to draw the `9+` pill.
  */
-export type SceneDevices = "one" | "two";
+export type SceneDevices = "one" | "two" | "busy";
 
-/** The device the scene opens in front: a rail tile's id, or the Inbox. */
-export type SceneFront = "local" | "mini" | "offline" | "inbox";
+/** The device the scene opens in front: a rail tile's id. */
+export type SceneFront = "local" | "mini" | "offline";
 
 /** The registered-but-unreachable device of the two-device scene. */
 export const OFFLINE_DEVICE = "build-box";
@@ -262,7 +262,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     agent({ pane_id: "e1", identity_label: "단축키 연결", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "2h" }),
   ];
 
-  if (devices === "two") agents.push(...HOME_AGENTS[content]);
+  if (devices !== "one") agents.push(...HOME_AGENTS[content]);
 
   const herdrCheckouts: Checkout[] = [
     checkout({ id: "herdr-ide:main", workspace: "herdr-ide", branch: "main", primary: true, age: 10, purpose: "사이드바 가독성 개선", panes: ["a1", "a1c2", "a2", "a2c1", "a2c2", "a3"], marks: { question: 2, working: 3, idle: 1 } }, now),
@@ -293,7 +293,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     ),
   ];
 
-  const world = devices === "two" ? deviceWorld(content, workspaces, now, folds) : null;
+  const world = devices !== "one" ? deviceWorld(content, workspaces, now, folds, devices === "busy") : null;
   const rest: SnapshotRest = {
     navigator: {
       workspaces: world ? [...workspaces, world.home] : workspaces,
@@ -336,6 +336,15 @@ const REMOTE_AGENTS: Record<SceneContent, AgentRow[]> = {
   ],
 };
 
+/** Enough more agents on `mini` for ten or more Needs You, an unseen Done and a second Working. */
+const BUSY_AGENTS: AgentRow[] = [
+  ...Array.from({ length: 11 }, (_, index) =>
+    agent({ pane_id: `remote:mini:busy:${index}`, identity_label: `배치 ${index + 1}`, agent_kind: "codex", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "3m", detail: "확인이 필요합니다" }),
+  ),
+  agent({ pane_id: "remote:mini:done:1", identity_label: "빌드 정리", agent_kind: "codex", group: "done", symbol: "✓", status_label: "Done", activity: "stopped", emphasized: true, elapsed: "9m" }),
+  agent({ pane_id: "remote:mini:working:2", identity_label: "로그 수집", agent_kind: "codex", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "2m" }),
+];
+
 /** The registration the core keeps for a project on `deviceId`; `home` marks the device's Home. */
 function registrationOf(workspace: Workspace, deviceId: string, extra: { home?: boolean } = {}) {
   return { id: workspace.id, label: workspace.label, path: workspace.path, device_id: deviceId, pinned: workspace.pinned, ...extra };
@@ -347,7 +356,7 @@ function registrationOf(workspace: Workspace, deviceId: string, extra: { home?: 
  * agents, and a registered device that is not connected, named at length to
  * try the rail's and the header's truncation.
  */
-function deviceWorld(content: SceneContent, workspaces: Workspace[], now: number, folds: SceneFolds) {
+function deviceWorld(content: SceneContent, workspaces: Workspace[], now: number, folds: SceneFolds, busy: boolean) {
   const offlineLabel = content === "long" ? "연구실 빌드 서버 자동화 장비 (긴 이름 확인용)" : "build-box";
   const home = workspace(
     "home",
@@ -385,7 +394,7 @@ function deviceWorld(content: SceneContent, workspaces: Workspace[], now: number
         herdr_version: "0.9.1",
         session: {
           workspaces: miniWorkspaces,
-          agents: REMOTE_AGENTS[content],
+          agents: busy ? [...REMOTE_AGENTS[content], ...BUSY_AGENTS] : REMOTE_AGENTS[content],
           active_tab_ids: {},
           focused_workspace_id: "remote:mini:workspace:web",
           focused_checkout_id: "remote:mini:workspace:web:main",

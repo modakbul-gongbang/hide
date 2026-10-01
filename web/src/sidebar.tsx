@@ -1,15 +1,14 @@
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, LaptopIcon, LayoutDashboardIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, LayoutDashboardIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu } from "./components/entry-menu";
-import { SidebarHeader } from "./components/sidebar-header";
+import { SidebarHeader, type DeviceMenu } from "./components/sidebar-header";
 import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DeviceRail } from "./components/device-rail";
-import { frontDeviceId, frontTitle, homeProjectCount, railVisible, sidebarBody } from "./devices";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
+import { BADGE_STATES, BADGE_TEXT, frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
 import { badgeWords, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
@@ -18,7 +17,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, overviewScreen, projectPaneIds, type ListedAgent } from "./navigation";
+import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, deviceListedAgents, groupCounts, overviewScreen, projectPaneIds, type ListedAgent } from "./navigation";
 import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
@@ -62,18 +61,29 @@ export function Sidebar({ actions }: { actions: Actions }) {
   // selected SSH device's lists; that device's state is on the canvas.
   const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
   const status = remote ? null : herdrRowLabel(herdrState);
-  // The rail exists while any remote device is registered; the Inbox is its selection beside the devices (PRD home-device-rail D-10, D-11).
-  const rail = useShellStore((s) => railVisible(s.rest));
-  const inboxSelected = useUiStore((s) => s.inbox);
-  // The Inbox selection ends with the rail, so the next device's rail opens on This Mac (B12).
-  useEffect(() => {
-    if (!rail && inboxSelected) useUiStore.getState().setInbox(false);
-  }, [rail, inboxSelected]);
-  const body = useShellStore((s) => sidebarBody(s.rest, inboxSelected, mode));
-  const inbox = body === "inbox";
+  // The rail is shown unless the operator hid it (quick device-rail-badges B1, B6).
+  const rail = useShellStore((s) => railShown(s.rest));
+  const body = useShellStore((s) => sidebarBody(s.rest, mode));
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const frontId = useShellStore((s) => s.rest?.navigator?.focused_device_id);
-  const title = useMemo(() => frontTitle(devices, frontId, inbox), [devices, frontId, inbox]);
+  const title = useMemo(() => frontTitle(devices, frontId), [devices, frontId]);
+  const remoteStatus = useShellStore((s) => s.rest?.status?.remote);
+  const deviceMenu = useMemo<DeviceMenu>(() => {
+    const list = devices ?? [];
+    const localId = list.find((device) => device.kind !== "remote")?.id ?? "local";
+    return {
+      devices: list.map((device) => ({
+        id: device.id,
+        label: device.label,
+        remote: device.kind === "remote",
+        connected: device.id === localId || remoteStatus?.find((row) => row.target_id === device.id)?.state === "connected",
+      })),
+      frontId: frontId ?? localId,
+      onSelect: actions.focusDevice,
+      onAddDevice: actions.openAddDevice,
+      onShowRail: actions.showDeviceRail,
+    };
+  }, [devices, frontId, remoteStatus, actions]);
   useHomeStart();
   // The switch has no chord of its own until the operator binds one (issue 170).
   const switchChord = useShellStore((s) => displayCommand("toggle_sidebar_view", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
@@ -93,16 +103,10 @@ export function Sidebar({ actions }: { actions: Actions }) {
     else actions.setSidebarWidth(send);
   };
   const home = <HomeSection actions={actions} />;
-  // With the rail, a device's sidebar is its Needs You, its Home and its Projects, with no tabs; the Inbox lists every device's agents;
-  // a device that is not connected shows its name and the way to reconnect, and no stale tree (B2, B4, B8).
+  // Every device's sidebar is its Projects | Agents: Projects lists its Needs You, its Home and its projects, Agents lists its agents by state;
+  // a device that is not connected shows its name and the way to reconnect, and no stale tree (quick device-rail-badges B3).
   const list =
-    body === "inbox" || body === "agents" ? (
-      <AgentList actions={actions} />
-    ) : body === "disconnected" ? (
-      <DisconnectedDevice actions={actions} />
-    ) : (
-      <ProjectList actions={actions} home={rail ? home : null} />
-    );
+    body === "agents" ? <AgentList actions={actions} /> : body === "disconnected" ? <DisconnectedDevice actions={actions} /> : <ProjectList actions={actions} home={home} />;
 
   return (
     // The width is a CSS variable, never the nav's own inline width, which
@@ -130,14 +134,15 @@ export function Sidebar({ actions }: { actions: Actions }) {
             : ({ "--sidebar-width": `${preview}px`, "--sidebar-total": "calc(var(--sidebar-width) + var(--sidebar-rail))" } as CSSProperties)
         }
         data-sidebar={mode}
-        data-sidebar-rail={rail ? (inbox ? "inbox" : "device") : "none"}
+        data-sidebar-rail={rail ? "device" : "none"}
       >
         <SidebarHeader
           rail={rail}
           title={title}
-          addProject={!inbox}
+          addProject={body === "projects"}
+          tabs={body !== "disconnected"}
           mode={mode}
-          home={home}
+          deviceMenu={deviceMenu}
           switchChord={switchChord || null}
           searchChord={displayCommand("search", hostKind()) || null}
           newWorkspaceChord={displayCommand("new_workspace", hostKind()) || null}
@@ -153,7 +158,6 @@ export function Sidebar({ actions }: { actions: Actions }) {
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-sidebar-content="true">
             {list}
             <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
-              {rail ? null : <FooterDeviceButton actions={actions} />}
               <span className="flex-1" />
               <WeeklyUsage actions={actions} />
               <Hint label={`Settings (${displayCommand("settings", hostKind())})`}>
@@ -420,39 +424,10 @@ function DisconnectedDevice({ actions }: { actions: Actions }) {
 }
 
 /**
- * With no remote device the footer's left button opens This Mac and Add
- * device (PRD home-device-rail B11); the first registration removes it and
- * shows the rail, whose `+` does the same Add device.
- */
-function FooterDeviceButton({ actions }: { actions: Actions }) {
-  return (
-    <DropdownMenu>
-      <Hint label="Devices">
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label="Devices" data-footer-device="true">
-            <LaptopIcon />
-          </Button>
-        </DropdownMenuTrigger>
-      </Hint>
-      <DropdownMenuContent align="start" side="top" aria-label="Devices" data-footer-device-menu="true">
-        <DropdownMenuItem data-footer-device-this="true">
-          <LaptopIcon aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">This Mac · 이 기기</span>
-          <CheckIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-foreground" />
-        </DropdownMenuItem>
-        <DropdownMenuItem data-footer-device-add="true" onSelect={() => actions.openAddDevice()}>
-          <PlusIcon aria-hidden="true" />
-          기기 추가…
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-/**
- * Every current agent, this machine's and each connected device's, under
- * Needs You, Done, Working and Seen (S6 B13); a device's row names its
- * device. Each section draws its roots, and a root's descendants follow it
+ * The device in front's current agents under Needs You, Done, Working and
+ * Seen (S6 B13, narrowed to one device by quick device-rail-badges B3), with
+ * the count of each of the first three above the list (B5); no row names its
+ * device, since the whole list is the one in front. Each section draws its roots, and a root's descendants follow it
  * while the operator has it unfolded; folded, the root's badge speaks for
  * them and opens their list (PRD sidebar-agent-status D-02, D-03). Showing
  * the list changes nothing: no focus moves and nothing is marked read.
@@ -465,7 +440,8 @@ function AgentList({ actions }: { actions: Actions }) {
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const localAgents = useShellStore((s) => s.agents);
-  const listed = useMemo(() => allAgents(remote, devices, localAgents), [remote, devices, localAgents]);
+  const frontId = useShellStore((s) => frontDeviceId(s.rest));
+  const listed = useMemo(() => deviceListedAgents(remote, devices, localAgents, frontId), [remote, devices, localAgents, frontId]);
   const lineageWorkspaces = useMemo(() => allLineageWorkspaces(workspaces, remote), [workspaces, remote]);
   const tree = useMemo(() => agentTree(listed, lineageWorkspaces), [listed, lineageWorkspaces]);
   const placeOf = useMemo(() => agentPlaces(workspaces, remote, devices), [workspaces, remote, devices]);
@@ -482,7 +458,9 @@ function AgentList({ actions }: { actions: Actions }) {
     return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted-foreground" data-agents-empty="true">No agents are running</div>;
   }
   return (
-    <ul className="min-h-0 flex-1 overflow-auto px-xs" data-agent-list="true">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <AgentCounts agents={listed.map((row) => row.agent)} />
+      <ul className="min-h-0 flex-1 overflow-auto px-xs" data-agent-list="true">
       {tree.sections.map((section) => (
         <li key={section.group} data-agent-group={section.group}>
           <div className="px-sm pb-xxs pt-sm text-micro font-medium text-muted-foreground" id={`agent-group-${section.group}`}>
@@ -493,7 +471,7 @@ function AgentList({ actions }: { actions: Actions }) {
               <SidebarAgentRow
                 key={`${row.device ?? "local"}:${row.agent.id}`}
                 agent={row.agent}
-                device={row.device}
+                device={null}
                 place={row.depth === 0 ? placeOf(row.device, row.agent.pane_id) : null}
                 depth={row.depth}
                 descendants={row.descendants}
@@ -510,7 +488,32 @@ function AgentList({ actions }: { actions: Actions }) {
           </ul>
         </li>
       ))}
-    </ul>
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The selected device's `Needs You N · Done N · Working N` line above its
+ * Agents list (quick device-rail-badges B5): the same three states and colors
+ * the tile's circles use, a zero count left out, and nothing at all when the
+ * device has no agent in any of them.
+ */
+function AgentCounts({ agents }: { agents: AgentRow[] }) {
+  const counts = groupCounts(agents);
+  const shown = BADGE_STATES.filter(({ state }) => counts[state] > 0);
+  if (shown.length === 0) return null;
+  return (
+    <p className="flex shrink-0 flex-wrap items-center gap-x-xs px-md pt-sm text-caption text-muted-foreground" data-agent-counts="true">
+      {shown.map(({ state, label }, index) => (
+        <span key={state} className="flex items-center gap-x-xs">
+          {index > 0 ? <span aria-hidden="true">·</span> : null}
+          <span className={BADGE_TEXT[state]} data-agent-count={state}>
+            {label} {counts[state]}
+          </span>
+        </span>
+      ))}
+    </p>
   );
 }
 
@@ -600,6 +603,8 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const localAgents = useShellStore((s) => s.agents);
   const listedAgents = useMemo(() => allAgents(remoteStatuses, devices, localAgents), [remoteStatuses, devices, localAgents]);
   const agents = useMemo(() => listedAgents.map((row) => row.agent), [listedAgents]);
+  const frontId = useShellStore((s) => frontDeviceId(s.rest));
+  const frontListed = useMemo(() => deviceListedAgents(remoteStatuses, devices, localAgents, frontId), [remoteStatuses, devices, localAgents, frontId]);
   const lineageWorkspaces = useMemo(() => allLineageWorkspaces(localWorkspaces, remoteStatuses), [localWorkspaces, remoteStatuses]);
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
@@ -610,9 +615,8 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
   const homeWorkspace = useShellStore((s) => contextHome(s.rest));
   const rows = useMemo(() => projectRows(workspaces, groups, listedAgents, homeWorkspace), [workspaces, groups, listedAgents, homeWorkspace]);
-  // The device's Needs You and Done come first, then its Home, then the projects (PRD home-device-rail B6).
-  // With the rail only Needs You is kept above the Home row; Done stays with the tab-less one-device sidebar (D-12).
-  const raised = useMemo(() => rows.filter((row) => row.kind === "raised" && (home === null || row.group === "needs_you")), [rows, home]);
+  // The device's Needs You comes first, then its Home, then the projects (PRD home-device-rail B6); Done and the rest are the Agents tab's.
+  const raised = useMemo(() => rows.filter((row) => row.kind === "raised" && row.group === "needs_you"), [rows]);
   const tree = useMemo(() => rows.filter((row) => row.kind !== "raised"), [rows]);
   const agentRowMenu = useAgentRowMenu(actions);
   const presentations = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, lineageWorkspaces)])), [agents, lineageWorkspaces]);
@@ -621,8 +625,8 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   // own checkout's row; ⌥n selects by the Agents list, so the number is that list's.
   const numbered = useUiStore((s) => s.hint === "agents");
   const numberOfPane = useMemo(
-    () => (numbered ? projectListNumbers(numberedAgents(listedAgentOrder(listedAgents)), rows, workspaces) : null),
-    [numbered, listedAgents, rows, workspaces],
+    () => (numbered ? projectListNumbers(numberedAgents(listedAgentOrder(frontListed)), rows, workspaces) : null),
+    [numbered, frontListed, rows, workspaces],
   );
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
@@ -752,7 +756,7 @@ function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "rai
             <SidebarAgentRow
               key={`${device ?? "local"}:${agent.id}`}
               agent={agent}
-              // The device in front is the whole list, so no row names it (PRD home-device-rail B2); the Inbox is where chips are.
+              // The device in front is the whole list, so no row names it (PRD home-device-rail B2).
               device={null}
               place={context.placeOf(device, agent.pane_id)}
               depth={0}

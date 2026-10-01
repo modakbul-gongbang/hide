@@ -1106,6 +1106,7 @@ export type SnapshotRest = {
   terminal?: { pane_id?: string | null; panes?: TerminalPane[] };
   ui_state?: {
     left_sidebar_visible?: boolean;
+    device_rail_visible?: boolean;
     right_panel_visible?: boolean;
     right_panel_section?: string;
     workspace_registrations?: WorkspaceRegistration[];

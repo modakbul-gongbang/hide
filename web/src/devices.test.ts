@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deviceBadge, deviceConnected, frontTitle, homeOf, homeProjectCount, inboxBadge, railVisible, remoteDevices, tileName } from "./devices";
+import { badgeText, deviceConnected, deviceStateCounts, frontTitle, homeOf, homeProjectCount, railShown, tileBadges, tileName } from "./devices";
 import type { AgentRow, SnapshotRest } from "./snapshot";
 
 function agent(paneId: string, group: string): AgentRow {
@@ -34,32 +34,44 @@ function rest(devices: string[] = ["mini", "build-box"]): SnapshotRest {
   } as unknown as SnapshotRest;
 }
 
-describe("the device rail's facts (PRD home-device-rail)", () => {
-  it("shows the rail only while at least one remote device is registered, connected or not (B1, B11, B12)", () => {
-    expect(railVisible(rest([]))).toBe(false);
-    expect(railVisible(rest(["build-box"]))).toBe(true);
-    expect(railVisible(rest())).toBe(true);
-    expect(railVisible(null)).toBe(false);
-    expect(remoteDevices(rest()).map((device) => device.id)).toEqual(["mini", "build-box"]);
+describe("the device rail's facts (quick device-rail-badges)", () => {
+  it("shows the rail with one device alone, and hides it only when the core says so (B1, B6)", () => {
+    expect(railShown(rest([]))).toBe(true);
+    expect(railShown(rest())).toBe(true);
+    expect(railShown(null)).toBe(true);
+    const hidden = rest();
+    hidden.ui_state = { ...hidden.ui_state, device_rail_visible: false };
+    expect(railShown(hidden)).toBe(false);
   });
 
-  it("badges each device with its own Needs You count and nothing at zero (B3)", () => {
-    expect(deviceBadge(rest(), LOCAL_AGENTS, "local")).toBe(2);
-    expect(deviceBadge(rest(), LOCAL_AGENTS, "mini")).toBe(1);
-    expect(deviceBadge(rest(), [agent("x", "working")], "local")).toBeNull();
+  it("counts each device's own Needs You, Done and Working, and stacks a circle only for a non-zero one in that order (B4)", () => {
+    const local = [...LOCAL_AGENTS, agent("l4", "done"), agent("l5", "seen")];
+    expect(deviceStateCounts(rest(), local, "local")).toEqual({ needs_you: 2, done: 1, working: 1 });
+    expect(tileBadges(deviceStateCounts(rest(), local, "local")).map((badge) => [badge.state, badge.count])).toEqual([
+      ["needs_you", 2],
+      ["done", 1],
+      ["working", 1],
+    ]);
+    // A device with only Working agents has a single circle at the top; Seen is not counted.
+    expect(tileBadges(deviceStateCounts(rest(), [agent("x", "working"), agent("y", "seen")], "local")).map((badge) => badge.state)).toEqual(["working"]);
+    expect(tileBadges(deviceStateCounts(rest(), [agent("x", "seen")], "local"))).toEqual([]);
+    expect(deviceStateCounts(rest(), LOCAL_AGENTS, "mini")).toEqual({ needs_you: 1, done: 1, working: 0 });
   });
 
-  it("gives a device that is not connected no badge, and the Inbox counts only connected devices (B3, B8, D-27)", () => {
+  it("gives a device that is not connected no count, its stale session ignored (B4, B8)", () => {
     expect(deviceConnected(rest(), "build-box")).toBe(false);
-    expect(deviceBadge(rest(), LOCAL_AGENTS, "build-box")).toBeNull();
-    // 2 on this Mac + 1 on mini; the stale device's 1 is not added.
-    expect(inboxBadge(rest(), LOCAL_AGENTS)).toBe(3);
+    expect(deviceStateCounts(rest(), LOCAL_AGENTS, "build-box")).toEqual({ needs_you: 0, done: 0, working: 0 });
   });
 
-  it("names a tile for assistive technology by device, state and count (B41)", () => {
-    expect(tileName("mini", true, 1)).toBe("mini, Needs You 1");
-    expect(tileName("build-box", false, null)).toBe("build-box, 연결 안 됨");
-    expect(tileName("This Mac", true, null)).toBe("This Mac");
+  it("draws `9+` from ten and the count below it (B4)", () => {
+    expect([1, 9, 10, 250].map(badgeText)).toEqual(["1", "9", "9+", "9+"]);
+  });
+
+  it("names a tile for assistive technology by device, connection and each non-zero count (B4)", () => {
+    expect(tileName("mini", true, tileBadges({ needs_you: 1, done: 0, working: 3 }))).toBe("mini, Needs You 1, Working 3");
+    expect(tileName("This Mac", true, tileBadges({ needs_you: 2, done: 1, working: 3 }))).toBe("This Mac, Needs You 2, Done 1, Working 3");
+    expect(tileName("build-box", false, [])).toBe("build-box, 연결 안 됨");
+    expect(tileName("This Mac", true, [])).toBe("This Mac");
   });
 
   it("counts a device's Home row from its registrations, its Home excluded (B16, D-04)", () => {
@@ -73,10 +85,9 @@ describe("the device rail's facts (PRD home-device-rail)", () => {
     expect(homeOf(rest(), "mini")).toBeNull();
   });
 
-  it("titles the sidebar's top line by what is in front (B7)", () => {
+  it("titles the sidebar's top line by the device in front (B3)", () => {
     const devices = rest().navigator!.devices;
-    expect(frontTitle(devices, "local", false)).toEqual({ name: "This Mac", note: null });
-    expect(frontTitle(devices, "mini", false)).toEqual({ name: "mini", note: "Remote" });
-    expect(frontTitle(devices, "mini", true)).toEqual({ name: "Inbox", note: "모든 기기" });
+    expect(frontTitle(devices, "local")).toEqual({ name: "This Mac", note: null });
+    expect(frontTitle(devices, "mini")).toEqual({ name: "mini", note: "Remote" });
   });
 });

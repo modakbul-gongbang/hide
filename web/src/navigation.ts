@@ -129,6 +129,11 @@ export function allAgents(remote: RemoteStatus[] | undefined, devices: Device[] 
   return listed;
 }
 
+/** One device's current agents, listed as the sidebar's Agents tab draws them: a device that is not connected lists nothing. */
+export function deviceListedAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[], deviceId: string): ListedAgent[] {
+  return allAgents(remote, devices, localAgents).filter((row) => row.agent.device_id === deviceId);
+}
+
 /** Every connected workspace, local and remote, with its device id intact. */
 export function allLineageWorkspaces(local: Workspace[] | undefined, remote: RemoteStatus[] | undefined): Workspace[] {
   return [...(local ?? []), ...(remote ?? []).filter((status) => status.state === "connected").flatMap((status) => status.session?.workspaces ?? [])];

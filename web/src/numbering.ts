@@ -7,7 +7,8 @@
 import { areasOf } from "./areaLayout";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
-import { agentListRows, agentTree, allAgents, type ListedAgent } from "./navigation";
+import { frontDeviceId } from "./devices";
+import { agentListRows, agentTree, deviceListedAgents, type ListedAgent } from "./navigation";
 import type { ProjectRow } from "./projects";
 import { DIGITS, type Digit } from "./shortcuts";
 import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
@@ -37,9 +38,9 @@ export function numberOf(numbered: Map<Digit, string>, id: string): Digit | null
   return null;
 }
 
-/** The Agents list's rows in draw order, the list ⌥n numbers whichever list is on screen (B2). */
+/** The Agents list's rows in draw order, the list ⌥n numbers whichever list is on screen (B2): the front device's. */
 export function agentListOrder(state: { rest: SnapshotRest | null; agents: AgentRow[] }): TreeRow[] {
-  return listedAgentOrder(allAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents));
+  return listedAgentOrder(deviceListedAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents, frontDeviceId(state.rest)));
 }
 
 /** The Agents list's rows in draw order, from the agents it lists. */
