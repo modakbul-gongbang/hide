@@ -724,7 +724,7 @@ impl Runtime {
             kind: EditorTabKind::File,
             diff_committed: None,
             markdown_live: true,
-            wrap: false,
+            wrap: true,
             dirty: false,
             preview,
             unavailable_reason: Some(reason),
