@@ -33,8 +33,8 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint } from "./components/ui/tooltip";
-import { readGraphGeometry, readMotionMs } from "./graphGeometry";
-import { Tween, type Targets } from "./graphMotion";
+import { readFlowTiming, readGraphGeometry, readMotionMs, type FlowTiming } from "./graphGeometry";
+import { Flow, Tween, type Targets } from "./graphMotion";
 import { cn } from "./lib/utils";
 import { FoldLine, gitHubClick, IssueChip, AgentMessagePopover, PullRequestChip, type LensHandlers } from "./OverviewLenses";
 import type { LensAgent } from "./overviewLens";
@@ -76,9 +76,10 @@ function indexCanvas(canvas: HTMLElement, edges: readonly GraphEdge[]): PaintInd
   for (const edge of edges) {
     const group = canvas.querySelector(`[data-graph-edge="${CSS.escape(edge.id)}"]`);
     if (!group) continue;
+    const flow = canvas.querySelector<SVGPathElement>(`[data-graph-flow="${CSS.escape(edge.id)}"]`);
     drawn.set(edge.id, {
       back: edge.back,
-      paths: [...group.querySelectorAll<SVGPathElement>("path")],
+      paths: [...group.querySelectorAll<SVGPathElement>("path"), ...(flow ? [flow] : [])],
       out: group.querySelector<SVGCircleElement>('[data-graph-port="out"]'),
       into: group.querySelector<SVGCircleElement>('[data-graph-port="in"]'),
     });
@@ -179,6 +180,7 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
   // The sizes are tokens, read once: the layout is numbers (D-31).
   const [geometry] = useState(() => readGraphGeometry());
   const [motionMs] = useState(() => readMotionMs());
+  const [flowTiming] = useState(() => readFlowTiming());
   const board = useMemo(() => buildGraph(projects, agents, { scope, geometry, openFolds: folds, selectedBox, filter }), [projects, agents, scope, geometry, folds, selectedBox, filter]);
   const root = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -205,15 +207,16 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
   return (
     <div ref={root} className="flex min-w-0 flex-col gap-lg pb-xl" data-graph={scope} onKeyDown={moveFocus}>
       {board.sections.map((section) => (
-        <GraphSection key={section.project.id} section={section} scope={scope} geometry={geometry} motionMs={motionMs} selectedBox={selectedBox} handlers={handlers} now={now} />
+        <GraphSection key={section.project.id} section={section} scope={scope} geometry={geometry} motionMs={motionMs} flowTiming={flowTiming} selectedBox={selectedBox} handlers={handlers} now={now} />
       ))}
     </div>
   );
 }
 
-function GraphSection({ section, scope, geometry, motionMs, selectedBox, handlers, now }: { section: ProjectGraph; scope: "project" | "all"; geometry: GraphGeometry; motionMs: number; selectedBox: string | null; handlers: LensHandlers; now: number }) {
+function GraphSection({ section, scope, geometry, motionMs, flowTiming, selectedBox, handlers, now }: { section: ProjectGraph; scope: "project" | "all"; geometry: GraphGeometry; motionMs: number; flowTiming: FlowTiming; selectedBox: string | null; handlers: LensHandlers; now: number }) {
   const canvas = useRef<HTMLDivElement>(null);
   const tween = useRef<Tween | null>(null);
+  const flow = useRef<Flow | null>(null);
   const index = useRef<PaintIndex | null>(null);
   const settled = useRef(false);
   const painted = useRef<HTMLElement | null>(null);
@@ -241,10 +244,18 @@ function GraphSection({ section, scope, geometry, motionMs, selectedBox, handler
     painted.current = element;
     element.dataset.graphRevision = String(tween.current.revision);
     element.dataset.graphFrames = String(tween.current.frames);
+    flow.current ??= new Flow({ ...flowTiming, reduced: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches });
+    flow.current.set([...element.querySelectorAll<SVGPathElement>(".graph-edge-flow")]);
     if (changed && settled.current) for (const key of added) enter(index.current, key);
     settled.current = true;
-  }, [section, targets, geometry, motionMs, hasCanvas]);
-  useLayoutEffect(() => () => tween.current?.dispose(), []);
+  }, [section, targets, geometry, motionMs, flowTiming, hasCanvas]);
+  useLayoutEffect(
+    () => () => {
+      tween.current?.dispose();
+      flow.current?.dispose();
+    },
+    [],
+  );
 
   const names = useMemo(() => new Map([...section.rows.values()].map((row) => [row.paneId, row.value.agent.identity_label])), [section]);
   const label = (kind: FoldKind) => FOLD_LABEL[kind];
@@ -266,12 +277,20 @@ function GraphSection({ section, scope, geometry, motionMs, selectedBox, handler
                   <g key={edge.id} className={cn("graph-edge", faded && "opacity-(--opacity-dimmed)")} data-graph-edge={edge.id} data-edge-kind={edge.kind} data-edge-back={edge.back ? "true" : undefined}>
                     <title>{`${names.get(edge.from) ?? ""} → ${names.get(edge.to) ?? ""} · ${EDGE_WORDS[edge.kind]}`}</title>
                     <path className="graph-edge-base" fill="none" stroke="currentColor" pathLength={1} />
-                    {edge.kind === "flow" && !edge.back ? <path className="graph-edge-flow" fill="none" /> : null}
                     <circle className="graph-port" data-graph-port="out" fill="currentColor" />
                     <circle className="graph-port" data-graph-port="in" fill="currentColor" />
                   </g>
                 );
               })}
+            </svg>
+            {/* The flowing dashes are the only thing that moves while nothing changes, so they stand in a layer of their own: a frame repaints this layer, not the lines and ports under it. */}
+            <svg aria-hidden="true" className="graph-flow-layer pointer-events-none absolute left-0 top-0 size-full overflow-visible">
+              {section.edges
+                .filter((edge) => edge.kind === "flow" && !edge.back)
+                .map((edge) => {
+                  const faded = edge.dim || (chain !== null && !(chain.has(edge.from) && chain.has(edge.to)));
+                  return <path key={edge.id} className={cn("graph-edge-flow", faded && "opacity-(--opacity-dimmed)")} data-graph-flow={edge.id} fill="none" />;
+                })}
             </svg>
             {section.boxes.map((box) => (
               <BoxView key={box.id} box={box} selected={box.id === selectedBox} chain={chain} hover={hover} names={names} onHover={setHover} handlers={handlers} now={now} />

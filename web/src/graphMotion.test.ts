@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sameTargets, Tween, type Targets } from "./graphMotion";
+import { Flow, sameTargets, Tween, type Targets } from "./graphMotion";
 
 // A picture of the graph is a map of named numbers; the tween owns when each
 // is painted. Frames here are driven by hand so a test sees every one.
@@ -97,5 +97,54 @@ describe("the graph's tween", () => {
     expect(sameTargets(picture({ a: 1 }), picture({ a: 1 }))).toBe(true);
     expect(sameTargets(picture({ a: 1 }), picture({ b: 1 }))).toBe(false);
     expect(sameTargets(picture({ a: 1 }), picture({ a: 1, b: 2 }))).toBe(false);
+  });
+});
+
+describe("the flowing dashes", () => {
+  function path() {
+    const offsets: string[] = [];
+    return { offsets, setAttribute: (_name: string, value: string) => offsets.push(value) };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("steps the pattern a quarter period at a time and starts over after a whole one", () => {
+    const flow = new Flow({ period: 18, stepMs: 250, steps: 4, reduced: () => false });
+    const a = path();
+    flow.set([a]);
+    expect(a.offsets).toEqual(["0"]);
+    vi.advanceTimersByTime(1000);
+    expect(a.offsets).toEqual(["0", "-4.5", "-9", "-13.5", "0"]);
+    flow.dispose();
+  });
+
+  it("runs no timer while no line works, and no frame is ever asked for", () => {
+    const flow = new Flow({ period: 18, stepMs: 250, steps: 4, reduced: () => false });
+    flow.set([]);
+    expect(vi.getTimerCount()).toBe(0);
+    flow.set([path()]);
+    expect(vi.getTimerCount()).toBe(1);
+    flow.set([]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(frames).toHaveLength(0);
+  });
+
+  it("stands still when the system asks for less motion, also when it asks after the dashes began", () => {
+    let reduced = false;
+    const flow = new Flow({ period: 18, stepMs: 250, steps: 4, reduced: () => reduced });
+    const a = path();
+    flow.set([a]);
+    reduced = true;
+    vi.advanceTimersByTime(500);
+    expect(a.offsets).toEqual(["0"]);
+    expect(vi.getTimerCount()).toBe(0);
+    flow.set([a]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

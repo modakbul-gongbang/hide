@@ -509,7 +509,7 @@ No box is selected there, and a device that cannot answer is a notice above the 
 
 The graph moves only when what it draws changes.
 Boxes, rows, trays and lines glide to their new places over 320 ms (`--graph-motion-ms`), a new box fades in and a new delegation's line draws itself from the parent to the child; a snapshot that leaves every position as it was starts no glide, no timer and no animation frame.
-The only motion that never stops is the dashes flowing along a working line, which is a CSS animation.
+The only motion that never stops is the dashes flowing along a working line, which a timer steps four times a second (the `--graph-flow-*` tokens) instead of a CSS animation, and no timer runs while no line is working.
 With `prefers-reduced-motion` every change is one jump, the entrances do not play, and a working line stays a still blue line; the app has no switch of its own.
 
 Heads, rows, chips, `정리` and fold lines take focus; the arrow keys move between them by where they are drawn, Enter is the click, and Escape leaves the Overview as before.

@@ -121,6 +121,10 @@
   --graph-tray-inset-y: 2px;
   --graph-edge-width: 1.5px;
   --graph-search-width: 176px;
+  --graph-flow-dash: 6px;
+  --graph-flow-gap: 12px;
+  --graph-flow-step-ms: 250;
+  --graph-flow-steps: 4;
   --graph-edge-flow-width: 2px;
   --graph-motion-ms: 320;
   --issue-panel-min-width: 360px;

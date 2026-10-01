@@ -133,9 +133,9 @@ html[data-view-drag="row-resize"] * {
  * The Agents graph (PRD agents-graph-view). Its boxes, rows, trays and lines
  * are placed by numbers `graphMotion.ts` writes straight into the DOM, so the
  * only styling here is what a number cannot say: a line's colour by the state
- * it leads to, the working line's flowing dashes, and the entrance of a new
- * box or line. `prefers-reduced-motion` stops all of it (B34); a working line
- * stays a still blue one.
+ * it leads to, the working line's dash pattern (`graphMotion.ts` steps its
+ * offset), and the entrance of a new box or line. `prefers-reduced-motion`
+ * stops all of it (B34); a working line stays a still blue one.
  */
 .graph-edge {
   color: var(--muted-foreground);
@@ -155,11 +155,13 @@ html[data-view-drag="row-resize"] * {
 .graph-port {
   r: var(--graph-port-radius);
 }
+.graph-flow-layer {
+  will-change: transform;
+}
 .graph-edge-flow {
   stroke-width: var(--graph-edge-flow-width);
   stroke: color-mix(in oklab, var(--agent-working), var(--foreground) 40%);
-  stroke-dasharray: 6 12;
-  animation: graph-flow 1.2s linear infinite;
+  stroke-dasharray: var(--graph-flow-dash) var(--graph-flow-gap);
 }
 .graph-edge[data-edge-back="true"] .graph-edge-base {
   stroke-dasharray: 4 4;
@@ -169,11 +171,6 @@ html[data-view-drag="row-resize"] * {
 }
 .graph-draw {
   animation: graph-draw calc(var(--graph-motion-ms) * 1ms) ease-out;
-}
-@keyframes graph-flow {
-  to {
-    stroke-dashoffset: -18;
-  }
 }
 @keyframes graph-fade {
   from {

@@ -359,7 +359,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const edge = overview.locator(`[data-graph-edge="${mainPane}>${workingPane}"]`);
     await expect(edge).toHaveAttribute("data-edge-kind", "flow");
     await expect(edge.locator(".graph-edge-base")).toHaveAttribute("d", /^M \S+ \S+ /);
-    await expect(edge.locator(".graph-edge-flow")).toHaveCount(1);
+    await expect(overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`)).toHaveCount(1);
     await expect(overview.locator("[data-graph-edge]")).toHaveCount(1);
     // The folds: one line each, per project, a click unfolding it in place (B21, B23).
     const emptyFold = overview.locator('[data-graph-fold="empty"]');
@@ -561,7 +561,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(edge).toHaveAttribute("data-edge-kind", "flow", { timeout: 20_000 });
     // Reduced motion draws every change at once and stops the flow (B34).
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect(edge.locator(".graph-edge-flow")).toHaveCSS("display", "none");
+    await expect(overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`)).toHaveCSS("display", "none");
     await page.emulateMedia({ reducedMotion: "no-preference" });
 
     // ⌥` brings back the Overview as it was left: the filter and the open fold stay (B29).

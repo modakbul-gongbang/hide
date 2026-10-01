@@ -119,3 +119,69 @@ export class Tween {
     this.cancel();
   }
 }
+
+/** What `Flow` moves: the one attribute of a dash pattern's path. */
+export type FlowPath = { setAttribute: (name: string, value: string) => void };
+
+export type FlowOptions = {
+  /** The dash pattern's length, one dash and one gap. */
+  period: number;
+  /** How often the pattern advances. */
+  stepMs: number;
+  /** How many steps make one period. */
+  steps: number;
+  reduced: () => boolean;
+};
+
+/**
+ * The dashes flowing along working lines (PRD agents-graph-view B9, D-26),
+ * stepped a few times a second by a timer. A CSS animation of the same
+ * dashes keeps the whole frame pipeline running at the display's rate
+ * whatever the dashes' own speed: measured natively with six lines it cost
+ * about a tenth of a core, and still three percent when stepped in CSS,
+ * where four timer steps a second cost a twentieth of that. No timer runs
+ * while no line is working or the system asks for less motion.
+ */
+export class Flow {
+  private paths: readonly FlowPath[] = [];
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private step = 0;
+
+  constructor(private readonly options: FlowOptions) {}
+
+  /** The paths flowing now; an empty list, or reduced motion, stops the timer. */
+  set(paths: readonly FlowPath[]): void {
+    this.paths = paths;
+    if (paths.length === 0 || this.options.reduced()) {
+      this.stop();
+      return;
+    }
+    this.paint();
+    if (this.timer === null) this.timer = setInterval(() => this.advance(), this.options.stepMs);
+  }
+
+  private advance(): void {
+    if (this.options.reduced()) {
+      this.stop();
+      return;
+    }
+    this.step = (this.step + 1) % this.options.steps;
+    this.paint();
+  }
+
+  private paint(): void {
+    const offset = -this.step * (this.options.period / this.options.steps);
+    for (const path of this.paths) path.setAttribute("stroke-dashoffset", String(offset));
+  }
+
+  private stop(): void {
+    if (this.timer !== null) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  /** Ends the timer; the owner calls it when the graph leaves the screen. */
+  dispose(): void {
+    this.stop();
+    this.paths = [];
+  }
+}

@@ -1058,6 +1058,22 @@
       "type": "number",
       "value": 176
     },
+    "--graph-flow-dash": {
+      "type": "number",
+      "value": 6
+    },
+    "--graph-flow-gap": {
+      "type": "number",
+      "value": 12
+    },
+    "--graph-flow-step-ms": {
+      "type": "number",
+      "value": 250
+    },
+    "--graph-flow-steps": {
+      "type": "number",
+      "value": 4
+    },
     "--graph-edge-flow-width": {
       "type": "number",
       "value": 2

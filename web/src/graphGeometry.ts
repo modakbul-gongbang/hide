@@ -39,3 +39,11 @@ export function readGraphGeometry(root: Element = document.documentElement): Gra
 export function readMotionMs(root: Element = document.documentElement): number {
   return read(getComputedStyle(root), "--graph-motion-ms");
 }
+
+/** How the dashes of a working line step: the dash pattern's period and how often, and in how many steps, it advances. */
+export type FlowTiming = { period: number; stepMs: number; steps: number };
+
+export function readFlowTiming(root: Element = document.documentElement): FlowTiming {
+  const style = getComputedStyle(root);
+  return { period: read(style, "--graph-flow-dash") + read(style, "--graph-flow-gap"), stepMs: read(style, "--graph-flow-step-ms"), steps: read(style, "--graph-flow-steps") };
+}
