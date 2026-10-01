@@ -12,6 +12,14 @@ The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in and receives snapshot and delta frames out over hided's WebSocket (see hided and the WebSocket boundary) when the change notifier announces.
 The event sync coordinator (`session_sync/coordinator.rs`) delegates Herdr snapshot and subscription lifecycle to `session_sync/subscription.rs`, opens `events.subscribe` first and reads `session.snapshot` second, applies the topology events that follow, and refreshes agent telemetry with `agent.list` once per second.
 Tab names use core focus and the same agent row as the sidebar; process names arrive through a coordinator-owned off-lock `pane.process_info` reader on each host's connector.
+Session label consumption validates provider/native-reference ownership before any title, progress, reply or semantic status is derived.
+The local Runtime and each remote SessionReplica hold one publication fence per live pane; a native-reference transition invalidates the previously observed atomic owner/generation pairs, including an A → B → A return before watcher publication.
+A reconnect retains the fence while a retired pane releases it, and a fresh watcher publication can restore proven same-session labels.
+A missing or unsupported reference hides the labels without retiring the last concrete reference, so a consumer-only absence can restore its unchanged valid publication.
+Equivalent ID/path references advance the producer's publication epoch without invalidating its canonical worker generation or forcing another analysis.
+This adds fixed-size comparisons and bounded per-pane state to projection, no file I/O, subprocess, timer or additional notification under the runtime mutex.
+The producer's transcript proof and physical-worker generation remain outside that lock; [status-model.md](status-model.md#task-identity) and the [plugin guide](../plugins/agent-context-labels/README.md#metadata-and-read-budgets) own their publication rules.
+
 Its single worker reads at most the five attached tabs' focused panes, on focus or agent-state changes or a 30-second recheck, rejects obsolete generations, and publishes only changed names.
 Stopping its coordinator cancels the rest of the batch and joins the active read off the runtime lock.
 Small process responses have a one-second absolute read deadline and a 64 KiB cap; SSH session contention, connection setup, socket discovery, channel opening and disconnect each use the remote transport's 15-second bound, so shutdown can include those setup and cleanup stages.

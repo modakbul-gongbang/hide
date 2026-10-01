@@ -3,7 +3,7 @@ use super::*;
 // PRD AC1-4: assertions describe the operator's tree and persisted choice,
 // independently of how the projector builds its parent index.
 fn lineage_rows() -> Vec<SidebarAgentSnapshot> {
-    project_agents(serde_json::from_value(serde_json::json!({"agents": [
+    project_agents(crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
         {"id":"observer-control","pane_id":"parent","agent_status":"working","state_change_seq":1,"tokens":{"task":"Parent"}},
         {"id":"implementor-control","pane_id":"child","spawned_from_pane_id":"parent","agent_status":"working","state_change_seq":2,"tokens":{"task":"Child"}},
         {"id":"reviewer-control","pane_id":"grandchild","spawned_from_pane_id":"child","agent_status":"working","state_change_seq":3,"tokens":{"task":"Grandchild"}},
@@ -221,9 +221,10 @@ fn lineage_depth_is_not_capped_and_cycles_are_visible_orphans() {
             "spawned_from_pane_id": (index > 0).then(|| format!("p{}", index - 1))}),
         );
     }
-    let mut rows =
-        project_agents(serde_json::from_value(serde_json::json!({"agents":values})).unwrap())
-            .agents;
+    let mut rows = project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents":values})).unwrap(),
+    )
+    .agents;
     crate::sidebar::apply_lineage(&mut rows, &[], &[]);
     assert_eq!(rows[63].lineage_depth, 63);
     rows[0].spawned_from_pane_id = Some("p1".into());
@@ -361,9 +362,10 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
     ));
     assert_eq!(scoped, ["remote:mini:p1"]);
     // Fresh ingestion is the production cleanup boundary, not the toggle.
-    runtime.ingest_session(Ok(
-        serde_json::from_value(serde_json::json!({"agents":[]})).unwrap()
-    ));
+    runtime.ingest_session(Ok(crate::sidebar::owned_label_fixture(
+        serde_json::json!({"agents":[]}),
+    )
+    .unwrap()));
     assert!(runtime.snapshot.ui_state.expanded_agent_pane_ids.is_empty());
     let (restored, _, _) = persistence::load(&runtime.state_path);
     assert!(restored.expanded_agent_pane_ids.is_empty());
@@ -475,7 +477,7 @@ fn the_breadcrumb_path_and_each_steps_siblings_come_out_of_the_lineage() {
 #[test]
 fn lineage_identity_uses_tasks_even_when_herdr_names_exist() {
     let mut rows = project_agents(
-        serde_json::from_value(serde_json::json!({"agents": [
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
             {
                 "pane_id":"w1:p1",
                 "agent_status":"working",
@@ -549,7 +551,7 @@ fn hook_status_of(
 
 fn instrumented_rows(agent_kind: &str) -> Vec<SidebarAgentSnapshot> {
     let mut rows = project_agents(
-        serde_json::from_value(serde_json::json!({"agents": [
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
             {"id":"Observer","pane_id":"parent","agent":agent_kind,"agent_status":"working","state_change_seq":1,
              "tokens":{"task":"Coordinate delegated work"}},
             {"id":"Worker","pane_id":"child","agent":agent_kind,"spawned_from_pane_id":"parent",
@@ -735,7 +737,7 @@ fn the_breadcrumb_is_the_ancestors_then_the_pane_with_each_layers_siblings() {
 // PRD B1, B3, B4, D-15, D-43, D-44: the canvas keeps one pane, and the tab
 // holding the delegated child never reaches the strip.
 fn split_lineage_payload() -> crate::sidebar::SessionSnapshotPayload {
-    serde_json::from_value(split_lineage_json()).expect("session payload")
+    crate::sidebar::owned_label_fixture(split_lineage_json()).expect("session payload")
 }
 
 /// A parent and its delegated child split in one tab, as Herdr reports them
@@ -1034,7 +1036,7 @@ fn ingest_lineage(runtime: &mut Runtime, rows: &[(&str, Option<&str>, &str, &str
             })
         })
         .collect::<Vec<_>>();
-    runtime.ingest_session(Ok(serde_json::from_value(serde_json::json!({
+    runtime.ingest_session(Ok(crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": agents, "panes": panes, "tabs": tabs, "layouts": layouts
     }))
     .expect("session payload")));
@@ -1486,7 +1488,7 @@ fn a_pane_whose_session_ended_draws_no_counts_even_though_its_tokens_remain() {
 #[test]
 fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the_install() {
     let mut runtime = runtime();
-    runtime.ingest_session(Ok(serde_json::from_value(serde_json::json!({
+    runtime.ingest_session(Ok(crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [
             {"id":"instrumented-control","pane_id":"w1:p1","agent":"claude","agent_status":"working",
              "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture","tokens":{"task":"Check hook reports"}},
@@ -1827,7 +1829,7 @@ fn the_overview_agent_line_separates_nobody_working_here_from_cannot_see() {
 #[test]
 fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
     let mut runtime = runtime();
-    runtime.ingest_session(Ok(serde_json::from_value(serde_json::json!({
+    runtime.ingest_session(Ok(crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [
             {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
              "state_change_seq":1,"cwd":"/fixture","workspace_label":"hide",

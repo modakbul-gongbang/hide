@@ -47,16 +47,17 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     env: {
       ...env,
       HOME: home,
+      HCOORD_HOME: path.join(home, ".hcoord"),
       HIDE_STATE_DIR: path.join(dir, "hide"),
       HIDE_KEEP_ALIVE: "1",
       HIDE_PORT: port,
       HIDED_UI_DIR: path.resolve("dist"),
       HERDR_SOCKET_PATH: herdr.socket,
       HERDR_BIN_PATH: herdr.bin,
-      // hided refuses to start an agent whose binary is not on its own PATH,
-      // so the fixture's `claude` shim leads it: the CI runner has no claude.
-      // A spec that passes its own PATH names the shim there itself.
-      PATH: `${path.join(herdr.root, "bin")}:${env.PATH ?? "/usr/bin:/bin"}`,
+      // Catalog discovery probes every provider on hided's PATH, so use the
+      // same controlled shim and system tools as the private Herdr server.
+      // Specs adding a shim prepend it to this path through extraEnv.
+      PATH: herdr.fixturePath,
       // `open_external` must not launch a GUI application on the runner.
       HIDE_OPEN_COMMAND: "/usr/bin/true",
       ...extraEnv,

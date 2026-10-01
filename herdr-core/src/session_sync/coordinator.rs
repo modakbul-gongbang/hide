@@ -106,13 +106,16 @@ fn run_coordinator(
                 has_projection,
             ) {
                 Ok(Connected {
-                    replica: next_replica,
+                    replica: mut next_replica,
                     subscription: next_subscription,
                     snapshot_at,
                 }) => {
                     if context.is_local() && !begin_local_read_record_reconciliation(&context) {
                         stop_subscription(&mut subscription);
                         return;
+                    }
+                    if let Some(previous) = replica.as_ref() {
+                        next_replica.retain_label_publications(previous);
                     }
                     replica = Some(next_replica);
                     subscription = Some(next_subscription);
@@ -127,7 +130,7 @@ fn run_coordinator(
                         .is_some_and(SessionReplica::ready_to_publish)
                         && !publish_replica(
                             &context,
-                            replica.as_ref().unwrap(),
+                            replica.as_mut().unwrap(),
                             &mut catalog_cache,
                             &mut purpose_mirror,
                         )
@@ -355,7 +358,7 @@ fn run_coordinator(
                     }
                 }
                 if rebuild
-                    && let Some(current) = replica.as_ref()
+                    && let Some(current) = replica.as_mut()
                     && !publish_replica(&context, current, &mut catalog_cache, &mut purpose_mirror)
                 {
                     stop_subscription(&mut subscription);
@@ -693,7 +696,7 @@ fn settle_active_tab_reads(
 
 fn publish_replica(
     context: &SessionSyncContext,
-    replica: &SessionReplica,
+    replica: &mut SessionReplica,
     catalog_cache: &mut Option<CatalogCache>,
     purpose_mirror: &mut Option<live::PurposeMirror>,
 ) -> bool {

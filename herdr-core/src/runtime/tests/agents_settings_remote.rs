@@ -1466,20 +1466,21 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
         });
     }
     let remote_session = |target_id: &str, pane_ids: &[&str], focused: Option<&str>| {
-        let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
-            "agents": pane_ids
-                .iter()
-                .map(|pane_id| serde_json::json!({
-                    "pane_id": pane_id,
-                    "workspace_label": "Remote",
-                    "agent": "codex",
-                    "agent_status": "idle",
-                    "state_change_seq": 4,
-                    "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
-                }))
-                .collect::<Vec<_>>()
-        }))
-        .expect("remote payload");
+        let payload: SessionSnapshotPayload =
+            crate::sidebar::owned_label_fixture(serde_json::json!({
+                "agents": pane_ids
+                    .iter()
+                    .map(|pane_id| serde_json::json!({
+                        "pane_id": pane_id,
+                        "workspace_label": "Remote",
+                        "agent": "codex",
+                        "agent_status": "idle",
+                        "state_change_seq": 4,
+                        "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
+                    }))
+                    .collect::<Vec<_>>()
+            }))
+            .expect("remote payload");
         let mut agents = project_agents(payload).agents;
         for agent in &mut agents {
             agent.pane_id = remote_pane_id_prefix(target_id) + &agent.pane_id;

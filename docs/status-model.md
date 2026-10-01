@@ -372,6 +372,19 @@ The core publishes one `identity_label` per agent, and every surface calls the a
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
 The plugin publishes no session `name`, does not read Claude's `ai-title` or Codex's first human turn as a separate title, and never renames an agent or tab.
+The plugin’s `task`, `progress` and `expected_reply` are accepted only when their atomic `label_owner` fingerprint matches the current supported provider/native reference.
+`sidebar.rs::project_agent` rejects missing, unsupported and mismatched ownership before deriving any title, detail or message, including the first snapshot after a native-session transition.
+Atomic `status_owner` and `status_generation` independently guard plugin demand; Herdr’s actual lifecycle remains the fallback.
+The local Runtime and remote SessionReplica each retain one publication fence per live pane, preserving it across reconnect and retiring it with the pane.
+An observed different concrete native reference invalidates the previously published owner/generation pairs, so retained A strings or demand cannot reappear on A → B → A before a fresh publication.
+Missing or unsupported references suppress the strings and semantic status while preserving the last concrete-reference fence; returning that same reference restores an unchanged publication unless another concrete session was observed.
+`label_generation` advances on each raw ID/path reference change, independently of the canonical worker generation, so equivalent-reference publications coalesced between frames still recover.
+`label_generation` accompanies the label group, and a restart uses a fresh watcher instance prefix while restoring only proven same-session labels.
+This comparison adds fixed-size token checks per projected agent, no worker, subprocess or I/O under the runtime lock, and no new notification beyond an actual projected state transition.
+The plugin proves durable ownership from transcript metadata, restores only that same provider/native ID after restart or reconnect, hides labels during temporary reference absence and rejects ownerless legacy state.
+Its fixed metadata source, report/key/value budgets and physical-worker generation fence are documented in [the plugin guide](../plugins/agent-context-labels/README.md#metadata-and-read-budgets).
+Sleeping rows preserve only labels captured from the guarded current projection; older sleep records without provenance fall back to the provider.
+Regression owners: `an_observed_return_cannot_revalidate_retained_publications`, `native_session_changes_suppress_every_stale_label_and_status_before_the_watcher_runs`, the plugin session-transition tests, and `hide-session::label_owner` metadata tests.
 There is no `summary` token and no missing-summary notice: an agent without a task is titled by its provider, and the row says nothing else.
 Truncation belongs to each view and does not shorten tooltip or accessibility text.
 Projection adds bounded-by-metadata strings per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.

@@ -188,7 +188,12 @@ fn main() -> Result<()> {
                 .context("cannot read hook payload")?;
             let payload: serde_json::Value =
                 serde_json::from_str(&input).context("hook payload is invalid")?;
-            apply_hook_payload(&paths, &pane_id, &payload)?;
+            apply_hook_payload(
+                &paths,
+                &pane_id,
+                &payload,
+                &SocketHerdr::from_environment(&home),
+            )?;
             Ok(())
         }
         Action::AnalyzeStdin { agent } => {

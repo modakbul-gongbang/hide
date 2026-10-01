@@ -6,9 +6,8 @@
 // conversation's resume arguments.
 
 import { expect, test } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
+import { setFixtureSession, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -28,11 +27,7 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     const [, sleeper] = herdr.panes;
     // The official Claude integration's report: the conversation id, under
     // Herdr's own source.
-    execFileSync(
-      herdr.bin,
-      ["pane", "report-agent-session", sleeper, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", SESSION],
-      { env: herdr.env, timeout: 30_000 },
-    );
+    setFixtureSession(herdr, sleeper, SESSION);
     const other = herdr.run([
       "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "other", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
     ]) as { result: { tab: { tab_id: string } } };

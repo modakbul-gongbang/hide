@@ -38,11 +38,16 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
 
 ## Writing a fixture
 
+- Set each fixture's `HCOORD_HOME` to its private `HOME/.hcoord`; a private `HOME` alone leaves hcoord on the account's shared launchd label.
+  The desktop fixture refuses a mismatched coordinator before launching a candidate.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
 - Herdr starts a pane's shell from the server's `SHELL`, so a fixture sets `SHELL=/bin/zsh` beside its private `HOME`.
   The CI runner's login shell is bash, where a prompt planted in the fixture's `.zshrc` never appears; reproduce that with `SHELL=/bin/bash pnpm --dir web e2e`.
 - A private `HOME` has no Claude or Codex login, because each CLI keys its credential to `HOME`.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent.
+  The private Herdr server, panes and `hided` use `fixturePath`: the shim directory followed by system-tool directories, including `/usr/sbin` for `lsof`.
+  Catalog discovery probes every provider, so appending the host's `PATH` also reaches its installed CLIs even when the test selects Claude.
+  A spec adding a GitHub or Git shim prepends it to `fixturePath`; explicit `extraEnv.PATH` remains authoritative.
   A claim about a real agent session needs the real CLI inside an otherwise isolated fixture: a shim on the pane's `PATH` that runs the CLI under the operator's `HOME`, while the server keeps its private one.
 
 ## Manual native QA

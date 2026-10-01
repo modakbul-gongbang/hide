@@ -23,15 +23,15 @@ fn event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
 fn session(seq: Option<u64>) -> SessionSnapshotPayload {
     let mut payload = tab_order_payload(CHECKOUT, &TABS, &TABS, "w-order:t1");
     if let Some(seq) = seq {
-        payload.agents.push(
-            serde_json::from_value(serde_json::json!({
+        let owned: SessionSnapshotPayload =
+            crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [{
                 "id": "reviewer", "pane_id": SLEEPER, "agent": "claude",
                 "agent_status": "idle", "state_change_seq": seq, "cwd": CHECKOUT,
                 "agent_session": {"kind": "id", "value": "11111111-2222-3333-4444-555555555555"},
                 "tokens": {"task": "Review the parser"}
-            }))
-            .unwrap(),
-        );
+            }]}))
+            .unwrap();
+        payload.agents.extend(owned.agents);
     }
     payload
 }
@@ -195,6 +195,31 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
             .is_none(),
         "the records stay off the wire"
     );
+}
+
+/// #268: a sleep record written before labels carried an owner proves no
+/// session, so its row falls back to the provider title with no progress.
+#[test]
+fn a_legacy_sleep_record_without_a_label_owner_shows_no_stale_label() {
+    let (mut runtime, _) = asleep();
+    let record = runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .records
+        .get_mut(SLEEPER)
+        .expect("the sleep record");
+    assert!(
+        record.label_owner.is_some(),
+        "a current row stamps its owner"
+    );
+    record.label_owner = None;
+    record.progress = Some("Split the lexer".to_owned());
+    runtime.ingest_session(Ok(session(None)));
+    let slept = row(&runtime);
+    assert_eq!(slept["sleep"]["state"], "sleeping");
+    assert_eq!(slept["identity_label"], "Claude");
+    assert!(slept.get("progress").is_none_or(serde_json::Value::is_null));
 }
 
 /// B12: typed input to a sleeping pane reaches no terminal.
