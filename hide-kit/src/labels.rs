@@ -94,8 +94,8 @@ pub(crate) fn retire(target: &KitTarget) -> LabelsRetirement {
                 Ok(()) => outcome.removed.push(name.to_owned()),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => outcome.failures.push(format!(
-                    "the plugin's {name} {} could not be removed: {error}",
-                    folder.display()
+                    "the plugin's {name} could not be removed: {}",
+                    error.kind()
                 )),
             }
         }
@@ -231,7 +231,7 @@ fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<i32>, String> {
 fn lock_is_held(lock: &Path) -> Result<bool, String> {
     use std::os::fd::AsRawFd;
     let file = std::fs::File::open(lock)
-        .map_err(|error| format!("{} could not be opened: {error}", lock.display()))?;
+        .map_err(|error| format!("the watcher lock could not be opened: {}", error.kind()))?;
     // SAFETY: flock on a descriptor `file` owns; dropping `file` releases it.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
         return Ok(false);
@@ -240,7 +240,10 @@ fn lock_is_held(lock: &Path) -> Result<bool, String> {
     if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
         Ok(true)
     } else {
-        Err(format!("{} could not be checked: {error}", lock.display()))
+        Err(format!(
+            "the watcher lock could not be checked: {}",
+            error.kind()
+        ))
     }
 }
 
