@@ -128,7 +128,16 @@ export class BrowserViews {
     window.webContents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) this.hideAll();
     });
-    window.on("blur", () => this.cancelCycle());
+    window.on("blur", () => {
+      const held = this.cycleInput;
+      this.cancelCycle();
+      // The hold moved the native responder to the shell. When the window
+      // comes back, the page that started it takes the keyboard again, as
+      // it would after Escape, unless it has since been hidden or closed.
+      if (held) window.once("focus", () => {
+        if (held.page.visible && this.pages.get(held.page.key) === held.page) held.page.view.webContents.focus();
+      });
+    });
     window.on("closed", () => {
       this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");

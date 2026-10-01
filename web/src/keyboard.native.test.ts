@@ -143,6 +143,17 @@ describe("native cycle responder return", () => {
     expect(pageCommands).toEqual([]);
   });
 
+  it("a release back on the origin commits nothing and returns the keyboard to the page", () => {
+    input();
+    input();
+    input("keyUp", "Control");
+    flushFrames();
+    expect(useUiStore.getState().cycle).toBeNull();
+    expect(events).toEqual([]);
+    expect(ended).toEqual([1]);
+    expect(pageCommands).toEqual([["local\u0000/fixture", "d1", "focus"]]);
+  });
+
   it("Escape restores the captured origin with no commit", () => {
     input();
     input("keyDown", "Escape");

@@ -27,11 +27,14 @@ function candidate() {
   };
   const page = (id: string) => {
     let focused = true;
-    const contents = Object.assign(new EventEmitter(), { isFocused: () => focused, setWindowOpenHandler: vi.fn() });
+    const pageFocus = vi.fn();
+    const contents = Object.assign(new EventEmitter(), { isFocused: () => focused, setWindowOpenHandler: vi.fn(), focus: pageFocus });
     const value = { key: id, workspace: "fixture", id, visible: true, view: { webContents: contents, setVisible: vi.fn() }, state: {}, report: null, route: null, applied: 1, partition: "fixture", shownAt: 0 };
     const watch = Reflect.get(subject, "watch") as (page: unknown) => void;
     watch.call(subject, value);
+    (Reflect.get(subject, "pages") as Map<string, unknown>).set(id, value);
     return {
+      pageFocus,
       focus: (next: boolean) => { focused = next; },
       show: (visible: boolean) => Reflect.get(subject, "show").call(subject, value, visible),
       visibility: value.view.setVisible,
@@ -39,7 +42,7 @@ function candidate() {
     };
   };
   const forwarded = () => send.mock.calls.filter(([channel]) => channel === BROWSER_EVENT_CHANNEL).map(([, value]) => value as { kind: string; id: string; cycleId: number; key: string });
-  return { page, forwarded, shellFocus, shellInput: (type?: string, key?: string, control?: boolean, alt?: boolean) => input(shellContents, type, key, control, alt), registry: (rows: readonly Command[]) => subject.setRegistry(rows), blur: () => window.emit("blur"), windowFocus: (focused: boolean) => { windowFocused = focused; } };
+  return { page, forwarded, shellFocus, shellInput: (type?: string, key?: string, control?: boolean, alt?: boolean) => input(shellContents, type, key, control, alt), registry: (rows: readonly Command[]) => subject.setRegistry(rows), blur: () => window.emit("blur"), windowReturn: () => window.emit("focus"), windowFocus: (focused: boolean) => { windowFocused = focused; } };
 }
 
 describe("native held cycle delivery", () => {
@@ -103,6 +106,22 @@ describe("native held cycle delivery", () => {
       expect.objectContaining({ kind: "cycle-cancel", id: "origin", cycleId: 1 }),
     ]);
     expect(shellInput("keyUp", "Control", false)).not.toHaveBeenCalled();
+  });
+  it("gives the keyboard back to a blur-cancelled origin once when the window returns", () => {
+    const { page, blur, windowReturn } = candidate();
+    const origin = page("origin"), hidden = page("hidden");
+    origin.input();
+    blur();
+    windowReturn();
+    expect(origin.pageFocus).toHaveBeenCalledOnce();
+    windowReturn();
+    expect(origin.pageFocus).toHaveBeenCalledOnce();
+    // An origin hidden while the window was away stays unfocused.
+    hidden.input();
+    blur();
+    hidden.show(false);
+    windowReturn();
+    expect(hidden.pageFocus).not.toHaveBeenCalled();
   });
   it("release and Escape from another page reach the frozen origin once", () => {
     for (const key of ["Control", "Escape"]) {

@@ -105,11 +105,12 @@ The first native cycle chord gives keyboard response to the shell in the same fo
 Held repeats, release and Escape received by the shell follow the same host IPC route as the first chord, so a quick release cannot arrive before cycle initialization or also run through the DOM listener.
 After hiding that held page, the host reasserts shell keyboard response, because hiding a WebContentsView removes its native keyboard response.
 The shell retains the initiating page's logical ownership until release commits or Escape restores its input destination.
-When a first start is rejected or has zero or one eligible item, it restores the initiating visible page without committing a selection; completing a cycle instead follows the chosen page.
+When a first start is rejected or has zero or one eligible item, or a release commits nothing because the cycle came back to its origin, it restores the initiating visible page; a release that commits instead follows the chosen page.
 The trusted bridge carries only cycle keydown/keyup and cancellation; the shell keeps the frozen scope and preview and owns the single commit.
 The shell also reports the matching identifier when release arrived in its renderer, so a late completion cannot erase a newer hold.
 Release or Escape received by another native page still ends the frozen initiating cycle.
 Window blur, page renderer failure and destruction of the held page cancel the host slot, and a hidden or unfocused page cannot begin a cycle.
+After a blur cancels a hold, the window's next focus gives the keyboard back to the initiating page if it is still shown, as Escape does.
 After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
 The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.

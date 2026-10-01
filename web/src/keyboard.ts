@@ -120,26 +120,32 @@ export function numberedTarget(family: NumberedFamily, number: Digit, state: { r
  * checkout does from the sidebar, which is also how a device's project comes
  * forward.
  */
-export function commitCycle(cycle: Cycle, actions: Actions) {
+/** Commits the chosen item; false when nothing moved: the cycle chose its origin, or a target that left its scope. */
+export function commitCycle(cycle: Cycle, actions: Actions): boolean {
   const chosen = cycle.items[cycle.index];
-  if (!chosen || (cycle.originKey ? chosen.key === cycle.originKey : cycle.index === 0)) return;
+  if (!chosen || (cycle.originKey ? chosen.key === cycle.originKey : cycle.index === 0)) return false;
   if (cycle.scope) {
     const membership = scopedSurfaces(useShellStore.getState().rest, cycle.scope);
-    if (chosen.target.kind !== "surface" || !membership?.surfaces.some((surface) => surface.key === chosen.key)) return;
-    return cycle.scope.kind === "view" ? actions.focusView(chosen.target.surface.id, true) : actions.focusTab(chosen.target.surface.id, true);
+    if (chosen.target.kind !== "surface" || !membership?.surfaces.some((surface) => surface.key === chosen.key)) return false;
+    if (cycle.scope.kind === "view") actions.focusView(chosen.target.surface.id, true);
+    else actions.focusTab(chosen.target.surface.id, true);
+    return true;
   }
   const target = chosen.target;
   switch (target.kind) {
     case "surface":
-      return actions.openSurface(target.surface);
+      actions.openSurface(target.surface);
+      return true;
     case "screen":
       // Expected like any commit, so an earlier commit still on its way cannot keep this from being the visit.
       expectSurface(chosen.key);
       // The rail and the sidebar follow the device first; the page's screen shows at once.
       actions.focusDevice(target.deviceId);
-      return useUiStore.getState().setScreen(target.screen);
+      useUiStore.getState().setScreen(target.screen);
+      return true;
     case "checkout":
-      return actions.openWorkspace(target.deviceId, target.workspaceId, target.checkoutId);
+      actions.openWorkspace(target.deviceId, target.workspaceId, target.checkoutId);
+      return true;
   }
 }
 
@@ -390,8 +396,9 @@ export function installKeyboard(actions: Actions): () => void {
     if (!cycle) return;
     const originalPage = nativeCycle;
     ui().setCycle(null);
-    commitCycle(cycle, actions);
-    if (originalPage && cycle.items[cycle.index]?.key === cycle.originKey) focusBrowserDisplay(originalPage.workspace, originalPage.id);
+    // A release that moved nothing returns the keyboard to the page that
+    // started the hold; a commit hands it to the chosen destination instead.
+    if (!commitCycle(cycle, actions) && originalPage) focusBrowserDisplay(originalPage.workspace, originalPage.id);
   };
 
   // Losing the window mid-cycle (⌥-Tab switching apps) cancels it; nothing
