@@ -203,9 +203,12 @@ impl Harness {
         (worker, woken)
     }
 
-    /// A Claude session file the worker reads by path.
+    /// A Claude session file the worker reads by path, where Claude keeps
+    /// it: a read refuses a file outside the home's transcript root.
     fn session(&self, name: &str, session_id: &str, turns: &[(&str, &str)]) -> PathBuf {
-        let path = self.home.path().join(format!("{name}.jsonl"));
+        let project = self.home.path().join(".claude/projects/-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let path = project.join(format!("{name}.jsonl"));
         let mut lines = String::new();
         for (index, (kind, text)) in turns.iter().enumerate() {
             let at = format!("2026-10-01T00:00:{index:02}Z");
@@ -633,6 +636,31 @@ impl crate::host_access::HostChannel for OlderHelper {
     }
 }
 
+/// The device helper in process, reading transcripts under its own HOME
+/// (the harness's), as `hide-host-helper` does under the device's.
+struct HelperAt(PathBuf);
+
+impl crate::host_access::HostChannel for HelperAt {
+    fn call(
+        &self,
+        call: hide_host::protocol::Call,
+        timeout: Duration,
+    ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
+        match call {
+            hide_host::protocol::Call::LabelTranscript { request } => {
+                hide_host::serve::label_transcript(&self.0, &request)
+                    .map(crate::host_access::HostAnswer::Parsed)
+                    .map_err(crate::host_access::HostCallError::Refused)
+            }
+            call => crate::host_access::InProcessHost.call(call, timeout),
+        }
+    }
+
+    fn in_process(&self) -> bool {
+        true
+    }
+}
+
 /// B13: a device pane's conversation comes through the helper protocol and
 /// is labeled here the same way as this Mac's.
 #[test]
@@ -648,7 +676,7 @@ fn a_device_panes_label_is_read_through_its_helper() {
     );
     harness.backend.answer("미니 배치 실행 작업", "none", "");
     let helper: Arc<dyn crate::host_access::HostChannel> =
-        Arc::new(crate::host_access::InProcessHost);
+        Arc::new(HelperAt(harness.home.path().to_path_buf()));
     let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
     let idle = agent(&path, "idle", 1);
     observe(&mut worker, &idle);
@@ -673,7 +701,7 @@ fn a_disconnected_device_keeps_its_label_and_catches_up_after_it_returns() {
     harness.backend.answer("두 번째 기기 작업", "none", "");
     let connected = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let helper: Arc<dyn crate::host_access::HostChannel> =
-        Arc::new(crate::host_access::InProcessHost);
+        Arc::new(HelperAt(harness.home.path().to_path_buf()));
     let link = Arc::clone(&connected);
     let (mut worker, woken) = harness.device_worker(Box::new(move || {
         if link.load(Ordering::SeqCst) {

@@ -9,7 +9,7 @@
 //! injected scaffolding or a path. Failures are stable reason codes.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -93,7 +93,10 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     if request.reference_value.trim().is_empty() {
         return Err("label_session_reference_missing".to_owned());
     }
-    let path = SessionLocator::new(home)
+    if request.reference_kind == "id" && !is_session_id(&request.reference_value) {
+        return Err("label_session_id_invalid".to_owned());
+    }
+    let located = SessionLocator::new(home)
         .locate(
             "label",
             request.agent,
@@ -104,6 +107,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
             SessionError::SessionFileMissing => "session_file_missing".to_owned(),
             _ => "label_session_location_unavailable".to_owned(),
         })?;
+    let path = inside_agent_root(home, request.agent, &located)?;
     let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
     let before = confirm_label_session(request.agent, &path, reported_id)
         .map_err(|error| error.to_string())?;
@@ -167,6 +171,34 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     })
 }
 
+/// A native session id as Claude and Codex write them; anything else (a
+/// separator, `..`) could steer the file name the locator builds from it.
+fn is_session_id(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        && value != "."
+        && value != ".."
+}
+
+/// The located file with every link resolved, refused unless it lies under
+/// the agent's own transcript root in `home`: a reported path, or a link
+/// planted inside the root, never makes the reader open a file elsewhere.
+fn inside_agent_root(home: &Path, agent: Agent, located: &Path) -> Result<PathBuf, String> {
+    let root = match agent {
+        Agent::Claude => home.join(".claude/projects"),
+        Agent::Codex => home.join(".codex/sessions"),
+    };
+    let outside = || "label_session_outside_roots".to_owned();
+    let root = std::fs::canonicalize(root).map_err(|_| outside())?;
+    let path = std::fs::canonicalize(located).map_err(|_| "session_file_missing".to_owned())?;
+    if path.starts_with(&root) && path != root {
+        Ok(path)
+    } else {
+        Err(outside())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +216,13 @@ mod tests {
         format!("{record}\n")
     }
 
+    /// Where Claude keeps a project's transcripts under `home`.
+    fn transcript_path(home: &Path, name: &str) -> PathBuf {
+        let project = home.join(".claude/projects/-project");
+        fs::create_dir_all(&project).unwrap();
+        project.join(name)
+    }
+
     fn request(path: &Path, checkpoint: Option<ConversationCheckpoint>) -> LabelTranscriptRequest {
         LabelTranscriptRequest {
             agent: Agent::Claude,
@@ -197,7 +236,7 @@ mod tests {
     #[test]
     fn a_resumed_read_returns_only_appended_conversation_and_an_anchor_at_the_last_human() {
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("session.jsonl");
+        let path = transcript_path(root.path(), "session.jsonl");
         fs::write(
             &path,
             claude_line("user", "s1", "first request", "2026-10-01T00:00:00Z")
@@ -228,7 +267,7 @@ mod tests {
     #[test]
     fn a_reported_id_the_file_does_not_carry_is_refused() {
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("session.jsonl");
+        let path = transcript_path(root.path(), "session.jsonl");
         fs::write(
             &path,
             claude_line("user", "native-a", "request", "2026-10-01T00:00:00Z"),
@@ -248,7 +287,7 @@ mod tests {
     #[test]
     fn an_oversized_tool_result_is_skipped_and_an_oversized_sentence_is_a_capacity_failure() {
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("session.jsonl");
+        let path = transcript_path(root.path(), "session.jsonl");
         let huge = "x".repeat(crate::SESSION_LINE_LIMIT_BYTES + 10);
         let tool = serde_json::json!({"type":"user","sessionId":"s1","timestamp":"2026-10-01T00:00:01Z",
             "message":{"role":"user","content":[{"type":"tool_result","content":huge}]}});
@@ -266,7 +305,7 @@ mod tests {
         );
         assert_eq!(answer.events.last().unwrap().text, "after the tool");
 
-        let sentence = root.path().join("sentence.jsonl");
+        let sentence = transcript_path(root.path(), "sentence.jsonl");
         fs::write(
             &sentence,
             claude_line("user", "s1", "request", "2026-10-01T00:00:00Z")
@@ -280,11 +319,75 @@ mod tests {
     #[test]
     fn an_unsupported_reference_kind_reads_nothing() {
         let root = tempfile::tempdir().unwrap();
-        let mut request = request(&root.path().join("missing.jsonl"), None);
+        let mut request = request(&transcript_path(root.path(), "missing.jsonl"), None);
         request.reference_kind = "pid".to_owned();
         assert_eq!(
             read(root.path(), &request).unwrap_err(),
             "session_kind_unsupported"
+        );
+    }
+
+    #[test]
+    fn an_id_that_is_not_a_bare_session_id_is_refused_before_any_file_is_looked_up() {
+        let root = tempfile::tempdir().unwrap();
+        let mut request = request(&transcript_path(root.path(), "unused.jsonl"), None);
+        request.reference_kind = "id".to_owned();
+        for id in ["../../secret", "a/b", "..", "id with space", "id\\x"] {
+            request.reference_value = id.to_owned();
+            assert_eq!(
+                read(root.path(), &request).unwrap_err(),
+                "label_session_id_invalid",
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_outside_the_agents_transcript_root_is_refused_without_naming_it() {
+        let root = tempfile::tempdir().unwrap();
+        transcript_path(root.path(), "unused.jsonl");
+        let elsewhere = root.path().join("elsewhere.jsonl");
+        fs::write(
+            &elsewhere,
+            claude_line("user", "s1", "private", "2026-10-01T00:00:00Z"),
+        )
+        .unwrap();
+        let error = read(root.path(), &request(&elsewhere, None)).unwrap_err();
+        assert_eq!(error, "label_session_outside_roots");
+
+        // A Codex root is no root for a Claude session either.
+        let codex = root.path().join(".codex/sessions");
+        fs::create_dir_all(&codex).unwrap();
+        let in_codex = codex.join("session.jsonl");
+        fs::copy(&elsewhere, &in_codex).unwrap();
+        assert_eq!(
+            read(root.path(), &request(&in_codex, None)).unwrap_err(),
+            "label_session_outside_roots"
+        );
+    }
+
+    #[test]
+    fn a_link_inside_the_root_that_leads_outside_it_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let elsewhere = root.path().join("elsewhere.jsonl");
+        fs::write(
+            &elsewhere,
+            claude_line("user", "s1", "private", "2026-10-01T00:00:00Z"),
+        )
+        .unwrap();
+        let link = transcript_path(root.path(), "s1.jsonl");
+        std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+
+        assert_eq!(
+            read(root.path(), &request(&link, None)).unwrap_err(),
+            "label_session_outside_roots"
+        );
+        let mut by_id = request(&link, None);
+        by_id.reference_kind = "id".to_owned();
+        by_id.reference_value = "s1".to_owned();
+        assert_eq!(
+            read(root.path(), &by_id).unwrap_err(),
+            "label_session_outside_roots"
         );
     }
 }

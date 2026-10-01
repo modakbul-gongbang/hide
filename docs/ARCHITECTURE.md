@@ -441,6 +441,7 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
 - **When it reads.** A pane's conversation is read only when its agent status, Herdr state sequence or session reference moved, when an earlier read left a backlog, when a provider wait ran out, and once about three seconds after a turn starts whose prompt was not written yet.
   A read is bounded and resumable, from the checkpoint the store kept, so an unchanged pane spends no read, no Herdr call, no request and no publish.
 - **What it reads.** `hide_session::label_transcript::read` proves the provider's native owner of the file Herdr's reference names, and returns only conversation events and the next checkpoint.
+  It reads only under the agent's own transcript root in its HOME (`.claude/projects` or `.codex/sessions`), after every link in the path is resolved, and takes an id only as letters, digits, `.`, `_` and `-`; anything else is refused with a stable code that names no path (`label_session_outside_roots`, `label_session_id_invalid`).
   For this Mac it runs in process.
   For a device the same function runs in `hide-host-helper` behind the `label_transcript` call (protocol 12); the events come to this Mac in memory only and are never stored, and the analysis runs on this Mac's provider login.
   A device whose helper is not connected keeps its panes' labels and is retried every fifteen seconds; a helper too old to know the call leaves the provider name, and the device's kit status already offers the reinstall that replaces it.
