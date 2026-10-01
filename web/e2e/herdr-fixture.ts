@@ -15,7 +15,9 @@
 // The same binary is the daemon's Claude provider, because hided finds
 // `claude` on the same PATH: `claude auth status` answers logged in, and a
 // print-mode request (`--json-schema`) answers with the label written after
-// the last `HIDE_E2E_LABEL ` in its prompt. `labelAgent` writes that marker
+// the last `HIDE_E2E_LABEL ` in its prompt, after the delay a
+// `HIDE_E2E_DELAY_MS ` line before it asks for, and appends the answered
+// task to `HIDE_E2E_PROVIDER_LOG` when that is set. `labelAgent` writes that marker
 // into a synthetic Claude transcript, so a pane's label comes from the
 // core's own transcript read and analysis, never from a token (PRD
 // labels-in-hided).
@@ -49,6 +51,7 @@ const SHIM_SOURCE = `#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 static char prompt[1 << 20];
 static int provider(int argc, char **argv) {
@@ -65,9 +68,19 @@ static int provider(int argc, char **argv) {
     puts("{\\"type\\":\\"result\\",\\"is_error\\":true,\\"subtype\\":\\"error_during_execution\\"}");
     return 1;
   }
+  char *delay = NULL;
+  for (char *at = prompt; (at = strstr(at, "HIDE_E2E_DELAY_MS ")) != NULL && at < label; at++) delay = at;
+  if (delay) {
+    long ms = atol(delay + strlen("HIDE_E2E_DELAY_MS "));
+    struct timespec wait = { ms / 1000, (ms % 1000) * 1000000L };
+    nanosleep(&wait, NULL);
+  }
   label += strlen("HIDE_E2E_LABEL ");
   char *end = strchr(label, '\\n');
   if (end) *end = 0;
+  const char *calls = getenv("HIDE_E2E_PROVIDER_LOG");
+  FILE *log = calls ? fopen(calls, "a") : NULL;
+  if (log) { fprintf(log, "%s\\n", label); fclose(log); }
   printf("{\\"type\\":\\"result\\",\\"is_error\\":false,\\"structured_output\\":%s}\\n", label);
   return 0;
 }
@@ -201,6 +214,8 @@ async function waitFor(predicate: () => boolean, what: string, ms = 10_000, deta
 export type FixtureLabel = {
   /** 8 to 30 characters: the core refuses a shorter title. */
   task: string;
+  /** How long the provider takes to answer. */
+  delayMs?: number;
   progress?: string;
   /** The reply the agent asks for; with `question`, the row's request line. */
   reply?: string;
@@ -242,7 +257,8 @@ export function labelMarker(label: FixtureLabel): string {
     expected_reply: label.reply ?? "",
     attention: label.question ? "question" : "none",
   };
-  return `HIDE_E2E_LABEL ${JSON.stringify(answer)}`;
+  const delay = label.delayMs ? `HIDE_E2E_DELAY_MS ${label.delayMs}\n` : "";
+  return `${delay}HIDE_E2E_LABEL ${JSON.stringify(answer)}`;
 }
 
 export function writeFixtureTranscript(projects: string, sessionId: string, label: FixtureLabel): string {

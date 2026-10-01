@@ -13,7 +13,7 @@ import { expect, type ElectronApplication, type Locator, type Page } from "@play
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { hostLog, isolate, launch, test, type Isolated } from "./fixture";
@@ -223,9 +223,11 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     // docs/status-model.md: a Needs You agent is raised above the Projects
     // tree and also stays in it; an ⌥ hold shows its number once, on the
     // raised row, and the other agent's on its own row in the tree.
-    const asking = herdr.panes[1];
-    const askingTokens = ["--token", "status_question_new=?", "--token", "expected_reply=계속할까요?"];
-    execFileSync(herdr.bin, ["pane", "report-metadata", asking, "--source", "e2e-status", ...askingTokens], { env: herdr.env, timeout: 30_000 });
+    // The pane ⌥2 opened is in front, where a question is read the moment
+    // it arrives; the one behind it asks.
+    const asking = herdr.panes.find((pane) => pane !== secondPane)!;
+    const other = secondPane!;
+    labelAgent(herdr, asking, { task: asking === herdr.panes[0] ? "Agent one" : "Agent two", reply: "계속할까요?", question: true });
     try {
       await expect(page.locator(`[data-agent-group="needs_you"] [data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
       await page.locator('[data-sidebar-mode="projects"]').click();
@@ -237,13 +239,15 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
       await expect(tree.locator(`[data-pane="${asking}"]`)).toBeVisible();
       await page.keyboard.down("Alt");
       await expect(raised.locator("[data-keycap]")).toHaveText("1");
-      await expect(tree.locator(`[data-pane="${herdr.panes[0]}"] [data-keycap]`)).toHaveText("2");
+      await expect(tree.locator(`[data-pane="${other}"] [data-keycap]`)).toHaveText("2");
       await expect(page.locator("[data-project-list] [data-keycap]")).toHaveCount(2);
       await capture(page, "digit-hints-projects-raised-dark", source);
       await page.keyboard.up("Alt");
       await expect(page.locator("[data-keycap]")).toHaveCount(0);
     } finally {
-      execFileSync(herdr.bin, ["pane", "report-metadata", asking, "--source", "e2e-status", "--clear-token", "status_question_new", "--clear-token", "expected_reply"], { env: herdr.env, timeout: 30_000 });
+      // Answered: the agent runs and stops again, which ends the question.
+      await setFixtureLifecycle(herdr, asking, "working");
+      await setFixtureLifecycle(herdr, asking, "idle");
     }
 
     // B7: the keycap draws from the Light tokens too.
