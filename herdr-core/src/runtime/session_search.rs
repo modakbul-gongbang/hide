@@ -765,12 +765,20 @@ mod tests {
             release.send(()).unwrap();
             assert!(terminal(&shared, &p).control_failure.is_some());
         }
+        // Hold a real worker answer so both requests land before it reads the
+        // mailbox; an idle worker could take "superseded" between the two.
         {
             let mut r = shared.lock().unwrap();
             scope(&mut r, "p8");
+            r.request_session_search(payload("p8", "barrier", None));
+        }
+        assert_eq!(next().query, "barrier");
+        {
+            let mut r = shared.lock().unwrap();
             r.request_session_search(payload("p8", "superseded", Some(0)));
             r.request_session_search(payload("p8", "latest ninth", None));
         }
+        release.send(()).unwrap();
         let ninth = next();
         assert_eq!(ninth.query, "latest ninth");
         assert_eq!(ninth.days, 0);
