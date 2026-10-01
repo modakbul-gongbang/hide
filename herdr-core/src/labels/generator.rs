@@ -1,11 +1,16 @@
 //! One label generator per Herdr server (PRD labels-in-hided D-10).
 //!
 //! Every hided that follows the same Herdr server would otherwise analyze
-//! the same turns. The worker that holds an exclusive `flock` on a file
-//! named after the server generates; any other shows provider names, logs
-//! once that it is standing by, and tries again every thirty seconds, so it
+//! the same turns. The worker that holds an exclusive `flock` on the
+//! server's lock file generates; any other shows provider names, logs once
+//! that it is standing by, and tries again every thirty seconds, so it
 //! takes over when the holder exits. The lock is advisory and released by
 //! the kernel with its process, so a crashed holder blocks nobody.
+//!
+//! A local server's lock sits beside its socket, the one place every daemon
+//! that reaches the server shares whatever HOME it runs with, so a daemon
+//! started with a private HOME but the operator's socket stands by too. A
+//! device's lock sits under the daemon's HOME, which owns the registration.
 
 use std::fs::File;
 use std::os::fd::AsRawFd;
@@ -17,9 +22,21 @@ use sha2::{Digest, Sha256};
 
 const RETRY: Duration = Duration::from_secs(30);
 
-/// Where generator locks live under a home.
-pub(crate) fn lock_dir(home: &Path) -> PathBuf {
+/// The lock of the local Herdr server listening at `socket`.
+pub(crate) fn local_lock_path(socket: &Path) -> PathBuf {
+    let socket = std::fs::canonicalize(socket).unwrap_or_else(|_| socket.to_path_buf());
+    let name = socket
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "herdr.sock".to_owned());
+    socket.with_file_name(format!("{name}.hide-label-generator.lock"))
+}
+
+/// The lock of a registered device's server, under the daemon's `home`.
+pub(crate) fn device_lock_path(home: &Path, device_id: &str) -> PathBuf {
+    let digest = Sha256::digest(format!("device:{device_id}").as_bytes());
     home.join(".local/state/hide/label-generators")
+        .join(format!("{digest:x}.lock"))
 }
 
 pub(crate) struct GeneratorLock {
@@ -30,13 +47,10 @@ pub(crate) struct GeneratorLock {
 }
 
 impl GeneratorLock {
-    /// `dir` `None` (no home) holds the role unconditionally: there is no
-    /// shared place another daemon could coordinate through.
-    pub(crate) fn new(dir: Option<&Path>, server_key: &str, target: &str) -> Self {
-        let path = dir.map(|dir| {
-            let digest = Sha256::digest(server_key.as_bytes());
-            dir.join(format!("{digest:x}.lock"))
-        });
+    /// `path` `None` (a device worker with no home) holds the role
+    /// unconditionally: there is no shared place another daemon could
+    /// coordinate through.
+    pub(crate) fn new(path: Option<PathBuf>, target: &str) -> Self {
         Self {
             path,
             target: target.to_owned(),
@@ -134,9 +148,13 @@ mod tests {
     #[test]
     fn a_second_worker_for_the_same_server_stands_by_until_the_first_ends() {
         let dir = tempfile::tempdir().unwrap();
-        let mut first = GeneratorLock::new(Some(dir.path()), "/tmp/herdr.sock", "local");
-        let mut second = GeneratorLock::new(Some(dir.path()), "/tmp/herdr.sock", "local");
-        let mut other = GeneratorLock::new(Some(dir.path()), "/tmp/other.sock", "local");
+        let socket = dir.path().join("herdr.sock");
+        let mut first = GeneratorLock::new(Some(local_lock_path(&socket)), "local");
+        let mut second = GeneratorLock::new(Some(local_lock_path(&socket)), "local");
+        let mut other = GeneratorLock::new(
+            Some(local_lock_path(&dir.path().join("other.sock"))),
+            "local",
+        );
         let now = Instant::now();
         assert_eq!(first.ensure(now), (true, false));
         assert_eq!(second.ensure(now), (false, false));

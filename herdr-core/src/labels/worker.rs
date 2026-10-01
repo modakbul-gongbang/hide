@@ -80,9 +80,8 @@ pub(crate) struct ObservedAgent {
 pub(crate) struct WorkerConfig {
     /// The store key: `local`, or `device:<id>`.
     pub(crate) target: String,
-    /// What names the Herdr server for the generator lock.
-    pub(crate) server_key: String,
-    pub(crate) lock_dir: Option<PathBuf>,
+    /// The Herdr server's generator lock (D-10); see `generator`.
+    pub(crate) lock_path: Option<PathBuf>,
 }
 
 pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -173,11 +172,7 @@ impl LabelWorker {
         let reader = Reader::spawn(source, sender.clone(), Arc::clone(&wake))?;
         Ok(Self {
             records: store.target(&config.target),
-            generator: GeneratorLock::new(
-                config.lock_dir.as_deref(),
-                &config.server_key,
-                &config.target,
-            ),
+            generator: GeneratorLock::new(config.lock_path, &config.target),
             target: config.target,
             store,
             analyzer,

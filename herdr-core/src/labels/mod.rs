@@ -75,15 +75,10 @@ impl LabelServices {
         let Some(home) = self.home.clone() else {
             return Ok(None);
         };
-        let server_key = std::fs::canonicalize(socket_path)
-            .unwrap_or_else(|_| socket_path.to_path_buf())
-            .display()
-            .to_string();
         LabelWorker::spawn(
             WorkerConfig {
                 target: store::LOCAL_TARGET.to_owned(),
-                server_key: format!("local:{server_key}"),
-                lock_dir: Some(generator::lock_dir(&home)),
+                lock_path: Some(generator::local_lock_path(socket_path)),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
@@ -103,8 +98,10 @@ impl LabelServices {
         LabelWorker::spawn(
             WorkerConfig {
                 target: format!("device:{device_id}"),
-                server_key: format!("device:{device_id}"),
-                lock_dir: self.home.as_deref().map(generator::lock_dir),
+                lock_path: self
+                    .home
+                    .as_deref()
+                    .map(|home| generator::device_lock_path(home, device_id)),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),

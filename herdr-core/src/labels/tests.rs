@@ -164,12 +164,7 @@ impl Harness {
             },
             reads: AtomicUsize::new(0),
         });
-        let (worker, woken) = self.spawn(
-            store,
-            LOCAL_TARGET,
-            "local:/fixture/herdr.sock",
-            source.clone(),
-        );
+        let (worker, woken) = self.spawn(store, LOCAL_TARGET, "local.lock", source.clone());
         (worker, woken, source)
     }
 
@@ -178,7 +173,7 @@ impl Harness {
         self.spawn(
             self.store(),
             "device:mini",
-            "device:mini",
+            "device-mini.lock",
             Arc::new(DeviceTranscripts::new(channel)),
         )
     }
@@ -187,7 +182,7 @@ impl Harness {
         &self,
         store: Arc<LabelStore>,
         target: &str,
-        server_key: &str,
+        lock_name: &str,
         source: Arc<dyn TranscriptSource>,
     ) -> (LabelWorker, Receiver<()>) {
         let (wake, woken) = channel();
@@ -195,8 +190,7 @@ impl Harness {
         let worker = LabelWorker::spawn(
             WorkerConfig {
                 target: target.to_owned(),
-                server_key: server_key.to_owned(),
-                lock_dir: Some(self.locks.path().to_path_buf()),
+                lock_path: Some(self.locks.path().join(lock_name)),
             },
             store,
             Arc::clone(&self.analyzer),
