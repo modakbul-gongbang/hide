@@ -340,8 +340,11 @@ impl LabelWorker {
             self.forget_pane(&id);
         }
         if let Some(live) = live_panes {
+            // An agent Herdr lists is live even when its pane is not in
+            // the pane list yet (a pane created between the two reads).
             let before = self.records.len();
-            self.records.retain(|id, _| live.contains(id));
+            self.records
+                .retain(|id, _| live.contains(id) || seen.contains(id.as_str()));
             if self.records.len() != before {
                 self.dirty = true;
             }
@@ -887,7 +890,13 @@ impl Reader {
             .name("herdr-core-labels-reader".to_owned())
             .spawn(move || {
                 while let Ok(job) = receiver.recv() {
-                    let result = source.read(&job.request);
+                    // The answer must arrive whatever happens here: a panic
+                    // that escaped would leave this server's reads in flight
+                    // forever.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        source.read(&job.request)
+                    }))
+                    .unwrap_or_else(|_| Err(ReadFailure::Refused("reader_panicked".to_owned())));
                     if results
                         .send(WorkerResult::Read {
                             pane: job.pane,

@@ -888,12 +888,18 @@ fn healthy_state(env: &Env) -> Option<DaemonState> {
 }
 
 /// The live daemon of this state folder and what its `/health` answered.
+/// The answer has to come from the process the state names: a pid reused
+/// after a crash, with another daemon on the port, is a stale state that
+/// `hide connect` must never signal.
 fn healthy_daemon(env: &Env) -> Option<(DaemonState, serde_json::Value)> {
     let state = state_file::read_state(&env.state_dir).ok().flatten()?;
-    if !pid_alive(state.pid) {
+    if state.pid <= 1 || !pid_alive(state.pid) {
         return None;
     }
     let health = health_json(state.port).ok()?;
+    if health.get("pid").and_then(serde_json::Value::as_u64) != Some(u64::from(state.pid)) {
+        return None;
+    }
     Some((state, health))
 }
 

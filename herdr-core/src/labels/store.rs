@@ -145,6 +145,9 @@ struct LabelsFile {
 pub(crate) struct LabelStore {
     path: Option<PathBuf>,
     file: Mutex<LabelsFile>,
+    /// Held from encoding to rename, so two workers saving at once cannot
+    /// share the temporary file and the last write carries the newest data.
+    writing: Mutex<()>,
 }
 
 impl LabelStore {
@@ -200,6 +203,7 @@ impl LabelStore {
         };
         let store = Self {
             path: Some(path),
+            writing: Mutex::new(()),
             file: Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
                 targets: file.targets,
@@ -214,6 +218,7 @@ impl LabelStore {
     pub(crate) fn in_memory() -> Self {
         Self {
             path: None,
+            writing: Mutex::new(()),
             file: Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
                 targets: BTreeMap::new(),
@@ -246,6 +251,10 @@ impl LabelStore {
         let Some(path) = self.path.as_deref() else {
             return;
         };
+        let _writing = self
+            .writing
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let bytes = match serde_json::to_vec(&*self.lock()) {
             Ok(bytes) => bytes,
             Err(error) => {

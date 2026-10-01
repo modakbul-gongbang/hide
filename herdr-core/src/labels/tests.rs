@@ -313,6 +313,34 @@ fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
 }
 
 #[test]
+fn an_agent_listed_before_its_pane_is_still_read_and_named() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "새 창 에이전트 요청"), ("assistant", "끝났습니다")],
+    );
+    harness.backend.answer("새 창 에이전트 작업", "none", "");
+    let idle = agent(&path, "idle", 1);
+
+    // Herdr's agent list already has the pane; its pane list does not yet.
+    let panes_without_it = HashSet::new();
+    worker.observe(
+        std::slice::from_ref(&idle),
+        Some(&panes_without_it),
+        Instant::now(),
+        1_000,
+    );
+    worker.tick(Instant::now());
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("새 창 에이전트 작업")
+    );
+}
+
+#[test]
 fn a_running_agent_is_not_asking_anything() {
     let harness = Harness::new();
     let (mut worker, woken, _) = harness.worker(harness.store());

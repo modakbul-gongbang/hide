@@ -90,6 +90,13 @@ impl Drop for Core {
         // Reserve cancellation before any coordinator shutdown can wait: a
         // completing attachment must not enqueue input during destruction.
         let attachment_worker = { lock_recover(&self.runtime).take_attachment_worker() };
+        // First, so the provider child ends with the daemon even while a
+        // coordinator below waits out a slow device read: the running
+        // request is cancelled and anything a worker hands in later is
+        // answered as stopped (labels-in-hided B22).
+        if let Some(labels) = self.labels.take() {
+            labels.analyzer.shutdown();
+        }
         self._session_search.take();
         self._terminal_maintenance.take();
         self._changes.take();
@@ -98,11 +105,6 @@ impl Drop for Core {
         // to lock the runtime, so a join under the lock never returns.
         let remote_syncs = { lock_recover(&self.runtime).take_remote_syncs() };
         drop(remote_syncs);
-        // Every worker has stopped handing in analyses; the one running is
-        // cancelled, which ends its provider child (labels-in-hided B22).
-        if let Some(labels) = self.labels.take() {
-            labels.analyzer.shutdown();
-        }
         if let Some(worker) = attachment_worker {
             let _ = worker.join();
         }
@@ -265,8 +267,8 @@ impl Core {
                     None
                 }
             };
-        // This Mac's install kit runs whether or not Herdr answers; only the
-        // labels plugin needs it (PRD device-parity B1, B6).
+        // This Mac's install kit runs whether or not Herdr answers; only
+        // retiring the old labels plugin needs it (PRD labels-in-hided D-12).
         let herdr_socket = options
             .herdr_socket_path
             .as_ref()
