@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showExplorer } from "../../web/e2e/wire";
-import { isolate, launch, NEEDS_FOCUS, test } from "./fixture";
+import { fitWindow, isolate, launch, NEEDS_FOCUS, test } from "./fixture";
 
 const TITLE = "New tab page";
 
@@ -74,18 +74,10 @@ test("Command T and Command W from a native page act on its View area, and after
     const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
-    // A CI runner's screen is 1024 points wide. At that width the side panel
-    // covers the agents while the sidebar shows, so the sidebar goes and the
-    // panel floats over the agents' right part, leaving each terminal's left
-    // edge to click.
-    const size = { width: 1024, height: 700 };
-    const bounds = await app.evaluate(({ BrowserWindow, screen }, wanted) => {
-      const area = screen.getPrimaryDisplay().workArea;
-      const window = BrowserWindow.getAllWindows()[0]!;
-      window.setBounds({ x: area.x, y: area.y, ...wanted });
-      return window.getBounds();
-    }, size);
-    expect(bounds, "the screen cannot hold the window this run needs").toMatchObject(size);
+    // At a CI runner's 1024-point width the side panel covers the agents
+    // while the sidebar shows, so the sidebar goes and the panel floats over
+    // the agents' right part, leaving each terminal's left edge to click.
+    await fitWindow(app, { width: 1024, height: 700 });
     await enterWorkspace(page);
     await menuClick(app, "toggle_left_sidebar");
     await expect(page.locator("[data-sidebar]")).toHaveCount(0);
