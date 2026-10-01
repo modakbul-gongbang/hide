@@ -77,6 +77,15 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
   await expect(page.locator("[role=tab]")).toHaveCount(tabs + 2);
   await expect.poll(() => sent.get("create_tab")).toBe(2);
 
+  // View > Toggle device rail hides and brings back the rail (quick device-rail-badges B6); the item has no chord.
+  await expect(page.locator("[data-device-rail]")).toBeVisible();
+  expect(await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById("toggle_device_rail")?.accelerator ?? null)).toBeNull();
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById("toggle_device_rail")?.click());
+  await expect(page.locator("[data-device-rail]")).toHaveCount(0);
+  await expect(page.locator("[data-sidebar-device-menu]")).toBeVisible();
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById("toggle_device_rail")?.click());
+  await expect(page.locator("[data-device-rail]")).toBeVisible();
+
   // B9: the ⌘/ sheet lists this host's chords, with no "moved for Chrome" note.
   await page.keyboard.press("Meta+Slash");
   const sheet = page.locator("[data-shortcut-sheet]");

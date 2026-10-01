@@ -74,11 +74,11 @@ describe("sidebar header (PRD sidebar-shell)", () => {
     expect(html).not.toContain("data-sidebar-device-menu");
   });
 
-  it("draws no tab strip and no Add project for a device that cannot be read (B3)", () => {
-    const html = header({ title: { name: "mini", note: "Remote" }, tabs: false, addProject: false });
+  it("draws no tab strip for a device that cannot be read (B3)", () => {
+    const html = header({ title: { name: "mini", note: "Remote" }, tabs: false });
     expect(html).not.toContain("data-sidebar-strip");
     expect(html).not.toContain("data-sidebar-mode");
-    expect(html).not.toContain("data-sidebar-new-workspace");
+    expect(html).toContain("data-sidebar-new-workspace");
     expect(tag(html, "data-sidebar-search")).toContain('aria-label="Search"');
   });
 

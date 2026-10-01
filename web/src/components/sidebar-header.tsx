@@ -48,7 +48,7 @@ export function SidebarHeader({
   rail: boolean;
   /** The device in front, and the smaller word after it. */
   title: { name: string; note: string | null };
-  /** Add project is offered on this line (on the Projects tab of a device that can be read). */
+  /** Add project is offered on this line (not on the Agents tab). */
   addProject: boolean;
   /** The Projects | Agents strip is drawn (not for a device that cannot be read). */
   tabs: boolean;

@@ -139,7 +139,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
         <SidebarHeader
           rail={rail}
           title={title}
-          addProject={body === "projects"}
+          addProject={body !== "agents"}
           tabs={body !== "disconnected"}
           mode={mode}
           deviceMenu={deviceMenu}
