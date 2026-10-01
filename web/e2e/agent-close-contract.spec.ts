@@ -10,7 +10,7 @@ import { enterWorkspace, screenshot } from "./wire";
 // Private Herdr, linked worktrees and close probes all run before the UI assertions.
 test.describe.configure({ timeout: 180_000 });
 
-test("primary last tab and last pane close retain the linked workspace boundary", async ({ page }) => {
+test("primary last tab and last pane close retain the linked workspace boundary", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/231" } }, async ({ page }) => {
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
   try {

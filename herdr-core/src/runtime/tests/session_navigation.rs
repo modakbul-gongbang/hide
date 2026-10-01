@@ -304,18 +304,42 @@ fn project_checkouts_fold_applies_workspace_expansion_without_waiting_for_sync()
     // Absent `expanded` flips: two flips sent before either is echoed land
     // back where they started, which a set computed from a stale snapshot
     // could not do.
-    assert!(fold(&mut runtime, serde_json::json!({"workspace_id": "workspace-a"})));
+    assert!(fold(
+        &mut runtime,
+        serde_json::json!({"workspace_id": "workspace-a"})
+    ));
     assert!(!runtime.snapshot().navigator.workspaces[0].expanded);
-    assert_eq!(runtime.snapshot().ui_state.collapsed_workspace_ids, ["workspace-a"]);
-    assert!(fold(&mut runtime, serde_json::json!({"workspace_id": "workspace-a"})));
+    assert_eq!(
+        runtime.snapshot().ui_state.collapsed_workspace_ids,
+        ["workspace-a"]
+    );
+    assert!(fold(
+        &mut runtime,
+        serde_json::json!({"workspace_id": "workspace-a"})
+    ));
     assert!(runtime.snapshot().navigator.workspaces[0].expanded);
-    assert!(runtime.snapshot().ui_state.collapsed_workspace_ids.is_empty());
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .collapsed_workspace_ids
+            .is_empty()
+    );
 
     // A given `expanded` sets, so repeating the intent changes nothing.
-    assert!(fold(&mut runtime, serde_json::json!({"workspace_id": "workspace-a", "expanded": false})));
-    assert!(!fold(&mut runtime, serde_json::json!({"workspace_id": "workspace-a", "expanded": false})));
+    assert!(fold(
+        &mut runtime,
+        serde_json::json!({"workspace_id": "workspace-a", "expanded": false})
+    ));
+    assert!(!fold(
+        &mut runtime,
+        serde_json::json!({"workspace_id": "workspace-a", "expanded": false})
+    ));
     assert!(!runtime.snapshot().navigator.workspaces[0].expanded);
-    assert_eq!(runtime.snapshot().ui_state.collapsed_workspace_ids, ["workspace-a"]);
+    assert_eq!(
+        runtime.snapshot().ui_state.collapsed_workspace_ids,
+        ["workspace-a"]
+    );
 
     // A whole-state save, which the shell sends for unrelated settings, neither
     // reads nor writes the folds, so a stale copy of them cannot undo one.
@@ -334,8 +358,14 @@ fn project_checkouts_fold_applies_workspace_expansion_without_waiting_for_sync()
     .expect("whole-state save");
     assert!(runtime.dispatch_json(&save));
     assert!(!runtime.snapshot().navigator.workspaces[0].expanded);
-    assert_eq!(runtime.snapshot().ui_state.collapsed_workspace_ids, ["workspace-a"]);
-    assert_eq!(runtime.snapshot().ui_state.collapsed_checkout_ids, ["checkout-a"]);
+    assert_eq!(
+        runtime.snapshot().ui_state.collapsed_workspace_ids,
+        ["workspace-a"]
+    );
+    assert_eq!(
+        runtime.snapshot().ui_state.collapsed_checkout_ids,
+        ["checkout-a"]
+    );
 }
 
 #[test]
@@ -2732,28 +2762,58 @@ fn expanded_checkouts_survive_a_ui_state_update_that_carries_them() {
         runtime.dispatch_json(&event)
     };
     assert!(runtime.snapshot().ui_state.expanded_checkout_ids.is_empty());
-    assert!(dispatch(&mut runtime, "checkout_agents_toggle", serde_json::json!({"checkout_id": "checkout:web"})));
-    assert!(dispatch(&mut runtime, "checkout_agents_toggle", serde_json::json!({"checkout_id": "checkout:api"})));
-    assert!(dispatch(&mut runtime, "checkout_agents_toggle", serde_json::json!({"checkout_id": "checkout:web"})));
-    assert!(dispatch(&mut runtime, "checkout_agents_toggle", serde_json::json!({"checkout_id": "checkout:web"})));
-    assert_eq!(runtime.snapshot().ui_state.expanded_checkout_ids, ["checkout:api", "checkout:web"]);
+    assert!(dispatch(
+        &mut runtime,
+        "checkout_agents_toggle",
+        serde_json::json!({"checkout_id": "checkout:web"})
+    ));
+    assert!(dispatch(
+        &mut runtime,
+        "checkout_agents_toggle",
+        serde_json::json!({"checkout_id": "checkout:api"})
+    ));
+    assert!(dispatch(
+        &mut runtime,
+        "checkout_agents_toggle",
+        serde_json::json!({"checkout_id": "checkout:web"})
+    ));
+    assert!(dispatch(
+        &mut runtime,
+        "checkout_agents_toggle",
+        serde_json::json!({"checkout_id": "checkout:web"})
+    ));
+    assert_eq!(
+        runtime.snapshot().ui_state.expanded_checkout_ids,
+        ["checkout:api", "checkout:web"]
+    );
 
-    assert!(dispatch(&mut runtime, "ui_state_update", serde_json::json!({
-        "expanded_paths": [],
-        "selected_path": null,
-        "selected_pane_id": null,
-        "collapsed_checkout_ids": ["checkout:older"],
-        "expanded_checkout_ids": [],
-        "expanded_agent_pane_ids": ["pane:stale"]
-    })));
-    assert!(dispatch(&mut runtime, "ui_state_update", serde_json::json!({
-        "expanded_paths": [],
-        "selected_path": null,
-        "selected_pane_id": null,
-        "collapsed_checkout_ids": []
-    })));
+    assert!(dispatch(
+        &mut runtime,
+        "ui_state_update",
+        serde_json::json!({
+            "expanded_paths": [],
+            "selected_path": null,
+            "selected_pane_id": null,
+            "collapsed_checkout_ids": ["checkout:older"],
+            "expanded_checkout_ids": [],
+            "expanded_agent_pane_ids": ["pane:stale"]
+        })
+    ));
+    assert!(dispatch(
+        &mut runtime,
+        "ui_state_update",
+        serde_json::json!({
+            "expanded_paths": [],
+            "selected_path": null,
+            "selected_pane_id": null,
+            "collapsed_checkout_ids": []
+        })
+    ));
     let state = &runtime.snapshot().ui_state;
-    assert_eq!(state.expanded_checkout_ids, ["checkout:api", "checkout:web"]);
+    assert_eq!(
+        state.expanded_checkout_ids,
+        ["checkout:api", "checkout:web"]
+    );
     assert!(state.expanded_agent_pane_ids.is_empty());
     assert!(state.collapsed_checkout_ids.is_empty());
 }
