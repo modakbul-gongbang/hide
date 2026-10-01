@@ -29,7 +29,7 @@ export type HerdrFixture = {
   panes: [string, string];
   /** Per agent pane, the file its `claude` shim appends every byte the PTY delivered to. */
   inputLogs: [string, string];
-  /** The PATH the fixture's `claude` shim is on, for panes created later. */
+  /** The controlled shim and system-tool PATH for the server, panes and daemon. */
   fixturePath: string;
   /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
   run: (args: string[]) => unknown;
@@ -232,7 +232,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     fs.rmSync(root, { recursive: true, force: true });
     throw error;
   }
-  const fixturePath = `${path.join(root, "bin")}:/usr/bin:/bin`;
+  // Keep host-installed providers out while retaining tools such as lsof.
+  const fixturePath = `${path.join(root, "bin")}:/usr/bin:/bin:/usr/sbin:/sbin`;
   // Workspaces created later inherit the server's PATH, not hided's PATH.
   // Keep every pane on the same fake agent binary, including new workspaces.
   env.PATH = fixturePath;

@@ -222,7 +222,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     fs.mkdirSync(quiet);
     await workspaceAt(herdr, quiet, null);
 
-    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root)}:${path.join(herdr.root, "bin")}:${process.env.PATH ?? ""}` });
+    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root)}:${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await open(page, daemon);

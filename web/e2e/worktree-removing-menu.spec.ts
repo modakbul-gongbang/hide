@@ -34,7 +34,7 @@ async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
  * Git for everything else. The hold gives up after 12 seconds, inside the
  * host's 15-second Git deadline, so a test that fails early still ends.
  */
-function heldGit(root: string): { path: string; release: () => void } {
+function heldGit(root: string, fixturePath: string): { path: string; release: () => void } {
   const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
   const bin = path.join(root, "held-git");
   const hold = path.join(root, "hold-worktree-remove");
@@ -45,7 +45,7 @@ function heldGit(root: string): { path: string; release: () => void } {
     `#!/bin/sh\ncase " $* " in *" worktree remove "*) i=0; while [ -e "${hold}" ] && [ $i -lt 120 ]; do sleep 0.1; i=$((i + 1)); done ;; esac\nexec "${real}" "$@"\n`,
     { mode: 0o755 },
   );
-  return { path: `${bin}:${process.env.PATH ?? ""}`, release: () => fs.rmSync(hold, { force: true }) };
+  return { path: `${bin}:${fixturePath}`, release: () => fs.rmSync(hold, { force: true }) };
 }
 
 test("a checkout row being deleted opens no empty menu", async ({ page }) => {
@@ -74,7 +74,7 @@ test("a checkout row being deleted opens no empty menu", async ({ page }) => {
       await prompt(herdr, created.result.root_pane.pane_id);
     }
 
-    const held = heldGit(herdr.root);
+    const held = heldGit(herdr.root, herdr.fixturePath);
     daemon = await startHided(herdr, "worktree-removing-menu", undefined, { PATH: held.path });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
