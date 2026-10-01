@@ -114,9 +114,27 @@ export async function showTool(page: Page, tool: "explorer" | "changes"): Promis
  * place that names all three states (the palette no longer does).
  */
 export async function choosePanel(page: Page, state: "closed" | "open" | "expanded"): Promise<void> {
-  await page.locator("[data-workspace-toolbar]").click({ button: "right" });
+  await page.locator("[data-workspace-location]").click({ button: "right" });
   await page.locator(`[data-menu-item="panel:${state}"]`).click();
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
+}
+
+/**
+ * Binds a chord to one of the chordless area commands in Settings, Shortcuts,
+ * Area commands (the web shell's only way to run them), then closes Settings.
+ */
+export async function bindAreaCommand(page: Page, id: string, chord: string): Promise<void> {
+  await page.keyboard.press("Alt+Comma");
+  await page.locator('[data-settings-tab="shortcuts"]').click();
+  const group = page.locator('[data-settings-group="area-commands"]');
+  await expect(group.locator(`[data-shortcut-effective="${id}"]`)).toHaveText("-");
+  await group.locator(`[data-shortcut-record="${id}"]`).click();
+  await page.keyboard.press(chord);
+  await expect(page.locator(`[data-shortcut-problem="${id}"]`)).toHaveCount(0);
+  await group.locator(`[data-shortcut-apply="${id}"]`).click();
+  await expect(group.locator(`[data-shortcut-effective="${id}"]`)).not.toHaveText("-");
+  await page.locator("[data-settings-close]").click();
+  await expect(page.locator("[data-settings]")).toHaveCount(0);
 }
 
 export async function showExplorer(page: Page): Promise<void> {

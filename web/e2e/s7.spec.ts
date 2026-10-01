@@ -3,7 +3,7 @@
 // area and a double click, Keep open or the first edit pins it (B1-B3); Open
 // to the side shows one document twice with one buffer (B4, B5, B20); tab
 // drags reorder, move and split with a preview and land once (B6-B8);
-// splits, dividers, menus and the palette work from the keyboard (B9, B10,
+// splits, dividers, menus and the area commands work from the keyboard (B9, B10,
 // B18, B20); the tab menu and the caps say what cannot be done (B11, B19); a
 // narrow window changes only what is drawn (B12, B13); a restart brings the
 // layout back and a broken or older file is handled (B14-B17); and the side
@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
+import { bindAreaCommand, choosePanel, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
 const RAIL = 64;
@@ -430,19 +430,11 @@ test("Open to the side from the only area is refused with its reason until that 
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeLessThan(450);
 
     // The one area cannot be halved, so Open to the side stays listed,
-    // disabled with the reason, in the Explorer's menu and the palette (B4, B9, D-06).
+    // disabled with the reason, in the Explorer's menu (B4, B9, D-06).
     await row.click({ button: "right" });
     const item = page.locator('[data-explorer-menu] [data-menu-item="open-beside"]');
     await expect(item).toBeDisabled();
     await expect(item).toContainText(BESIDE_TOO_NARROW);
-    await page.keyboard.press("Escape");
-    // A click on the tab strip's empty padding, which holds no control, takes focus off the Explorer.
-    await page.locator("[data-sidebar-strip]").click({ position: { x: 2, y: 2 } });
-    await page.keyboard.press("Meta+KeyK");
-    await page.keyboard.type("Open file to the side");
-    const command = page.locator('[data-palette-row="command:open_beside"]');
-    await expect(command).toHaveAttribute("aria-disabled", "true");
-    await expect(command).toContainText(BESIDE_TOO_NARROW);
     await page.keyboard.press("Escape");
 
     // History's row menu opens at the pointer, whole, with the same item
@@ -628,7 +620,6 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
   }
 });
 
-/** Runs one palette (⌘K) command by typing its name and committing the row with Enter. */
 test("a drag or a tab menu begun on one Workspace ends when another client moves the front to another Workspace", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-front-moves", { "a.txt": "a\n", "c.txt": "c\n" }, {
@@ -695,19 +686,6 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
   }
 });
 
-async function paletteCommand(page: Page, query: string, rowId: string): Promise<void> {
-  await page.keyboard.press("Meta+KeyK");
-  await expect(page.locator("[data-palette-input]")).toBeFocused();
-  await page.keyboard.type(query);
-  const row = page.locator(`[data-palette-row="${rowId}"]`);
-  await expect(row).toBeVisible();
-  for (let step = 0; step < 30 && (await row.getAttribute("aria-selected")) !== "true"; step += 1) await page.keyboard.press("ArrowDown");
-  await expect(row).toHaveAttribute("aria-selected", "true");
-  await expect(row).not.toHaveAttribute("aria-disabled", "true");
-  await page.keyboard.press("Enter");
-  await expect(page.locator("[data-palette-input]")).toHaveCount(0);
-}
-
 /**
  * Moves the keyboard with Tab or Shift+Tab until `target` has it. An editor
  * keeps Tab for indenting; Escape first lets the next Tab leave it, as
@@ -739,7 +717,7 @@ async function menuByKeyboard(page: Page, item: string): Promise<void> {
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
 }
 
-test("splits, moves, resizes, focus and closes run from the palette and menus by keyboard, each landing once", async ({ page }) => {
+test("splits, moves, resizes, focus and closes run from the tab menu, area commands and chords by keyboard, each landing once", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   // The split frame is delivered twice at the transport, as a resend would
   // be; the core must split once (B18).
@@ -765,10 +743,17 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
     const count = (key: string) => stack.sent.get(key) ?? 0;
+    // The area commands have no default chord (PRD cmdk-navigation D-05): the
+    // three this flow runs are bound in Settings first.
+    await bindAreaCommand(page, "focus_previous_view_area", "Alt+Shift+KeyJ");
+    await bindAreaCommand(page, "focus_next_view_area", "Alt+Shift+KeyK");
+    await bindAreaCommand(page, "grow_view_area", "Alt+Shift+KeyL");
+    await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
 
-    // Split right from the palette: one event, delivered twice, one new area;
+    // Split right from the active tab's menu: one event, delivered twice, one new area;
     // the keyboard follows the view into it (B9, B18, B20).
-    await paletteCommand(page, "Split right", "command:view:split_right");
+    await tabTo(page, tab(page, "d.txt"), "Shift+Tab");
+    await menuByKeyboard(page, "split_right");
     await expect.poll(() => shape(page)).toBe("(a.txt b.txt >c.txt) | @(>d.txt)");
     // The page sent one split; the wire carried it to the core twice.
     expect(pageSplits).toBe(1);
@@ -778,8 +763,8 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await expect.poll(() => shape(page)).toBe("(a.txt b.txt >c.txt) | @(>d.txt)");
     await expect(editor(page, 1)).toBeFocused();
 
-    // Focus moves between areas from the palette, and the keyboard goes along (B20).
-    await paletteCommand(page, "Focus previous view area", "command:view:focus_previous");
+    // Focus moves between areas from the bound chord, and the keyboard goes along (B20).
+    await page.keyboard.press("Alt+Shift+KeyJ");
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt >c.txt) | (>d.txt)");
     await expect(editor(page, 0)).toBeFocused();
     expect(count("view_layout.focus_area")).toBe(1);
@@ -831,20 +816,23 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     // Tabbing through the left area's view on the way made it the area in use (B20).
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt) | (d.txt >b.txt)");
 
-    // Grow, focus and close from the palette act on the active area and its view (B20).
-    await paletteCommand(page, "Grow view area", "command:view:grow");
+    // Grow and focus from the bound chords act on the active area; Close view
+    // is the active tab's menu item (B20).
+    await page.keyboard.press("Alt+Shift+KeyL");
     await expect.poll(async () => Number(await divider.getAttribute("aria-valuenow"))).toBe(dragged - 5);
-    await paletteCommand(page, "Focus next view area", "command:view:focus_next");
+    await page.keyboard.press("Alt+Shift+KeyK");
     await expect.poll(() => shape(page)).toBe("(a.txt >c.txt) | @(d.txt >b.txt)");
-    await paletteCommand(page, "Close view", "command:view:close_view");
+    await tabTo(page, tab(page, "b.txt"), "Shift+Tab");
+    await menuByKeyboard(page, "close_view");
     await expect.poll(() => shape(page)).toBe("(a.txt >c.txt) | @(>d.txt)");
-    await paletteCommand(page, "Close view", "command:view:close_view");
+    await tabTo(page, tab(page, "d.txt"), "Shift+Tab");
+    await menuByKeyboard(page, "close_view");
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
     await expect(divider).toHaveCount(0);
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
     // Closing the last view with no tool shown closes the panel (issue 170).
-    await paletteCommand(page, "Hide Explorer", "command:tool:explorer");
+    await page.keyboard.press("Meta+KeyE");
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
     await tabTo(page, tab(page, "c.txt"), "Shift+Tab");
@@ -858,7 +846,7 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     // Core normalizes the panel as part of closing the view, without another dispatch.
     expect(stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length).toBe(panelsBefore);
     await screenshot(page, "s7-keys-closed");
-    await paletteCommand(page, "Show Explorer", "command:tool:explorer");
+    await page.keyboard.press("Meta+KeyE");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
@@ -962,7 +950,7 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
     const splitsAtSix = stack.sent.get("view_layout.split") ?? 0;
 
     // At six every split is refused with the reason, in the menu, on a drag
-    // and in the palette, and every view stays where it was (B9, B19).
+    // and every view stays where it was (B9, B19).
     const capped = await tabMenuRows(page, area(page, 0), "f02.txt");
     for (const row of capped.filter((entry) => SPLITS.includes(entry.id))) expect(row).toMatchObject({ disabled: true, reason: "This Workspace already shows 6 view areas, the most it can." });
     await tab(area(page, 0), "f02.txt").click({ button: "right" });
@@ -973,20 +961,8 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
       await expect(page.locator("html")).toHaveAttribute("data-view-drag", "forbidden");
       await expect(page.locator("[data-view-drag-tab]")).toContainText("This Workspace already shows 6 view areas, the most it can.");
     });
-    // The palette acts on the active view: one of several in its area.
-    await tab(area(page, 0), "f02.txt").click();
-    await expect.poll(() => shape(page)).toMatch(/^@\(>f02\.txt/);
+    // The refused menu and drag changed nothing.
     const sixFocused = await shape(page);
-    await page.keyboard.press("Meta+KeyK");
-    await page.keyboard.type("Split right");
-    const paletteRow = page.locator('[data-palette-row="command:view:split_right"]');
-    await expect(paletteRow).toHaveAttribute("aria-disabled", "true");
-    await expect(paletteRow).toContainText("This Workspace already shows 6 view areas, the most it can.");
-    // Picking a command that cannot run does nothing: the palette stays open.
-    await page.keyboard.press("Enter");
-    await expect(page.locator("[data-palette-input]")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     expect(stack.sent.get("view_layout.split") ?? 0).toBe(splitsAtSix);
     expect(await shape(page)).toBe(sixFocused);
     expect(sixFocused.replace(/[>@]/g, "")).toBe(six.replace(/[>@]/g, ""));
@@ -1200,10 +1176,8 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator("[data-tools-overlay]")).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
-    // Reveal in Explorer requests its tool with the panel closed.
-    await page.locator('[data-panel-toggle="on"]').click();
-    await expect(workspace).toHaveAttribute("data-panel", "closed");
-    await paletteCommand(page, "Reveal in Explorer", "command:view:reveal");
+    // Reveal in Explorer, from the tab's menu, requests the tool the narrow panel kept hidden.
+    await tabMenu(page, page, "a.txt", "reveal");
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
@@ -1519,7 +1493,7 @@ test("the side panel's toggle, Expand, tools, kind marks and an open from a clos
     // Expanding never splits. With nothing open the panel stays the tool
     // column's width, and the first file brings one View area over the
     // whole body (B22, issue 170).
-    await paletteCommand(page, "Expand side panel", "command:panel:expanded");
+    await choosePanel(page, "expanded");
     await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "tools");
     await expect(workspace).toHaveAttribute("data-panel", "open");
     await explorerRow(page, stack, "a.txt").dblclick();

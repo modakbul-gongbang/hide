@@ -201,7 +201,7 @@ test("New tab and Reopen use the requested area and Rename works in either bar",
 });
 
 // Quarantined: runs in CI without blocking `verify` until #287 is fixed.
-test("Delegated canvas returns to its normal tab and Agent controls keep palette commands", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/287" } }, async ({ page }) => {
+test("Delegated canvas returns to its normal tab and its tab menu keeps the Agent commands", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/287" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -224,10 +224,10 @@ test("Delegated canvas returns to its normal tab and Agent controls keep palette
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     await expect(tab(page, herdr.tab)).toHaveAttribute("aria-selected", "true");
     expect(sent.get("agent_layout.focus")).toBe(before + 1);
-    await tab(page, herdr.tab).focus();
-    await page.keyboard.press("Meta+k");
-    await expect(page.locator('[data-palette-row="command:agent:split_right"]')).toBeVisible();
+    await tab(page, herdr.tab).click({ button: "right" });
+    await expect(page.locator('[role="menu"] [data-menu-item="split_right"]')).toBeVisible();
     await page.keyboard.press("Escape");
+    await expect(page.locator('[role="menu"]')).toHaveCount(0);
     await screenshot(page, "agent-groups-delegated-return");
   } finally { daemon?.stop(); herdr.stop(); }
 });
