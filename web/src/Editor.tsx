@@ -226,7 +226,7 @@ export function DisplayEditor({ display, placeKey, actions }: { display: ViewDis
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-editor={tab.id} data-editor-kind={display.kind} data-editor-display={display.id}>
       <EditorHeader display={display} tab={tab} document={document} actions={actions} />
       {display.kind === "diff" ? (
-        <DiffBody display={display} scale={scale} />
+        <DiffBody display={display} wrap={tab.wrap} scale={scale} />
       ) : (
         <FileBody display={display} tab={tab} document={document} placeKey={placeKey} scale={scale} actions={actions} />
       )}
@@ -240,7 +240,7 @@ export function DisplayEditor({ display, placeKey, actions }: { display: ViewDis
  * or its own reason there is none; the page's sentence is only for a display
  * the core sent nothing for.
  */
-function DiffBody({ display, scale }: { display: ViewDisplaySnapshot; scale: number }) {
+function DiffBody({ display, wrap, scale }: { display: ViewDisplaySnapshot; wrap: boolean; scale: number }) {
   const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   if (!changes) return <Notice text="Reading the diff…" state="diff-loading" />;
   if (changes.unavailable_reason) return <Notice text={`History is unavailable: ${changes.unavailable_reason}`} state="diff-unavailable" />;
@@ -256,7 +256,7 @@ function DiffBody({ display, scale }: { display: ViewDisplaySnapshot; scale: num
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-diff-path={display.path} data-diff-group={committed ? "committed" : "working"}>
       {diff.notice ? <div className="border-b border-border px-md py-xs text-caption text-warning" data-diff-notice="true">{diff.notice}</div> : null}
-      {diff.text ? <PatchView text={diff.text} scale={scale} /> : <div className="min-h-0 flex-1" data-diff-empty="true" />}
+      {diff.text ? <PatchView text={diff.text} wrap={wrap} scale={scale} /> : <div className="min-h-0 flex-1" data-diff-empty="true" />}
     </div>
   );
 }
@@ -305,7 +305,7 @@ function EditorHeader({
           </Button>
         </Hint>
       ) : null}
-      {file && editable ? (
+      {display.kind === "diff" || (file && editable) ? (
         <Hint label="Wrap lines">
           <Button
             variant="ghost"
