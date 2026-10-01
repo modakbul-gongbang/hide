@@ -35910,11 +35910,15 @@
     },
     "--size-rail": {
       "type": "number",
-      "value": 52
+      "value": 64
     },
     "--size-disk-sheet": {
       "type": "number",
       "value": 1160
+    },
+    "--size-badge-wide": {
+      "type": "number",
+      "value": 20
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",
