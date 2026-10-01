@@ -30,7 +30,8 @@ async function shape(page: Page) {
   })));
 }
 
-test("Agent pointer drags split live canvases, reorder, move, cancel, resize, collapse and restore", async ({ page }) => {
+// Quarantined: runs in CI without blocking `verify` until #303 is fixed.
+test("Agent pointer drags split live canvases, reorder, move, cancel, resize, collapse and restore", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/303" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;

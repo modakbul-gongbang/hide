@@ -206,6 +206,18 @@ export async function shellPage(app: ElectronApplication): Promise<Page> {
 }
 
 /**
+ * A launch that returns once the host's own navigation from the status page
+ * to the shell has landed, for a spec that reloads or navigates the window
+ * itself. A spec navigation sent while the host's is in flight replaces it:
+ * the host drops a superseded load as not a failure, so the window stays on
+ * the status page with no socket, or the spec's reload is the one aborted.
+ */
+export async function launchShell(env: Record<string, string>): Promise<{ app: ElectronApplication; page: Page }> {
+  const app = await relaunch(env);
+  return { app, page: await shellPage(app) };
+}
+
+/**
  * The built app copied under this run's directory, so an unpackaged launch
  * has no worktree `target/` beside it and searches for `hide` the way an
  * installed app does.

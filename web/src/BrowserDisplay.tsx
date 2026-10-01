@@ -200,7 +200,7 @@ export function BrowserHost({ actions }: { actions: Actions }) {
         if (workspace) latest.current.reportBrowserState(workspace, event.id, event.url, "", event.load, false, null, false);
       } else if (event.kind === "open") {
         const workspace = parseWorkspaceKey(event.workspace);
-        if (workspace) latest.current.openBrowser(event.url, workspace);
+        if (workspace) latest.current.openBrowser(event.url, workspace, undefined, event.id);
       } else if (event.kind === "focus") {
         const current = workspaceViewOf(useShellStore.getState().rest);
         if (!current?.layout || workspaceKey({ device_id: current.device_id, path: current.path }) !== event.workspace) return;

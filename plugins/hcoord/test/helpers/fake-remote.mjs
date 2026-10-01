@@ -123,6 +123,9 @@ export function createFakeRemote(cliPath) {
   const lines = (host, name) => { const file = path.join(hostDir(host), name); return fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []; };
   const home = (host) => { const dir = path.join(hostDir(host), "home"); fs.mkdirSync(dir, { recursive: true }); return dir; };
   const baseEnv = { ...process.env, FAKE_REMOTE_ROOT: root, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  // Stops for the processes running out of this root, run before the root is removed:
+  // removing it first raced a daemon still writing there (ENOTEMPTY) and left it running.
+  const owned = [];
   delete baseEnv.HERDR_SOCKET_PATH; delete baseEnv.HERDR_BIN_PATH; delete baseEnv.HCOORD_HOME; delete baseEnv.HCOORD_REMOTE_HOME; delete baseEnv.HERDR_PANE_ID;
   return {
     root, bin,
@@ -160,6 +163,13 @@ export function createFakeRemote(cliPath) {
       const agents = read(host, "agents.json", {}); for (const agent of Object.values(agents)) agent.instance = `${agent.instance}-restarted`; write(host, "agents.json", agents);
     },
     flag(host, name, on = true) { const file = path.join(hostDir(host), name); if (on) fs.writeFileSync(file, "1"); else fs.rmSync(file, { force: true }); },
-    cleanup() { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }); },
+    /** Registers a stop that `cleanup` runs before it removes the root. */
+    own(stop) { owned.push(stop); },
+    async cleanup() {
+      const stopped = await Promise.allSettled(owned.map((stop) => stop()));
+      fs.rmSync(root, { recursive: true, force: true });
+      const failed = stopped.find((result) => result.status === "rejected");
+      if (failed) throw failed.reason;
+    },
   };
 }
