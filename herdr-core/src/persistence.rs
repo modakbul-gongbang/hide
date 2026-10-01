@@ -19,6 +19,8 @@ struct StoredUiState {
     #[serde(default = "default_panel_visible")]
     left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
+    device_rail_visible: bool,
+    #[serde(default = "default_panel_visible")]
     right_panel_visible: bool,
     #[serde(default)]
     right_panel_section: RightPanelSection,
@@ -244,6 +246,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
     (
         UiStateSnapshot {
             left_sidebar_visible: stored.left_sidebar_visible,
+            device_rail_visible: stored.device_rail_visible,
             right_panel_visible: stored.right_panel_visible,
             right_panel_section: stored.right_panel_section,
             sessions_mode_by_project: stored.sessions_mode_by_project,
@@ -318,6 +321,7 @@ pub fn save(
     let stored = StoredUiState {
         schema_version: UI_STATE_SCHEMA_VERSION,
         left_sidebar_visible: state.left_sidebar_visible,
+        device_rail_visible: state.device_rail_visible,
         right_panel_visible: state.right_panel_visible,
         right_panel_section: state.right_panel_section,
         sessions_mode_by_project: state.sessions_mode_by_project.clone(),
@@ -580,6 +584,7 @@ mod tests {
         assert_eq!(state.expanded_paths, ["/repo/src"]);
         assert_eq!(state.selected_pane_id.as_deref(), Some("p1"));
         assert!(state.left_sidebar_visible);
+        assert!(state.device_rail_visible, "a pre-rail-toggle store still shows the rail");
         assert!(state.right_panel_visible);
         assert!(state.shortcut_bindings.is_empty());
         assert!(state.pet_visible, "a pre-pet store still shows the pet");
@@ -593,6 +598,7 @@ mod tests {
         let path = root.join("state.json");
         let state = UiStateSnapshot {
             left_sidebar_visible: false,
+            device_rail_visible: false,
             right_panel_visible: false,
             ..UiStateSnapshot::default()
         };
@@ -602,6 +608,7 @@ mod tests {
 
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert!(!restored.left_sidebar_visible);
+        assert!(!restored.device_rail_visible);
         assert!(!restored.right_panel_visible);
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);

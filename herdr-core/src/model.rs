@@ -2158,6 +2158,10 @@ impl RightPanelSection {
 pub struct UiStateSnapshot {
     #[serde(default = "default_panel_visible")]
     pub left_sidebar_visible: bool,
+    /// The device rail on the sidebar's left. It is shown by default, and an
+    /// older store without the field keeps showing it.
+    #[serde(default = "default_panel_visible")]
+    pub device_rail_visible: bool,
     #[serde(default = "default_panel_visible")]
     pub right_panel_visible: bool,
     /// Which of the right panel's four sections is showing. Persisted rather
@@ -2580,6 +2584,7 @@ impl Default for UiStateSnapshot {
     fn default() -> Self {
         Self {
             left_sidebar_visible: true,
+            device_rail_visible: true,
             right_panel_visible: true,
             right_panel_section: RightPanelSection::default(),
             sessions_mode_by_project: BTreeMap::new(),
