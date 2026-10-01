@@ -2192,7 +2192,8 @@ pub(super) fn load_session_detail(
     let events = parsed
         .events
         .into_iter()
-        .map(|event| {
+        .zip(parsed.event_offsets)
+        .map(|(event, source_offset)| {
             let receipt = store.as_ref().and_then(|store| {
                 trusted_memory_receipt(
                     store,
@@ -2208,6 +2209,7 @@ pub(super) fn load_session_detail(
                 .map(|receipt| receipt.items.into_iter().map(|(id, _)| id).collect())
                 .unwrap_or_default();
             ArchiveEventSnapshot {
+                source_offset: Some(source_offset),
                 role: event.role.to_owned(),
                 kind: event.kind.as_str().to_owned(),
                 at_unix_ms: event.at_unix_ms,

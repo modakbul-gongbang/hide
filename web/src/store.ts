@@ -85,6 +85,7 @@ export type Frame = {
     changes?: ChangesSnapshot | null;
     documents?: DocumentsSection | null;
     project_sessions?: ProjectSessions;
+    session_search?: import("./snapshot").SessionSearch;
     find?: PaneFind;
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
@@ -143,6 +144,7 @@ type Store = {
    * without it has none; a delta without it keeps what the store holds.
    */
   projectSessions: ProjectSessions | null;
+  sessionSearch: import("./snapshot").SessionSearch | null;
   agents: AgentRow[];
   /**
    * The keyboard-focus pane of the context on screen: the core's
@@ -259,6 +261,7 @@ export const useShellStore = create<Store>((set, get) => ({
   changes: null,
   documents: NO_DOCUMENTS,
   projectSessions: null,
+  sessionSearch: null,
   agents: [],
   focusedPaneId: null,
   herdrState: null,
@@ -335,18 +338,20 @@ export const useShellStore = create<Store>((set, get) => ({
         changes: payload.changes ?? null,
         documents: payload.documents ? mergeDocuments(NO_DOCUMENTS, payload.documents) : NO_DOCUMENTS,
         projectSessions: payload.project_sessions ?? null,
+        sessionSearch: payload.session_search ?? null,
       });
     } else if (
       payload.editor !== undefined ||
       payload.changes !== undefined ||
       payload.documents !== undefined ||
-      payload.project_sessions !== undefined
+      payload.project_sessions !== undefined || payload.session_search !== undefined
     ) {
       set({
         editor: payload.editor ?? get().editor,
         changes: payload.changes ?? get().changes,
         documents: payload.documents ? mergeDocuments(get().documents, payload.documents) : get().documents,
         projectSessions: payload.project_sessions ?? get().projectSessions,
+        sessionSearch: payload.session_search && (payload.revision ?? get().revision) >= get().revision ? share(get().sessionSearch, payload.session_search) : get().sessionSearch,
       });
     }
     if (frame.type === "directory_list") {
@@ -459,7 +464,7 @@ export const useShellStore = create<Store>((set, get) => ({
     }
     const chunks = payload.chunks ?? [];
     const cursors = {
-      revision: payload.revision ?? get().revision,
+      revision: frame.type === "snapshot" ? (payload.revision ?? get().revision) : Math.max(payload.revision ?? 0, get().revision),
       terminalSequence: payload.terminal_sequence ?? get().terminalSequence,
       find: payload.find ? share(get().find, payload.find) : get().find,
     };

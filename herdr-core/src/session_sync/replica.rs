@@ -402,6 +402,7 @@ impl SessionReplica {
                                     // so a remote pane reports none rather than
                                     // claiming the local machine's.
                                     ports: Vec::new(),
+                                    servers: Vec::new(),
                                     // Judged by the core from this pane's
                                     // hook tokens and the device's kit, the
                                     // same way a local pane is (PRD

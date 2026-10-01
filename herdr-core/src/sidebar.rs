@@ -2046,6 +2046,7 @@ mod tests {
                         activity_at_unix_ms: None,
                         fork: Default::default(),
                         ports: vec![],
+                        servers: vec![],
                         children: None,
                         lineage_path: Vec::new(),
                         sleep: None,

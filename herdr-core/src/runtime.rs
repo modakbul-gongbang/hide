@@ -27,6 +27,7 @@ mod projects;
 mod pull_requests;
 mod rename;
 mod session;
+pub(crate) mod session_search;
 mod snapshot_delta;
 mod terminal;
 mod tree_close;
@@ -1154,6 +1155,8 @@ pub struct Runtime {
     archive_detail_load_generation: u64,
     /// The reads behind `snapshot.project_sessions`.
     project_sessions_work: project_sessions::ProjectSessionsWork,
+    search_client: Option<session_search::SearchClient>,
+    search_generation: u64,
     memory_operation_in_flight: bool,
     memory_operation_generation: u64,
     memory_operation_checkout_path: Option<String>,
@@ -1593,6 +1596,8 @@ impl Runtime {
             memory_sessions_load_generation: 0,
             archive_detail_load_generation: 0,
             project_sessions_work: project_sessions::ProjectSessionsWork::default(),
+            search_client: None,
+            search_generation: 0,
             memory_operation_in_flight: false,
             memory_operation_generation: 0,
             memory_operation_checkout_path: None,
@@ -1955,7 +1960,7 @@ fn project_layout_panes(
                 id: pane.pane_id.clone(),
                 herdr_label: source.and_then(|source| source.label.clone()),
                 terminal_title: source.and_then(|source| source.terminal_title.clone()),
-                cwd,
+                cwd: cwd.clone(),
                 // This projection cannot see the read record ledger, so both
                 // read-dependent values are refilled from the navigator's
                 // agent rows once those are final; see
@@ -1971,6 +1976,7 @@ fn project_layout_panes(
                 activity_at_unix_ms: agent.and_then(|agent| agent.last_activity.parse().ok()),
                 fork: pane_fork_snapshot(agent),
                 ports,
+                servers: crate::ports::attributed_servers(&cwd, listening_ports),
                 // Both are refilled from the final agent list once the read
                 // axis and the lineage are applied; see `sync_pane_lineage`.
                 children: None,

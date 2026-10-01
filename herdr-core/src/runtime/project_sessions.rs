@@ -84,11 +84,18 @@ impl Runtime {
                 unavailable_reason: None,
                 loading: false,
                 failure: None,
-                rows: Vec::new(),
+                rows: Arc::new(Vec::new()),
                 detail: None,
             });
             self.project_sessions_work.project_id = None;
             self.project_sessions_work.detail_generation += 1;
+        }
+        self.search_generation += 1;
+        if self.snapshot.session_search.is_some() {
+            self.snapshot.session_search = Some(Default::default());
+        }
+        if let Some(client) = self.search_client.as_ref() {
+            client.invalidate();
         }
         self.project_sessions_work.list_generation += 1;
         match self.project_sessions_folder(device_id, workspace_id) {
@@ -99,7 +106,7 @@ impl Runtime {
                     sessions.unavailable_reason = Some(reason);
                     sessions.loading = false;
                     sessions.failure = None;
-                    sessions.rows.clear();
+                    sessions.rows = Arc::new(Vec::new());
                     sessions.detail = None;
                 }
                 true
@@ -249,7 +256,7 @@ impl Runtime {
                     "message": message,
                 }));
                 let failure = history_failure(&message);
-                sessions.rows.clear();
+                sessions.rows = Arc::new(Vec::new());
                 // The open session would be read against rows this read did
                 // not produce: a read of it still waiting is dropped, and one
                 // that never showed its conversation says why (B5).
@@ -268,7 +275,7 @@ impl Runtime {
             }
             Ok(history) => {
                 sessions.failure = None;
-                sessions.rows = history.rows;
+                sessions.rows = Arc::new(history.rows);
                 self.project_sessions_work
                     .known
                     .insert(sessions.workspace_id.clone(), history.kept);
@@ -276,6 +283,7 @@ impl Runtime {
                 // A Retry reads the history and then the open session against
                 // its fresh row, so a source that came back opens and one that
                 // went away says so: one action, one event (A6).
+                self.start_project_search();
                 self.reread_open_project_session();
                 true
             }

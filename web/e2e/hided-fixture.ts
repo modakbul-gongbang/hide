@@ -14,6 +14,8 @@ import type { HerdrFixture } from "./herdr-fixture";
  * the host keeps its id, and the browser keeps its origin and so its drafts.
  */
 export type Daemon = {
+  /** Owned fixture process, used for isolated resource measurements. */
+  pid: number;
   origin: string;
   token: string;
   home: string;
@@ -101,7 +103,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
             await beforeStart?.(path.join(dir, "hide"));
             return launch(herdr, label, dir, home, String(state.port), extraEnv);
           };
-          return { origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };
+          return { pid: child.pid!, origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };
         }
       } catch {
         /* still starting */

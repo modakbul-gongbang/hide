@@ -25,10 +25,11 @@ use std::path::{Path, PathBuf};
 mod catalog;
 mod conversation_cursor;
 mod label_owner;
+pub mod search;
 
 pub use label_owner::{ConfirmedLabelSession, confirm_label_session, label_reference_token};
 
-pub use conversation_cursor::ConversationCursor;
+pub use conversation_cursor::{ConversationCheckpoint, ConversationCursor};
 
 pub use catalog::{
     ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
