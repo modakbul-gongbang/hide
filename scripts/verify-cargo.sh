@@ -25,6 +25,13 @@ cd "$(dirname "$0")/.."
 
 export CARGO_TARGET_DIR="$PWD/target"
 
+# A Herdr pane carries the socket and identity of the Herdr that opened it,
+# and the core takes HERDR_SOCKET_PATH over any socket a test hands it, so a
+# test daemon started from an agent's pane would follow the operator's live
+# Herdr and label its agents from the operator's conversations. No test may
+# reach that server; each one that needs Herdr names its own.
+unset HERDR_SOCKET_PATH HERDR_BIN_PATH HERDR_ENV HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID
+
 case "${1:-}" in
     test)
         shift
