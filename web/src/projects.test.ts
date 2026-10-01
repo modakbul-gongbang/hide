@@ -46,7 +46,7 @@ describe("projectRows", () => {
     expect(rows[0]).toEqual({ kind: "header", title: "Projects · Recent activity", count: 1 });
   });
 
-  it("raises Needs You and Done above Pinned, in the core's order, and keeps them in the tree", () => {
+  it("raises Needs You alone above Pinned, in the core's order, and keeps them in the tree", () => {
     const withPanes = (id: string, panes: string[], extra: Partial<Workspace> = {}) =>
       workspace(id, { checkouts: [{ id: `${id}-main`, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] } as unknown as Checkout], ...extra });
     const agent = (pane: string, group: string, extra: Partial<AgentRow> = {}) => ({ agent: { pane_id: pane, id: pane, group, ...extra } as AgentRow, device: null });
@@ -62,7 +62,8 @@ describe("projectRows", () => {
     const shape = rows.map((row) =>
       row.kind === "raised" ? `${row.title}:${row.agents.map(({ agent }) => agent.pane_id).join(",")}` : row.kind === "header" ? row.title : `${row.kind}:${row.kind === "workspace" ? row.workspace.id : ""}`,
     );
-    expect(shape).toEqual(["Needs You:ask-2,ask-1", "Done:done-1", "Pinned", "workspace:a", "Projects · Recent activity", "workspace:b"]);
+    // Done is the Agents tab's: the Projects list does not raise it.
+    expect(shape).toEqual(["Needs You:ask-2,ask-1", "Pinned", "workspace:a", "Projects · Recent activity", "workspace:b"]);
     // A raised row never unfolds, whatever the tree below has open.
     const needsYou = rows[0] as Extract<(typeof rows)[number], { kind: "raised" }>;
     expect(needsYou.agents.map(({ agent }) => agent.lineage_collapsed !== false)).toEqual([true, true]);

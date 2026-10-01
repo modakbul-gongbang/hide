@@ -1,8 +1,8 @@
-import { CheckIcon, ChevronDownIcon, LaptopIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
+import { ChevronDownIcon, LaptopIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { SIDEBAR_MODES, type SidebarMode } from "../ui";
 import { Button } from "./ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
 
 const MODE_LABEL: Record<SidebarMode, string> = { projects: "Projects", agents: "Agents" };
@@ -126,7 +126,7 @@ function HiddenRailMenu({ title, menu }: { title: { name: string; note: string |
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`${title.name}, 기기 전환`}
+          aria-label={`${title.name}${title.note ? ` ${title.note}` : ""}, 기기 전환`}
           data-sidebar-device-menu="true"
           className="flex min-w-0 flex-1 items-baseline gap-sm rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
@@ -138,17 +138,18 @@ function HiddenRailMenu({ title, menu }: { title: { name: string; note: string |
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" aria-label="Devices" data-device-menu="true">
-        {menu.devices.map((device) => {
-          const Icon = device.remote ? ServerIcon : LaptopIcon;
-          return (
-            <DropdownMenuItem key={device.id} data-device-menu-item={device.id} onSelect={() => menu.onSelect(device.id)}>
-              <Icon aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{device.label}</span>
-              {device.connected ? null : <span className="shrink-0 text-caption text-muted-foreground">연결 안 됨</span>}
-              {device.id === menu.frontId ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-foreground" /> : null}
-            </DropdownMenuItem>
-          );
-        })}
+        <DropdownMenuRadioGroup value={menu.frontId} onValueChange={menu.onSelect}>
+          {menu.devices.map((device) => {
+            const Icon = device.remote ? ServerIcon : LaptopIcon;
+            return (
+              <DropdownMenuRadioItem key={device.id} value={device.id} data-device-menu-item={device.id}>
+                <Icon aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{device.label}</span>
+                {device.connected ? null : <span className="shrink-0 text-caption text-muted-foreground">연결 안 됨</span>}
+              </DropdownMenuRadioItem>
+            );
+          })}
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem data-device-menu-add="true" onSelect={menu.onAddDevice}>
           <PlusIcon aria-hidden="true" />

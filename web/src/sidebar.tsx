@@ -461,33 +461,33 @@ function AgentList({ actions }: { actions: Actions }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <AgentCounts agents={listed.map((row) => row.agent)} />
       <ul className="min-h-0 flex-1 overflow-auto px-xs" data-agent-list="true">
-      {tree.sections.map((section) => (
-        <li key={section.group} data-agent-group={section.group}>
-          <div className="px-sm pb-xxs pt-sm text-micro font-medium text-muted-foreground" id={`agent-group-${section.group}`}>
-            {section.label} · {section.count}
-          </div>
-          <ul aria-labelledby={`agent-group-${section.group}`}>
-            {section.rows.map((row) => (
-              <SidebarAgentRow
-                key={`${row.device ?? "local"}:${row.agent.id}`}
-                agent={row.agent}
-                device={null}
-                place={row.depth === 0 ? placeOf(row.device, row.agent.pane_id) : null}
-                depth={row.depth}
-                descendants={row.descendants}
-                childRows={tree.presentation(row.agent).badgeChildren}
-                selected={row.agent.pane_id === focusedPaneId}
-                onOpen={actions.openAgent}
-                onToggleTree={actions.toggleAgentTree}
-                inset="var(--spacing-xs)"
-                foldedLineage={tree.presentation(row.agent)}
-                number={numbers ? numberOf(numbers, row.agent.pane_id) : null}
-                menu={menu}
-              />
-            ))}
-          </ul>
-        </li>
-      ))}
+        {tree.sections.map((section) => (
+          <li key={section.group} data-agent-group={section.group}>
+            <div className="px-sm pb-xxs pt-sm text-micro font-medium text-muted-foreground" id={`agent-group-${section.group}`}>
+              {section.label} · {section.count}
+            </div>
+            <ul aria-labelledby={`agent-group-${section.group}`}>
+              {section.rows.map((row) => (
+                <SidebarAgentRow
+                  key={`${row.device ?? "local"}:${row.agent.id}`}
+                  agent={row.agent}
+                  device={null}
+                  place={row.depth === 0 ? placeOf(row.device, row.agent.pane_id) : null}
+                  depth={row.depth}
+                  descendants={row.descendants}
+                  childRows={tree.presentation(row.agent).badgeChildren}
+                  selected={row.agent.pane_id === focusedPaneId}
+                  onOpen={actions.openAgent}
+                  onToggleTree={actions.toggleAgentTree}
+                  inset="var(--spacing-xs)"
+                  foldedLineage={tree.presentation(row.agent)}
+                  number={numbers ? numberOf(numbers, row.agent.pane_id) : null}
+                  menu={menu}
+                />
+              ))}
+            </ul>
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -616,7 +616,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const homeWorkspace = useShellStore((s) => contextHome(s.rest));
   const rows = useMemo(() => projectRows(workspaces, groups, listedAgents, homeWorkspace), [workspaces, groups, listedAgents, homeWorkspace]);
   // The device's Needs You comes first, then its Home, then the projects (PRD home-device-rail B6); Done and the rest are the Agents tab's.
-  const raised = useMemo(() => rows.filter((row) => row.kind === "raised" && row.group === "needs_you"), [rows]);
+  const raised = useMemo(() => rows.filter((row) => row.kind === "raised"), [rows]);
   const tree = useMemo(() => rows.filter((row) => row.kind !== "raised"), [rows]);
   const agentRowMenu = useAgentRowMenu(actions);
   const presentations = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, lineageWorkspaces)])), [agents, lineageWorkspaces]);

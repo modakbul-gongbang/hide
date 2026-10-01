@@ -25,6 +25,7 @@ import { closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
+import { railShown } from "./devices";
 import { allAgents, overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
@@ -119,7 +120,7 @@ export function createActions(dispatch: DispatchFn) {
 
   const setDeviceRailVisible = (visible: boolean) => {
     const state = rest()?.ui_state;
-    if (!state || (state.device_rail_visible ?? true) === visible) return;
+    if (!state || railShown(rest()) === visible) return;
     updateUiState({ device_rail_visible: visible });
   };
 
@@ -1650,7 +1651,7 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Shows or hides the device rail; the core keeps the choice across a restart. */
     toggleDeviceRail() {
-      setDeviceRailVisible(!(rest()?.ui_state?.device_rail_visible ?? true));
+      setDeviceRailVisible(!railShown(rest()));
     },
 
     hideDeviceRail() {
