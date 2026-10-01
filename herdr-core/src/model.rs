@@ -2429,6 +2429,60 @@ pub struct IssueWorkSnapshot {
     pub detail: Option<IssueDetailSnapshot>,
     pub name: Option<WorktreeNameSnapshot>,
     pub update: Option<IssueUpdateSnapshot>,
+    /// The latest `github_search`; absent from the wire until the first one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search: Option<GithubSearchSnapshot>,
+}
+
+/// The latest GitHub search (`github_search`), matched by the web's own
+/// request id. `query` is the trimmed text the search ran, or was refused
+/// with. `results` is empty until `ready`; `message` says why a search
+/// `failed`, or that a `ready` one did not cover every repository.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GithubSearchSnapshot {
+    pub request_id: String,
+    pub query: String,
+    /// `working`, `ready` or `failed`.
+    pub phase: String,
+    pub results: Vec<GithubSearchResult>,
+    pub message: Option<String>,
+}
+
+/// One pull request or issue a search found: at most 20 of each, pull
+/// requests first, in the order the repositories are searched.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GithubSearchResult {
+    /// `pr` or `issue`.
+    pub kind: String,
+    /// `owner/name`.
+    pub repository: String,
+    pub number: u32,
+    pub title: String,
+    /// `open`, `closed` or `merged`.
+    pub state: String,
+    pub url: String,
+    /// A draft pull request; always false for an issue.
+    pub is_draft: bool,
+}
+
+impl GithubSearchSnapshot {
+    pub fn working(request_id: String, query: String) -> Self {
+        Self {
+            request_id,
+            query,
+            phase: "working".into(),
+            results: Vec::new(),
+            message: None,
+        }
+    }
+
+    pub fn failed(request_id: String, query: String, message: impl Into<String>) -> Self {
+        Self {
+            phase: "failed".into(),
+            message: Some(message.into()),
+            ..Self::working(request_id, query)
+        }
+    }
 }
 
 /// A new issue on its way to the project's source.

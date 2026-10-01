@@ -9,6 +9,21 @@ pub struct IssueReference {
     pub number: u32,
 }
 
+/// Whether `value` reads as `owner/name`: two plain path-safe parts, so it
+/// can be handed to `gh` as a repository.
+pub(crate) fn is_repository(value: &str) -> bool {
+    let mut parts = value.split('/');
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+    };
+    parts.next().is_some_and(valid) && parts.next().is_some_and(valid) && parts.next().is_none()
+}
+
 impl IssueReference {
     pub fn parse(value: &str, current_repository: Option<&str>) -> Result<Self, String> {
         let value = value.trim();
@@ -34,19 +49,7 @@ impl IssueReference {
     }
 
     fn validated(repository: &str, number: &str) -> Result<Self, String> {
-        let mut parts = repository.split('/');
-        let valid = |part: &str| {
-            !part.is_empty()
-                && part != "."
-                && part != ".."
-                && part
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
-        };
-        if !parts.next().is_some_and(valid)
-            || !parts.next().is_some_and(valid)
-            || parts.next().is_some()
-        {
+        if !is_repository(repository) {
             return Err("owner/repo 형식의 저장소를 입력하세요.".into());
         }
         let number = number
