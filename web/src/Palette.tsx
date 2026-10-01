@@ -9,6 +9,9 @@ import { SearchPalette } from "./SearchPalette";
 import { explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { drawnViews } from "./viewFocus";
+import { besideUnavailable } from "./viewLayout";
+import { workspaceViewOf } from "./workspace";
 
 // The file and diff palettes (PRD B12, B13) on the System command palette: a
 // query field, a list cmdk's own arrow keys and Enter walk, and Escape closes
@@ -89,6 +92,8 @@ function FilePalette({ actions }: { actions: Actions }) {
   );
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState("");
+  // Why ⌘↵ opened nothing, said in the footer where its hint stands.
+  const [besideReason, setBesideReason] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -117,7 +122,10 @@ function FilePalette({ actions }: { actions: Actions }) {
       label="Open file"
       placeholder="Search files by name"
       query={query}
-      onQuery={setQuery}
+      onQuery={(next) => {
+        setBesideReason(null);
+        setQuery(next);
+      }}
       value={current?.path ?? ""}
       onValue={setHighlighted}
       onKeyDown={(event) => {
@@ -125,11 +133,13 @@ function FilePalette({ actions }: { actions: Actions }) {
         if (event.key !== "Enter" || !event.metaKey || !current) return;
         event.preventDefault();
         event.stopPropagation();
+        const reason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());
+        if (reason) return setBesideReason(reason);
         actions.openIndexEntryBeside(current.path);
       }}
       footer={
         <span className="flex items-center gap-md">
-          <span data-palette-hint="beside">⌘↵ 옆에 열기</span>
+          <span data-palette-hint="beside">{besideReason ?? "⌘↵ 옆에 열기"}</span>
           {fileIndex?.truncated ? <span>The index is truncated at 50,000 files</span> : null}
         </span>
       }
