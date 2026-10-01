@@ -136,7 +136,33 @@ function remoteShell(argv: string[]): string {
   return `HCOORD_HOME=${dir} exec ${dir}/bin/hcoord remote ${before.map(quote).join(" ")} --json${divider < 0 ? "" : ` -- ${tail.map(quote).join(" ")}`}`;
 }
 
-const sshArgs = (target: string, argv: string[]): string[] => ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", target, "--", remoteShell(argv)];
+// Every SSH run used to open its own connection, so a flaky SSH agent was asked
+// to sign every few seconds (about 15 refusals an hour, 2265 since 2026-09-26).
+// One multiplexed master per target serves the runs inside its idle window.
+// The socket directory is short and private because a unix socket path caps
+// near 104 bytes and the per-user temp directory alone is nearly that long.
+const CONTROL_PERSIST_SECONDS = 60;
+let reuseSkipLogged = false;
+const controlDir = (): string => path.join("/tmp", `hcoord-ssh-${process.getuid?.() ?? 0}`);
+
+/**
+ * SSH options that reuse one connection per target. A directory that cannot be
+ * made, for example inside a sandbox, only costs the reuse: every run then
+ * opens its own connection exactly as before, so the call itself never fails
+ * on it.
+ */
+export function controlOptions(): string[] {
+  if (process.platform === "win32") return [];
+  const dir = controlDir();
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.chmodSync(dir, 0o700); }
+  catch (error) {
+    if (!reuseSkipLogged) { reuseSkipLogged = true; process.stderr.write(`${JSON.stringify({ event: "hcoord.ssh_reuse_unavailable", at: new Date().toISOString(), code: (error as NodeJS.ErrnoException).code ?? "internal" })}\n`); }
+    return [];
+  }
+  return ["-o", "ControlMaster=auto", "-o", `ControlPath=${dir}/%C`, "-o", `ControlPersist=${CONTROL_PERSIST_SECONDS}`];
+}
+
+export const sshArgs = (target: string, argv: string[]): string[] => ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", ...controlOptions(), target, "--", remoteShell(argv)];
 
 export type Raw = { status: number | null; stdout: string; stderr: string };
 
