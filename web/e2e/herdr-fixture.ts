@@ -233,7 +233,8 @@ export function linkFixtureTranscripts(fixture: Pick<HerdrFixture, "root">, home
  * before the session is declared, because the core reads a session when its
  * reference or state changes, not when its file grows.
  */
-export function writeFixtureTranscript(projects: string, sessionId: string, label: FixtureLabel): string {
+/** The text a transcript carries for the fixture provider to answer with. */
+export function labelMarker(label: FixtureLabel): string {
   const answer = {
     task: label.task,
     task_changed: true,
@@ -241,9 +242,13 @@ export function writeFixtureTranscript(projects: string, sessionId: string, labe
     expected_reply: label.reply ?? "",
     attention: label.question ? "question" : "none",
   };
+  return `HIDE_E2E_LABEL ${JSON.stringify(answer)}`;
+}
+
+export function writeFixtureTranscript(projects: string, sessionId: string, label: FixtureLabel): string {
   const records = [
     { type: "user", sessionId, timestamp: "2026-10-01T09:00:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 진행해줘` } },
-    { type: "assistant", sessionId, timestamp: "2026-10-01T09:00:01Z", message: { role: "assistant", content: [{ type: "text", text: `HIDE_E2E_LABEL ${JSON.stringify(answer)}` }] } },
+    { type: "assistant", sessionId, timestamp: "2026-10-01T09:00:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
   ];
   const dir = path.join(projects, "e2e");
   fs.mkdirSync(dir, { recursive: true });
@@ -296,10 +301,13 @@ export async function setFixtureLifecycle(fixture: HerdrFixture, pane: string, s
   }
   // The existing raw-mode shim echoes these bytes, so pinned Herdr's
   // osc_title_working / bash_permission_prompt rules see a controlled TUI.
+  // Leaving a permission prompt clears it off the screen, where Herdr would
+  // still read it as blocked; nothing else touches the pane's text.
+  const clear = reference && current()?.agent_status === "blocked" ? "\x1b[2J\x1b[H" : "";
   const screen = state === "working"
-    ? "\x1b[2J\x1b[H\x1b]0;\u280b Working\x07"
+    ? `${clear}\x1b]0;\u280b Working\x07`
     : state === "idle"
-      ? "\x1b[2J\x1b[H\x1b]0;\u2733 Claude Code\x07"
+      ? `${clear}\x1b]0;\u2733 Claude Code\x07`
       : "\x1b]0;Fixture\x07\x1b[2J\x1b[Hdo you want to proceed?\n"
         + "bash command\n❯ 1. Yes\n2. No\n";
   const reached = (status: string | undefined) => (state === "idle" ? status === "idle" || status === "done" : status === state);

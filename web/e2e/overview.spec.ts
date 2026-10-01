@@ -22,7 +22,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
+import { agentsIn, labelAgent, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -51,7 +51,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
   await prompt(herdr, pane);
   if (task) {
     herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
-    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env: herdr.env, timeout: 30_000 });
+    labelAgent(herdr, pane, { task });
   }
   return pane;
 }
@@ -221,17 +221,20 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     const mainPane = await workspaceAt(herdr, repo, "최신 hide 서버 웹 실행");
     const workingPane = await workspaceAt(herdr, tree("working"), "웹 디자인 시스템 리셋 구현");
     const askingPane = await workspaceAt(herdr, tree("asking"), "사이드바 상태 규칙 구현");
-    const shippedPane = await workspaceAt(herdr, tree("shipped"), "머지된 작업");
+    const shippedPane = await workspaceAt(herdr, tree("shipped"), "머지된 작업 마무리");
     // The Observer on main delegated the working worktree's Implementor,
     // which is working, so the Observer waits on it (B14, B21).
     execFileSync(herdr.bin, ["pane", "report-metadata", workingPane, "--source", "e2e-lineage", "--token", `parent_pane=${mainPane}`], { env: herdr.env, timeout: 30_000 });
     await setFixtureLifecycle(herdr, workingPane, "working");
-    // An agent asking the operator: the label plugin's `expected_reply` is
-    // its question, and its `progress` the rest of what it said; the node
-    // shows the question, its popover the whole message (B21, B22).
+    // An agent asking the operator: its label's expected reply is its
+    // question, and its progress the rest of what it said; the node shows
+    // the question, its popover the whole message (B21, B22).
     await setFixtureLifecycle(herdr, askingPane, "blocked");
-    execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "expected_reply=Done 그룹 회색 링을 바꿔도 될까요?"], { env: herdr.env, timeout: 30_000 });
-    execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "progress=사이드바 상태 규칙을 세 곳에 적용했고 Done 그룹만 남았습니다."], { env: herdr.env, timeout: 30_000 });
+    labelAgent(herdr, askingPane, {
+      task: "사이드바 상태 규칙 구현",
+      progress: "사이드바 상태 규칙을 세 곳에 적용했고 Done 그룹만 남았습니다.",
+      reply: "Done 그룹 회색 링을 바꿔도 될까요?",
+    });
     // A project with only a shell: no agent at all.
     const quiet = path.join(herdr.root, "quiet");
     fs.mkdirSync(quiet);
