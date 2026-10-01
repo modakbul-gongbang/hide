@@ -57,6 +57,10 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | herdr pin single source | The Herdr version and digest live only in `herdr-bundle.json` | `zsh scripts/check-herdr-pin-single-source.sh` | Derive from the manifest; never restate the value. Bump with `scripts/bump-herdr.sh <version>`. |
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |
 
+A web e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that is the only way a test leaves a required gate.
+Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required shards skip it with `--grep-invert @flaky`, and shard 1 still runs every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
+Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
+
 The gates that read a running Herdr server, drive the built app, or reach the network are local steps and are not required in CI.
 They are listed under "Local gates" below; every script in `scripts/` is either a required gate above, a local gate there, or a generator named in [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md).
 The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs`, `node --test scripts/tests/pen-gallery.test.mjs`, `node --test scripts/tests/pen-transplant.test.mjs`, `node --test scripts/tests/design-scratch.test.mjs`, `node --test scripts/tests/design-review.test.mjs`, and `node --test scripts/tests/hide-screens.test.mjs`.
