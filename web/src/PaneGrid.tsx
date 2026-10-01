@@ -1,9 +1,11 @@
 import { memo, useCallback, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { markTone } from "./agentRow";
 import { PaneView } from "./PaneView";
-import { frameStyle, type RemoteView } from "./remote";
+import { contextAgents, frameStyle, type RemoteView } from "./remote";
 import { resizeStep } from "./resize";
 import {
+  type AgentRow,
   dividerPaneId,
   focusedCheckout,
   layoutForTab,
@@ -28,8 +30,22 @@ type PaneProps = {
   transports: Map<string, TerminalPane>;
   scales: Record<string, number>;
   focusedPaneId: string;
+  agents: Map<string, AgentRow>;
+  paneCount: number;
+  zoomed: boolean;
   actions: Actions;
 };
+
+/** The agents of the context on screen, by pane, as the sidebar reads them: what a pane header draws as its mark and logo. */
+function useAgentsByPane(): Map<string, AgentRow> {
+  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
+  return new Map(agents.map((agent) => [agent.pane_id, agent]));
+}
+
+/** The header's agent facts as plain values, so a pane redraws only when they change. */
+function agentProps(agent: AgentRow | undefined) {
+  return { agentKind: agent?.agent_kind ?? null, markSymbol: agent?.symbol ?? null, markTone: agent ? markTone(agent) : "" };
+}
 
 export function PaneCanvas({ actions, tab }: { actions: Actions; tab: Tab | null }) {
   const checkout = useShellStore((s) => focusedCheckout(s.rest));
@@ -76,6 +92,7 @@ export function RemotePaneCanvas({
 }) {
   const transportRows = useShellStore((s) => s.rest?.terminal?.panes ?? EMPTY_TRANSPORTS);
   const scales = useShellStore((s) => s.rest?.ui_state?.pane_text_scales ?? EMPTY_SCALES);
+  const agents = useAgentsByPane();
   const { tab, layout } = view;
   if (!tab || !layout) {
     return (
@@ -100,6 +117,9 @@ export function RemotePaneCanvas({
                 focused={view.focusedPaneId === frame.pane_id}
                 scale={scales[frame.pane_id] ?? 1}
                 actions={actions}
+                {...agentProps(agents.get(frame.pane_id))}
+                paneCount={tab.panes.length}
+                zoomed={layout.zoomed}
                 local={false}
                 offline={!connected}
               />
@@ -128,6 +148,7 @@ const TabCanvas = memo(function TabCanvas({
   actions: Actions;
 }) {
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  const agents = useAgentsByPane();
   const panes = new Map(tab.panes.map((pane) => [pane.id, pane]));
   const transports = new Map(transportRows.map((row) => [row.pane_id, row]));
   const props: PaneProps = {
@@ -135,6 +156,9 @@ const TabCanvas = memo(function TabCanvas({
     transports,
     scales,
     focusedPaneId: focusedPaneId ?? "",
+    agents,
+    paneCount: tab.panes.length,
+    zoomed: layout.zoomed,
     actions,
   };
   const root: LayoutNode = layout.zoomed ? { type: "pane", pane_id: layout.focused_pane_id } : layout.root;
@@ -157,6 +181,9 @@ function LayoutView({ node, ...props }: { node: LayoutNode } & PaneProps) {
             focused={props.focusedPaneId === node.pane_id}
             scale={props.scales[node.pane_id] ?? 1}
             actions={props.actions}
+            {...agentProps(props.agents.get(node.pane_id))}
+            paneCount={props.paneCount}
+            zoomed={props.zoomed}
           />
         ) : (
           // The layout names a pane the tab rows do not carry yet; the next

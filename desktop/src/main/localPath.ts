@@ -58,7 +58,7 @@ function expand(value: string, home: string): string {
   return path.normalize(value.startsWith("~/") ? path.join(home, value.slice(2)) : value);
 }
 
-/** Each path's physical spelling and kind, or null for one that is missing, unreadable, or neither a file nor a folder. */
+/** Physical spelling/kind, or null for confirmed absence or an unsupported kind; unexpected filesystem failures reject the batch. */
 export async function probe(paths: string[], home: string = os.homedir()): Promise<Probed[]> {
   return Promise.all(
     paths.map(async (each) => {
@@ -68,8 +68,14 @@ export async function probe(paths: string[], home: string = os.homedir()): Promi
         if (stat.isDirectory()) return { real, kind: "directory" as const };
         if (stat.isFile()) return { real, kind: "file" as const };
         return null;
-      } catch {
-        return null;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException | null)?.code;
+        if (code === "ENOENT" || code === "ENOTDIR") return null;
+        // Electron's rejected IPC reaches the provider's existing diagnostic.
+        // Filesystem error messages can include private paths, so carry only
+        // the platform's reason code across that boundary.
+        const reason = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,31}$/u.test(code) ? code : "UNKNOWN";
+        throw new Error(`native path probe failed: ${reason}`);
       }
     }),
   );

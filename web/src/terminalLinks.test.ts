@@ -67,7 +67,7 @@ describe("linkCandidates", () => {
   it("finds each token of the hovered row with its columns", () => {
     const rows = [row("see src/a.ts:3 and https://example.com.", 60)];
     const groups = linkCandidates(rows, 0);
-    expect(texts(groups)).toEqual([["src/a.ts:3"], ["https://example.com"]]);
+    expect(texts(groups)).toEqual([["src/a.ts:3", "src/a.ts:3"], ["https://example.com"]]);
     expect(groups[0]![0]!.spans).toEqual([{ row: 0, start: 4, end: 14 }]);
     expect(groups[1]![0]!.spans).toEqual([{ row: 0, start: 19, end: 38 }]);
   });
@@ -99,8 +99,8 @@ describe("linkCandidates", () => {
   it("places a tool header's argument on the row it lands on when the wrap cut the header", () => {
     const rows = [row("see Upd", 7), row("ate(web/src/a.ts)", 30)];
     const [group] = linkCandidates(rows, 1);
-    expect(group![0]!.text).toBe("web/src/a.ts");
-    expect(group![0]!.spans).toEqual([{ row: 1, start: 4, end: 16 }]);
+    const argument = group!.find((candidate) => candidate.text === "web/src/a.ts")!;
+    expect(argument.spans).toEqual([{ row: 1, start: 4, end: 16 }]);
   });
 
   it("joins a URL only across a row that reaches the last column", () => {
@@ -124,5 +124,72 @@ describe("linkCandidates", () => {
 
   it("offers nothing for a row of prose", () => {
     expect(linkCandidates([row("nothing to open here", 30)], 0)).toEqual([]);
+  });
+});
+
+
+describe("bounded Korean interpretations", () => {
+  it("uses a finite particle boundary and keeps the original spelling", () => {
+    const particles = ["에", "에서", "에게", "께", "으로", "로", "와", "과", "을", "를", "은", "는", "이", "가", "의", "도", "만", "부터", "까지"];
+    for (const closer of [")", "]", "}", '"', "'", "`"]) {
+      for (const particle of particles.flatMap((base) => [base, ...["도", "만", "는", "은"].map((extra) => base + extra)])) {
+        const token = "docs/한글.md" + closer + particle;
+        const [group] = linkCandidates([row(token, 40)], 0);
+        expect(group!.length).toBeLessThanOrEqual(6);
+        expect(group![0]!.target).toMatchObject({ path: token, line: null });
+        expect(group!.at(-1)!.target).toMatchObject({ path: "docs/한글.md" });
+        expect(group!.at(-1)!.spans).toEqual([{ row: 0, start: 0, end: 12 }]);
+      }
+    }
+  });
+
+  it("preserves all six composite spellings, including raw leading and closing punctuation", () => {
+    const [group] = linkCandidates([row("(src/a.ts:12:5)에", 40)], 0);
+    expect(group!.map((candidate) => [candidate.text, candidate.target])).toEqual([
+      ["(src/a.ts:12:5)에", { kind: "path", path: "(src/a.ts:12:5)에", line: null, column: null }],
+      ["src/a.ts:12:5)에", { kind: "path", path: "src/a.ts:12:5)에", line: null, column: null }],
+      ["(src/a.ts:12:5)", { kind: "path", path: "(src/a.ts:12:5)", line: null, column: null }],
+      ["src/a.ts:12:5)", { kind: "path", path: "src/a.ts:12:5)", line: null, column: null }],
+      ["src/a.ts:12:5", { kind: "path", path: "src/a.ts:12:5", line: null, column: null }],
+      ["src/a.ts:12:5", { kind: "path", path: "src/a.ts", line: 12, column: 5 }],
+    ]);
+    expect(group![2]!.spans).toEqual([{ row: 0, start: 0, end: 15 }]);
+    expect(group![4]!.spans).toEqual([{ row: 0, start: 1, end: 14 }]);
+  });
+
+  it("does not truncate unsupported words or unbounded particle chains", () => {
+    for (const token of ["docs/a.md)한국어", "docs/a.md)에서라도", "docs/a.md)에도만", "docs/a.md에서도"]) {
+      const [group] = linkCandidates([row(token, 40)], 0);
+      expect(group!.map((candidate) => candidate.target)).toEqual([{ kind: "path", path: token, line: null, column: null }]);
+    }
+  });
+
+  it("excludes wrapping punctuation and wide particles from actual cell ranges", () => {
+    const [group] = linkCandidates([row("보드 보기 (docs/README.md)에 끝", 50)], 0);
+    const path = group!.find((candidate) => candidate.text === "docs/README.md")!;
+    expect(path.spans).toEqual([{ row: 0, start: 11, end: 25 }]);
+    const wrapped = [row("한글 (docs/한", 13), row("글.md)에서도 끝", 20)];
+    const candidate = linkCandidates(wrapped, 1)[0]!.find((each) => each.text === "docs/한글.md")!;
+    expect(candidate.spans).toEqual([{ row: 0, start: 6, end: 13 }, { row: 1, start: 0, end: 5 }]);
+  });
+
+  it("maps surrogate pairs and combining sequences to whole cells", () => {
+    const cells: CellRow = ["앞", null, " ", "(", ..."docs/", "😀", null, "e\u0301", ".", "m", "d", ")", "에", null];
+    const path = linkCandidates([cells], 0)[0]!.find((each) => each.text === "docs/😀e\u0301.md")!;
+    expect(path.spans).toEqual([{ row: 0, start: 4, end: 15 }]);
+  });
+
+  it("bounds every joined spelling to six interpretations and every hovered token to sixteen joins", () => {
+    const rows = Array.from({ length: 7 }, (_, index) => row("docs/" + String.fromCharCode(97 + index) + ".md)에", 12));
+    const groups = linkCandidates(rows, 3);
+    expect(groups).toHaveLength(1);
+    // All seven rows are fully occupied: four starts times four ends make
+    // sixteen distinct joined spellings around the middle row.
+    const originals = groups[0]!.filter((candidate) => candidate.original);
+    expect(originals).toHaveLength(16);
+    expect(new Set(originals.map((candidate) => candidate.text)).size).toBe(16);
+    expect(groups[0]).toHaveLength(48); // This fixture has three distinct stages per join.
+    expect(groups[0]!.length * 2).toBeLessThanOrEqual(192);
+    expect(groups[0]!.filter((candidate) => !candidate.original).length * 2).toBeLessThanOrEqual(160);
   });
 });

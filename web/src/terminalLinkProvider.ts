@@ -38,6 +38,8 @@ export const PROBE_CACHE_CAP = 512;
 export const PROBE_TTL_MS = 10_000;
 /** Paths one host call carries (`MAX_PROBE_PATHS` in the desktop host). */
 const PROBE_BATCH = 64;
+/** New unique logical paths one hover may send to the host. Cache hits are free. */
+export const PROBE_NEW_LIMIT = 512;
 
 type Cached = { answer: ProbedPath; at: number };
 const cache = new Map<string, Cached>();
@@ -56,8 +58,17 @@ export async function probePaths(paths: string[], probe: (paths: string[]) => Pr
     if (hit && now - hit.at < PROBE_TTL_MS) answers.set(path, hit.answer);
     else missing.push(path);
   }
-  for (let from = 0; from < missing.length; from += PROBE_BATCH) {
-    const batch = missing.slice(from, from + PROBE_BATCH);
+  if (missing.length > PROBE_NEW_LIMIT) {
+    useShellStore.getState().noteDiagnostic(`terminal link: path_budget_exceeded unique=${answers.size + missing.length} cache_misses=${missing.length} limit=${PROBE_NEW_LIMIT} skipped=${missing.length - PROBE_NEW_LIMIT}`);
+  }
+  const admitted = missing.slice(0, PROBE_NEW_LIMIT);
+  // The existing opt-in terminal QA seam records counts, never paths.
+  // Ordinary hover has no diagnostic publication for successful checks.
+  if (typeof window !== "undefined" && window.__hideProbe) {
+    useShellStore.getState().noteDiagnostic(`terminal link: path_probe unique=${answers.size + missing.length} cache_hits=${answers.size} cache_misses=${missing.length} admitted=${admitted.length} skipped=${missing.length - admitted.length}`);
+  }
+  for (let from = 0; from < admitted.length; from += PROBE_BATCH) {
+    const batch = admitted.slice(from, from + PROBE_BATCH);
     let found: ProbedPath[];
     try {
       found = await probe(batch);
@@ -148,7 +159,7 @@ export async function resolveGroups(
 ): Promise<{ candidate: LinkCandidate; resolved: Resolved }[]> {
   const lookups = new Map<LinkCandidate, string[]>();
   if (context && probe) {
-    for (const candidate of groups.flat()) {
+    for (const candidate of groups.flat().sort((a, b) => Number(b.original) - Number(a.original))) {
       if (candidate.target.kind === "path") lookups.set(candidate, pathLookups(candidate.target.path, context.cwd, context.root));
     }
   }
@@ -160,7 +171,16 @@ export async function resolveGroups(
         chosen.push({ candidate, resolved: { target: candidate.target, found: null } });
         break;
       }
-      const found = (lookups.get(candidate) ?? []).map((path) => answers.get(path) ?? null).find((answer) => answer !== null) ?? null;
+      const paths = lookups.get(candidate) ?? [];
+      let found: FoundPath | null = null;
+      let unknown = false;
+      for (const path of paths) {
+        if (!answers.has(path)) { unknown = true; break; }
+        const answer = answers.get(path);
+        if (answer) { found = answer; break; }
+      }
+      // A skipped or failed higher-precedence spelling cannot justify a shorter link.
+      if (unknown) break;
       if (found) {
         chosen.push({ candidate, resolved: { target: candidate.target, found } });
         break;
