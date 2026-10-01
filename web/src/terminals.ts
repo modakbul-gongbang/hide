@@ -381,6 +381,16 @@ export function terminalSelectionText(paneId: string): string | null {
   return instance ? selectedText(instance) : null;
 }
 
+/** Pastes text as typed input, wrapped in bracketed paste when the program asked for it. */
+export function pasteText(paneId: string, text: string) {
+  instances.get(paneId)?.term.paste(text);
+}
+
+/** Selects the pane's whole visible text, for Copy to take. */
+export function selectAllText(paneId: string) {
+  instances.get(paneId)?.term.selectAll();
+}
+
 function onCopy(instance: Instance, event: ClipboardEvent) {
   const text = selectedText(instance);
   if (text === null || !event.clipboardData) return;
@@ -406,6 +416,9 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     // A program's own links open like the ones found in the text, never
     // through xterm's confirm dialog.
     linkHandler: osc8Handler(paneId, link, () => instance.links, () => instance.term.hasSelection()),
+    // A right-click opens the pane's menu; it leaves the drag selection as it
+    // was, so Copy there copies what the operator selected, not a word.
+    rightClickSelectsWord: false,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);

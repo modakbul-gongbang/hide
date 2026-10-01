@@ -1,14 +1,18 @@
-import { CircleAlertIcon, EllipsisIcon, MoonIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, EllipsisIcon, Maximize2Icon, MoonIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useRef } from "react";
 import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
+import { AgentMark } from "./AgentMark";
+import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { ChildChipRow, ReturnToParent, usePaneMenu } from "./PaneRelations";
+import { hostKind } from "./host";
+import { ChildChipRow, ReturnToParent, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
+import { displayCommand, hostRegistry } from "./shortcuts";
 import { sleepCaption, wakingLine } from "./sleep";
 import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
-import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale } from "./terminals";
+import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale, terminalSelectionText } from "./terminals";
 
 /**
  * Transport states with a live stream; anything else is drawn as a caption in
@@ -56,6 +60,18 @@ export function transportCaption(transport: TerminalPane | undefined, local = tr
     default:
       return { text: "starting…", reconnects: false };
   }
+}
+
+/** The chords the registry binds here for the terminal menu's commands, read when it opens. */
+function terminalMenuChords(): TerminalMenuContext["chords"] {
+  const host = hostKind();
+  const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state, host);
+  return {
+    find: displayCommand("find_in_pane", host, registry),
+    splitRight: displayCommand("split_right", host, registry),
+    splitDown: displayCommand("split_down", host, registry),
+    zoom: displayCommand("toggle_zoom", host, registry),
+  };
 }
 
 /**
@@ -116,6 +132,11 @@ export const PaneView = memo(function PaneView({
   focused,
   scale,
   actions,
+  agentKind,
+  markSymbol,
+  markTone,
+  paneCount,
+  zoomed,
   local = true,
   offline = false,
 }: {
@@ -124,6 +145,14 @@ export const PaneView = memo(function PaneView({
   focused: boolean;
   scale: number;
   actions: Actions;
+  /** The pane's agent, as the sidebar row and the tab draw it; null for a plain shell. */
+  agentKind: string | null;
+  markSymbol: string | null;
+  markTone: string;
+  /** Panes in the tab, a zoomed pane's hidden siblings included. */
+  paneCount: number;
+  /** The tab is zoomed, so this pane is the only one drawn. */
+  zoomed: boolean;
   /** False for a pane on a selected SSH device. */
   local?: boolean;
   /** True while that device's connection is down. */
@@ -191,14 +220,27 @@ export const PaneView = memo(function PaneView({
     return () => host.removeEventListener("paste", onPaste, true);
   }, [paneId]);
 
+  const openTerminalMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    paneMenu.openTerminalAt(event.clientX, event.clientY, {
+      selection: terminalSelectionText(paneId) !== null,
+      zoomed,
+      paneCount,
+      chords: terminalMenuChords(),
+    });
+  };
+  const zoomChord = zoomed ? terminalMenuChords().zoom : "";
+  const hidden = paneCount - 1;
+
   const caption = transportCaption(transport, local, offline);
   const sleep = local ? pane.sleep : undefined;
   const sleepWords = sleep ? sleepCaption(sleep, Date.now()) : null;
   return (
     <section
-      className="flex h-full min-h-0 min-w-0 flex-col bg-background"
+      className="group/pane relative flex h-full min-h-0 min-w-0 flex-col bg-background"
       data-pane-view={paneId}
       data-focused={focused ? "true" : "false"}
+      data-menu-open={paneMenu.open ? "true" : "false"}
       data-transport={transport?.transport_state ?? ""}
       onDragOver={(event) => {
         if (event.dataTransfer.types.includes("Files")) event.preventDefault();
@@ -207,7 +249,7 @@ export const PaneView = memo(function PaneView({
     >
       <header
         className={`relative flex h-[var(--size-pane-header)] shrink-0 items-center gap-sm px-sm text-caption ${
-          focused ? "bg-secondary text-foreground" : "bg-card text-subtle-foreground"
+          focused ? "bg-secondary text-foreground" : "bg-card text-muted-foreground"
         }`}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -215,11 +257,28 @@ export const PaneView = memo(function PaneView({
         }}
       >
         <ReturnToParent pane={pane} actions={actions} />
+        {markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
+        <AgentMark kind={agentKind} />
         <Hint label={title} reveals>
         <span className="min-w-0 flex-1 truncate">
           {title}
         </span>
         </Hint>
+        {zoomed ? (
+          <Hint label={`Unzoom pane${zoomChord ? ` (${zoomChord})` : ""}`}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0 gap-xxs px-xs text-caption text-foreground hover:bg-popover"
+              aria-label={hidden > 0 ? `Unzoom pane, ${hidden} more ${hidden === 1 ? "pane" : "panes"} in this tab` : "Unzoom pane"}
+              data-pane-zoom={hidden}
+              onClick={() => actions.toggleZoom(paneId)}
+            >
+              <Maximize2Icon aria-hidden="true" />
+              {hidden > 0 ? <span>+{hidden}</span> : null}
+            </Button>
+          </Hint>
+        ) : null}
         {sleepWords ? (
           <span className="flex min-w-0 items-center gap-xxs truncate text-muted-foreground" data-pane-sleep-caption={sleep?.state}>
             {sleepWords.moon ? <MoonIcon className="size-(--size-status-mark) shrink-0" aria-hidden="true" /> : null}
@@ -261,7 +320,7 @@ export const PaneView = memo(function PaneView({
       <ChildChipRow pane={pane} actions={actions} />
       <div className="h-[var(--size-hairline)] shrink-0 bg-border" />
       <div className="relative min-h-0 flex-1">
-        <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} />
+        <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} onContextMenu={openTerminalMenu} />
         {refusal?.pane_id === paneId ? (
           <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-card px-sm py-xxs text-caption text-destructive" data-pane-attachment-refusal="true">
             <span className="min-w-0 flex-1 truncate">{refusalText(refusal.reason)}</span>
@@ -285,6 +344,15 @@ export const PaneView = memo(function PaneView({
           </button>
         ) : null}
       </div>
+      {/* Which terminal takes the keys, among several (docs/UI_BEHAVIOR.md):
+          drawn while its pane holds the keyboard or its menu is open. */}
+      {focused && paneCount > 1 && !zoomed ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 hidden border border-primary group-focus-within/pane:block group-data-[menu-open=true]/pane:block"
+          data-pane-focus-outline="true"
+        />
+      ) : null}
     </section>
   );
 });

@@ -10,6 +10,7 @@ import { DeviceChip } from "./components/device-chip";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
 import type { PaneRow, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { pasteText, selectAllText, terminalSelectionText } from "./terminals";
 import { useUiStore } from "./ui";
 
 // The delegation tree where the operator works (PRD S6 D-07, B14-B16): a
@@ -158,7 +159,18 @@ export function RelationStatus({ actions }: { actions: Actions }) {
   );
 }
 
-type PaneMenuId = `open:${string}` | "sleep_agent" | "copy_name" | "close_pane";
+type PaneMenuId =
+  | `open:${string}`
+  | "sleep_agent"
+  | "copy_name"
+  | "close_pane"
+  | "copy"
+  | "paste"
+  | "select_all"
+  | "find"
+  | "split_right"
+  | "split_down"
+  | "toggle_zoom";
 
 /**
  * What the pane header offers about this pane (B16, B18): its relatives,
@@ -187,20 +199,90 @@ export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuI
   return items;
 }
 
+/** What a right-click in the terminal knows when it opens. */
+export type TerminalMenuContext = {
+  /** The pane has a drag selection, so Copy has something to copy. */
+  selection: boolean;
+  zoomed: boolean;
+  /** Panes in the tab, the zoomed one's hidden siblings included. */
+  paneCount: number;
+  /** The chords the registry binds here; "" draws none. */
+  chords: { find: string; splitRight: string; splitDown: string; zoom: string };
+};
+
+/**
+ * A right-click in the terminal: editing the text first, then the tab's
+ * layout around this pane, then everything the header menu offers.
+ */
+export function terminalMenuItems(pane: PaneRow, title: string, context: TerminalMenuContext): MenuEntry<PaneMenuId>[] {
+  const { chords } = context;
+  const items: MenuEntry<PaneMenuId>[] = [];
+  if (context.selection) items.push({ id: "copy", label: "Copy", unavailable: null, shortcut: "⌘C" });
+  items.push(
+    { id: "paste", label: "Paste", unavailable: null, shortcut: "⌘V" },
+    { id: "select_all", label: "Select all", unavailable: null },
+    { id: "find", label: "Find", unavailable: null, shortcut: chords.find },
+    { id: "split_right", label: "Split right", unavailable: null, separated: true, shortcut: chords.splitRight },
+    { id: "split_down", label: "Split down", unavailable: null, shortcut: chords.splitDown },
+    {
+      id: "toggle_zoom",
+      label: context.zoomed ? "Unzoom pane" : "Zoom pane",
+      unavailable: context.zoomed || context.paneCount > 1 ? null : "This pane is the only one in its tab",
+      shortcut: chords.zoom,
+    },
+  );
+  const paneItems = paneMenuItems(pane, title).map((item, index) => (index === 0 ? { ...item, separated: true } : item));
+  return [...items, ...paneItems];
+}
+
+type MenuOpen = { x: number; y: number; items: MenuEntry<PaneMenuId>[] };
+
 export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
-  const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
+  const [open, setOpen] = useState<MenuOpen | null>(null);
   const select = (id: PaneMenuId) => {
-    if (id === "copy_name") {
-      void navigator.clipboard?.writeText(title).catch(() => undefined);
-      return;
+    switch (id) {
+      case "copy_name":
+        void navigator.clipboard?.writeText(title).catch(() => undefined);
+        return;
+      case "close_pane":
+        return actions.closePane(pane.id);
+      case "sleep_agent":
+        return actions.sleepAgent(pane.id);
+      case "copy": {
+        const text = terminalSelectionText(pane.id);
+        if (text !== null) void navigator.clipboard?.writeText(text).catch(() => useShellStore.getState().noteDiagnostic("pane menu copy: clipboard write refused"));
+        return;
+      }
+      case "paste":
+        void navigator.clipboard
+          ?.readText()
+          .then((text) => {
+            if (text) pasteText(pane.id, text);
+          })
+          .catch(() => useShellStore.getState().noteDiagnostic("pane menu paste: clipboard read refused"));
+        return;
+      case "select_all":
+        return selectAllText(pane.id);
+      // The right-click focused this pane, so the focused-pane commands act on it.
+      case "find":
+        return actions.openFind();
+      case "split_right":
+        return actions.split("right");
+      case "split_down":
+        return actions.split("down");
+      case "toggle_zoom":
+        return actions.toggleZoom(pane.id);
     }
-    if (id === "close_pane") return actions.closePane(pane.id);
-    if (id === "sleep_agent") return actions.sleepAgent(pane.id);
     const target = relationEntries(pane).find((entry) => `open:${entry.paneId}` === id);
     if (target) actions.followRelation(pane.id, target.paneId, target.label);
   };
-  const menu = <EntryPointMenu label={`Pane ${title}`} items={paneMenuItems(pane, title)} onSelect={select} at={open} onClose={() => setOpen(null)} />;
-  return { menu, openAt: (x: number, y: number) => setOpen({ x, y }) };
+  const menu = <EntryPointMenu label={`Pane ${title}`} items={open?.items ?? []} onSelect={select} at={open} onClose={() => setOpen(null)} />;
+  return {
+    menu,
+    open: open !== null,
+    openAt: (x: number, y: number) => setOpen({ x, y, items: paneMenuItems(pane, title) }),
+    openTerminalAt: (x: number, y: number, context: TerminalMenuContext) => setOpen({ x, y, items: terminalMenuItems(pane, title, context) }),
+  };
 }
 
 function useRelationPending(sourcePaneId: string, targetPaneId: string | null): boolean {

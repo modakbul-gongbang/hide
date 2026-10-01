@@ -1575,16 +1575,17 @@ export function createActions(dispatch: DispatchFn) {
       });
     },
 
-    toggleZoom() {
+    /** Zooms or unzooms `target`, a pane the operator pointed at, else the focused pane. */
+    toggleZoom(target?: string) {
       if (remoteContext(rest())) {
         const host = remoteHost("Zoom pane");
         if (!host) return;
-        const paneId = host.view?.focusedPaneId;
+        const paneId = target ?? host.view?.focusedPaneId;
         if (!paneId) return diagnostic("toggle_pane_zoom: no focused remote pane");
         sendRemote(host.targetId, { action: "toggle_pane_zoom", pane_id: paneId });
         return;
       }
-      const paneId = useShellStore.getState().focusedPaneId;
+      const paneId = target ?? useShellStore.getState().focusedPaneId;
       if (!paneId) return diagnostic("toggle_zoom: no focused pane");
       dispatch({ schema_version: 2, kind: "toggle_zoom", payload: { pane_id: paneId } });
     },
