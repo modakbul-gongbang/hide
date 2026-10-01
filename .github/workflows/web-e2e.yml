@@ -6,6 +6,10 @@
 #
 # Each spec starts its own Herdr, hided and Chromium, so one worker per runner
 # keeps timing assertions honest; the shards are the parallelism.
+#
+# With more than one shard the daemon is built once, in the `build` job, and
+# every shard downloads it to the path the fixtures read, `target/debug`. A
+# single shard builds in place: a second job would only add its own setup.
 name: web e2e lane
 
 on:
@@ -55,9 +59,71 @@ jobs:
           SHARDS: ${{ inputs.shards }}
         run: echo "shards=$(seq 1 "$SHARDS" | jq -sc .)" >> "$GITHUB_OUTPUT"
 
+  # zsh for the Linux shards, fetched once. The Ubuntu mirror serves one
+  # connection at about 60 kB/s when many runners ask at once (2026-10-01: 5 MB
+  # of zsh took 88 s in every shard that asked), and a shard that stalled on it
+  # held its slot until the job timeout. Here the fetch runs beside the cargo
+  # build, retries, gives up on a silent connection after 30 s, and fails the
+  # lane with its own name after 5 minutes.
+  zsh:
+    name: fetch zsh ${{ inputs.lane }}
+    if: ${{ startsWith(inputs.runner, 'ubuntu') }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      - name: Download the zsh packages
+        timeout-minutes: 5
+        run: |
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
+          mkdir zsh-debs
+          cd zsh-debs
+          apt-get download zsh zsh-common
+      - uses: actions/upload-artifact@v7
+        timeout-minutes: 5
+        with:
+          name: zsh-debs-${{ inputs.lane }}
+          path: zsh-debs
+          if-no-files-found: error
+          retention-days: 1
+
+  # One cargo build for the whole lane. The debug `hided` reads `web/dist` from
+  # disk at run time, so the binaries are all a shard needs from cargo; the
+  # `hide` CLI comes from the same package and `workspace-cli.spec.ts` runs it.
+  build:
+    name: build hided ${{ inputs.lane }}
+    if: ${{ inputs.shards > 1 }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        timeout-minutes: 5
+      - uses: Swatinem/rust-cache@v2
+        timeout-minutes: 5
+        with:
+          workspaces: ". -> target"
+          shared-key: web-e2e
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build hided for Playwright
+        timeout-minutes: 20
+        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+      - name: Keep the binaries for the shards
+        uses: actions/upload-artifact@v7
+        timeout-minutes: 5
+        with:
+          name: hided-debug-${{ inputs.lane }}
+          path: |
+            target/debug/hided
+            target/debug/hide
+          if-no-files-found: error
+          retention-days: 1
+
   e2e:
     name: web e2e ${{ inputs.lane }} ${{ matrix.shard }}/${{ inputs.shards }}
-    needs: plan
+    needs: [plan, build, zsh]
+    # `build` is skipped for a single shard and `zsh` off Linux; a failed or
+    # cancelled one still stops the shards, and the lane reports the failure.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build.result) && contains(fromJSON('["success","skipped"]'), needs.zsh.result) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 40
     strategy:
@@ -66,35 +132,70 @@ jobs:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
       - uses: actions/checkout@v7
+        timeout-minutes: 5
       - uses: pnpm/action-setup@v6
+        timeout-minutes: 5
         with:
           version: 10
       - uses: actions/setup-node@v4
+        timeout-minutes: 5
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - uses: Swatinem/rust-cache@v2
+        timeout-minutes: 5
+        if: ${{ inputs.shards == 1 }}
         with:
           workspaces: ". -> target"
           shared-key: web-e2e
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install zsh
-        if: runner.os == 'Linux'
-        # Herdr starts each pane's shell from SHELL, and the fixture names zsh
-        # so its private .zshrc sets the prompt the tests wait for. macOS has it.
-        run: sudo apt-get install -y --no-install-recommends zsh
       - name: Build hided for Playwright
+        if: ${{ inputs.shards == 1 }}
+        timeout-minutes: 20
         run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+      - name: Fetch hided from the build job
+        if: ${{ inputs.shards > 1 }}
+        uses: actions/download-artifact@v8
+        timeout-minutes: 5
+        with:
+          name: hided-debug-${{ inputs.lane }}
+          path: target/debug
+      - name: Mark the binaries executable
+        if: ${{ inputs.shards > 1 }}
+        # An artifact does not keep the executable bit.
+        run: chmod +x target/debug/hided target/debug/hide
       - name: Install web dependencies
+        timeout-minutes: 5
         run: pnpm --dir web install --frozen-lockfile
       - name: Build the web shell
+        timeout-minutes: 5
         run: pnpm --dir web build
+      - name: Fetch zsh from the zsh job
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v8
+        timeout-minutes: 5
+        with:
+          name: zsh-debs-${{ inputs.lane }}
+          path: zsh-debs
+      - name: Install zsh
+        if: runner.os == 'Linux'
+        timeout-minutes: 3
+        # Herdr starts each pane's shell from SHELL, and the fixture names zsh
+        # so its private .zshrc sets the prompt the tests wait for. macOS has it.
+        # The packages come from the `zsh` job, so no shard asks the mirror.
+        run: sudo dpkg -i zsh-debs/*.deb
       - name: Install Playwright Chromium
-        # --with-deps adds the system libraries a bare Linux image lacks.
-        run: pnpm --dir web exec playwright install --with-deps chromium
+        timeout-minutes: 5
+        # No `--with-deps`: it runs apt, which stalled on the mirror, and the
+        # runner image already carries the libraries Chromium needs. The suite
+        # passes on it (2026-10-01 run 36896943318, no "missing dependencies"
+        # from Playwright); `--with-deps` only added fonts and newer Mesa
+        # builds. A launch failure names the missing library in the shard log.
+        run: pnpm --dir web exec playwright install chromium
       - name: Fetch the pinned Herdr runtime
         id: herdr
+        timeout-minutes: 5
         # The click-flow e2e attaches hided to an isolated real Herdr; the
         # fixture refuses any binary whose version is not the pin.
         env:
