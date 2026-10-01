@@ -44,6 +44,10 @@ use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 /// How long after a turn starts a pane whose prompt was not in the
 /// transcript yet is read once more.
 const FOLLOW_UP_READ: Duration = Duration::from_secs(3);
+/// How long a read the machine could not answer (a device whose helper is
+/// not connected) waits before it is tried again, so the pane catches up
+/// after a reconnect without waiting for its next state change (B14).
+const UNAVAILABLE_RETRY: Duration = Duration::from_secs(15);
 
 /// Why a read produced nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -566,6 +570,9 @@ impl LabelWorker {
             Ok(transcript) => transcript,
             Err(ReadFailure::Unavailable(reason)) => {
                 self.log_failure(pane_id, "read.unavailable", &reason);
+                if let Some(pane) = self.panes.get_mut(pane_id) {
+                    pane.follow_up_at = Some(now + UNAVAILABLE_RETRY);
+                }
                 return false;
             }
             Err(ReadFailure::Refused(reason)) => {

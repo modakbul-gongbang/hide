@@ -15,6 +15,7 @@ use hide_ai::{
 use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
 use serde_json::{Value, json};
 
+use super::DeviceTranscripts;
 use super::analyzer::LabelAnalyzer;
 use super::store::{LOCAL_TARGET, LabelStore};
 use super::worker::{
@@ -157,29 +158,55 @@ impl Harness {
     }
 
     fn worker(&self, store: Arc<LabelStore>) -> (LabelWorker, Receiver<()>, Arc<CountingSource>) {
-        let (wake, woken) = channel();
-        let wake = Mutex::new(wake);
         let source = Arc::new(CountingSource {
             inner: LocalTranscripts {
                 home: self.home.path().to_path_buf(),
             },
             reads: AtomicUsize::new(0),
         });
+        let (worker, woken) = self.spawn(
+            store,
+            LOCAL_TARGET,
+            "local:/fixture/herdr.sock",
+            source.clone(),
+        );
+        (worker, woken, source)
+    }
+
+    /// A device's worker, reading through whatever channel `channel` hands out.
+    fn device_worker(&self, channel: super::ChannelSource) -> (LabelWorker, Receiver<()>) {
+        self.spawn(
+            self.store(),
+            "device:mini",
+            "device:mini",
+            Arc::new(DeviceTranscripts::new(channel)),
+        )
+    }
+
+    fn spawn(
+        &self,
+        store: Arc<LabelStore>,
+        target: &str,
+        server_key: &str,
+        source: Arc<dyn TranscriptSource>,
+    ) -> (LabelWorker, Receiver<()>) {
+        let (wake, woken) = channel();
+        let wake = Mutex::new(wake);
         let worker = LabelWorker::spawn(
             WorkerConfig {
-                target: LOCAL_TARGET.to_owned(),
-                server_key: "local:/fixture/herdr.sock".to_owned(),
+                target: target.to_owned(),
+                server_key: server_key.to_owned(),
                 lock_dir: Some(self.locks.path().to_path_buf()),
             },
             store,
             Arc::clone(&self.analyzer),
-            source.clone(),
+            source,
             Arc::new(move || {
                 let _ = wake.lock().unwrap().send(());
             }),
         )
         .unwrap();
-        (worker, woken, source)
+        (worker, woken)
     }
 
     /// A Claude session file the worker reads by path.
@@ -537,4 +564,128 @@ fn the_providers_answer_is_judged_before_it_is_shown() {
         "a question needs a reply to ask for"
     );
     assert!(super::context_label::parse_text(r#"{"task":"짧음"}"#).is_err());
+}
+
+/// A helper from before protocol 12, which does not know the call.
+struct OlderHelper;
+
+impl crate::host_access::HostChannel for OlderHelper {
+    fn call(
+        &self,
+        _: hide_host::protocol::Call,
+        _: Duration,
+    ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
+        Err(crate::host_access::HostCallError::Refused(
+            hide_host::error::HostError::new(
+                hide_host::error::ErrorCode::InvalidRequest,
+                "unknown variant `label_transcript`",
+            ),
+        ))
+    }
+}
+
+/// B13: a device pane's conversation comes through the helper protocol and
+/// is labeled here the same way as this Mac's.
+#[test]
+fn a_device_panes_label_is_read_through_its_helper() {
+    let harness = Harness::new();
+    let path = harness.session(
+        "device",
+        "native-d",
+        &[
+            ("user", "미니에서 배치 돌려줘"),
+            ("assistant", "돌렸습니다"),
+        ],
+    );
+    harness.backend.answer("미니 배치 실행 작업", "none", "");
+    let helper: Arc<dyn crate::host_access::HostChannel> =
+        Arc::new(crate::host_access::InProcessHost);
+    let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
+    let idle = agent(&path, "idle", 1);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("미니 배치 실행 작업")
+    );
+}
+
+/// B14: while the device cannot be reached its pane keeps the last label,
+/// and the read it owes runs once the helper is back.
+#[test]
+fn a_disconnected_device_keeps_its_label_and_catches_up_after_it_returns() {
+    let harness = Harness::new();
+    let path = harness.session(
+        "device",
+        "native-d",
+        &[("user", "첫 요청"), ("assistant", "첫 답")],
+    );
+    harness.backend.answer("첫 번째 기기 작업", "none", "");
+    harness.backend.answer("두 번째 기기 작업", "none", "");
+    let connected = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let helper: Arc<dyn crate::host_access::HostChannel> =
+        Arc::new(crate::host_access::InProcessHost);
+    let link = Arc::clone(&connected);
+    let (mut worker, woken) = harness.device_worker(Box::new(move || {
+        if link.load(Ordering::SeqCst) {
+            Ok(Arc::clone(&helper))
+        } else {
+            Err("device_helper_not_ready")
+        }
+    }));
+    observe(&mut worker, &agent(&path, "idle", 1));
+    settle(&mut worker, &woken);
+
+    connected.store(false, Ordering::SeqCst);
+    harness.session(
+        "device",
+        "native-d",
+        &[
+            ("user", "첫 요청"),
+            ("assistant", "첫 답"),
+            ("user", "두 번째 요청"),
+            ("assistant", "두 번째 답"),
+        ],
+    );
+    let moved = agent(&path, "idle", 2);
+    observe(&mut worker, &moved);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &moved)).as_deref(),
+        Some("첫 번째 기기 작업")
+    );
+    assert_eq!(harness.backend.calls(), 1);
+
+    connected.store(true, Ordering::SeqCst);
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 2);
+    // A turn first seen at its end updates the progress; the task title
+    // moves only at a turn's start (the plugin's rule, kept).
+    assert_eq!(
+        shown(&worker, &moved)
+            .and_then(|label| label.progress)
+            .as_deref(),
+        Some("두 번째 기기 작업 진행")
+    );
+}
+
+/// B15: an older helper leaves the pane on its provider name and spends no
+/// request; the device's kit row is what offers the fix.
+#[test]
+fn a_helper_that_cannot_read_conversations_leaves_the_provider_name() {
+    let harness = Harness::new();
+    let path = harness.session(
+        "device",
+        "native-d",
+        &[("user", "요청"), ("assistant", "답")],
+    );
+    let (mut worker, woken) = harness.device_worker(Box::new(|| {
+        Ok(Arc::new(OlderHelper) as Arc<dyn crate::host_access::HostChannel>)
+    }));
+    let idle = agent(&path, "idle", 1);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(shown(&worker, &idle), None);
+    assert_eq!(harness.backend.calls(), 0);
 }

@@ -26,7 +26,7 @@ use std::time::Duration;
 use hide_host::protocol::Call;
 use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
 
-use crate::host_access::{HostCallError, call_as};
+use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::runtime::Runtime;
 use analyzer::LabelAnalyzer;
 use store::LabelStore;
@@ -107,36 +107,46 @@ impl LabelServices {
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
-            Arc::new(DeviceTranscripts {
-                device_id: device_id.to_owned(),
-                runtime,
-            }),
+            Arc::new(DeviceTranscripts::of_device(device_id, runtime)),
             wake,
         )
     }
 }
 
+/// The device helper's channel when it has one, or the stable reason it does
+/// not (no connection yet, a helper still starting).
+pub(crate) type ChannelSource =
+    Box<dyn Fn() -> Result<Arc<dyn HostChannel>, &'static str> + Send + Sync>;
+
 /// A device's conversations, read by its helper and brought here in memory
 /// only (PRD D-03); nothing of them is stored.
-struct DeviceTranscripts {
-    device_id: String,
-    runtime: Weak<Mutex<Runtime>>,
+pub(crate) struct DeviceTranscripts {
+    channel: ChannelSource,
+}
+
+impl DeviceTranscripts {
+    pub(crate) fn new(channel: ChannelSource) -> Self {
+        Self { channel }
+    }
+
+    /// The registered device's helper, taken under a brief runtime lock;
+    /// the read itself runs outside it.
+    fn of_device(device_id: &str, runtime: Weak<Mutex<Runtime>>) -> Self {
+        let device_id = device_id.to_owned();
+        Self::new(Box::new(move || {
+            let runtime = runtime.upgrade().ok_or("runtime_gone")?;
+            let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
+            guard
+                .device_channel(&device_id)
+                .map_err(|_| "device_helper_not_ready")
+        }))
+    }
 }
 
 impl TranscriptSource for DeviceTranscripts {
     fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
-        let channel = {
-            let runtime = self
-                .runtime
-                .upgrade()
-                .ok_or_else(|| ReadFailure::Unavailable("runtime_gone".to_owned()))?;
-            let mut guard = runtime
-                .lock()
-                .map_err(|_| ReadFailure::Unavailable("runtime_poisoned".to_owned()))?;
-            guard
-                .device_channel(&self.device_id)
-                .map_err(|_| ReadFailure::Unavailable("device_helper_not_ready".to_owned()))?
-        };
+        let channel =
+            (self.channel)().map_err(|reason| ReadFailure::Unavailable(reason.to_owned()))?;
         call_as::<LabelTranscript>(
             channel.as_ref(),
             Call::LabelTranscript {
