@@ -119,7 +119,7 @@ jobs:
   web-e2e:
     name: web e2e ${{ matrix.shard }}/3
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -167,9 +167,12 @@ jobs:
         # A test tagged @flaky carries the issue that tracks its cause. It still
         # runs here, once, so a fix shows up as a pass and a regression of the
         # product it covers still shows up in the log; it cannot turn verify red.
-        timeout-minutes: 5
+        timeout-minutes: 10
         id: quarantine
-        if: ${{ matrix.shard == 1 && !cancelled() }}
+        # Only after the setup it needs succeeded, and into its own output
+        # directory: Playwright empties its output directory when a run starts,
+        # which would delete the required step's failure snapshots.
+        if: ${{ matrix.shard == 1 && !cancelled() && steps.herdr.outcome == 'success' }}
         continue-on-error: true
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
@@ -177,7 +180,7 @@ jobs:
           HIDE_E2E_TRACE: "1"
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir web exec playwright test --grep @flaky
+          pnpm --dir web exec playwright test --grep @flaky --output=test-results-quarantine
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),
@@ -192,6 +195,7 @@ jobs:
           path: |
             ${{ runner.temp }}/hide-e2e
             web/test-results
+            web/test-results-quarantine
           if-no-files-found: ignore
 
   desktop-e2e:
