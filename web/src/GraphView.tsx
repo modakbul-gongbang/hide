@@ -230,7 +230,9 @@ function GraphSection({ section, scope, geometry, motionMs, selectedBox, handler
       durationMs: motionMs,
       reduced: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
       paint: (values) => {
-        if (index.current) paintGraph(index.current, values, geometry);
+        if (!index.current) return;
+        paintGraph(index.current, values, geometry);
+        index.current.canvas.dataset.graphFrames = String(tween.current?.frames ?? 0);
       },
     });
     const { changed, added } = tween.current.retarget(targets);
@@ -238,6 +240,7 @@ function GraphSection({ section, scope, geometry, motionMs, selectedBox, handler
     if (!changed && painted.current !== element) tween.current.repaint();
     painted.current = element;
     element.dataset.graphRevision = String(tween.current.revision);
+    element.dataset.graphFrames = String(tween.current.frames);
     if (changed && settled.current) for (const key of added) enter(index.current, key);
     settled.current = true;
   }, [section, targets, geometry, motionMs, hasCanvas]);
@@ -255,7 +258,7 @@ function GraphSection({ section, scope, geometry, motionMs, selectedBox, handler
       ) : null}
       {hasCanvas ? (
         <div className="min-w-0 overflow-x-auto px-lg">
-          <div ref={canvas} className="relative" data-graph-canvas={section.project.id} data-graph-revision="0">
+          <div ref={canvas} className="relative" data-graph-canvas={section.project.id} data-graph-revision="0" data-graph-frames="0">
             <svg className="pointer-events-none absolute left-0 top-0 size-full overflow-visible">
               {section.edges.map((edge) => {
                 const faded = edge.dim || (chain !== null && !(chain.has(edge.from) && chain.has(edge.to)));

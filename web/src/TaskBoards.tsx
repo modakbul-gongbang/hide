@@ -312,7 +312,7 @@ function StageColumn({
 function LooseWorktreesLine({ worktrees, onOpen }: { worktrees: readonly LooseWorktree[]; onOpen: () => void }) {
   if (worktrees.length === 0) return null;
   return (
-    <Hint label={`Agents › 체크아웃에서 보기\n${foldNames(worktrees.map((value) => value.branch))}`}>
+    <Hint label={`Agents 그래프에서 보기\n${foldNames(worktrees.map((value) => value.branch))}`}>
       <FoldLine onClick={onOpen} data={{ "data-loose-worktrees": String(worktrees.length) }}>
         이슈 없는 워크트리 {worktrees.length}
       </FoldLine>

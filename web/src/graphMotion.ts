@@ -45,6 +45,8 @@ export class Tween {
   private frame: number | null = null;
   /** How many pictures were applied, for the idle check (`data-graph-revision`). */
   revision = 0;
+  /** How many animation frames this tween asked for, for the same check (`data-graph-frames`). */
+  frames = 0;
 
   constructor(private readonly options: TweenOptions) {}
 
@@ -77,7 +79,7 @@ export class Tween {
     this.from = new Map(this.shown);
     this.started = performance.now();
     this.options.paint(this.shown);
-    this.frame = requestAnimationFrame(this.step);
+    this.frame = this.schedule();
     return { changed: true, added };
   }
 
@@ -92,10 +94,15 @@ export class Tween {
         const from = this.from.get(key) ?? to;
         this.shown.set(key, from + (to - from) * eased);
       }
-      this.frame = requestAnimationFrame(this.step);
+      this.frame = this.schedule();
     }
     this.options.paint(this.shown);
   };
+
+  private schedule(): number {
+    this.frames += 1;
+    return requestAnimationFrame(this.step);
+  }
 
   /** Paints the picture as it stands, for an element drawn after the numbers were last painted. */
   repaint() {
