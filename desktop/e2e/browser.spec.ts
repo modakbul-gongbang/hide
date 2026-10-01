@@ -439,6 +439,8 @@ test("browser: a login in one Workspace is available in another", async () => {
 test("browser: a sign-in popup keeps its opener, belongs to its page, and a link to another app asks first", async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
+  // The window a CI runner's screen holds.
+  await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setSize(size.width, size.height), WINDOW);
   await enterWorkspace(page, "fixture");
   const signin = `${origin}/signin.html`;
   const opened = await openFromCli(signin, ["--reveal", "--wait"]);
@@ -525,6 +527,13 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
     for (const type of ["mouseDown", "mouseUp"] as const) child.webContents.sendInputEvent({ type, x: 20, y: 20, button: "left", clickCount: 1, modifiers: ["shift"] });
   }, signin);
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
+  // Two View areas side by side need the Workspace's width: in this run's
+  // window the side panel is expanded over it, as the first test does.
+  await page.keyboard.press("Meta+KeyK");
+  await page.keyboard.type("Expand side panel");
+  await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+  await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
   await expect.poll(async () => (await views()).filter((view) => view.visible).map((view) => view.url).sort()).toEqual([`${origin}/c.html`, signin].sort());
   expect(await windows()).toBe(1);
 
