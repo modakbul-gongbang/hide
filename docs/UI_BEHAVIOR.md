@@ -449,7 +449,7 @@ Resting on a bar shows its legend, each part's name and count, and resting on a 
 A value not yet read leaves the number and the bar out, and zero is drawn as zero; when a source read fails, a ⚠ stands by the tile's name and resting on it says what failed and how old the value is, with the reason in the diagnostic log and no banner.
 The Agents tile's agents are the device's live rows, so it has no last value to age: while the device cannot answer, its ⚠ says why and the number stays empty.
 
-Every way into a project's Overview, the project row, its Overview row, the palette and ⌘⇧H, opens the Agents graph with the box of the checkout in front selected (outlined and scrolled into view), or main's box when the checkout in front is elsewhere, and with no filter.
+Every way into a project's Overview, the project row, its Overview row, the palette and ⌘⇧H, opens the Agents graph with the box of the checkout in front selected (outlined and scrolled into view), or main's box when the checkout in front is elsewhere or folded away, and with no filter.
 Only Global Recent Panels (a separate command, unbound by default) brings an Overview back as it was left, its tile, mode, selected box, filter and opened folds; the view lives on the screen, not in stored settings.
 The PRs view opens only from its tile, a PR chip, `이슈 없는 PR N`, the sidebar's PR card and Recent Panels.
 The facts line's right end carries the chosen view's controls: the status chips, search and device choice for Agents, the filter and `Board · List · Dependencies` for Issues, and nothing for PRs.
@@ -486,7 +486,7 @@ Boxes whose agents all rest fold away.
 A box folds into `쉬는 체크아웃 N` when none of its agents asks, works, waits on children or has a finished root the operator has not looked at yet, so a box with an unread Done stays open until it is looked at; a worktree with no agent folds into `에이전트 없는 워크트리 N`, and a merged or folder-less worktree whose agents only rest, or that has none, into `정리할 것 N`, which is taken before the resting fold.
 On a project's Overview the primary checkout's box never folds.
 Each project has its own fold lines, identified as `empty:`, `cleanup:` or `resting:` and the project's id; a click unfolds the line in place, a line at zero is not drawn, and the folds stay open until the screen is left.
-A box a way in selected opens its fold with it, so the selected box is always in view.
+A selected box that is folded away leaves main's box carrying the selection, so a fold line always opens and closes by its own click.
 The lines a folded box would have drawn are gone, and the row that delegated into it carries a tucked badge, the mark and count of the folded agents (`✓2`), counted on the nearest row still drawn; its tooltip says the words.
 The Issues view's `이슈 없는 워크트리 N` opens this graph with `에이전트 없는 워크트리` unfolded.
 

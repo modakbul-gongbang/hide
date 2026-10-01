@@ -183,10 +183,11 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
   const [flowTiming] = useState(() => readFlowTiming());
   const board = useMemo(() => buildGraph(projects, agents, { scope, geometry, openFolds: folds, selectedBox, filter }), [projects, agents, scope, geometry, folds, selectedBox, filter]);
   const root = useRef<HTMLDivElement>(null);
+  const selected = board.sections[0]?.selected ?? null;
   useLayoutEffect(() => {
-    if (!selectedBox) return;
-    root.current?.querySelector(`[data-graph-box="${CSS.escape(selectedBox)}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [selectedBox]);
+    if (!selected) return;
+    root.current?.querySelector(`[data-graph-box="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selected]);
   if (board.empty) {
     return (
       <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-graph-empty="true">
@@ -207,27 +208,35 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
   return (
     <div ref={root} className="flex min-w-0 flex-col gap-lg pb-xl" data-graph={scope} onKeyDown={moveFocus}>
       {board.sections.map((section) => (
-        <GraphSection key={section.project.id} section={section} scope={scope} geometry={geometry} motionMs={motionMs} flowTiming={flowTiming} selectedBox={selectedBox} handlers={handlers} now={now} />
+        <GraphSection key={section.project.id} section={section} scope={scope} geometry={geometry} motionMs={motionMs} flowTiming={flowTiming} handlers={handlers} now={now} />
       ))}
     </div>
   );
 }
 
-function GraphSection({ section, scope, geometry, motionMs, flowTiming, selectedBox, handlers, now }: { section: ProjectGraph; scope: "project" | "all"; geometry: GraphGeometry; motionMs: number; flowTiming: FlowTiming; selectedBox: string | null; handlers: LensHandlers; now: number }) {
+function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers, now }: { section: ProjectGraph; scope: "project" | "all"; geometry: GraphGeometry; motionMs: number; flowTiming: FlowTiming; handlers: LensHandlers; now: number }) {
   const canvas = useRef<HTMLDivElement>(null);
   const tween = useRef<Tween | null>(null);
   const flow = useRef<Flow | null>(null);
   const index = useRef<PaintIndex | null>(null);
   const settled = useRef(false);
   const painted = useRef<HTMLElement | null>(null);
+  const paintedEdges = useRef("");
   const [hover, setHover] = useState<string | null>(null);
   const chain = useMemo(() => (hover ? chainOf(section, hover) : null), [section, hover]);
   const targets = useMemo(() => graphTargets(section), [section]);
   const hasCanvas = section.boxes.length > 0;
+  // A line that changes state changes which paths are drawn without moving a number, so the paths need painting on their own.
+  const edgeSignature = useMemo(() => section.edges.map((edge) => `${edge.id}:${edge.kind}:${edge.back}`).join("|"), [section.edges]);
 
   useLayoutEffect(() => {
     const element = canvas.current;
-    if (!element) return;
+    if (!element) {
+      // The canvas is gone, and the dashes on it stop with it.
+      flow.current?.set([]);
+      index.current = null;
+      return;
+    }
     index.current = indexCanvas(element, section.edges);
     tween.current ??= new Tween({
       durationMs: motionMs,
@@ -240,15 +249,16 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, selected
     });
     const { changed, added } = tween.current.retarget(targets);
     // A canvas that came back after the graph had gone is a new element holding nothing yet.
-    if (!changed && painted.current !== element) tween.current.repaint();
+    if (!changed && (painted.current !== element || paintedEdges.current !== edgeSignature)) tween.current.repaint();
     painted.current = element;
+    paintedEdges.current = edgeSignature;
     element.dataset.graphRevision = String(tween.current.revision);
     element.dataset.graphFrames = String(tween.current.frames);
     flow.current ??= new Flow({ ...flowTiming, reduced: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches });
     flow.current.set([...element.querySelectorAll<SVGPathElement>(".graph-edge-flow")]);
     if (changed && settled.current) for (const key of added) enter(index.current, key);
     settled.current = true;
-  }, [section, targets, geometry, motionMs, flowTiming, hasCanvas]);
+  }, [section, targets, edgeSignature, geometry, motionMs, flowTiming, hasCanvas]);
   useLayoutEffect(() => {
     // A working line's dashes stop under reduced motion and start again when the setting is turned off.
     const setting = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -262,6 +272,7 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, selected
   }, []);
 
   const names = useMemo(() => new Map([...section.rows.values()].map((row) => [row.paneId, row.value.agent.identity_label])), [section]);
+  const lines = useMemo(() => new Map(section.edges.map((edge) => [edge.to, EDGE_WORDS[edge.kind]])), [section]);
   const label = (kind: FoldKind) => FOLD_LABEL[kind];
   return (
     <section className="flex min-w-0 flex-col gap-sm" data-graph-section={section.project.id} aria-label={scope === "all" ? section.project.label : undefined}>
@@ -297,7 +308,7 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, selected
                 })}
             </svg>
             {section.boxes.map((box) => (
-              <BoxView key={box.id} box={box} selected={box.id === selectedBox} chain={chain} hover={hover} names={names} onHover={setHover} handlers={handlers} now={now} />
+              <BoxView key={box.id} box={box} selected={box.id === section.selected} chain={chain} hover={hover} names={names} lines={lines} onHover={setHover} handlers={handlers} now={now} />
             ))}
           </div>
         </div>
@@ -315,7 +326,7 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, selected
 
 // --- a box ---------------------------------------------------------------------
 
-function BoxView({ box, selected, chain, hover, names, onHover, handlers, now }: { box: GraphBox; selected: boolean; chain: Set<string> | null; hover: string | null; names: ReadonlyMap<string, string>; onHover: (paneId: string | null) => void; handlers: LensHandlers; now: number }) {
+function BoxView({ box, selected, chain, hover, names, lines, onHover, handlers, now }: { box: GraphBox; selected: boolean; chain: Set<string> | null; hover: string | null; names: ReadonlyMap<string, string>; lines: ReadonlyMap<string, string>; onHover: (paneId: string | null) => void; handlers: LensHandlers; now: number }) {
   const peers = useMemo(() => new Map(box.rows.map((row) => [row.paneId, row.tray ? box.rows.filter((other) => other.tray === row.tray && other.paneId !== row.paneId).map((other) => other.value.agent.identity_label) : []])), [box]);
   return (
     <div
@@ -341,7 +352,7 @@ function BoxView({ box, selected, chain, hover, names, onHover, handlers, now }:
           />
         ))}
         {box.rows.map((row) => (
-          <RowView key={row.paneId} row={row} faded={chain !== null && !chain.has(row.paneId)} peers={peers.get(row.paneId) ?? []} parent={row.parent ? (names.get(row.parent) ?? null) : null} onHover={onHover} handlers={handlers} />
+          <RowView key={row.paneId} row={row} faded={chain !== null && !chain.has(row.paneId)} peers={peers.get(row.paneId) ?? []} parent={row.parent ? (names.get(row.parent) ?? null) : null} line={lines.get(row.paneId) ?? null} onHover={onHover} handlers={handlers} />
         ))}
       </div>
     </div>
@@ -447,7 +458,7 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
  * delegation chain bright and shows `↵ 패널` where the age was, and resting on
  * it opens everything the agent last said with where it stands.
  */
-function RowView({ row, faded, peers, parent, onHover, handlers }: { row: GraphRow; faded: boolean; peers: readonly string[]; parent: string | null; onHover: (paneId: string | null) => void; handlers: LensHandlers }) {
+function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: GraphRow; faded: boolean; peers: readonly string[]; parent: string | null; line: string | null; onHover: (paneId: string | null) => void; handlers: LensHandlers }) {
   const { agent, project, checkout, task, device } = row.value;
   const asking = row.line !== null;
   const said = rowLine(agent);
@@ -473,7 +484,7 @@ function RowView({ row, faded, peers, parent, onHover, handlers }: { row: GraphR
         fallback={said?.text ?? agent.identity_label}
         tone={said ? lineTone(said, agent.demand) : "text-muted-foreground"}
         onOpen={open}
-        context={{ checkout: place, tab: row.tab?.label ?? null, peers, parent }}
+        context={{ checkout: place, tab: row.tab?.label ?? null, peers, parent, line }}
       >
         <button
           type="button"

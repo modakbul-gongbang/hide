@@ -278,14 +278,17 @@ describe("folds", () => {
     expect(box(section, "main").rows[0]!.tucked).toEqual({ idle: 2 });
   });
 
-  it("draws an opened fold's boxes and their lines, and a selected box's own fold opens with it (B1, B23)", () => {
+  it("draws an opened fold's boxes and their lines, and leaves main selected when the selected box is folded (B1, B23)", () => {
     const opened = only(graph(one(workspace(checkouts()), agents()), { openFolds: [foldId("resting", "project")] }));
     expect(opened.boxes.map((candidate) => candidate.id).sort()).toEqual(["main", "rest", "unread"]);
     expect(opened.edges).toHaveLength(1);
     expect(box(opened, "main").rows[0]!.tucked).toBeNull();
     const selected = only(graph(one(workspace(checkouts()), agents()), { selectedBox: "shipped" }));
-    expect(selected.boxes.map((candidate) => candidate.id)).toContain("shipped");
-    expect(selected.folds.find((fold) => fold.kind === "cleanup")!.open).toBe(true);
+    expect(selected.boxes.map((candidate) => candidate.id)).not.toContain("shipped");
+    expect(selected.folds.find((fold) => fold.kind === "cleanup")!.open).toBe(false);
+    expect(selected.selected).toBe("main");
+    const drawn = only(graph(one(workspace(checkouts()), agents()), { selectedBox: "unread" }));
+    expect(drawn.selected).toBe("unread");
   });
 
   it("holds nothing at all as empty, and a project with only fold lines as a section (B30, B31)", () => {

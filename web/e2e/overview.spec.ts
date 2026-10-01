@@ -420,6 +420,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.mouse.move(4, 996);
     await row(workingPane).locator("[data-graph-open]").hover();
     await expect(page.locator(`[data-lens-message="${workingPane}"] [data-lens-message-context]`)).toContainText("최신 hide 서버 웹 실행");
+    // ...and says in words what colour its line is (B36).
+    await expect(page.locator(`[data-lens-message="${workingPane}"] [data-lens-message-context]`)).toContainText("선일하는 중");
     await page.mouse.move(2, 998);
     await page.mouse.move(4, 996);
     await row(askingPane).locator("[data-graph-open]").hover();
@@ -565,6 +567,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.emulateMedia({ reducedMotion: "no-preference" });
     // ...and turning the setting off lets the dashes step again, a few times a second (B9, B34).
     const flowPath = overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`);
+    await expect(flowPath).toHaveAttribute("d", /.+/);
     const seen = new Set<string | null>();
     await expect.poll(async () => (seen.add(await flowPath.getAttribute("stroke-dashoffset")), seen.size), { timeout: 5000 }).toBeGreaterThan(2);
 
@@ -954,7 +957,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(page.locator('[data-task-agent="failed"]')).toHaveCount(0);
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
-    await expect(box("3-graph-view")).toHaveAttribute("data-selected", "true");
+    // A fresh agent only rests, so its box is folded away: main's box carries the selection until the fold is opened (B1).
+    await expect(box("3-graph-view")).toHaveCount(0);
+    await expect(overview.locator("[data-graph-box][data-selected]")).toHaveAttribute("data-graph-primary", "true");
+    await overview.locator('[data-graph-fold="resting"]').click();
     await expect(box("3-graph-view").locator("[data-graph-row]")).toHaveCount(1);
     await tile("issues").locator("[data-lens-tile-button]").click();
     await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(0, { timeout: 30_000 });

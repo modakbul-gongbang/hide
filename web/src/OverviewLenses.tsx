@@ -273,7 +273,7 @@ export function AgentMessageHint({ agent, place, line, tone, onOpen }: { agent: 
 }
 
 /** Where an agent stands, for the graph row's popover (agents-graph-view B19): its checkout and tab, its tab's other agents, and who delegated it. */
-export type PopoverContext = { checkout: string; tab: string | null; peers: readonly string[]; parent: string | null };
+export type PopoverContext = { checkout: string; tab: string | null; peers: readonly string[]; parent: string | null; line: string | null };
 
 /**
  * Everything an agent last said, after a half-second rest on `children`
@@ -313,6 +313,12 @@ export function AgentMessagePopover({ agent, place, fallback, tone, onOpen, cont
                 <dt className="shrink-0">맡긴 에이전트</dt>
                 <dd className="min-w-0 break-words text-foreground">{context.parent ?? "직접 시작"}</dd>
               </div>
+              {context.line ? (
+                <div className="flex gap-sm">
+                  <dt className="shrink-0">선</dt>
+                  <dd className="min-w-0 break-words text-foreground">{context.line}</dd>
+                </div>
+              ) : null}
             </dl>
           ) : null}
           <span className="flex items-center gap-sm text-caption text-muted-foreground">

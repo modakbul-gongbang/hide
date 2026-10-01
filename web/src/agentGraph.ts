@@ -166,7 +166,7 @@ export type GraphRow = {
   /** The shared tab's key when two or more rows of this box stand in it (B7). */
   tray: string | null;
   /** The tab the agent's pane is in, for its popover. */
-  tab: { id: string | null; label: string | null } | null;
+  tab: { label: string | null } | null;
   /** The row's parent when it is drawn, for the hover chain. */
   parent: string | null;
   /** What the folded boxes below this row hold, as the sidebar's badge counts them (B22). */
@@ -175,7 +175,7 @@ export type GraphRow = {
   dim: boolean;
 };
 
-export type GraphTray = { key: string; top: number; bottom: number; tabLabel: string | null; paneIds: string[] };
+export type GraphTray = { key: string; top: number; bottom: number; paneIds: string[] };
 
 export type GraphBox = {
   id: string;
@@ -222,6 +222,8 @@ export type ProjectGraph = {
   boxes: GraphBox[];
   edges: GraphEdge[];
   folds: GraphFold[];
+  /** The drawn box carrying the selection outline, if any. */
+  selected: string | null;
   /** Every drawn row by pane id. */
   rows: Map<string, GraphRow>;
   width: number;
@@ -244,7 +246,7 @@ export type GraphOptions = {
   geometry: GraphGeometry;
   /** The folds the operator opened, by `foldId`. */
   openFolds: readonly string[];
-  /** The box a way in selected: its fold opens with it so it is always in view. */
+  /** The box a way in selected; a box that is not drawn leaves the project's primary box selected (B1). */
   selectedBox: string | null;
   filter: GraphFilter;
 };
@@ -322,8 +324,6 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
   }
 
   const opened = new Set(options.openFolds);
-  const selectedKind = options.selectedBox ? foldOf.get(options.selectedBox) : undefined;
-  if (selectedKind) opened.add(foldId(selectedKind, workspace.id));
   const foldList: GraphFold[] = (["empty", "cleanup", "resting"] as const).flatMap((kind) => {
     const list = folded[kind];
     if (list.length === 0) return [];
@@ -393,6 +393,7 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     boxes,
     edges,
     folds: filtering ? [] : foldList,
+    selected: options.selectedBox === null ? null : shownIds.has(options.selectedBox) ? options.selectedBox : (drawn.find((entry) => entry.primary)?.checkout.id ?? null),
     rows: rowOf,
     width: boxes.length === 0 ? 0 : width + g.pad,
     height: boxes.length === 0 ? 0 : height + g.pad,
@@ -415,7 +416,7 @@ function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphG
     else roots.push(value);
   }
   const emitted = new Set<string>();
-  const out: { value: LensAgent; depth: number; trayKey: string | null; clusterSize: number }[] = [];
+  const out: { value: LensAgent; depth: number; trayKey: string | null }[] = [];
   const emit = (agents: readonly LensAgent[], depth: number) => {
     const clusters = new Map<string, LensAgent[]>();
     for (const value of agents) {
@@ -426,7 +427,7 @@ function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphG
     for (const [key, group] of clusters) {
       for (const value of group) {
         emitted.add(value.agent.pane_id);
-        out.push({ value, depth, trayKey: group.length > 1 ? key : null, clusterSize: group.length });
+        out.push({ value, depth, trayKey: group.length > 1 ? key : null });
       }
       for (const value of group) emit(children.get(value.agent.pane_id) ?? [], depth + 1);
     }
@@ -454,7 +455,7 @@ function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphG
       attention: attentionOf(value),
       line,
       tray: item.trayKey,
-      tab: tab ? { id: tab.id, label: tab.label } : null,
+      tab: tab ? { label: tab.label } : null,
       parent: parentId,
       tucked: null,
       dim: matched ? !matched.has(value.agent.pane_id) : false,
@@ -462,7 +463,7 @@ function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphG
     rows.push(row);
     top += height;
     if (item.trayKey) {
-      const tray = trays.get(item.trayKey) ?? { key: item.trayKey, top: row.top, bottom: 0, tabLabel: tab?.label ?? null, paneIds: [] };
+      const tray = trays.get(item.trayKey) ?? { key: item.trayKey, top: row.top, bottom: 0, paneIds: [] };
       tray.bottom = top;
       tray.paneIds.push(row.paneId);
       trays.set(item.trayKey, tray);

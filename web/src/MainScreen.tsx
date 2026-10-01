@@ -9,7 +9,7 @@ import { cn } from "./lib/utils";
 import { AGENT_GROUPS, boardProjects, mainSections, overviewScreen, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
-import { NO_GRAPH_FILTER, type GraphFilter } from "./agentGraph";
+import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
 import { lensHandlers } from "./OverviewLenses";
 import { agentsTile, scopeAgents } from "./overviewLens";
 import { allProjectsStats, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
@@ -96,6 +96,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
     showCheckouts: () => {
       setView("agents");
       setPanel(null);
+      setFolds((open) => [...open, ...projects.map(({ workspace }) => foldId("empty", workspace.id)).filter((id) => !open.includes(id))]);
     },
   };
   // The Agents tab keeps the count of agents whose turn it is, the Agents tile's badge.
