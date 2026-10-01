@@ -798,15 +798,14 @@ pub(crate) fn search(
 }
 
 /// The targets' repositories, once each by `owner/name` (GitHub names ignore
-/// case), in order. A project whose repository cannot be resolved is left
-/// out and logged; when none could be, the search has nothing to ask and says
-/// so rather than answering as if it had looked.
+/// case), in order. A project with no GitHub remote is left out; a project
+/// whose repository could not be read for any other reason fails the search,
+/// which then cannot say it covered every project.
 fn resolve_repositories(
     run: impl Fn(Option<&Path>, &[&str]) -> Result<String, GhFailure>,
     targets: &[SearchTarget],
 ) -> Result<Vec<String>, String> {
     let mut repositories: Vec<String> = Vec::new();
-    let mut unresolved: Option<String> = None;
     for target in targets {
         let repository = match &target.repository {
             Some(repository) => repository.clone(),
@@ -827,13 +826,15 @@ fn resolve_repositories(
                     .ok_or_else(|| GhFailure::network("repository identity is missing".into()))
             }) {
                 Ok(repository) => repository,
+                // A project with no GitHub remote is not one to search; any
+                // other failure means the search cannot say it covered it.
+                Err(failure) if failure.category == "no GitHub remote" => continue,
                 Err(failure) => {
-                    crate::diagnostic!(serde_json::json!({
-                        "component": "github", "kind": "search_repository.unresolved",
-                        "reason": failure.reason,
-                    }));
-                    unresolved.get_or_insert(failure.reason);
-                    continue;
+                    return Err(format!(
+                        "gh repo view in {}: {}",
+                        target.root.display(),
+                        failure.reason
+                    ));
                 }
             },
         };
@@ -844,12 +845,7 @@ fn resolve_repositories(
             repositories.push(repository);
         }
     }
-    match (repositories.is_empty(), unresolved) {
-        (true, Some(reason)) => Err(format!(
-            "no project's repository could be resolved: {reason}"
-        )),
-        _ => Ok(repositories),
-    }
+    Ok(repositories)
 }
 
 /// Searches pull requests and issues for `query` in all the repositories at
@@ -2492,7 +2488,7 @@ esac"#,
     }
 
     #[test]
-    fn an_unread_project_is_resolved_by_the_search_and_an_unresolvable_one_is_said() {
+    fn an_unread_project_is_resolved_by_the_search_and_an_unreadable_one_fails_it() {
         let target = |root: &str, repository: Option<&str>| SearchTarget {
             root: root.into(),
             repository: repository.map(str::to_owned),
@@ -2502,24 +2498,38 @@ esac"#,
             match cwd.and_then(Path::to_str) {
                 Some("/unread") => Ok(r#"{"nameWithOwner":"ACME/Known"}"#.to_owned()),
                 Some("/new") => Ok(r#"{"nameWithOwner":"acme/new"}"#.to_owned()),
-                _ => Err(GhFailure::network("no GitHub remote".into())),
+                Some("/gitlab") => Err(GhFailure {
+                    category: "no GitHub remote",
+                    reason: "none of the git remotes point to a known GitHub host".into(),
+                }),
+                _ => Err(GhFailure::network("HTTP 502".into())),
             }
         };
-        // Resolved ones join the known ones once, ignoring case; a failed one is left out.
+        // Resolved ones join the known ones once, ignoring case; a project with
+        // no GitHub remote is not one to search.
         let found = resolve_repositories(
             run,
             &[
                 target("/known", Some("acme/known")),
                 target("/unread", None),
                 target("/new", None),
-                target("/broken", None),
+                target("/gitlab", None),
             ],
         )
         .unwrap();
         assert_eq!(found, vec!["acme/known", "acme/new"]);
-        // Nothing resolvable is a failed search, never an empty answer.
-        let error = resolve_repositories(run, &[target("/broken", None)]).unwrap_err();
-        assert!(error.contains("no GitHub remote"), "{error}");
+        assert!(
+            resolve_repositories(run, &[target("/gitlab", None)])
+                .unwrap()
+                .is_empty()
+        );
+        // Any other failure fails the search: it cannot say it covered the project.
+        let error = resolve_repositories(run, &[target("/new", None), target("/broken", None)])
+            .unwrap_err();
+        assert!(
+            error.contains("/broken") && error.contains("502"),
+            "{error}"
+        );
     }
 
     #[test]
