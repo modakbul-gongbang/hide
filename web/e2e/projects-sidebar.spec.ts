@@ -377,7 +377,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await projectToggle.click();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
     const moved = [...sent].filter(([kind, count]) => count !== (quiet.get(kind) ?? 0)).map(([kind]) => kind);
-    expect(moved.filter((kind) => !["agent_tree_toggle", "ui_state_update", "ui_state_update.usage_hint"].includes(kind))).toEqual([]);
+    expect(moved.filter((kind) => !["agent_tree_toggle", "checkout_agents_toggle", "project_checkouts_fold", "ui_state_update", "ui_state_update.usage_hint"].includes(kind))).toEqual([]);
     expect(await page.locator("[data-workspace-screen]").count()).toBe(screenBefore);
     await expect(folderRow).toHaveAttribute("aria-current", "true");
 
@@ -398,8 +398,8 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
     await expect(overview).toHaveAttribute("aria-current", "page");
-    expect((sent.get("ui_state_update") ?? 0) - (beforeRow.get("ui_state_update") ?? 0)).toBe(1);
-    expect(last.get("ui_state_update")?.collapsed_workspace_ids).not.toContain(await project.getAttribute("data-project"));
+    expect((sent.get("project_checkouts_fold") ?? 0) - (beforeRow.get("project_checkouts_fold") ?? 0)).toBe(1);
+    expect(last.get("project_checkouts_fold")).toEqual({ workspace_id: await project.getAttribute("data-project"), expanded: true });
     expect(sent.get("focus_checkout") ?? 0).toBe(beforeRow.get("focus_checkout") ?? 0);
     await projectRow.click();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");

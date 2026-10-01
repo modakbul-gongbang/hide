@@ -132,23 +132,39 @@ export function createActions(dispatch: DispatchFn) {
    * own them and the core keeps them when they are absent, so an echo of an
    * older snapshot can never undo a registration that landed after it.
    * Sidebar width is also patch-only: echoing it could undo a completed drag
-   * while its snapshot is still in flight.
+   * while its snapshot is still in flight. The folds (`collapsed_workspace_ids`,
+   * `expanded_checkout_ids`, `expanded_agent_pane_ids`) are left out for the
+   * same reason: the core owns them through `project_checkouts_fold`,
+   * `checkout_agents_toggle` and `agent_tree_toggle`.
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
     if (!state) return;
-    const { workspace_registrations: _workspaces, device_registrations: _devices, sidebar_width: _width, ...owned } = state;
+    const {
+      workspace_registrations: _workspaces,
+      device_registrations: _devices,
+      sidebar_width: _width,
+      collapsed_workspace_ids: _projectFolds,
+      expanded_checkout_ids: _checkoutFolds,
+      expanded_agent_pane_ids: _lineageFolds,
+      ...owned
+    } = state;
     void _workspaces;
     void _devices;
     void _width;
+    void _projectFolds;
+    void _checkoutFolds;
+    void _lineageFolds;
     dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
   };
 
-  const setProjectExpanded = (workspace: Workspace, expanded: boolean) => {
-    const collapsed = new Set(rest()?.ui_state?.collapsed_workspace_ids ?? []);
-    if (expanded) collapsed.delete(workspace.id);
-    else collapsed.add(workspace.id);
-    updateUiState({ collapsed_workspace_ids: [...collapsed].sort() });
+  /**
+   * The core applies the fold against its own set, so two folds sent before
+   * the first one's snapshot arrives still land one after the other.
+   * `expanded` absent flips it.
+   */
+  const foldProject = (workspace: Workspace, expanded?: boolean) => {
+    dispatch({ schema_version: 2, kind: "project_checkouts_fold", payload: { workspace_id: workspace.id, ...(expanded === undefined ? {} : { expanded }) } });
   };
 
   /**
@@ -1637,7 +1653,7 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Folds or unfolds a project's checkouts in the Projects list; the core keeps the choice and says it back as `expanded`. */
     toggleProjectCheckouts(workspace: Workspace) {
-      setProjectExpanded(workspace, workspace.expanded === false);
+      foldProject(workspace);
     },
 
     /**
@@ -1647,14 +1663,12 @@ export function createActions(dispatch: DispatchFn) {
      */
     openProject(workspace: Workspace, expanded: boolean | undefined) {
       ui().setScreen(overviewScreen(rest(), workspace.id));
-      if (expanded !== undefined && expanded !== (workspace.expanded !== false)) setProjectExpanded(workspace, expanded);
+      if (expanded !== undefined && expanded !== (workspace.expanded !== false)) foldProject(workspace, expanded);
     },
 
     /** Opens or closes the agent rows under a checkout in the Projects list; they start closed and the core keeps the choice. */
     toggleCheckoutAgents(checkoutId: string) {
-      const expanded = new Set(rest()?.ui_state?.expanded_checkout_ids ?? []);
-      if (!expanded.delete(checkoutId)) expanded.add(checkoutId);
-      updateUiState({ expanded_checkout_ids: [...expanded].sort() });
+      dispatch({ schema_version: 2, kind: "checkout_agents_toggle", payload: { checkout_id: checkoutId } });
     },
 
     toggleLeftSidebar() {

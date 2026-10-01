@@ -35,6 +35,8 @@ impl Runtime {
             .replacement
             .as_ref()
             .ok_or("replacement context is missing")?;
+        let in_projection = payload.tabs.iter().any(|tab| tab.tab_id == tab_id);
+        let has_layout = payload.layouts.iter().any(|layout| layout.tab_id == tab_id);
         self.queue_restored_agent_tab(context, tab_id)?;
         self.finish_agent_effect(&context.checkout_path, &format!("close:{}", request.key));
         self.close_operations
@@ -52,6 +54,13 @@ impl Runtime {
             .is_some_and(|layout| layout.tree.display(tab_id).is_some())
             && self.workspace_views.is_some()
         {
+            crate::diagnostic!(serde_json::json!({
+                "component": "agent_close",
+                "kind": "close.replacement_unplaced",
+                "tab_id": tab_id,
+                "in_projection": in_projection,
+                "layout_read": has_layout,
+            }));
             return Err(
                 "The replacement shell could not be placed; the original tab was not closed".into(),
             );

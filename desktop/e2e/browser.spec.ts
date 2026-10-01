@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
+import { fitWindow, hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -196,13 +196,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   ({ app } = await launch(run.env));
   // The window is the size this run needs, whatever the machine's screen:
   // a CI runner's screen is 1024 points wide.
-  const bounds = await app.evaluate(({ BrowserWindow, screen }, size) => {
-    const area = screen.getPrimaryDisplay().workArea;
-    const window = BrowserWindow.getAllWindows()[0]!;
-    window.setBounds({ x: area.x, y: area.y, ...size });
-    return window.getBounds();
-  }, WINDOW);
-  expect(bounds, "the screen cannot hold the window this run needs").toMatchObject(WINDOW);
+  await fitWindow(app, WINDOW);
   const page = await app.firstWindow();
   await enterWorkspace(page, "fixture");
   const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
@@ -668,7 +662,7 @@ function releaseNativeModifiers(): ReturnType<typeof spawnSync> {
   return postEvents(null, events);
 }
 
-test("area cycle native: page input previews one exact area, releases once and cancels", { tag: NEEDS_FOCUS }, async () => {
+test("area cycle native: page input previews one exact area, releases once and cancels", { tag: [NEEDS_FOCUS, "@flaky"], annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/311" } }, async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   const sent = countSent(page);

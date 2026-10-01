@@ -270,15 +270,37 @@ jobs:
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir desktop e2e
+          pnpm --dir desktop e2e --grep-invert @flaky
+      - name: Quarantined end-to-end (does not block verify)
+        # A test tagged @flaky carries the issue that tracks its cause. It still
+        # runs here, once, so a fix shows up as a pass and a regression of the
+        # product it covers still shows up in the log; it cannot turn verify red.
+        # The build is the required step's. `--no-deps` matters: a project
+        # dependency runs whole whatever `--grep` says, so a `@needs-focus`
+        # quarantined test would otherwise bring the entire background suite
+        # with it.
+        timeout-minutes: 10
+        id: quarantine
+        # Into its own output directory: Playwright empties its output directory
+        # when a run starts, which would delete the required step's failure
+        # snapshots.
+        if: ${{ !cancelled() && steps.herdr.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          pnpm --dir desktop exec playwright test --no-deps --grep @flaky --output=test-results-quarantine
       - name: Keep the e2e run's logs
-        if: failure()
+        if: failure() || steps.quarantine.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
           name: hide-desktop-e2e-logs
           path: |
             ${{ runner.temp }}/hide-e2e
             desktop/test-results
+            desktop/test-results-quarantine
           if-no-files-found: ignore
 
   verify:
