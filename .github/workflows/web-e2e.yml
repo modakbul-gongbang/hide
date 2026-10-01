@@ -139,7 +139,7 @@ jobs:
         # is on the step's stdout. A screen assertion alone cannot say which
         # side moved.
         if: failure() || steps.quarantine.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hide-web-e2e-logs-${{ inputs.lane }}-${{ matrix.shard }}
           path: |
