@@ -17,7 +17,8 @@ import {
 export type { AgentRow, SnapshotRest } from "./snapshot";
 import type { MobileState } from "./mobileSettings";
 
-function focusedPaneOf(rest: SnapshotRest): string | null {
+/** The pane holding the keyboard on the device in front, as the core reports it. */
+export function focusedPaneOf(rest: SnapshotRest): string | null {
   const remote = remoteContext(rest);
   if (remote) return remoteView(remote.session)?.focusedPaneId ?? null;
   return rest.terminal?.pane_id ?? rest.focused?.pane_id ?? null;

@@ -926,9 +926,9 @@ In a View area it walks the tabs of that exact area, in recent-use order.
 The View scope includes device, checkout and area ID, so an Agent area with the same ID or another checkout cannot widen it.
 A document, diff, View tab bar or visible native browser page names its View area.
 In the Agent area it walks the terminal panes the keyboard has been in this session, one row per pane, across every device, project and checkout, in recent-use order (issue #301).
-A terminal pane, a delegated child's canvas or an Agent tab bar of the Workspace in front puts the keyboard in the Agent area; from a tab bar the pane in use is the one the core focuses in that tab.
+A terminal pane in a tab an Agent area of the Workspace in front draws (its normal tab or a delegated child's canvas), or that area's tab bar, puts the keyboard in the Agent area; from a tab bar the pane in use is the one the core focuses in that tab.
 A pane joins the order the first time the keyboard is in it, and a commit's passing frames on the way to its pane are not visits; a pane that closes leaves the order.
-A pane row is titled by the agent it runs, else by its tab's label when it is the tab's only pane, else by the pane's own title, with `project · checkout · Terminal` beneath and the agent's status mark; View displays, Overviews and projects are never rows.
+A pane row is titled by the agent it runs, else by its tab's label when it is the tab's only pane, else by the pane's own title, with the place as Recent Panels names it and `Terminal` beneath, and the agent's status mark; View displays, Overviews and projects are never rows.
 A hidden View, tool, search, Settings, dialog or Overview supplies no scope; a View area of zero or one tab, or an Agent area with no other visited pane, is a no-op.
 Holding the chord's actual modifier freezes the order and scope and previews in Recent Agent panes or Recent View tabs without moving the committed tab, layout or keyboard owner.
 Repeated forward and backward chords walk that frozen order; Escape or losing the window cancels without a selection event.

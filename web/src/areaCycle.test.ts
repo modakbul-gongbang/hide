@@ -140,12 +140,20 @@ describe("Agent pane cycle (issue 301)", () => {
 
   it("does not take a commit's passing frames for visits", () => {
     const rest = devices(); draw(rest);
-    for (const pane of ["t2-pane", "t1-pane"]) observePane(rest, pane);
+    for (const pane of ["t2-pane", "outside-pane"]) observePane(rest, pane);
     expectPane("other-tab-pane");
     observePane(rest, "t3-pane");
     observePane(rest, "other-tab-pane");
-    observePane(rest, "t3-pane");
-    expect(panes(agentCycle(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" }))).toEqual(["t3-pane", "other-tab-pane", "t1-pane", "t2-pane"]);
+    observePane(rest, "t1-pane");
+    expect(panes(agentCycle(rest, owner))).toEqual(["t1-pane", "other-tab-pane", "outside-pane", "t2-pane"]);
+  });
+
+  it("takes no origin from a pane whose tab no Agent area draws", () => {
+    const rest = devices(); draw(rest);
+    observePane(rest, "t2-pane");
+    // t3 is in the fixture but a1 shows t1: a keyboard owner left on t3's pane is stale.
+    expect(agentOrigin(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" })).toBeNull();
+    expect(agentCycle(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" })).toBeNull();
   });
 
   it("starts before the most recent pane when the keyboard is in no pane, and drops a closed pane while held", () => {
@@ -167,11 +175,17 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("counts a delegated child's canvas as the Agent area", () => {
-    const rest = devices(); draw(rest);
+    const rest = devices();
+    const checkout = rest.navigator!.workspaces![0]!.checkouts[0]!;
+    // A delegated child's tab is in no area's strip; a1 draws it as a canvas over t1.
+    checkout.tabs.push({ id: "child", label: "child", panes: [{ id: "child-pane" }], workspace_id: "w", checkout_id: "c", empty: false, delegated: true } as never);
+    rest.workspace_view!.agent_layout!.canvases.a1 = "child";
+    draw(rest);
     observePane(rest, "t2-pane");
-    rest.workspace_view!.agent_layout!.canvases.a1 = "outside";
-    const child = { kind: "pane", workspace: "c", paneId: "outside-pane" } as const;
-    expect(focusedCycleScope(rest, child)?.areaId).toBe("a2");
-    expect(panes(agentCycle(rest, child))).toEqual(["outside-pane", "t2-pane"]);
+    const child = { kind: "pane", workspace: "c", paneId: "child-pane" } as const;
+    expect(focusedCycleScope(rest, child)).toBeNull();
+    expect(panes(agentCycle(rest, child))).toEqual(["child-pane", "t2-pane"]);
+    // t1 is under the canvas now, so its pane is not where the keyboard is.
+    expect(agentOrigin(rest, owner)).toBeNull();
   });
 });

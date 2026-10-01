@@ -155,7 +155,6 @@ export type WorkspaceDialog =
   | { kind: "disk_cleanup"; workspaceId: string; filter: DiskFilter }
   | { kind: "remove_project"; workspaceId: string };
 
-/** A held-modifier cycle over Recent Panels or Recent Projects; committed when the modifier is released. */
 /**
  * A held switcher. `area` is a View area's tabs and `agents` the Agent area's
  * panes; both compare the highlight with `originKey`, while Recent Panels and

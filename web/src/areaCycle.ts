@@ -5,8 +5,8 @@
 import { areaFrame } from "./areaFrames";
 import { areasOf, findArea } from "./areaLayout";
 import { displaySurface, paneItem, paneKey, panelItem, recentEntries, recentPanes, tabSurface, type CycleItem, type Surface } from "./recent";
-import { remoteContext, remoteView } from "./remote";
 import { frontCheckout, type SnapshotRest } from "./snapshot";
+import { focusedPaneOf } from "./store";
 import { workspaceViewOf } from "./workspace";
 import { useUiStore, type Cycle } from "./ui";
 import { keyboardOwner, type KeyboardOwner } from "./viewFocus";
@@ -75,19 +75,20 @@ export function areaCycle(rest: SnapshotRest | null, owner?: KeyboardOwner): Cyc
 /**
  * Where the keyboard is while the front Workspace's Agent area holds it: the
  * pane it is in, or for a tab bar the pane the core focused in the tab that
- * area shows. Null when the keyboard is anywhere else. A delegated child's
- * canvas counts, since its pane is an Agent pane like any other.
+ * area shows. Null when the keyboard is anywhere else. Only a tab an Agent
+ * area draws counts, its normal one or a delegated child's canvas, so a pane
+ * whose terminal went away with its tab is not where the keyboard is.
  */
 export function agentOrigin(rest: SnapshotRest | null, owner: KeyboardOwner = keyboardOwner()): { paneId: string | null } | null {
   const checkout = frontCheckout(rest);
-  if (!checkout || (owner.kind !== "pane" && owner.kind !== "agent") || owner.workspace !== checkout.id || useUiStore.getState().screen?.kind !== "workspace") return null;
+  const frame = areaFrame("agent");
+  if (!rest || !checkout || !frame || frame.workspace.path !== checkout.path || (owner.kind !== "pane" && owner.kind !== "agent") || owner.workspace !== checkout.id || useUiStore.getState().screen?.kind !== "workspace") return null;
+  const drawn = new Set(areasOf(frame.layout.root).map((area) => frame.layout.canvases[area.id] ?? area.active));
   const holds = (paneId: string | null | undefined, tabId?: string | null) =>
-    paneId && checkout.tabs.some((tab) => (tabId === undefined || tab.id === tabId) && tab.panes.some((pane) => pane.id === paneId)) ? paneId : null;
+    paneId && checkout.tabs.some((tab) => tab.id !== null && drawn.has(tab.id) && (tabId === undefined || tab.id === tabId) && tab.panes.some((pane) => pane.id === paneId)) ? paneId : null;
   if (owner.kind === "pane") return holds(owner.paneId) ? { paneId: owner.paneId } : null;
   const tabId = focusedSurface(rest, focusedCycleScope(rest, owner))?.id ?? checkout.active_tab_id;
-  const remote = remoteContext(rest);
-  const focused = remote ? remoteView(remote.session)?.focusedPaneId : rest?.focused?.pane_id;
-  return { paneId: holds(focused, tabId) };
+  return { paneId: holds(focusedPaneOf(rest), tabId) };
 }
 
 /**

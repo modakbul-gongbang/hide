@@ -241,6 +241,8 @@ export function observeEntries(rest: SnapshotRest | null, current: RecentEntry |
  * are not visits, as for `observeEntries`.
  */
 export function observePane(rest: SnapshotRest | null, current: string | null) {
+  // Nothing to prune and nothing to record: most snapshots end here until the keyboard has been in a pane.
+  if (panes.length === 0 && current === null) return;
   const alive = new Set(allPanes(rest).map((row) => row.pane.id));
   panes = panes.filter((id) => alive.has(id));
   if (expectedPane && current !== expectedPane) return;
