@@ -951,11 +951,11 @@ The rail is always shown, even when This Mac is the only device: the sidebar's f
 The stored sidebar width stays the content column's; the rail adds `--size-rail` to its left while it shows, and the drag edge sits on the content column.
 Each tile is a 32 rounded square with no name under it: This Mac draws the laptop glyph and a device the monogram of its name, the first letter of each of its first two words, split at spaces, dots, dashes and underscores (`Mac mini` → `Mm`, `build-box` → `Bb`, `mini` → `M`); the tile's hint, shown to its right, is the name followed by `연결 안 됨` or each count it marks in full (`mini · Needs You 12 · Done 1`), since the pill stops at `9+`.
 The selected tile is ringed (a 2px ring 2px off the tile), and one tile is selected at a time.
-A tile carries at most two marks, each notched into its corner by a ring of the rail's fill: the Needs You count in a `--warning` pill at the bottom-right, `9+` from 10, and a `--success` dot with no number at the top-right while the device has unseen Done.
+A tile carries at most one mark, notched into its top-right corner by a ring of the rail's fill, and it is the most urgent state: the Needs You count in a `--warning` pill, `9+` from 10, or, with no Needs You, a `--success` dot with no number while the device has unseen Done.
 Working has no mark on the rail, since it is no reason to switch device; the Agents tab counts it.
 A mark's digits are `--status-foreground`, white in Light and near-black in Dark.
 The counts come from the device's own agents in the snapshot (`deviceAgents()` and `groupCounts()`), with no extra core or wire data.
-A device that is not connected dims its glyph and wears a `×` in the count's corner, with no mark, since its last counts are not current; selected, its sidebar shows only its name, `연결 안 됨` and `다시 연결`, which retries the connection in place, and never the tree it last reported.
+A device that is not connected dims its glyph and wears a `×` at the bottom-right, with no mark, since its last counts are not current; selected, its sidebar shows only its name, `연결 안 됨` and `다시 연결`, which retries the connection in place, and never the tree it last reported.
 Selecting a device tile sends `focus_device`, and the sidebar becomes that device's Projects | Agents; no row there names the device.
 Every tile is a button reached with Tab and chosen with Enter or Space, named for assistive technology by the device, its connection and each count it marks (`mini, 연결 안 됨`, `This Mac, Needs You 2, Done 1`).
 `기기 추가` opens Settings › Devices at its Add device form, as the hidden rail's `기기 추가…` and the Add a project dialog's host list do.

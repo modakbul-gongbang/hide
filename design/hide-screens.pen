@@ -83225,7 +83225,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, sidebar-header.",
-          "content": "sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown (quick device-rail-slack). The rail is the sidebar’s full-height left column: This Mac and each registered device as a 32 tile with no name under it (the laptop glyph, or the monogram of the device’s name; the hint is the name with its counts in full), the selected tile ringed 2 off its edge, the Needs You count notched into a tile’s bottom-right (ten or more reads 9+), a dot at its top-right for unseen Done, no mark for Working, an unreachable device with its glyph dimmed and a x in the count’s corner, and + directly under the last tile to add a device, dashed in the app and drawn solid here. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You group first, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the Overview child of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.",
+          "content": "sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown (quick device-rail-slack). The rail is the sidebar’s full-height left column: This Mac and each registered device as a 32 tile with no name under it (the laptop glyph, or the monogram of the device’s name; the hint is the name with its counts in full), the selected tile ringed 2 off its edge, one mark notched into a tile’s top-right for its most urgent state (the Needs You count, ten or more reading 9+, else a dot for unseen Done), no mark for Working, an unreachable device with its glyph dimmed and a x at the bottom-right, and + directly under the last tile to add a device, dashed in the app and drawn solid here. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You group first, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the Overview child of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -83321,35 +83321,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "psb-rest-l-rt0-done",
-                                      "name": "Done",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "psb-rest-l-rt0-done-m",
-                                          "name": "Done",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "layout": "horizontal",
-                                          "justifyContent": "center",
-                                          "alignItems": "center",
-                                          "fill": "$--success"
-                                        }
-                                      ],
-                                      "width": 12,
-                                      "height": 12,
-                                      "cornerRadius": 6,
-                                      "fill": "$--sidebar",
-                                      "layout": "horizontal",
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "x": 32,
-                                      "y": 0
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "psb-rest-l-rt0-needs",
                                       "name": "Needs You",
                                       "children": [
@@ -83386,7 +83357,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 29,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -83462,7 +83433,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 27,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -88437,35 +88408,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "psb-agents-l-rt0-done",
-                                      "name": "Done",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "psb-agents-l-rt0-done-m",
-                                          "name": "Done",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "layout": "horizontal",
-                                          "justifyContent": "center",
-                                          "alignItems": "center",
-                                          "fill": "$--success"
-                                        }
-                                      ],
-                                      "width": 12,
-                                      "height": 12,
-                                      "cornerRadius": 6,
-                                      "fill": "$--sidebar",
-                                      "layout": "horizontal",
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "x": 32,
-                                      "y": 0
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "psb-agents-l-rt0-needs",
                                       "name": "Needs You",
                                       "children": [
@@ -88502,7 +88444,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 29,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -88578,7 +88520,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 27,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -89792,35 +89734,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "psb-remote-l-rt0-done",
-                                      "name": "Done",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "psb-remote-l-rt0-done-m",
-                                          "name": "Done",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "layout": "horizontal",
-                                          "justifyContent": "center",
-                                          "alignItems": "center",
-                                          "fill": "$--success"
-                                        }
-                                      ],
-                                      "width": 12,
-                                      "height": 12,
-                                      "cornerRadius": 6,
-                                      "fill": "$--sidebar",
-                                      "layout": "horizontal",
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "x": 32,
-                                      "y": 0
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "psb-remote-l-rt0-needs",
                                       "name": "Needs You",
                                       "children": [
@@ -89857,7 +89770,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 29,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -89947,7 +89860,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 27,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -91215,35 +91128,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "psb-off-l-rt0-done",
-                                      "name": "Done",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "psb-off-l-rt0-done-m",
-                                          "name": "Done",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "layout": "horizontal",
-                                          "justifyContent": "center",
-                                          "alignItems": "center",
-                                          "fill": "$--success"
-                                        }
-                                      ],
-                                      "width": 12,
-                                      "height": 12,
-                                      "cornerRadius": 6,
-                                      "fill": "$--sidebar",
-                                      "layout": "horizontal",
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "x": 32,
-                                      "y": 0
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "psb-off-l-rt0-needs",
                                       "name": "Needs You",
                                       "children": [
@@ -91280,7 +91164,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 29,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -94011,35 +93895,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "psb-rest-d-rt0-done",
-                                      "name": "Done",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "psb-rest-d-rt0-done-m",
-                                          "name": "Done",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "layout": "horizontal",
-                                          "justifyContent": "center",
-                                          "alignItems": "center",
-                                          "fill": "$--success"
-                                        }
-                                      ],
-                                      "width": 12,
-                                      "height": 12,
-                                      "cornerRadius": 6,
-                                      "fill": "$--sidebar",
-                                      "layout": "horizontal",
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "x": 32,
-                                      "y": 0
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "psb-rest-d-rt0-needs",
                                       "name": "Needs You",
                                       "children": [
@@ -94076,7 +93931,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 29,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -94152,7 +94007,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 27,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -99127,35 +98982,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "psb-agents-d-rt0-done",
-                                      "name": "Done",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "psb-agents-d-rt0-done-m",
-                                          "name": "Done",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "layout": "horizontal",
-                                          "justifyContent": "center",
-                                          "alignItems": "center",
-                                          "fill": "$--success"
-                                        }
-                                      ],
-                                      "width": 12,
-                                      "height": 12,
-                                      "cornerRadius": 6,
-                                      "fill": "$--sidebar",
-                                      "layout": "horizontal",
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "x": 32,
-                                      "y": 0
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "psb-agents-d-rt0-needs",
                                       "name": "Needs You",
                                       "children": [
@@ -99192,7 +99018,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 29,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -99268,7 +99094,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 27,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -100482,35 +100308,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "psb-remote-d-rt0-done",
-                                      "name": "Done",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "psb-remote-d-rt0-done-m",
-                                          "name": "Done",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "layout": "horizontal",
-                                          "justifyContent": "center",
-                                          "alignItems": "center",
-                                          "fill": "$--success"
-                                        }
-                                      ],
-                                      "width": 12,
-                                      "height": 12,
-                                      "cornerRadius": 6,
-                                      "fill": "$--sidebar",
-                                      "layout": "horizontal",
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "x": 32,
-                                      "y": 0
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "psb-remote-d-rt0-needs",
                                       "name": "Needs You",
                                       "children": [
@@ -100547,7 +100344,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 29,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -100637,7 +100434,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 27,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",
@@ -101905,35 +101702,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "psb-off-d-rt0-done",
-                                      "name": "Done",
-                                      "children": [
-                                        {
-                                          "type": "frame",
-                                          "id": "psb-off-d-rt0-done-m",
-                                          "name": "Done",
-                                          "children": [],
-                                          "width": 8,
-                                          "height": 8,
-                                          "cornerRadius": 4,
-                                          "layout": "horizontal",
-                                          "justifyContent": "center",
-                                          "alignItems": "center",
-                                          "fill": "$--success"
-                                        }
-                                      ],
-                                      "width": 12,
-                                      "height": 12,
-                                      "cornerRadius": 6,
-                                      "fill": "$--sidebar",
-                                      "layout": "horizontal",
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "x": 32,
-                                      "y": 0
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "psb-off-d-rt0-needs",
                                       "name": "Needs You",
                                       "children": [
@@ -101970,7 +101738,7 @@
                                       "justifyContent": "center",
                                       "alignItems": "center",
                                       "x": 29,
-                                      "y": 25
+                                      "y": -2
                                     }
                                   ],
                                   "layout": "none",

@@ -65,16 +65,15 @@ describe("a rail tile (quick device-rail-slack)", () => {
     expect(remote).not.toContain(">Mac mini<");
   });
 
-  it("notches the Needs You count into a corner and marks unseen Done with a dot that has no number", () => {
+  it("shows one mark, the most urgent: the Needs You count over an unseen Done dot", () => {
     const html = view({ tile: mini, counts: { needs_you: 2, done: 8 } });
-    expect(marks(html)).toEqual([
-      ["done", ""],
-      ["needs_you", "2"],
-    ]);
+    expect(marks(html)).toEqual([["needs_you", "2"]]);
     expect(html).toContain("bg-warning");
-    expect(html).toContain("bg-success");
+    expect(html).not.toContain("bg-success");
     expect(html).toContain("text-status-foreground");
+    // Done alone is a dot with no number; the hint still names both counts.
     expect(marks(view({ tile: mini, counts: { needs_you: 0, done: 3 } }))).toEqual([["done", ""]]);
+    expect(tile(html)).toContain('aria-label="Mac mini, Needs You 2, Done 8"');
   });
 
   it("draws a count of ten or more as `9+`, and no mark at all when both counts are zero (B4)", () => {

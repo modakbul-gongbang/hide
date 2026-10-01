@@ -80,10 +80,11 @@ const RailTile = memo(function RailTile({ tile, selected, actions }: { tile: Til
 /**
  * One tile as drawn: a focusable button named by its device, its connection
  * and each count it marks, holding This Mac's laptop or a device's monogram,
- * ringed while selected. Needs You is a count notched into the bottom-right
- * corner (`9+` from ten), unseen Done a dot at the top-right, and Working has
- * no mark. A device that is not connected dims its glyph and wears a cross in
- * the count's corner instead, with no mark, since what it last reported is not
+ * ringed while selected. One mark at most, notched into the top-right corner,
+ * shows the most urgent state: the Needs You count (`9+` from ten), else a dot
+ * while it has unseen Done; Working has no mark, and the hint carries every
+ * count. A device that is not connected dims its glyph and wears a cross at
+ * the bottom-right instead, with no mark, since what it last reported is not
  * current (B3, B8, B41).
  */
 export function RailTileView({ tile, selected, counts, connected, onSelect }: { tile: Tile; selected: boolean; counts: TileCounts; connected: boolean; onSelect: () => void }) {
@@ -105,24 +106,22 @@ export function RailTileView({ tile, selected, counts, connected, onSelect }: { 
         <span aria-hidden="true" data-rail-glyph="true" className={cn("flex items-center justify-center", !connected && "opacity-(--opacity-dimmed)")}>
           {tile.icon === "local" ? <LaptopIcon className="size-(--size-icon-lg)" /> : tileMonogram(tile.label)}
         </span>
-        {connected ? (
-          <>
-            {counts.done > 0 ? <span aria-hidden="true" data-rail-badge="done" className={cn("absolute -top-xxs -right-xxs size-(--size-rail-mark) rounded-full bg-success", CUTOUT)} /> : null}
-            {counts.needs_you > 0 ? (
-              <span
-                aria-hidden="true"
-                data-rail-badge="needs_you"
-                data-rail-badge-count={counts.needs_you}
-                className={cn(
-                  "absolute -right-xs -bottom-xs flex h-(--size-rail-badge) min-w-(--size-rail-badge) items-center justify-center rounded-full bg-warning px-xxs text-(length:--size-rail-badge-text) leading-none font-semibold text-status-foreground tabular-nums",
-                  CUTOUT,
-                )}
-              >
-                {badgeText(counts.needs_you)}
-              </span>
-            ) : null}
-          </>
-        ) : (
+        {!connected ? null : counts.needs_you > 0 ? (
+          <span
+            aria-hidden="true"
+            data-rail-badge="needs_you"
+            data-rail-badge-count={counts.needs_you}
+            className={cn(
+              "absolute -top-xs -right-xs flex h-(--size-rail-badge) min-w-(--size-rail-badge) items-center justify-center rounded-full bg-warning px-xxs text-(length:--size-rail-badge-text) leading-none font-semibold text-status-foreground tabular-nums",
+              CUTOUT,
+            )}
+          >
+            {badgeText(counts.needs_you)}
+          </span>
+        ) : counts.done > 0 ? (
+          <span aria-hidden="true" data-rail-badge="done" className={cn("absolute -top-xxs -right-xxs size-(--size-rail-mark) rounded-full bg-success", CUTOUT)} />
+        ) : null}
+        {connected ? null : (
           <span aria-hidden="true" data-rail-off="true" className={cn("absolute -right-xs -bottom-xs flex size-(--size-rail-badge) items-center justify-center rounded-full bg-card text-muted-foreground", CUTOUT)}>
             <XIcon className="size-(--size-rail-mark)" />
           </span>
