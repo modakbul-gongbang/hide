@@ -12,10 +12,6 @@ name: os contract
 
 on:
   workflow_call:
-  # Temporary while the Windows leg is brought up: run on this branch's
-  # pushes without a pull request, so the macOS jobs of `verify` stay idle.
-  push:
-    branches: [platform/ipc]
 
 permissions:
   contents: read
@@ -46,6 +42,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Contract tests and the client's own tests
         run: cargo test --locked -p hide-platform -p hide-herdr-client
+      - name: Lint the platform crates
+        run: cargo clippy --locked -p hide-platform -p hide-herdr-client --all-targets -- -D warnings
       - name: Install zsh for the Herdr fetch
         if: matrix.system == 'linux'
         run: sudo apt-get install -y --no-install-recommends zsh

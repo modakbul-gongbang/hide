@@ -318,7 +318,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e]
+    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e, os-contract]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
