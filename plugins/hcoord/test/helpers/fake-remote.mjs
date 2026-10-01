@@ -152,6 +152,8 @@ export function createFakeRemote(cliPath) {
     notifications: (host = "local") => lines(host, "notifications.jsonl"),
     worktrees: (host) => read(host, "worktrees.json", []),
     pane: (host, pane) => read(host, "panes.json", {})[pane],
+    /** Pane tokens as a writer left them, for a pane whose tokens predate the daemon's current contract. */
+    setPaneTokens(host, pane, tokens) { const panes = read(host, "panes.json", {}); panes[pane].tokens = tokens; write(host, "panes.json", panes); },
     /** What a Herdr server restart does to a pane: its tokens are gone and its terminal is new. */
     restartServer(host) {
       const panes = read(host, "panes.json", {}); for (const pane of Object.values(panes)) delete pane.tokens; write(host, "panes.json", panes);
