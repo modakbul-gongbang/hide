@@ -40,9 +40,10 @@ async function livePanes(herdr: HerdrFixture): Promise<Set<string>> {
  * `pane.closed` events. Polling `pane list` from a subprocess was slower than
  * the core's ~140 ms steps on a loaded runner and saw two panes go in one
  * look (CI, 2026-10-01); the events carry the order itself. Resolves once
- * the subscription is live, so nothing the caller does next is missed.
+ * the subscription is live, so nothing the caller does next is missed; the
+ * caller closes it on every exit path.
  */
-async function watchCloseOrder(herdr: HerdrFixture, watched: string[]): Promise<{ order: Promise<string[]> }> {
+async function watchCloseOrder(herdr: HerdrFixture, watched: string[]): Promise<{ order: Promise<string[]>; close: () => void }> {
   const socket = net.createConnection(herdr.socket);
   const order: string[] = [];
   let buffer = "";
@@ -62,16 +63,21 @@ async function watchCloseOrder(herdr: HerdrFixture, watched: string[]): Promise<
   // A failure before the caller awaits `done` still reaches it; this only
   // keeps the runner from reporting the same rejection as unhandled.
   done.catch(() => undefined);
-  const timer = setTimeout(() => settle(new Error(`closed so far: ${order.join(", ") || "none"}`)), 60_000);
-  socket.on("error", (error) => {
+  const fail = (error: Error) => {
     ack(error);
     settle(error);
-  });
+  };
+  const timer = setTimeout(() => fail(new Error(`closed so far: ${order.join(", ") || "none"}`)), 60_000);
+  socket.on("error", fail);
+  // Herdr ending the stream before every pane closed is a failure, not a wait.
+  socket.on("close", () => fail(new Error(`Herdr closed the event stream; closed so far: ${order.join(", ") || "none"}`)));
   socket.on("data", (chunk) => {
     buffer += chunk.toString("utf8");
     for (let newline = buffer.indexOf("\n"); newline >= 0; newline = buffer.indexOf("\n")) {
-      const line = JSON.parse(buffer.slice(0, newline)) as { id?: string; error?: unknown; data?: { type?: string; pane_id?: string } };
+      const text = buffer.slice(0, newline).trim();
       buffer = buffer.slice(newline + 1);
+      if (!text) continue;
+      const line = JSON.parse(text) as { id?: string; error?: unknown; data?: { type?: string; pane_id?: string } };
       if (line.id === "close-order") {
         ack(line.error ? new Error(`events.subscribe refused: ${JSON.stringify(line.error)}`) : undefined);
         continue;
@@ -83,7 +89,7 @@ async function watchCloseOrder(herdr: HerdrFixture, watched: string[]): Promise<
   });
   socket.write(`${JSON.stringify({ id: "close-order", method: "events.subscribe", params: { subscriptions: [{ type: "pane.closed" }] } })}\n`);
   await live;
-  return { order: done };
+  return { order: done, close: () => fail(new Error("closed by the test")) };
 }
 
 async function agentsMode(page: Page): Promise<void> {
@@ -185,6 +191,7 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
+  let closeWatch: { order: Promise<string[]>; close: () => void } | null = null;
   try {
     const [keeper, target] = herdr.panes;
     // target spawned child, which spawned grandchild; keeper spawned kept.
@@ -230,9 +237,9 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press("Alt+KeyW");
     await expect(sheet.locator("[data-subtree-close-all]")).toBeFocused();
-    const { order } = await watchCloseOrder(herdr, [target, child, grandchild]);
+    closeWatch = await watchCloseOrder(herdr, [target, child, grandchild]);
     await page.keyboard.press("Enter");
-    expect(await order).toEqual([grandchild, child, target]);
+    expect(await closeWatch.order).toEqual([grandchild, child, target]);
     expect(sent.get("close_tree")).toBe(1);
     expect(last.get("close_tree")).toMatchObject({ target: { kind: "pane", pane_id: target }, pane_ids: [grandchild, child], confirmed: true });
     for (const pane of [target, child, grandchild]) await expect(page.locator(`[data-pane="${pane}"]`)).toHaveCount(0, { timeout: 20_000 });
@@ -249,6 +256,7 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
     await expect(page.locator(`[data-pane="${kept}"]`)).toHaveAttribute("data-depth", "0", { timeout: 20_000 });
     await screenshot(page, "close-subtree-close-only");
   } finally {
+    closeWatch?.close();
     daemon?.stop();
     herdr.stop();
   }
