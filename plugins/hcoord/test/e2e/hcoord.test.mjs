@@ -3,8 +3,9 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { spawnOwned, stopOwned } from "../helpers/owned-children.mjs";
 import { MAX_BODY_BYTES, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_REQUESTS } from "../../dist/hcoord/model.js";
 
 const CLI = path.resolve(import.meta.dirname, "../../dist/hcoord/cli.js");
@@ -65,7 +66,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   let daemon = null;
   let daemonErrors = "";
   const start = async () => {
-    daemon = spawn(process.execPath, [CLI, "daemon", "run"], { env, stdio: ["ignore", "ignore", "pipe"] });
+    daemon = spawnOwned("hcoord daemon", process.execPath, [CLI, "daemon", "run"], { env, stdio: ["ignore", "ignore", "pipe"] });
     let error = "";
     daemon.stderr.on("data", (chunk) => { error += chunk; daemonErrors += chunk; });
     for (let attempt = 0; attempt < 500; attempt += 1) {
@@ -79,13 +80,10 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const stop = async () => {
     if (!daemon) return;
     const old = daemon;
-    if (old.exitCode === null) {
-      old.kill("SIGTERM");
-      await new Promise((resolve) => old.once("exit", resolve));
-    }
     daemon = null;
+    await stopOwned(old);
   };
-  t.after(async () => { await stop(); fs.rmSync(home, { recursive: true, force: true }); });
+  t.after(async () => { try { await stop(); } finally { fs.rmSync(home, { recursive: true, force: true }); } });
   const command = (...args) => spawnSync(process.execPath, [CLI, ...args, "--json"], { env, encoding: "utf8" });
   const ok = (...args) => {
     const result = command(...args);
