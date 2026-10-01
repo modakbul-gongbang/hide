@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeText, deviceConnected, frontTitle, homeOf, homeProjectCount, railShown, tileCounts, tileMonogram, tileName } from "./devices";
+import { badgeText, deviceConnected, frontTitle, homeOf, homeProjectCount, railShown, tileCounts, tileHint, tileMonogram, tileName } from "./devices";
 import type { AgentRow, SnapshotRest } from "./snapshot";
 
 function agent(paneId: string, group: string): AgentRow {
@@ -72,6 +72,12 @@ describe("the device rail's facts (quick device-rail-badges)", () => {
     expect(tileName("This Mac", true, { needs_you: 2, done: 1 })).toBe("This Mac, Needs You 2, Done 1");
     expect(tileName("build-box", false, { needs_you: 0, done: 0 })).toBe("build-box, 연결 안 됨");
     expect(tileName("This Mac", true, { needs_you: 0, done: 0 })).toBe("This Mac");
+  });
+
+  it("writes the full counts in a tile's hint, where the pill stops at `9+`", () => {
+    expect(tileHint("mini", true, { needs_you: 12, done: 1 })).toBe("mini · Needs You 12 · Done 1");
+    expect(tileHint("build-box", false, { needs_you: 3, done: 0 })).toBe("build-box · 연결 안 됨");
+    expect(tileHint("This Mac", true, { needs_you: 0, done: 0 })).toBe("This Mac");
   });
 
   it("counts a device's Home row from its registrations, its Home excluded (B16, D-04)", () => {

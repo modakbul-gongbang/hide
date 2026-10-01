@@ -160,10 +160,10 @@ test("the rail follows the registered devices; a device that cannot be reached i
       const overflow = await sidebar.locator(part).evaluate((element) => element.scrollWidth - element.clientWidth);
       expect(overflow, part).toBeLessThanOrEqual(0);
     }
-    // The tile draws the name's monogram and no name; the name is the tile's hint.
+    // The tile draws the name's monogram and no name; its hint is the name and its connection.
     await expect(tile.locator("[data-rail-glyph]")).toHaveText("연빌");
     await tile.hover();
-    await expect(page.getByRole("tooltip")).toContainText("연구실 빌드 서버 자동화 장비");
+    await expect(page.getByRole("tooltip")).toContainText("연구실 빌드 서버 자동화 장비 · 연결 안 됨");
 
     // B13: the rail's + opens the same Add device form.
     await rail.locator("[data-rail-add]").click();

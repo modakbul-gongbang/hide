@@ -949,7 +949,7 @@ Quick device-rail-slack then narrowed the rail to `--size-rail` (48), ran it the
 
 The rail is always shown, even when This Mac is the only device: the sidebar's full-height left column, with the top line and the `Projects | Agents` strip to its right, holding This Mac, each registered device in the core's order, and a `+` (`기기 추가`, a dashed tile) directly under the last device tile.
 The stored sidebar width stays the content column's; the rail adds `--size-rail` to its left while it shows, and the drag edge sits on the content column.
-Each tile is a 32 rounded square with no name under it: This Mac draws the laptop glyph and a device the monogram of its name, the first letter of each of its first two words, split at spaces, dots, dashes and underscores (`Mac mini` → `Mm`, `build-box` → `Bb`, `mini` → `M`); the name is the tile's hint, shown to its right.
+Each tile is a 32 rounded square with no name under it: This Mac draws the laptop glyph and a device the monogram of its name, the first letter of each of its first two words, split at spaces, dots, dashes and underscores (`Mac mini` → `Mm`, `build-box` → `Bb`, `mini` → `M`); the tile's hint, shown to its right, is the name followed by `연결 안 됨` or each count it marks in full (`mini · Needs You 12 · Done 1`), since the pill stops at `9+`.
 The selected tile is ringed (a 2px ring 2px off the tile), and one tile is selected at a time.
 A tile carries at most two marks, each notched into its corner by a ring of the rail's fill: the Needs You count in a `--warning` pill at the bottom-right, `9+` from 10, and a `--success` dot with no number at the top-right while the device has unseen Done.
 Working has no mark on the rail, since it is no reason to switch device; the Agents tab counts it.

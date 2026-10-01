@@ -77,10 +77,20 @@ export function tileMonogram(label: string): string {
   return initial(first).toLocaleUpperCase() + initial(second);
 }
 
-/** What a tile is called for assistive technology: the name, the connection state, then each non-zero count it marks (B4). */
+/** What a tile says besides its name: `연결 안 됨`, or each non-zero count it marks, in full where the pill reads `9+`. */
+function tileFacts(connected: boolean, counts: TileCounts): string[] {
+  if (!connected) return ["연결 안 됨"];
+  return [counts.needs_you > 0 ? `Needs You ${counts.needs_you}` : null, counts.done > 0 ? `Done ${counts.done}` : null].filter((fact) => fact !== null);
+}
+
+/** What a tile is called for assistive technology: the name, then its connection or its counts (B4). */
 export function tileName(label: string, connected: boolean, counts: TileCounts): string {
-  if (!connected) return `${label}, 연결 안 됨`;
-  return [label, counts.needs_you > 0 ? `Needs You ${counts.needs_you}` : null, counts.done > 0 ? `Done ${counts.done}` : null].filter(Boolean).join(", ");
+  return [label, ...tileFacts(connected, counts)].join(", ");
+}
+
+/** A tile's hint, the only place its name is written: the name, then its connection or its counts (`mini · Needs You 12 · Done 1`). */
+export function tileHint(label: string, connected: boolean, counts: TileCounts): string {
+  return [label, ...tileFacts(connected, counts)].join(" · ");
 }
 
 /** How many projects a device has registered, without its Home (D-04, B16): a count from the registrations, not from any folder. */

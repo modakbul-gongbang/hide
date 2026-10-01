@@ -2,7 +2,7 @@ import { LaptopIcon, PlusIcon, XIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { Actions } from "../actions";
-import { badgeText, deviceConnected, frontDeviceId, tileCounts, tileMonogram, tileName, type TileCounts } from "../devices";
+import { badgeText, deviceConnected, frontDeviceId, tileCounts, tileHint, tileMonogram, tileName, type TileCounts } from "../devices";
 import { cn } from "../lib/utils";
 import { useShellStore } from "../store";
 import { EntryContextMenu } from "./entry-menu";
@@ -21,7 +21,7 @@ const CUTOUT = "ring-2 ring-sidebar";
  * device-rail-badges and quick device-rail-slack): a column the sidebar's full
  * height with This Mac, each registered device in the core's order, and `+`
  * directly under the last one, which is Add device. Each tile is a square with
- * no name under it; the name is its hint. It is shown with one device alone,
+ * no name under it; its hint is the name with its counts. It is shown with one device alone,
  * and a right-click on it offers `레일 숨기기`. One tile is selected, ringed.
  * A tile reads only its own facts (its two counts, whether it is connected),
  * so a snapshot that changes another device redraws no tile, and nothing here
@@ -88,7 +88,7 @@ const RailTile = memo(function RailTile({ tile, selected, actions }: { tile: Til
  */
 export function RailTileView({ tile, selected, counts, connected, onSelect }: { tile: Tile; selected: boolean; counts: TileCounts; connected: boolean; onSelect: () => void }) {
   return (
-    <Hint label={tile.label} side="right">
+    <Hint label={tileHint(tile.label, connected, counts)} side="right">
       <button
         type="button"
         aria-label={tileName(tile.label, connected, counts)}
