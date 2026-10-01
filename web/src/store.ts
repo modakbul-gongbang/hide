@@ -37,6 +37,8 @@ export type DirectoryList = {
   root_path: string;
   entries: DirectoryEntry[];
   truncated: boolean;
+  /** The folder changed and is being read again; its rows stay drawn until the new listing lands. */
+  stale?: boolean;
 };
 /** A device folder its helper could not list now (`directory_unavailable`); the reason is the helper's. */
 export type DirectoryUnavailable = { device_id: string; root_path: string; code: string; message: string };
@@ -195,6 +197,8 @@ type Store = {
   noteDraftExported: (tabId: string, contents: string) => void;
   /** Drops cached listings so the Explorer re-reads those folders. */
   invalidateListings: (paths: string[]) => void;
+  /** Marks cached listings stale: the Explorer re-reads those folders and keeps drawing them meanwhile. */
+  refreshListings: (paths: string[]) => void;
   applyFrame: (frame: Frame) => TerminalChunk[];
 };
 
@@ -325,6 +329,14 @@ export const useShellStore = create<Store>((set, get) => ({
     for (const path of paths) delete next[path];
     set({ listings: next });
   },
+  refreshListings: (paths) => {
+    const listings = get().listings;
+    const changed = paths.filter((path) => listings[path] && !listings[path].stale);
+    if (changed.length === 0) return;
+    const next = { ...listings };
+    for (const path of changed) next[path] = { ...listings[path]!, stale: true };
+    set({ listings: next });
+  },
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};
     // The core revisions `editor`, `changes`, `documents` and the named
@@ -415,14 +427,16 @@ export const useShellStore = create<Store>((set, get) => ({
       return [];
     }
     if (frame.type === "directory_changed") {
-      // A watched folder moved; its cached listing is dropped and the count
-      // lets the Explorer re-read even a listing that was still in flight.
+      // A watched folder moved; its cached listing turns stale, so its rows
+      // stay drawn until the re-read lands instead of vanishing for the round
+      // trip, and the count lets the Explorer re-read even a listing that was
+      // still in flight.
       // Listings are the shown device's, so another device's frame names a
       // path that is not the one listed here (S5.5 B2).
       const path = payload.path;
       const shownDevice = get().rest?.navigator?.focused_device_id ?? "local";
       if (path && (payload.device_id ?? "local") === shownDevice) {
-        get().invalidateListings([path]);
+        get().refreshListings([path]);
         // A bounded map ordered by recency: the count is re-inserted so a
         // folder that keeps changing is the last one evicted.
         const next = { ...get().folderChanges };
