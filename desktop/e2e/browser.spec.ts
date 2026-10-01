@@ -677,12 +677,14 @@ test("area cycle native: page input previews one exact area, releases once and c
   const previousId = await displayIdOf(page, "Page B");
   const outsideId = await displayIdOf(page, "Page A");
   const pid = app.process().pid!;
-  const focus = async (url: string) => {
+  const focus = async (url: string, displayId: string) => {
     await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows()[0]!;
       electron.focus({ steal: true }); window.focus();
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-      child.webContents.focus();
+      // A page already holding native focus announces nothing when focused
+      // again, so the shell takes it first and the page enters as an operator's click would.
+      window.webContents.focus(); child.webContents.focus();
     }, url);
     // macOS activates the window asynchronously, and an activation still in
     // flight can hand the keyboard back to the shell a moment after the page
@@ -693,16 +695,25 @@ test("area cycle native: page input previews one exact area, releases once and c
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
       return window.isFocused() && child.webContents.isFocused();
     }, url);
+    // Native focus is not yet a hold the shell admits. The host starts one
+    // only from a page it shows, and the shell only when its keyboard owner
+    // is that page's area and the core's snapshot selects the page there
+    // (`web/src/keyboard.ts`). A tab click or a closed sheet just before
+    // reaches both through a round trip, and the window's own activation can
+    // hand the owner to the shell element it focuses, so keys posted on
+    // native focus alone drew nothing.
+    const admitted = async () => (await viewOf(url)).visible && (await page.evaluate((id) =>
+      document.querySelector("[data-keyboard-area=true] [data-view-tab-bar] [aria-selected=true]")?.getAttribute("data-display") === id, displayId));
     await expect.poll(async () => {
       await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
         const window = BrowserWindow.getAllWindows()[0]!;
         electron.focus({ steal: true }); window.focus();
         const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-        child.webContents.focus();
+        window.webContents.focus(); child.webContents.focus();
       }, url);
       if (!(await holds())) return false;
       await new Promise((resolve) => setTimeout(resolve, 250));
-      return holds();
+      return (await holds()) && (await admitted());
     }).toBe(true);
   };
   const capture = async (name: string) => {
@@ -713,7 +724,7 @@ test("area cycle native: page input previews one exact area, releases once and c
     expect(result.status, "exact native window capture failed: " + result.stderr).toBe(0);
     fs.writeFileSync(path.join(dir, "area-native-identity.json"), JSON.stringify({ pid, window: source, daemonPid: run.daemonPid(), socket: herdr.socket, state: run.env.HIDE_STATE_DIR, userData: run.env.HIDE_DESKTOP_USER_DATA_DIR, pages: await views() }, null, 2));
   };
-  await focus(current);
+  await focus(current, originalId);
   await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
   const selections = () => page.locator('[data-view-tab-bar] [aria-selected=true]').evaluateAll(tabs => tabs.map(tab => tab.getAttribute("data-display")));
   const before = await selections();
@@ -742,7 +753,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   // Escape from the actual native page preserves both the selection and owner.
   await tab(page, "한글 브라우저").click();
   await inPage(current, "document.querySelector('input').focus()");
-  await focus(current);
+  await focus(current, originalId);
   const canceled = sent.get("view_layout") ?? 0;
   nativeKeys(pid, ["control down", "tab"]);
   await expect(page.locator("[data-cycle=area]")).toBeVisible();
@@ -777,12 +788,17 @@ test("area cycle native: page input previews one exact area, releases once and c
   await page.locator('[data-settings-tab="shortcuts"]').click();
   await page.locator('[data-shortcut-record="recent_area_tab"]').click();
   await page.keyboard.press("Control+Alt+Tab");
+  // A native page's hold starts from the host's copy of the chords, which
+  // the shell reports after the core stores the binding; the host takes it
+  // and then rebuilds the menu in one call, so a new menu means it has it.
+  await app.evaluate(({ Menu }) => { (globalThis as { menuBeforeRebind?: unknown }).menuBeforeRebind = Menu.getApplicationMenu(); });
   await page.locator('[data-shortcut-apply="recent_area_tab"]').click();
   await expect(page.locator('[data-shortcut-effective="recent_area_tab"]')).toHaveText("⌃⌥⇥");
+  await expect.poll(() => app!.evaluate(({ Menu }) => Menu.getApplicationMenu() !== (globalThis as { menuBeforeRebind?: unknown }).menuBeforeRebind)).toBe(true);
   await page.keyboard.press("Escape");
   await inPage(previous, "document.getElementById('q').value = ''");
   await inPage(current, "document.querySelector('input').focus()");
-  await focus(current);
+  await focus(current, originalId);
   const rebound = sent.get("view_layout") ?? 0;
   const originText = await inPage(current, "document.querySelector('input').value");
   nativeKeys(pid, ["option down", "control down", "tab"]);
