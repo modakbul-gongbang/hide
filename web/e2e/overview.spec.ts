@@ -170,6 +170,35 @@ async function leaveHoverCard(page: Page, gone: Locator): Promise<void> {
   }).toPass({ timeout: 10_000 });
 }
 
+/**
+ * Rests on `target` until its tooltip says every one of `texts`. A tooltip opens
+ * on a pointer move that reaches its trigger and then waits its 500 ms; a move
+ * that is lost on a busy runner opens nothing and nothing retries it (a CI
+ * snapshot showed the trigger present and no tooltip). Each attempt leaves the
+ * page first so the pointer enters the trigger afresh. Three attempts wait
+ * 1.5 s each for the tooltip, less than the five seconds a single wait had; the
+ * moves themselves keep their own action timeouts, so a slow runner that is
+ * late to move is not counted against the tooltip. A control that only shows
+ * while its card is hovered names that card as `within`, which each attempt
+ * hovers again before the control.
+ */
+async function restOn(page: Page, target: Locator, texts: string[], within?: Locator): Promise<void> {
+  const tooltip = page.getByRole("tooltip");
+  let lastFailure: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.mouse.move(2, 998);
+    if (within) await within.hover();
+    await target.hover();
+    try {
+      for (const text of texts) await expect(tooltip).toContainText(text, { timeout: 1500 });
+      return;
+    } catch (failure) {
+      lastFailure = failure;
+    }
+  }
+  throw lastFailure;
+}
+
 /** Clears hover and keyboard focus so a capture shows the page at rest. */
 async function atRest(page: Page): Promise<void> {
   await page.mouse.move(2, 998);
@@ -324,10 +353,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(tile("sessions").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "0", { timeout: 20_000 });
     await expect(tile("sessions")).toContainText("오늘");
     // Resting on the bar shows its legend and on the badge its breakdown (B4).
-    await tile("agents").locator("[data-lens-tile-bar]").hover();
-    await expect(page.getByRole("tooltip")).toContainText("내 차례 1");
-    await tile("agents").locator("[data-lens-tile-badge]").hover();
-    await expect(page.getByRole("tooltip")).toContainText("승인 1");
+    await restOn(page, tile("agents").locator("[data-lens-tile-bar]"), ["내 차례 1"]);
+    await restOn(page, tile("agents").locator("[data-lens-tile-badge]"), ["승인 1"]);
 
     // Boxes (B2-B5, D-37): the asking worktree's band stands first, above main's, because
     // its question outranks main's band; main holds the Observer and the Implementor it
@@ -477,8 +504,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const shippedBox = box("prd/shipped");
     await expect(row(shippedPane)).toHaveAttribute("data-bucket", "resting");
     const cleanup = shippedBox.locator("[data-graph-cleanup]");
-    await cleanup.hover();
-    await expect(page.getByRole("tooltip")).toContainText("지운다");
+    await restOn(page, cleanup, ["지운다"]);
     await cleanup.click();
     const dialog = page.locator("[data-delete-worktree]");
     await expect(dialog).toBeVisible();
@@ -716,12 +742,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.waitForTimeout(600);
     expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quietIssues);
     // Each button says what it does (B7).
-    await issueCard(2).locator("[data-card-workspace]").hover();
-    await expect(page.getByRole("tooltip")).toContainText("Workspace 열기");
+    await restOn(page, issueCard(2).locator("[data-card-workspace]"), ["Workspace 열기"], issueCard(2));
     await issueCard(3).hover();
     await expect(issueCard(3).locator("[data-card-start]")).toBeVisible();
-    await issueCard(3).locator("[data-card-start]").hover();
-    await expect(page.getByRole("tooltip")).toContainText("이 이슈로 워크트리와 에이전트를 만든다");
+    await restOn(page, issueCard(3).locator("[data-card-start]"), ["이 이슈로 워크트리와 에이전트를 만든다"], issueCard(3));
     await leaveHoverCard(page, page.getByRole("tooltip"));
     const previewBefore = sent.get("issue_detail_request") ?? 0;
     await issueCard(2).locator("[data-task-id]").hover();
@@ -742,17 +766,13 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // request line's is the PRs tab, where each has an issue cell to link
     // (overview-lenses-prs B21).
     const looseWorktrees = column("working").locator("[data-loose-worktrees]");
-    await looseWorktrees.hover();
-    await expect(page.getByRole("tooltip")).toContainText("Agents 그래프에서 보기");
-    await expect(page.getByRole("tooltip")).toContainText("prd/asking");
+    await restOn(page, looseWorktrees, ["Agents 그래프에서 보기", "prd/asking"]);
     await looseWorktrees.click();
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await expect(emptyFold).toHaveAttribute("aria-expanded", "true");
     await tile("issues").locator("[data-lens-tile-button]").click();
     const loosePrs = column("review").locator("[data-loose-prs]");
-    await loosePrs.hover();
-    await expect(page.getByRole("tooltip")).toContainText("PRs 탭에서 보기");
-    await expect(page.getByRole("tooltip")).toContainText("#12");
+    await restOn(page, loosePrs, ["PRs 탭에서 보기", "#12"]);
     await loosePrs.click();
     await expect(overview).toHaveAttribute("data-overview-view", "prs");
     await expect(overview.locator('[data-pr="12"] [data-pr-issue="none"]')).toBeVisible();
