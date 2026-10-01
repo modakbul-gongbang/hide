@@ -84,6 +84,8 @@ export type ListState =
   | { kind: "failed"; reason: string }
   | { kind: "empty" }
   | { kind: "no_match" }
+  | { kind: "content_pending"; indexing: boolean }
+  | { kind: "content_unavailable"; stale: boolean }
   | { kind: "rows"; rows: SessionRow[] };
 
 /**

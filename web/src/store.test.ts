@@ -290,3 +290,27 @@ describe("the documents section", () => {
     expect(useShellStore.getState().documents).toBe(before);
   });
 });
+
+describe("independent conversation-search delta", () => {
+  it("preserves search across unrelated deltas and clears it on fresh snapshots", () => {
+    const store = useShellStore.getState();
+    const search = { workspace_id: "a", device_id: "local", provider: "all", query: "화검", loading: false, indexing: true, indexed: 8, total: 2000, days: 90, policy_loaded: true, failure: null, control_failure: null, page: { hits: [], limited: false, stale: false } };
+    const history = { workspace_id: "a", device_id: "local", loading: false, failure: null, unavailable_reason: null, rows: [], detail: null };
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, rest: {}, project_sessions: history, session_search: search } });
+    store.applyFrame({ type: "delta", payload: { revision: 2, session_search: { ...search, indexed: 16 } } });
+    expect(useShellStore.getState().projectSessions).toBe(history);
+    const updated = useShellStore.getState().sessionSearch;
+    store.applyFrame({ type: "delta", payload: { revision: 3, session_search: { ...search, indexed: 16 } } });
+    expect(useShellStore.getState().sessionSearch).toBe(updated);
+    store.applyFrame({ type: "delta", payload: { revision: 2, session_search: search } });
+    expect(useShellStore.getState().sessionSearch).toBe(updated);
+    expect(useShellStore.getState().revision).toBe(3);
+    store.applyFrame({ type: "delta", payload: { revision: 3, rest: {} } });
+    expect(useShellStore.getState().sessionSearch).toBe(updated);
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+    expect(useShellStore.getState().sessionSearch).toBeNull();
+    store.applyFrame({ type: "delta", payload: { revision: 2, session_search: search } });
+    store.applyFrame({ type: "delta", payload: { revision: 3, session_search: { ...search, workspace_id: "", query: "", page: { hits: [], limited: false, stale: false } } } });
+    expect(useShellStore.getState().sessionSearch?.workspace_id).toBe("");
+  });
+});

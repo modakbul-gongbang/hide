@@ -1201,6 +1201,10 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** Opens one session read-only beside the named Project's history; never in a Workspace (B3). */
+    searchProjectSessions(workspaceId: string, deviceId: string, query: string, control?: { clear?: boolean; days?: number; provider?: string }) {
+      dispatch({ schema_version: 2, kind: "session_search", payload: { workspace_id: workspaceId, device_id: deviceId, query, ...control } });
+    },
+
     openProjectSession(workspaceId: string, sessionId: string) {
       dispatch({ schema_version: 2, kind: "archive_open", payload: { kind: "session", id: sessionId, workspace_id: workspaceId } });
     },

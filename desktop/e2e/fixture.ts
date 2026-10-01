@@ -24,7 +24,7 @@ export type Isolated = {
   cleanup: () => void;
 };
 
-export function isolate(herdr: HerdrFixture, label: string): Isolated {
+export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin">, label: string): Isolated {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `hide-desktop-${label}-`));
   const home = path.join(root, "home");
   fs.mkdirSync(path.join(home, "projects"), { recursive: true });
@@ -66,7 +66,7 @@ export function isolate(herdr: HerdrFixture, label: string): Isolated {
   return { root, env, hide, daemonPid, cleanup };
 }
 
-function assertIsolated(env: Record<string, string>): void {
+export function assertIsolated(env: Record<string, string>): void {
   // The Herdr fixture keeps its socket directly under /tmp for the path length limit.
   const roots = [fs.realpathSync(os.tmpdir()), fs.realpathSync("/tmp")];
   for (const key of ["HOME", "HCOORD_HOME", "HIDE_STATE_DIR", "HIDE_DESKTOP_USER_DATA_DIR", "HERDR_SOCKET_PATH"]) {
@@ -133,11 +133,11 @@ export const test = base.extend<{ focusGuard: void }>({
 });
 
 /** Starts the app with the focus guard preloaded, reporting into the running test's folder. */
-async function start(appDir: string, env: Record<string, string>): Promise<ElectronApplication> {
+async function start(appDir: string, env: Record<string, string>, executablePath?: string): Promise<ElectronApplication> {
   assertIsolated(env);
   if (!focusReports) throw new Error("launch the desktop app from a test imported from desktop/e2e/fixture.ts, so its focus guard runs");
   const report = path.join(focusReports.dir, `launch-${focusReports.apps.length + 1}.jsonl`);
-  const app = await electron.launch({ args: ["-r", FOCUS_GUARD, appDir, ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
+  const app = await electron.launch({ executablePath, args: ["-r", FOCUS_GUARD, ...(!executablePath ? [appDir] : []), ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
   // Taken now: `app.process()` throws once the app is closed.
   focusReports.apps.push({ app, child: app.process() });
   return app;
@@ -146,9 +146,9 @@ async function start(appDir: string, env: Record<string, string>): Promise<Elect
 /** `appDir` is the app folder to run, the desktop package unless a test copies it. */
 export async function launch(
   env: Record<string, string>,
-  { appDir = DESKTOP_DIR }: { appDir?: string } = {},
+  { appDir = DESKTOP_DIR, executablePath }: { appDir?: string; executablePath?: string } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await start(appDir, env);
+  const app = await start(appDir, env, executablePath);
   const page = await app.firstWindow();
   return { app, page };
 }

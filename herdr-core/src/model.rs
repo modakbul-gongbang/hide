@@ -109,6 +109,8 @@ pub struct Snapshot {
     /// It rides its own revisioned section of the delta wire.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_sessions: Option<ProjectSessionsSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_search: Option<SessionSearchSnapshot>,
 }
 
 /// A snapshot value that takes a new edit number whenever it may change, so
@@ -1455,6 +1457,8 @@ pub struct PaneSnapshot {
     pub fork: PaneForkSnapshot,
     /// The ports listened on from at or below this pane's working directory.
     pub ports: Vec<u16>,
+    /// Address-preserving listener endpoints from the same port sample.
+    pub servers: Vec<ServerEndpointSnapshot>,
     /// What this pane's agent delegated, or why that is unknown. `None` on a
     /// pane Herdr detected no agent in: a shell, an editor or a log gets
     /// neither chips nor an uninstrumented mark, because there is no agent
@@ -1615,8 +1619,16 @@ pub struct ListeningPortsSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ListeningPortSnapshot {
+    pub host: String,
     pub port: u16,
     pub cwd: String,
+}
+
+/// A reachable address for one observed TCP listener, before HTTP navigation.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+pub struct ServerEndpointSnapshot {
+    pub host: String,
+    pub port: u16,
 }
 
 /// What the pane header needs to know about forking this pane.
@@ -1850,6 +1862,7 @@ pub struct ArchiveDetailSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ArchiveEventSnapshot {
+    pub source_offset: Option<u64>,
     pub role: String,
     pub kind: String,
     pub at_unix_ms: u64,
@@ -1996,10 +2009,34 @@ pub struct ProjectSessionsSnapshot {
     pub failure: Option<String>,
     /// Every session of every worktree of the Project, newest first, with
     /// an unavailable row's reason in words. A shell narrows them itself.
-    pub rows: Vec<SessionRowSnapshot>,
+    #[serde(serialize_with = "serialize_session_rows")]
+    pub rows: Arc<Vec<SessionRowSnapshot>>,
     pub detail: Option<ProjectSessionDetailSnapshot>,
 }
 
+fn serialize_session_rows<S: serde::Serializer>(
+    rows: &Arc<Vec<SessionRowSnapshot>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    rows.as_ref().serialize(serializer)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct SessionSearchSnapshot {
+    pub workspace_id: String,
+    pub device_id: String,
+    pub provider: String,
+    pub query: String,
+    pub loading: bool,
+    pub indexing: bool,
+    pub indexed: usize,
+    pub total: usize,
+    pub days: u16,
+    pub policy_loaded: bool,
+    pub control_failure: Option<String>,
+    pub failure: Option<String>,
+    pub page: hide_session::search::SearchPage,
+}
 /// One session opened beside a Project's Sessions with `archive_open` and a
 /// `workspace_id`: read-only, and never an editor tab or a Workspace's.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -3257,6 +3294,7 @@ pub struct TextRangeSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StatusSnapshot {
+    pub server_discovery: ServerDiscoverySnapshot,
     pub tab_rename: Option<TabRenameSnapshot>,
     pub herdr: ProviderStatusSnapshot,
     pub remote: Vec<RemoteStatusSnapshot>,
@@ -3278,6 +3316,12 @@ pub struct StatusSnapshot {
     /// themselves, oldest first and bounded, so a `hide browser open` waiting
     /// on one reads its own (issue 155).
     pub browser_opens: Vec<BrowserOpenReceiptSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ServerDiscoverySnapshot {
+    pub loading: bool,
+    pub failure: Option<String>,
 }
 
 /// One `browser_open` request's outcome: where the page opened, or why not.
@@ -3658,6 +3702,10 @@ impl Snapshot {
                 async_operations: Vec::new(),
                 pane_focus_request: None,
                 browser_opens: Vec::new(),
+                server_discovery: ServerDiscoverySnapshot {
+                    loading: true,
+                    failure: None,
+                },
             },
             pet: PetSnapshot::initial(),
             recent_closed: RecentClosedSnapshot::default(),
@@ -3665,6 +3713,7 @@ impl Snapshot {
             browser_views: Vec::new(),
             browser_views_revision: None,
             project_sessions: None,
+            session_search: None,
         }
     }
 }
@@ -3817,6 +3866,7 @@ pub struct SnapshotDeltaPayload {
     /// shell without View areas.
     pub documents: Option<DocumentsDelta>,
     pub project_sessions: Option<Arc<ProjectSessionsSnapshot>>,
+    pub session_search: Option<Arc<SessionSearchSnapshot>>,
     pub find: PaneFindSnapshot,
     pub input_generation: u64,
     pub terminal_sequence: u64,
@@ -3859,6 +3909,8 @@ pub struct SnapshotDeltaWire<'a> {
     /// such a snapshot exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_sessions: Option<&'a ProjectSessionsSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_search: Option<&'a SessionSearchSnapshot>,
     /// Find state rides top-level rather than in `rest`, because it changes on
     /// every keystroke while a search is open. In `rest` each keystroke would
     /// restamp that revision and resend the whole navigator, ui state, and pet
@@ -3888,6 +3940,7 @@ impl<'a> SnapshotDeltaWire<'a> {
                     .collect(),
             }),
             project_sessions: payload.project_sessions.as_deref(),
+            session_search: payload.session_search.as_deref(),
             find: &payload.find,
             input_generation: payload.input_generation,
             terminal_sequence: payload.terminal_sequence,

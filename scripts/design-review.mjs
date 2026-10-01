@@ -186,11 +186,11 @@ async function baseline(root, args) {
     copyPortable(from, temporary);
     const document = path.join(temporary, path.basename(from));
     // Export from the bundle itself: the images prove the bundle opens on its own.
-    const exported = await exportFrames(document, target.frames.map(frame => frame.node), path.join(temporary, 'png'), temporary);
+    const exported = await exportFrames(document, target.frames.map(frame => frame.referenceNode ?? frame.node), path.join(temporary, 'png'), temporary);
     const frames = target.frames.map(frame => {
-      const size = pngSize(exported[frame.node]);
+      const size = pngSize(exported[frame.referenceNode ?? frame.node]);
       if (size.width / PIXEL_RATIO !== frame.width) throw new Error(`Frame ${frame.node} is ${size.width / PIXEL_RATIO}px wide, but the target declares ${frame.width}px; fix design/review-targets.json or the frame`);
-      return {...frame, png: `png/${frame.node}.png`, height: size.height / PIXEL_RATIO};
+      return {...frame, png: `png/${frame.referenceNode ?? frame.node}.png`, height: size.height / PIXEL_RATIO};
     });
     const head = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: root, encoding: 'utf8'}).trim();
     const dirty = execFileSync('git', ['status', '--porcelain', '--', path.relative(root, from)], {cwd: root, encoding: 'utf8'}).trim() !== '';
@@ -294,6 +294,13 @@ async function enterState(page, state) {
   if (state === 'folded-parent') await page.locator('nav[data-sidebar] [data-agent-tree-toggle="a1"]').click();
   if (state === 'checkout-closed') await page.locator('nav[data-sidebar] [data-checkout-toggle="herdr-ide:main"]').click();
   if (state === 'folded-parent' || state === 'checkout-closed') await page.mouse.move(0, 0);
+  if (state === 'server-picker') await page.getByRole('button', {name:'Open server', exact:true}).click();
+  if (state === 'content-match') {
+    await page.getByRole('searchbox', {name:'Search sessions'}).fill('화검');
+    await page.locator('[data-content-match]').waitFor();
+    await page.locator('[data-session-row]').first().click();
+    await page.locator('[data-search-match="true"]').waitFor();
+  }
   await page.waitForTimeout(120);
 }
 

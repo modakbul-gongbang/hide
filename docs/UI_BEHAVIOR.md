@@ -11,6 +11,10 @@ The web shell's Workspace screen follows the approved S6 proposal, its View area
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
 The toolbar spans only the agent column and holds the path back (`Home / Project / Workspace`, where `Home` opens the Overview), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `Home / ~/hide`, since Home is no project. It has no tool toggles.
+The globe at the path’s right edge is `Open server`: one known listener opens directly in the Workspace’s existing Browser View beside the agent, and multiple listeners open a compact keyboard picker.
+The picker shows each real bind address and port, preserves IPv4/IPv6 scope, and supports arrows, Home, End, Enter and Escape.
+An empty, loading, disconnected, failed or stale catalog gives small feedback in the same popover; a remote Workspace explicitly has no local discovery.
+Discovery never starts or stops a server, and an opened page retains the Browser View’s own connection failure and recovery controls.
 The side panel toggle sits at the Workspace's top right in both states: at the toolbar's right end while the panel is closed, and at the right end of the panel's first row while it shows.
 It is drawn pressed while the panel shows, and ⌘⇧B toggles the panel too, restoring its views and the tool column as they were before hiding; while the panel is closed with views open, the toggle carries a badge with their count, also given as its accessible description.
 The toggle, the tool column's toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
@@ -361,10 +365,18 @@ A Project's Sessions is the Project Overview's Sessions tab (PRD S8), under the 
 Web owner: `web/src/ProjectSessions.tsx`, `web/src/sessions.ts`.
 
 It lists the history of every Workspace the Project has, works for a Project with no Workspace, and never runs an agent or sends a session to a Workspace.
-Above the list are the `All / Codex / Claude Code` choice, the search, and the count (`N sessions` or `N of M sessions` while a filter narrows it); a read in flight adds `Reading…` beside the count and keeps the rows.
+Above the list are the `All / Codex / Claude Code` choice, metadata and Human/Assistant content search, and the count (`N sessions` or `N of M sessions` while a filter narrows it); a read in flight adds `Reading…` beside the count and keeps the rows.
 Each row shows the provider mark and name, the time, the first request or title in at most two lines with the full text in its tooltip, and the checkout it ran in.
 A session with neither request nor title reads `Untitled session`, muted, and a time it never carried is left out.
 A row's accessible name reads provider, first request, checkout, time, and availability, in that order.
+Content matches add a short matching snippet, Human or Assistant role, and the message time, grouped once per session.
+The provider choice scopes backend results before the session limit, and Korean substrings including two characters, identifiers, punctuation and query syntax characters are literal searches.
+A content result opens the exact source message once; index updates and query snapshots never pull a manually scrolled conversation back to its match.
+Metadata rows stay useful while content search prepares or indexes, and an incomplete, failed or stale search has a pending or recovery state rather than a completed no-match assertion.
+`Copied history` selects Off, 30, 90 or 365 days, initially 90 days after the policy loads.
+Off erases this Project’s local copied bodies and pauses indexing while metadata remains available; Rebuild index clears the copy and starts a fresh bounded pass under the selected retention.
+Expired copies from inactive Projects are also removed, and originals remain intact.
+Searching and these controls never schedule Memory analysis, provider calls, embeddings or injection.
 The open session's row is the list's one Tab stop; the arrows, Home, and End move between rows, ArrowDown from the search lands on that row, and Escape in the search clears it, so only an Escape in an empty search leaves the Overview.
 The provider choice is one Tab stop whose arrows choose the neighbouring provider.
 An unreadable session dims only its own row, marks it unavailable, and keeps its reason, Retry, and Copy source location under it, copying the provider file's own path.

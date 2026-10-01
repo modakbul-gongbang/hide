@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import type { Root } from "react-dom/client";
 import { Gallery, GalleryFrame } from "./Gallery";
 import { GALLERY, type Section } from "./manifest";
+import { ServerSessionScene } from "./ServerSessionScene";
 import { sceneParams, SidebarScene } from "./SidebarScene";
 import { AreaFocusScene } from "./AreaFocusScene";
 
@@ -14,6 +15,10 @@ export function mountGallery(root: Root) {
       return;
     }
     // A scene seeds the app's own stores, so it is one document per scene.
+    if (scene === "workspace-servers" || scene === "session-search") {
+      root.render(<StrictMode><ServerSessionScene scene={scene} {...sceneParams(params)}/></StrictMode>);
+      return;
+    }
     if (scene !== "projects-sidebar") throw new Error(`Unknown gallery scene ${scene}`);
     document.title = "hide · Projects sidebar scene";
     root.render(

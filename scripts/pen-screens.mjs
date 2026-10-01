@@ -1547,7 +1547,7 @@ function sidePanelToggle(id, count) {
 }
 
 function buildWorkspace(tokens) {
-  const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), MAIN_W = 900, MAIN_H = 460;
+  const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), MAIN_W = 1440 - SIDEBAR_W - num(tokens, '--spacing-md'), MAIN_H = 928;
   const ROW = num(tokens, '--size-tab-strip'), GAP = num(tokens, '--spacing-sm'), TOOLS_W = num(tokens, '--size-panel-ideal');
   const HAIR = '$--size-hairline', PANEL_W = GAP + 300 + TOOLS_W;
   const rule = {stroke: '$--border', strokeWidth: {bottom: HAIR}, strokeAlignment: 'inner'};
@@ -1580,7 +1580,10 @@ function buildWorkspace(tokens) {
           text(`ws-c5-${key}`, crumbs[2], {weight: '600'}),
         ]),
       ]),
-      ...(count ? [sidePanelToggle(`ws-paneltoggle-${key}`, count)] : []),
+      frame(`ws-toolbar-actions-${key}`, 'Workspace actions', {layout:'horizontal', gap:'$--spacing-xs', alignItems:'center'}, [
+        screenIconButton(`ws-open-server-${key}`, 'globe'),
+        ...(count ? [sidePanelToggle(`ws-paneltoggle-${key}`, count)] : []),
+      ]),
     ]);
   }
 
@@ -1697,7 +1700,10 @@ function buildWorkspace(tokens) {
     ]);
     const main = open
       ? frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip: true}, [{...agentColumn(key, 0, false, null, false), x: 0, y: 0}, sidePanel(key)])
-      : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2, groups)]);
+       : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip:true}, [{...agentColumn(key, 2, groups), x:0, y:0}, ...(groups ? [] : [frame(`ws-server-picker-${key}`, 'Open server picker', {x:MAIN_W-332,y:ROW+4,width:320,layout:'vertical',gap:'$--spacing-xs',padding:'$--spacing-sm',fill:'$--popover',cornerRadius:'$--radius-md',stroke:'$--border',strokeWidth:HAIR}, [
+          text(`ws-server-title-${key}`, 'Open server', {size:'$--text-caption',fill:'$--muted-foreground'}),
+          ...['127.0.0.1:3000','[::1]:5173'].map((address,index)=>frame(`ws-server-option${index}-${key}`, address, {width:'fill_container',layout:'horizontal',gap:'$--spacing-sm',padding:'$--spacing-sm',alignItems:'center',fill:index===0?'$--accent':'$--popover',cornerRadius:'$--radius-sm'}, [icon(`ws-server-globe${index}-${key}`,'globe'),text(`ws-server-address${index}-${key}`,address,{mono:true,size:'$--text-caption'}),icon(`ws-server-arrow${index}-${key}`,'arrow-up-right')]))
+        ])])]);
     return frame(`ws-wrap-${key}`, groups ? 'Two Agent areas, independent tab bars and live terminals' : open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
   }
   // A remote device in front: no sidebar beside it here, only the column with its band and pane frame.
@@ -1743,7 +1749,7 @@ function buildWorkspace(tokens) {
     return frame(`ws-focus-${suffix}`, 'One keyboard area, other selections readable', {width: 960, height: 440, layout: 'horizontal', fill: '$--background'}, [area(true, 1), frame(`ws-focus-divider-${suffix}`, 'Area divider', {width: '$--size-resize-handle', height: 'fill_container', fill: '$--border'}), area(false, 2)]);
   }
   const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), workspace(`${suffix}g`, false, true), remoteWorkspace(`${suffix}r`), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false), focusComparison(suffix)];
-  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping. Below them a remote device in front (PRD home-device-rail D-15): the toolbar starts with a band in the device color (--device-remote) carrying the server glyph and the device name ahead of the path, and the agent pane is framed in the same color; This Mac in front has neither.', build, build);
+  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and carries Open server as a globe, reusing attributed listeners, with one opening directly and multiple addresses in a small picker; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping. Below them a remote device in front (PRD home-device-rail D-15): the toolbar starts with a band in the device color (--device-remote) carrying the server glyph and the device name ahead of the path, and the agent pane is framed in the same color; This Mac in front has neither.', build, build);
 }
 
 // -- Screen / Project Sessions --------------------------------------------------
@@ -1755,19 +1761,35 @@ function buildSessions(tokens) {
     const header = overviewHeader(tokens, 'ss-head', suffix, {project: 'fixture', facts: [
       {glyph: 'folder-git-2', label: '2 worktrees'},
       {glyph: 'hard-drive', label: '812 MB'},
-    ], view: 'sessions', width: 820});
+    ], view: 'sessions', width: 1136});
     const list = frame(`ss-list-${suffix}`, 'List', {width: 320, layout: 'vertical', gap: '$--spacing-sm'}, [
       screenTabs(`ss-tabs-${suffix}`, ['All', 'Codex', 'Claude Code'], 0),
-      screenInput(`ss-search-${suffix}`, {placeholder: 'Search sessions', width: 300}),
+      screenInput(`ss-search-${suffix}`, {content:'화검', width:300}),
+      text(`ss-copy-status-${suffix}`, 'Search titles and conversation contents', {size:'$--text-caption', fill:'$--muted-foreground'}),
+      frame(`ss-copy-controls-${suffix}`, 'Copied history', {layout:'horizontal', gap:'$--spacing-xs', alignItems:'center'}, [
+        text(`ss-copy-label-${suffix}`, 'Copied history', {size:'$--text-caption', fill:'$--muted-foreground'}),
+        screenSelect(`ss-retention-${suffix}`, {content:'90 days', width:100}),
+        screenButton(`ss-rebuild-${suffix}`, 'Rebuild index', {variant:'ghost'}),
+      ]),
+      text(`ss-copy-privacy-${suffix}`, 'Local copy only. Off clears this Project’s copy; originals stay intact.', {size:'$--text-micro',fill:'$--muted-foreground',width:300,textGrowth:'fixed-width'}),
       text(`ss-count-${suffix}`, '1 session', {size: '$--text-caption', fill: '$--muted-foreground'}),
-      screenSessionRow(`ss-row1-${suffix}`, {title: '배포 스크립트 정리하고 release note 초안까지 작성해줘', checkout: 'fixture', provider: 'Claude Code', time: 'Sep 21, 10:00 AM', width: 300}),
+      screenSessionRow(`ss-row1-${suffix}`, {title:'배포 스크립트 정리하고 release note 초안까지 작성해줘',checkout:'fixture',provider:'Claude Code',time:'Sep 21, 10:00 AM',width:300}),
+      text(`ss-snippet-context-${suffix}`, 'Assistant · Sep 21, 10:00 AM', {size:'$--text-micro',fill:'$--muted-foreground'}),
+      text(`ss-snippet-${suffix}`, '대화검색으로 로그인 연결을 확인했습니다.', {size:'$--text-caption',width:300,textGrowth:'fixed-width'}),
     ]);
-    const detail = frame(`ss-detail-${suffix}`, 'Detail', {width: 480, height: 320, alignItems: 'center', justifyContent: 'center', fill: '$--card', cornerRadius: '$--radius-md'}, [
-      text(`ss-empty-${suffix}`, 'Choose a session to read it here.', {fill: '$--muted-foreground'}),
+    const detail = frame(`ss-detail-${suffix}`, 'Matching conversation', {width:800,height:780,layout:'vertical',gap:'$--spacing-lg',padding:'$--spacing-lg',fill:'$--card',cornerRadius:'$--radius-md'}, [
+      text(`ss-detail-title-${suffix}`, '로그인 연결 확인', {size:'$--text-body',weight:'600'}),
+      text(`ss-human-role-${suffix}`, 'Human', {size:'$--text-caption',fill:'$--muted-foreground'}),
+      text(`ss-human-text-${suffix}`, '지난 작업에서 로그인 연결을 확인해 줘.', {width:'fill_container',textGrowth:'fixed-width'}),
+      frame(`ss-selected-${suffix}`, 'Matching Assistant message', {width:'fill_container',layout:'vertical',gap:'$--spacing-sm',padding:'$--spacing-md',fill:'$--accent',cornerRadius:'$--radius-sm',stroke:'$--primary',strokeWidth:'$--size-hairline'}, [
+        text(`ss-assistant-role-${suffix}`, 'Assistant · Sep 21, 10:00 AM', {size:'$--text-caption',fill:'$--muted-foreground'}),
+        text(`ss-assistant-text-${suffix}`, '대화검색으로 로그인 연결을 확인했습니다.', {width:'fill_container',textGrowth:'fixed-width'}),
+      ]),
     ]);
-    return [frame(`ss-wrap-${suffix}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-md'}, [header, frame(`ss-row-${suffix}`, 'Row', {layout: 'horizontal', gap: '$--spacing-lg'}, [list, detail])])];
+    const main = frame(`ss-main-${suffix}`, 'Project Sessions', {width:1136,height:928,layout:'vertical',gap:'$--spacing-md'}, [header,frame(`ss-row-${suffix}`, 'Row', {layout:'horizontal',gap:'$--spacing-lg'}, [list,detail])]);
+    return [frame(`ss-wrap-${suffix}`, 'Sessions with sidebar', {width:1440,layout:'horizontal',gap:'$--spacing-md',alignItems:'start'}, [screenSidebar(tokens,'ss-sidebar',suffix,[]),main])];
   }
-  return screenSheet('screen-sessions', 'Screen / Project Sessions', 'web/src/ProjectOverview.tsx on its Sessions tab, ProjectSessions.tsx: the Overview’s header and tabs over the provider-filtered session list with search, and the read-only detail pane, using a real Korean session title.', build, build);
+  return screenSheet('screen-sessions', 'Screen / Project Sessions', 'web/src/ProjectOverview.tsx on its Sessions tab, ProjectSessions.tsx: the Overview’s header and tabs over the provider-filtered session list with search, and the read-only detail pane, with grouped Human/Assistant snippets, exact-message jumps and local copied-history retention/rebuild controls. Pending, failed and changed-source states preserve metadata results.', build, build);
 }
 
 // -- Screen / Settings ----------------------------------------------------------

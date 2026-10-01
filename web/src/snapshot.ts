@@ -296,6 +296,8 @@ export type CheckoutAgentSummary = {
 export type MarkCounts = { error: number; approval: number; question: number; working: number; done: number; idle: number };
 
 export type PaneRow = {
+  ports?: number[];
+  servers?: { host: string; port: number }[];
   id: string;
   herdr_label: string | null;
   terminal_title: string | null;
@@ -1030,6 +1032,7 @@ export type SessionRow = {
 
 /** One recorded turn of a session: `role` is `user` or `assistant`, `kind` `human`, `assistant`, `interrupted` or `injected`. */
 export type ArchiveEvent = {
+  source_offset?: number | null;
   role: string;
   kind: string;
   at_unix_ms: number;
@@ -1135,6 +1138,7 @@ export type SnapshotRest = {
     [key: string]: unknown;
   };
   status?: {
+    server_discovery?: { loading: boolean; failure: string | null };
     herdr?: HerdrStatus;
     remote?: RemoteStatus[];
     environment?: EnvironmentStatus[];
@@ -1275,3 +1279,6 @@ export function dividerPaneId(first: LayoutNode): string {
   const ids = paneIds(first);
   return ids[ids.length - 1] ?? "";
 }
+
+export type SessionSearchHit = { session_id: string; source_offset: number; role: string; at_unix_ms: number; snippet: string };
+export type SessionSearch = { workspace_id: string; device_id: string; provider: string; query: string; loading: boolean; indexing: boolean; indexed: number; total: number; days: number; policy_loaded: boolean; control_failure: string | null; failure: string | null; page: { hits: SessionSearchHit[]; limited: boolean; stale: boolean } };

@@ -37,6 +37,7 @@ unicode-normalization = "=0.1.25"
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
 hide-host = { path = "../hide-host", features = ["call-log"] }
 
 [lints.rust]

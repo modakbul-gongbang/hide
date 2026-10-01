@@ -76,6 +76,8 @@ Every name, path and count in a scene is invented example data, so a capture of 
 
 A design change is judged against the design that was chosen, not against whatever the Pen file says by the time the code lands: a later edit to Pen, or the same wrong change made to Pen and code together, would otherwise hide the drift.
 `scripts/design-review.mjs` keeps that choice and checks the production screen against it.
+The `workspace-servers` and `session-search` gallery scenes render the production Workspace toolbar and Sessions screen with invented local history and reachable-address fixtures.
+A frame may name `referenceNode` when the approved scratch uses a different node ID; baseline exports that reference node while review exports the committed `node`, retaining both identities and their actual dimensions in the comparison.
 A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
 Targets exist for `projects-sidebar` and `area-focus`; add one when a change touches another screen, not before.
 `area-focus` measures the production shared area renderer and View tabs with read-only Korean content, enforcing one keyboard area, retained selections, stable geometry and unfiltered content; real terminal and native browser behavior still requires an isolated app capture.

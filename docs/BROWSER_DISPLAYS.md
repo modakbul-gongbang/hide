@@ -157,3 +157,12 @@ The test window never activates the app or takes the keyboard, because the e2e f
 The zoom test needs the key window: it is tagged `@needs-focus` and brings its window to the front itself.
 Keep screenshots and logs under local-only `agents/runs/`.
 `desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server, whose sessions get the private HOME `desktop/e2e/device-home.ts` proves because connecting installs Hide's kit there, and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, route cleanup on close and forced candidate exit, and a return route that comes back after the device's helper connection ends and reconnects, with every remote command run through the `hide` Hide installed and linked on the device.
+
+## Running Workspace servers
+
+The Workspace toolbar’s globe reuses the existing cwd-attributed pane listener projection.
+The projection retains each bind address as well as its port, mapping wildcard listeners to loopback of the same address family.
+The current device, checkout ID, path and endpoint are checked again when a choice is made; identical paths on a remote Project never authorize a local listener.
+One endpoint uses the existing explicit Workspace `browser_open` route directly, and multiple endpoints use the shared popover picker.
+Discovery identifies TCP listeners, so successful discovery does not prove an HTTP page loads; native verification must observe the actual Browser View loading the chosen IPv4/IPv6 URL and its connection-error recovery.
+The action starts no server and adds no duplicate context footer.

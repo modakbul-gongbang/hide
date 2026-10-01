@@ -91,12 +91,22 @@ The web shell reads a Project's Sessions through the same catalog, but for a Pro
 A project's Overview sends it once when it opens, so its Sessions tile counts today's sessions without the Sessions view being chosen (PRD overview-lenses-tiles-agents B5).
 The named Project stays named while the focus moves, a read that finishes after another Project was named is dropped by the existing generation fence, and naming another Project closes the open session.
 A device Project reads no local session: the section carries the device's reason, because the provider files live on the device and there is no contract yet for reading them there.
-The section rides the snapshot delta on its own revision, `project_sessions`, beside `rest`, `editor` and `changes`, so an agent or navigator change never resends a history; it is compared by value under the lock, the open transcript behind a shared pointer that compares in O(1), and it is absent from the wire until a Project is named.
+The section rides the snapshot delta on its own revision, `project_sessions`, beside `rest`, `editor` and `changes`, so an agent or navigator change never resends a history; its immutable history rows and open transcript use shared pointers for O(1) unchanged comparisons and payload capture under the lock, and it is absent from the wire until a Project is named.
 The core words each reason for the operator (a missing, unparsable, oversized or unreadable file, a session or Project folder it could not read) and records a read failure as a diagnostic.
 A session a Project's history listed and a later read no longer finds stays listed as unavailable, with its last location, when its file is gone, for as long as the daemon runs, so a moved or deleted file reads differently from one that never existed (B5); one whose file is still there no longer belongs to the Project (its checkout was removed, say) and leaves the list as the catalog decides.
 The core keeps each Project's last rows for that, and the read's worker checks their files off the lock; a kept row stays until its file is found again, so what is kept grows only with the sessions deleted while the daemon runs.
 A failed history read leaves the open session's conversation on screen, or says why it was not read, rather than leaving it reading.
-Provider filtering and search run in the page over the rows the section carries, with the core's own rule (`apply_session_filters`), so typing costs no round trip.
+Metadata filtering remains local over retained rows.
+Human/Assistant body search owns one background worker and an independent `session-search.sqlite3` copied-body FTS store, with no Memory extraction cursor or provider dependency.
+The page debounces query and provider changes for 220 ms, and the core fences replies by generation and named Project/device identity, including rejected requests.
+A latest-query slot coalesces queries; a separate eight-entry control FIFO preserves accepted retention and rebuild commands across Project changes and drains them during normal bounded shutdown.
+Control outcomes are persisted per canonical Project and remain independent of setup, indexing and query failures.
+The independent `session_search` delta revision carries small progress/result transitions without copying or serializing `project_sessions` history rows.
+Retention defaults to 90 days, supports Off/30/90/365, and prunes inactive Project copies on database open and periodic idle work.
+The copied index caps source files at 64 MiB, a retained line at 256 KiB, a body at 64 KiB, indexed files at 2,000 per Project, copied messages at 25,000 globally, grouped hits at 100, and SQLite pages at 256 MiB.
+Admission uses one nonblocking regular-file descriptor whose identity/version must match the current pathname before committing bodies and cursor together.
+Changed growing sources validate saved prefix hashes in bounded chunks; replacement, middle rewrite, truncation, missing sources and failed parsing invalidate old copies.
+An unchanged completed stamp performs no transcript read, hash or SQLite write.
 The history read is the Sessions list's own `load_sessions` (`herdr-core/src/runtime/memory.rs`), which opens the Memory store read-only and also lists the Project's Memory items; this path keeps only the recorded sessions whose files have gone, writes nothing, schedules no analysis, cancels none, and leaves the due-work poll alone.
 
 Project Memory in the web shell is a deferred TODO (PRD S8 D-17): the web has no Memory entry point, disabled control or placeholder, and Memory management has had no shell surface since the native shell that carried it was removed.

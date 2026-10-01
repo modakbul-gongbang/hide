@@ -163,6 +163,21 @@ test('a baseline carries the Pen file, its library and images, exports from itse
   assert.match(shown.stdout, /every file matches its hash/);
 });
 
+test('a scratch reference keeps its node identity while pairing the committed screen', t => {
+  const f = fixture(t);
+  const file = path.join(f.root, 'design/review-targets.json');
+  const targets = JSON.parse(fs.readFileSync(file, 'utf8'));
+  targets.sample.frames[0].referenceNode = 'proposal-light';
+  fs.writeFileSync(file, JSON.stringify(targets));
+  const result = run(f, baselineArgs());
+  assert.equal(result.status, 0, result.stderr);
+  const manifest = JSON.parse(fs.readFileSync(path.join(bundleOf(f), 'manifest.json'), 'utf8'));
+  assert.equal(manifest.frames[0].node, 'f-l');
+  assert.equal(manifest.frames[0].referenceNode, 'proposal-light');
+  assert.equal(manifest.frames[0].png, 'png/proposal-light.png');
+  assert.ok(fs.existsSync(path.join(bundleOf(f), manifest.frames[0].png)));
+});
+
 test('the bundle opens from another directory with nothing outside it', t => {
   const f = fixture(t);
   assert.equal(run(f, baselineArgs()).status, 0);

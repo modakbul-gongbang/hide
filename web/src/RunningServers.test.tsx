@@ -1,0 +1,125 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createActions } from "./actions";
+import { TooltipProvider } from "./components/ui/tooltip";
+import { RunningServers } from "./RunningServers";
+import type { Checkout, SnapshotRest, Workspace } from "./snapshot";
+import { useShellStore } from "./store";
+import type { WorkspaceView } from "./workspace";
+import type { DispatchFn } from "./ws";
+
+// This flow does not render a terminal. Keep the real actions import while
+// answering xterm's canvas capability probe at the browser boundary.
+const browserCanvas = vi.hoisted(() => {
+  const original = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = () => null;
+  return { restore: () => { HTMLCanvasElement.prototype.getContext = original; } };
+});
+afterAll(() => browserCanvas.restore());
+
+const view: WorkspaceView = {
+  device_id: "local", path: "/projects/studio", panel: "closed", pinned: false,
+  tool: "explorer", tools: false, views_over_share: 0.5, tools_share: null, covered: false,
+};
+function checkout(servers: { host: string; port: number }[]): Checkout {
+  return {
+    id: "checkout:studio", workspace_id: "project:studio", label: "Studio", path: view.path,
+    branch: null, purpose: null, is_worktree: false, exists: true, has_panes: true,
+    pull_request: null, active_tab_id: "tab:studio", strip: [], next_tab_label: "2",
+    tabs: [{
+      id: "tab:studio", workspace_id: "project:studio", checkout_id: "checkout:studio", label: "1", empty: false, delegated: false,
+      panes: [{
+        id: "pane:studio", herdr_label: null, terminal_title: null, cwd: view.path,
+        status_label: "", requires_close_confirmation: false, requires_close_status_check: false,
+        identity_label: null, servers,
+      }],
+    }],
+  };
+}
+function project(device: string, rows: Checkout[]): Workspace {
+  return {
+    id: "project:studio", label: "Studio", path: view.path, device_id: device,
+    registered: true, temporary: false, pinned: false, checkouts: rows,
+    inactive_checkouts: { expanded: false, checkout_ids: [] },
+  };
+}
+function catalog(current: Checkout, remote: Checkout): SnapshotRest {
+  return {
+    status: { server_discovery: { loading: false, failure: null } },
+    navigator: {
+      // A remote Project may have the same IDs and paths. It must not satisfy
+      // the local endpoint check, even when it is listed first and focused.
+      workspaces: [project("mini", [remote]), project("local", [current])],
+      focused_device_id: "mini", focused_checkout_id: remote.id,
+    },
+    workspace_view: { ...view, device_id: "mini", path: "/projects/other" },
+  };
+}
+
+describe("Workspace server action", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let saved: ReturnType<typeof useShellStore.getState>;
+  let events: Parameters<DispatchFn>[0][];
+
+  beforeEach(() => {
+    saved = useShellStore.getState();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    // jsdom has no layout observer. This substitutes only the browser API
+    // used by the real Radix popover, not product state or interaction code.
+    vi.stubGlobal("ResizeObserver", class BrowserResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    events = [];
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    useShellStore.setState({ connection: "live", rest: null });
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    useShellStore.setState(saved, true);
+    vi.unstubAllGlobals();
+  });
+  async function render(displayed: Checkout) {
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => root.render(<TooltipProvider><RunningServers checkout={displayed} view={view} actions={actions} /></TooltipProvider>));
+  }
+  async function openServer() {
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Open server"]');
+    if (!button) throw new Error("Missing server action");
+    await act(async () => button.click());
+  }
+
+  it("shows actionable small feedback when the single direct server has disappeared before the click", async () => {
+    const stale = checkout([{ host: "127.0.0.1", port: 3000 }]);
+    useShellStore.setState({ rest: catalog(stale, stale) });
+    await render(stale);
+    await act(async () => useShellStore.setState({ rest: catalog(checkout([]), stale) }));
+    await openServer();
+
+    const picker = document.querySelector<HTMLElement>('[aria-label="Running servers"]');
+    expect(picker).not.toBeNull();
+    expect(picker?.querySelector('[role="status"]')?.textContent).toContain("This server is no longer listed. Choose a running server again.");
+    expect(events.filter((event) => event.kind === "browser_open")).toHaveLength(0);
+  });
+
+  it("opens a single live server directly in its own Workspace despite a different front device and colliding catalog IDs", async () => {
+    const local = checkout([{ host: "::1", port: 3000 }]);
+    const remote = checkout([{ host: "127.0.0.1", port: 4000 }]);
+    useShellStore.setState({ rest: catalog(local, remote) });
+    await render(local);
+    await openServer();
+
+    expect(events.filter((event) => event.kind === "browser_open")).toEqual([{
+      schema_version: 2, kind: "browser_open",
+      payload: { url: "http://[::1]:3000", workspace: { device_id: "local", path: view.path } },
+    }]);
+    expect(document.querySelector('[aria-label="Running servers"]')).toBeNull();
+  });
+});
