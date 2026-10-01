@@ -1228,6 +1228,9 @@ pub struct Runtime {
     /// rebuild triggered by a registration change is not a session update, so
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
+    /// Whether a window draws the snapshot (`ui_attached`); a core no daemon
+    /// told otherwise is drawn.
+    ui_attached: bool,
     /// The label store and analyzer every session-sync coordinator's worker
     /// shares; `None` when the core was made without them (tests).
     label_services: Option<std::sync::Arc<crate::labels::LabelServices>>,
@@ -1627,6 +1630,7 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
+            ui_attached: true,
             label_services: None,
             issue_tokens: Default::default(),
             issue_candidates: Default::default(),

@@ -19,6 +19,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         vite_origin: None,
         bind: "127.0.0.1:0".parse().unwrap(),
         idle_secs: 600,
+        build: None,
         open_command: None,
         host_helper_root: None,
         host_cli_dir: None,
@@ -1314,4 +1315,88 @@ async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
     .await;
     assert_eq!(refused["payload"]["reason"], "invalid_request_id");
     running.stop();
+}
+
+/// A Herdr server that answers every request on `socket`, refusing all but
+/// `ping`; the daemon's session sync gets nothing it can use and keeps
+/// retrying, which is all this needs.
+fn answering_herdr(socket: &std::path::Path) -> std::os::unix::net::UnixListener {
+    use std::io::{BufRead, Write};
+    let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
+    let serving = listener.try_clone().unwrap();
+    std::thread::spawn(move || {
+        for stream in serving.incoming() {
+            let Ok(mut stream) = stream else { return };
+            std::thread::spawn(move || {
+                let mut line = String::new();
+                if std::io::BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .is_err()
+                {
+                    return;
+                }
+                let Ok(request) = serde_json::from_str::<Value>(&line) else {
+                    return;
+                };
+                let response = if request["method"] == "ping" {
+                    json!({"id": request["id"], "result": {"type": "pong"}})
+                } else {
+                    json!({"id": request["id"], "error": {"code": "unavailable", "message": "fake"}})
+                };
+                let _ = writeln!(stream, "{response}");
+            });
+        }
+    });
+    listener
+}
+
+#[tokio::test]
+async fn the_daemon_outlives_the_idle_window_while_its_herdr_answers() {
+    let (dir, mut env) = test_env(false);
+    env.idle_secs = 1;
+    // A Unix socket path has a hard length limit; a tempdir may be too deep.
+    let herdr_dir =
+        std::path::PathBuf::from("/tmp").join(format!("hided-idle-{}", std::process::id()));
+    std::fs::create_dir_all(&herdr_dir).unwrap();
+    let socket = herdr_dir.join("herdr.sock");
+    let listener = answering_herdr(&socket);
+    env.herdr_socket_path = Some(socket.display().to_string());
+    let running = std::sync::Arc::new(hided::start_daemon(env).await.expect("start daemon"));
+    let announced = tokio::spawn({
+        let running = std::sync::Arc::clone(&running);
+        async move { hided::wait_shutdown(&running).await }
+    });
+    // No client ever connects; three idle windows pass.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(
+        !announced.is_finished(),
+        "a daemon whose Herdr answers keeps making labels with no window open"
+    );
+    assert!(state_file::state_path(dir.path()).exists());
+    drop(listener);
+    let _ = std::fs::remove_dir_all(&herdr_dir);
+    announced.abort();
+}
+
+#[tokio::test]
+async fn the_daemon_exits_after_the_idle_window_when_its_herdr_is_gone() {
+    let (dir, mut env) = test_env(false);
+    env.idle_secs = 1;
+    env.herdr_socket_path = Some(dir.path().join("gone.sock").display().to_string());
+    let running = std::sync::Arc::new(hided::start_daemon(env).await.expect("start daemon"));
+    let stopped =
+        tokio::time::timeout(Duration::from_secs(5), hided::wait_shutdown(&running)).await;
+    assert!(
+        stopped.is_ok(),
+        "with no client and no Herdr the daemon ends after the idle window"
+    );
+}
+
+#[tokio::test]
+async fn a_window_cannot_say_whether_windows_are_attached() {
+    let (_dir, running) = start().await;
+    let mut socket = live_socket(&running).await;
+    let answer = send_event(&mut socket, "ui_attached", json!({"attached": false})).await;
+    assert_eq!(answer["type"], "error");
+    assert_eq!(answer["message"], "ui_attached is sent by the daemon only");
 }

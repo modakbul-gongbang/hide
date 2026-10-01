@@ -85,6 +85,12 @@ pub struct AppState {
     pub last_client_gone: Arc<Mutex<Instant>>,
     pub keep_alive: bool,
     pub idle_secs: u64,
+    /// This daemon's build, reported on `/health` for `hide connect`.
+    pub build: Option<Arc<str>>,
+    /// Serializes a renderer count change with the `ui_attached` event it
+    /// sends, so two windows coming and going at once cannot leave the core
+    /// told the opposite of the final count.
+    pub renderer_transitions: Arc<Mutex<()>>,
     pub shutdown: Arc<Notify>,
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
@@ -293,6 +299,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     axum::Json(json!({
         "pid": std::process::id(),
         "version": state.version,
+        "build": state.build.as_deref(),
         "schema_version": SCHEMA_VERSION,
         "clients": state.clients.load(Ordering::SeqCst),
         "open_handlers_in_flight": state.opener.in_flight(),
@@ -543,10 +550,13 @@ async fn client_loop(
         refuse(&mut socket, CloseReason::ClientLimit, Some(previous + 1)).await;
         return;
     }
+    if previous == 0 {
+        state.roots.resume();
+    }
     let renderer = matches!(handshake.client_kind.as_deref(), Some("web" | "desktop"));
     let desktop = handshake.client_kind.as_deref() == Some("desktop");
     if renderer {
-        state.renderers.fetch_add(1, Ordering::SeqCst);
+        renderer_count(&state, true);
     }
     if desktop {
         state.desktop_renderers.fetch_add(1, Ordering::SeqCst);
@@ -1079,6 +1089,9 @@ fn handle_client_text(
         Some("ai_settings") => {
             return handle_ai_settings(state, event, connection);
         }
+        // The daemon owns this flag from its renderer count; a window that
+        // sent it would pause the readers every other window draws.
+        Some("ui_attached") => return Err("ui_attached is sent by the daemon only".to_owned()),
         Some(kind) if kind.starts_with("mobile_") => {
             state.mobile.handle_event(connection, &event)?;
             return Ok(ClientAction::Replies(Vec::new()));
@@ -2594,9 +2607,43 @@ async fn send_snapshot(
     Ok(())
 }
 
+/// Counts a window in or out, and tells the core when the first arrives or
+/// the last leaves (PRD labels-in-hided B29).
+fn renderer_count(state: &AppState, arrived: bool) {
+    let _transition = state
+        .renderer_transitions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let previous = if arrived {
+        state.renderers.fetch_add(1, Ordering::SeqCst)
+    } else {
+        state.renderers.fetch_sub(1, Ordering::SeqCst)
+    };
+    match (arrived, previous) {
+        (true, 0) => dispatch_ui_attached(&state.core, true),
+        (false, 1) => dispatch_ui_attached(&state.core, false),
+        _ => {}
+    }
+}
+
+/// Tells the core whether any window draws its snapshot.
+pub(crate) fn dispatch_ui_attached(core: &CoreHandle, attached: bool) {
+    let event = json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "ui_attached",
+        "payload": { "attached": attached },
+    });
+    if let Err(error) = core.dispatch(event.to_string().into_bytes()) {
+        eprintln!(
+            "{}",
+            json!({"component": "hided", "kind": "ui_attached.dispatch_failed", "attached": attached, "message": error})
+        );
+    }
+}
+
 fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool) {
     if renderer {
-        state.renderers.fetch_sub(1, Ordering::SeqCst);
+        renderer_count(state, false);
     }
     if desktop {
         state.desktop_renderers.fetch_sub(1, Ordering::SeqCst);
@@ -2650,12 +2697,15 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
     let clients = Arc::clone(&state.clients);
     let shutdown = Arc::clone(&state.shutdown);
     let mobile = Arc::clone(&state.mobile);
+    let herdr_socket = state.herdr_socket.clone();
     let idle_task = {
         let shutdown = Arc::clone(&shutdown);
         tokio::spawn(async move {
             if keep_alive {
                 return;
             }
+            let mut herdr_probed: Option<Instant> = None;
+            let mut herdr_up = false;
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 if clients.load(Ordering::SeqCst) != 0 {
@@ -2665,6 +2715,23 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
                 // any time and push has to keep going (PRD D-10). The idle
                 // clock starts over when that ends.
                 if mobile.keep_alive() {
+                    *last_client_gone.lock().expect("client timestamp") = Instant::now();
+                    continue;
+                }
+                // The daemon lives as long as its Herdr server: labels keep
+                // being made with no window open (PRD labels-in-hided D-18).
+                // The idle clock runs only while the server is unreachable,
+                // so a restart or a live handoff, which brings it back within
+                // the idle window, never ends the daemon.
+                if let Some(socket) = herdr_socket.clone()
+                    && herdr_probed.is_none_or(|at| at.elapsed() >= HERDR_PROBE_INTERVAL)
+                {
+                    herdr_probed = Some(Instant::now());
+                    herdr_up = tokio::task::spawn_blocking(move || herdr_reachable(&socket))
+                        .await
+                        .unwrap_or(false);
+                }
+                if herdr_up {
                     *last_client_gone.lock().expect("client timestamp") = Instant::now();
                     continue;
                 }
@@ -2685,6 +2752,18 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
         .map_err(|error| format!("server: {error}"))?;
     idle_task.abort();
     Ok(())
+}
+
+/// How often an idle daemon asks whether its Herdr server is still there.
+const HERDR_PROBE_INTERVAL: Duration = Duration::from_secs(30);
+const HERDR_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Whether the Herdr server at `socket` answers; a refusal is an answer.
+fn herdr_reachable(socket: &std::path::Path) -> bool {
+    matches!(
+        hide_herdr_client::request_with_timeout(socket, "ping", json!({}), HERDR_PROBE_TIMEOUT),
+        Ok(_) | Err(hide_herdr_client::ApiError::Remote { .. })
+    )
 }
 
 pub async fn bind(addr: SocketAddr) -> Result<tokio::net::TcpListener, String> {

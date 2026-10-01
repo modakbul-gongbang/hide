@@ -3,6 +3,7 @@ pub mod boundary;
 mod browser_assets;
 pub mod browser_cli;
 pub mod browser_routes;
+pub mod build_id;
 pub mod cli;
 pub mod core;
 pub mod demand;
@@ -352,6 +353,8 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         last_client_gone: Arc::new(Mutex::new(Instant::now())),
         keep_alive: env.keep_alive,
         idle_secs: env.idle_secs,
+        build: env.build.as_deref().map(Arc::from),
+        renderer_transitions: Arc::new(Mutex::new(())),
         shutdown: Arc::clone(&shutdown),
         ui_dir: if server::has_embedded_ui() {
             None
@@ -385,7 +388,9 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     if let Err(error) = app.roots.catch_up() {
         roots_failed(&error);
     }
-    spawn_root_refresh(Arc::clone(&app.roots));
+    spawn_root_refresh(Arc::clone(&app.roots), Arc::clone(&app.clients));
+    // The core starts out drawn; until a window says otherwise, it is not.
+    server::dispatch_ui_attached(&app.core, false);
     tokio::spawn(pane_auth::serve(
         pane_listener,
         Arc::clone(&pane_capabilities),
@@ -442,6 +447,9 @@ pub struct RootFollower {
     index: Arc<IndexService>,
     /// The revision and terminal sequence the last read reached.
     cursors: Mutex<(u64, u64)>,
+    /// Wakes the refresh loop when a client arrives after none were
+    /// connected, so the reads it skipped meanwhile catch up at once.
+    resumed: Notify,
 }
 
 impl RootFollower {
@@ -457,7 +465,13 @@ impl RootFollower {
             watch,
             index,
             cursors: Mutex::new((0, 0)),
+            resumed: Notify::new(),
         }
+    }
+
+    /// A client arrived after none were connected.
+    pub fn resume(&self) {
+        self.resumed.notify_one();
     }
 
     /// Reads what the core changed since the last read and applies the roots
@@ -516,18 +530,30 @@ pub(crate) fn roots_failed(message: &str) {
 /// beyond the first are drained before it, and the ones that do run take a
 /// snapshot that already carries every change the burst announced, so a repeat
 /// read converges on the same root set instead of piling up work.
-fn spawn_root_refresh(roots: Arc<RootFollower>) {
+///
+/// With no client connected nothing reads the roots but a refused event,
+/// which catches them up itself (`server::admit_event`), so the reads rest
+/// until a client arrives and one read then covers everything skipped (PRD
+/// labels-in-hided B29): the core changes on every label while no window is
+/// open, and a snapshot per change would be the daemon's largest cost then.
+fn spawn_root_refresh(roots: Arc<RootFollower>, clients: Arc<AtomicUsize>) {
     let mut changes = roots.core.notify.subscribe();
     tokio::spawn(async move {
         loop {
-            match changes.recv().await {
-                Ok(()) => {}
-                // This reader fell behind; the next read catches it up. Only a
-                // closed channel means the daemon is done.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            tokio::select! {
+                change = changes.recv() => match change {
+                    Ok(()) => {}
+                    // This reader fell behind; the next read catches it up.
+                    // Only a closed channel means the daemon is done.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                },
+                () = roots.resumed.notified() => {}
             }
             while changes.try_recv().is_ok() {}
+            if clients.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                continue;
+            }
             if let Err(error) = roots.catch_up() {
                 roots_failed(&error);
                 return;

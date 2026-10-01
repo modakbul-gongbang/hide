@@ -1336,6 +1336,11 @@ impl Runtime {
         self.label_services = Some(services);
     }
 
+    /// Whether the readers that only feed a window should run.
+    pub(crate) fn ui_attached(&self) -> bool {
+        self.ui_attached
+    }
+
     /// What a starting session-sync coordinator builds its label worker on.
     pub(crate) fn label_services(&self) -> Option<std::sync::Arc<crate::labels::LabelServices>> {
         self.label_services.clone()

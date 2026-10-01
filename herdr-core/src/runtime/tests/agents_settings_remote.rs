@@ -1949,3 +1949,25 @@ fn remote_purpose_resolver_reports_an_unsupported_server_in_the_sheet() {
             .any(|diagnostic| { diagnostic.kind == "checkout_purpose.remote_unsupported" })
     );
 }
+
+#[test]
+fn window_readers_rest_while_no_window_draws_the_snapshot() {
+    let mut runtime = runtime();
+    let event = |attached: bool| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "ui_attached", "payload": {"attached": attached}
+        }))
+        .expect("the event encodes")
+    };
+    assert!(
+        runtime.ui_attached(),
+        "a core no daemon told otherwise is drawn, so every reader runs"
+    );
+    assert!(
+        !runtime.dispatch_json(&event(false)),
+        "the last window leaving is known and changes nothing on screen"
+    );
+    assert!(!runtime.ui_attached());
+    assert!(!runtime.dispatch_json(&event(true)));
+    assert!(runtime.ui_attached());
+}

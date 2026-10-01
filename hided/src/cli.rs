@@ -661,9 +661,35 @@ impl ConnectError {
 /// The one discovery path: the live daemon the state file names, or a new
 /// one started and waited for. `open` and `connect` both run it, so a host
 /// that loads the shell itself can never start a second daemon.
+///
+/// A live daemon of another build than the `hided` beside this CLI is
+/// stopped and replaced (PRD labels-in-hided D-19): the app and its daemon
+/// are always one build. It is never attached to instead; a daemon that
+/// will not stop is a start failure. Only the daemon of this state folder
+/// is looked at, so a dev or e2e daemon elsewhere is never replaced, and
+/// stopping it leaves Herdr, its panes and their agents running.
 fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
-    if let Some(state) = healthy_state(env) {
-        return Ok(state);
+    let build = crate::build_id::of_file(&daemon_binary().map_err(ConnectError::StartFailed)?)
+        .map_err(ConnectError::StartFailed)?;
+    if let Some((state, health)) = healthy_daemon(env) {
+        let running = health.get("build").and_then(serde_json::Value::as_str);
+        if running == Some(build.as_str()) {
+            return Ok(state);
+        }
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "hide", "kind": "daemon.replacing",
+                "pid": state.pid, "running_build": running, "build": build,
+            })
+        );
+        stop_daemon(env, &state).map_err(|detail| {
+            eprintln!(
+                "{}",
+                serde_json::json!({"component": "hide", "kind": "daemon.replace_failed", "pid": state.pid, "message": detail})
+            );
+            ConnectError::StartFailed(detail)
+        })?;
     }
     spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
     wait_healthy(env).map_err(ConnectError::NoResponse)
@@ -742,16 +768,37 @@ fn status(env: &Env) -> Result<(), String> {
 
 fn stop(env: &Env) -> Result<(), String> {
     if let Some(state) = state_file::read_state(&env.state_dir).map_err(|e| e.to_string())? {
-        let _ = send_signal(state.pid, libc::SIGTERM);
-        for _ in 0..50 {
+        stop_daemon(env, &state)?;
+    }
+    state_file::remove_state(&env.state_dir);
+    Ok(())
+}
+
+/// Ends the daemon `state` names: SIGTERM and five seconds for its graceful
+/// stop, which ends its AI requests and provider processes, then SIGKILL.
+/// An error only when it is still alive after that.
+fn stop_daemon(env: &Env, state: &DaemonState) -> Result<(), String> {
+    let _ = send_signal(state.pid, libc::SIGTERM);
+    for _ in 0..50 {
+        if !pid_alive(state.pid) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if pid_alive(state.pid) {
+        let _ = send_signal(state.pid, libc::SIGKILL);
+        for _ in 0..20 {
             if !pid_alive(state.pid) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        if pid_alive(state.pid) {
-            let _ = send_signal(state.pid, libc::SIGKILL);
-        }
+    }
+    if pid_alive(state.pid) {
+        return Err(format!(
+            "the running hided (pid {}) did not stop",
+            state.pid
+        ));
     }
     state_file::remove_state(&env.state_dir);
     Ok(())
@@ -759,6 +806,9 @@ fn stop(env: &Env) -> Result<(), String> {
 
 fn serve(mut env: Env, keep_alive: bool) -> Result<(), String> {
     env.keep_alive = keep_alive || env.keep_alive;
+    // The daemon runs inside this CLI here; its build is the `hided` this
+    // CLI ships beside, the one `hide connect` compares against.
+    env.build = Some(crate::build_id::of_file(&daemon_binary()?)?);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("hide-serve")
@@ -834,12 +884,17 @@ fn wait_healthy(env: &Env) -> Result<DaemonState, String> {
 }
 
 fn healthy_state(env: &Env) -> Option<DaemonState> {
+    healthy_daemon(env).map(|(state, _)| state)
+}
+
+/// The live daemon of this state folder and what its `/health` answered.
+fn healthy_daemon(env: &Env) -> Option<(DaemonState, serde_json::Value)> {
     let state = state_file::read_state(&env.state_dir).ok().flatten()?;
     if !pid_alive(state.pid) {
         return None;
     }
-    health_json(state.port).ok()?;
-    Some(state)
+    let health = health_json(state.port).ok()?;
+    Some((state, health))
 }
 
 fn health_json(port: u16) -> Result<serde_json::Value, String> {

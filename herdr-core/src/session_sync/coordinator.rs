@@ -289,7 +289,10 @@ fn run_coordinator(
             }
         }
 
-        let run_background_reads = subscription.is_some() && !defer_background_reads;
+        // With no window attached only label work runs; these readers feed
+        // nothing else (PRD labels-in-hided B29).
+        let run_background_reads =
+            subscription.is_some() && !defer_background_reads && read_ui_attached(&context);
         defer_background_reads = false;
         if run_background_reads {
             if let Some(current) = replica.as_mut()
@@ -971,6 +974,16 @@ fn publish_provider_usage(
 fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::UsageActivity> {
     let runtime = context.runtime.upgrade()?;
     runtime.lock().ok().map(|guard| guard.usage_activity())
+}
+
+/// Whether a window draws the snapshot; a gone runtime reads as attached,
+/// and the loop's own check ends the coordinator.
+fn read_ui_attached(context: &SessionSyncContext) -> bool {
+    context
+        .runtime
+        .upgrade()
+        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.ui_attached()))
+        .unwrap_or(true)
 }
 
 /// Whether the Settings agents tab is on screen. `None` means the runtime is

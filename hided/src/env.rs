@@ -148,6 +148,10 @@ pub struct Env {
     pub vite_origin: Option<String>,
     pub bind: SocketAddr,
     pub idle_secs: u64,
+    /// This daemon's build (`build_id`), set by `hided serve` from its own
+    /// executable; never read from the environment. A daemon started in
+    /// process (tests) has none and reports none.
+    pub build: Option<String>,
     /// Optional test/operator-selected host opener, validated before serving.
     pub open_command: Option<PathBuf>,
     /// Where the device helper is installed on each SSH device; part of the
@@ -374,6 +378,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         vite_origin,
         bind: SocketAddr::from(([127, 0, 0, 1], port)),
         idle_secs,
+        build: None,
         open_command,
         host_helper_root,
         host_cli_dir,

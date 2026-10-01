@@ -13,13 +13,16 @@ fn run() -> Result<(), String> {
             return hided::spawn::run_opener_helper(&args);
         }
     }
-    let env = hided::env::load().map_err(|errors| {
+    let mut env = hided::env::load().map_err(|errors| {
         errors
             .iter()
             .map(|error| format!("{}: {}", error.key, error.kind))
             .collect::<Vec<_>>()
             .join("\n")
     })?;
+    // Hashed before anything else: an app update replaces the file under the
+    // same path, and a later read would report the new build as this one.
+    env.build = Some(hided::build_id::of_current_exe()?);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("hided")
