@@ -62,6 +62,7 @@
   --color-warning: var(--warning);
   --color-success: var(--success);
   --color-agent-working: var(--agent-working);
+  --color-status-foreground: var(--status-foreground);
   --color-file-neutral: var(--file-neutral);
   --color-file-document: var(--file-document);
   --color-file-blue: var(--file-blue);
@@ -140,7 +141,10 @@
   --ratio-agent-mark-font: 0.53;
   --size-tab-strip: 32px;
   --size-traffic-light-inset: 69px;
-  --size-rail: 64px;
+  --size-rail: 48px;
+  --size-rail-badge: 13px;
+  --size-rail-badge-text: 9px;
+  --size-rail-mark: 8px;
   --size-pane-header: 28px;
   --size-sidebar-min: 220px;
   --size-sidebar-ideal: 292px;
@@ -154,7 +158,6 @@
   --size-agent-mark: 12px;
   --size-status-mark: 7px;
   --size-badge-height: 16px;
-  --size-badge-wide: 20px;
   --size-recent-location-max: 112px;
   --size-keycap-height: 18px;
   --size-control-compact: 24px;
@@ -292,6 +295,7 @@
   --warning: #b45309;
   --success: #15803d;
   --agent-working: #2563eb;
+  --status-foreground: #ffffff;
   --file-neutral: #6e6e73;
   --file-document: #52525b;
   --file-blue: #2d7598;
@@ -363,6 +367,7 @@
   --warning: #ffb847;
   --success: #5ee69e;
   --agent-working: #61a6ff;
+  --status-foreground: #101112;
   --file-neutral: #9c9c9d;
   --file-document: #d3d3d4;
   --file-blue: #519aba;

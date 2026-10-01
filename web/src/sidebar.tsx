@@ -127,7 +127,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
           font is (D-05): `interface-scale-exempt` is the generated rule in
           tokens.css that declares the sizes again at scale 1. */}
       <nav
-        className={cn("interface-scale-exempt absolute inset-y-0 left-0 flex w-(--sidebar-total) flex-col bg-sidebar text-foreground", preview !== null && "z-30")}
+        className={cn("interface-scale-exempt absolute inset-y-0 left-0 flex w-(--sidebar-total) bg-sidebar text-foreground", preview !== null && "z-30")}
         style={
           preview === null
             ? undefined
@@ -136,25 +136,26 @@ export function Sidebar({ actions }: { actions: Actions }) {
         data-sidebar={mode}
         data-sidebar-rail={rail ? "device" : "none"}
       >
-        <SidebarHeader
-          rail={rail}
-          title={title}
-          addProject={body !== "agents"}
-          tabs={body !== "disconnected"}
-          mode={mode}
-          deviceMenu={deviceMenu}
-          switchChord={switchChord || null}
-          searchChord={displayCommand("search", hostKind()) || null}
-          newWorkspaceChord={displayCommand("new_workspace", hostKind()) || null}
-          onMode={actions.showSidebarMode}
-          onSearch={() => actions.openSearch()}
-          onNewWorkspace={hostBridge() ? () => actions.openAddProject() : null}
-        />
-        {status ? (
-          <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
-        ) : null}
-        <div className="flex min-h-0 flex-1">
-          {rail ? <DeviceRail actions={actions} /> : null}
+        {/* The rail is the sidebar's full-height left column, the device's header and lists beside it (quick device-rail-slack). */}
+        {rail ? <DeviceRail actions={actions} /> : null}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <SidebarHeader
+            rail={rail}
+            title={title}
+            addProject={body !== "agents"}
+            tabs={body !== "disconnected"}
+            mode={mode}
+            deviceMenu={deviceMenu}
+            switchChord={switchChord || null}
+            searchChord={displayCommand("search", hostKind()) || null}
+            newWorkspaceChord={displayCommand("new_workspace", hostKind()) || null}
+            onMode={actions.showSidebarMode}
+            onSearch={() => actions.openSearch()}
+            onNewWorkspace={hostBridge() ? () => actions.openAddProject() : null}
+          />
+          {status ? (
+            <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
+          ) : null}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-sidebar-content="true">
             {list}
             <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
@@ -495,9 +496,10 @@ function AgentList({ actions }: { actions: Actions }) {
 
 /**
  * The selected device's `Needs You N · Done N · Working N` line above its
- * Agents list (quick device-rail-badges B5): the same three states and colors
- * the tile's circles use, a zero count left out, and nothing at all when the
- * device has no agent in any of them.
+ * Agents list (quick device-rail-badges B5): the three states in the colors
+ * the rail's marks wear, a zero count left out, and nothing at all when the
+ * device has no agent in any of them. Working is counted here and not on the
+ * rail (quick device-rail-slack).
  */
 function AgentCounts({ agents }: { agents: AgentRow[] }) {
   const counts = groupCounts(agents);

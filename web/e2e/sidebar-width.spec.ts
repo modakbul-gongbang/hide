@@ -25,7 +25,7 @@ async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
 }
 
 /** `--size-rail`: the always-shown device rail, which the nav and its box carry beside the content column the width names. */
-const RAIL = 64;
+const RAIL = 48;
 
 const width = async (element: Locator) => Math.round((await element.boundingBox())!.width);
 
