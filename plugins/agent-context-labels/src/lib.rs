@@ -2358,11 +2358,14 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                         label_reference_token(pane.agent.as_str(), "id", &session.value)
                     })
             });
+        // A first sighting starts from the lifecycle's own initial state, so
+        // owning the labels never turns a new pane unseen.
+        let now = unix_time_ms()?;
         let state = self
             .display_states
             .panes
             .entry(pane.id.clone())
-            .or_default();
+            .or_insert_with(|| first_display_state(pane, now));
         let owner_changed = known_owner.as_ref().is_some_and(|owner| {
             state.session_owner.as_ref().is_some_and(|old| old != owner)
                 || (confirmed.is_some() && state.session_owner.is_none())
@@ -2677,11 +2680,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             .display_states
             .panes
             .entry(pane.id.clone())
-            .or_insert_with(|| PersistedDisplayState {
-                state_change_seq: pane.state_change_seq,
-                changed_unix_ms: now,
-                ..PersistedDisplayState::default()
-            });
+            .or_insert_with(|| first_display_state(pane, now));
         let mut changed = is_new;
         if state.state_change_seq != pane.state_change_seq {
             state.state_change_seq = pane.state_change_seq;
@@ -3343,6 +3342,16 @@ fn spawn_watcher_subscription(
         shutdown,
         worker: Some(worker),
     })
+}
+
+/// The display state a pane gets the first time the watcher sees it: its
+/// current lifecycle step counts as already seen.
+fn first_display_state(pane: &Pane, now: u64) -> PersistedDisplayState {
+    PersistedDisplayState {
+        state_change_seq: pane.state_change_seq,
+        changed_unix_ms: now,
+        ..PersistedDisplayState::default()
+    }
 }
 
 fn reconnect_delay(delay: Duration) -> Duration {

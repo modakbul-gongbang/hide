@@ -201,6 +201,28 @@ fn event_driven_scan_updates_status_and_focus_without_waiting_for_a_tick() {
     );
 }
 
+/// Confirming a first-seen pane's session must not turn it unseen: only a
+/// lifecycle change the watcher observed does that.
+#[test]
+fn a_first_seen_unfocused_pane_is_published_as_seen() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let mut first = pane("w1:p1", AgentKind::Claude, "idle");
+    first.state_change_seq = 7;
+    let transport = FakeTransport::new(vec![first.clone()]);
+    let mut watcher = Watcher::new(transport, no_provider(), FakeSessionReader, paths);
+
+    watcher.scan_panes(&[first.clone()], false, false).unwrap();
+    assert!(!watcher.last_report().unseen);
+
+    first.state_change_seq += 1;
+    watcher.scan_panes(&[first], false, false).unwrap();
+    assert!(
+        watcher.last_report().unseen,
+        "a later change while unfocused is unseen"
+    );
+}
+
 #[test]
 fn watcher_clears_the_legacy_summary_token_once_per_pane() {
     let root = tempdir().unwrap();
