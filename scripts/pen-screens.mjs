@@ -2409,7 +2409,7 @@ function buildProjectsSidebar(tokens) {
   const railWidth = num(tokens, '--size-rail');
   const WIN_H = 720;
   const TILE = 32, RING = 2, RAIL_TOP = 12;
-  const MARK = num(tokens, '--size-rail-mark'), BADGE = num(tokens, '--size-rail-badge'), CUT = 2;
+  const MARK = num(tokens, '--size-rail-mark'), BADGE = num(tokens, '--size-rail-badge'), BADGE_TEXT = num(tokens, '--size-rail-badge-text'), CUT = 2;
   const FG = '$--foreground', SUBTLE = '$--subtle-foreground', MUTED = '$--muted-foreground';
   const at = (node, x, y) => ({...node, x: Math.round(x), y: Math.round(y)});
   const spacer = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
@@ -2441,7 +2441,7 @@ function buildProjectsSidebar(tokens) {
     const glyphFill = key === 'add' ? MUTED : selected ? FG : SUBTLE;
     const drawn = d.monogram ? text(`${id}-g`, d.monogram, {size: '$--text-body', weight: '600', fill: glyphFill}) : icon(`${id}-g`, d.glyph, {size: key === 'add' ? 14 : 20, fill: glyphFill});
     const glyph = off ? {...drawn, opacity: num(tokens, '--opacity-dimmed')} : drawn;
-    const pill = needs >= 10 ? BADGE + 6 : BADGE;
+    const pill = needs >= 10 ? BADGE + 2 : BADGE;
     return frame(id, d.label, {layout: 'none', width: railWidth, height: box}, [
       ...(selected ? [at(frame(`${id}-ring`, 'Selected', {width: box, height: box, cornerRadius: 12, stroke: FG, strokeWidth: RING, strokeAlignment: 'inner'}, []), x0 - 2 * RING, y0 - 2 * RING)] : []),
       at(frame(`${id}-t`, 'Tile', {
@@ -2450,10 +2450,10 @@ function buildProjectsSidebar(tokens) {
       }, [glyph]), x0, y0),
       ...(done && !off ? [at(notched(`${id}-done`, 'Done', MARK, MARK, {fill: BADGE_FILL.done}), x0 + TILE + 2 - MARK - CUT, y0 - 2 - CUT)] : []),
       ...(needs > 0 && !off ? [at(notched(`${id}-needs`, 'Needs You', pill, BADGE, {fill: BADGE_FILL.needs_you}, [
-        text(`${id}-nt`, needs >= 10 ? '9+' : String(needs), {size: '$--text-micro', weight: '600', fill: '$--status-foreground'}),
+        text(`${id}-nt`, needs >= 10 ? '9+' : String(needs), {size: BADGE_TEXT, weight: '600', fill: '$--status-foreground'}),
       ]), x0 + TILE + 4 - pill - CUT, y0 + TILE + 4 - BADGE - CUT)] : []),
       ...(off ? [at(notched(`${id}-x`, 'Not connected', BADGE, BADGE, {fill: '$--card'}, [
-        text(`${id}-xt`, '×', {size: '$--text-micro', fill: MUTED}),
+        text(`${id}-xt`, '×', {size: BADGE_TEXT, fill: MUTED}),
       ]), x0 + TILE + 4 - BADGE - CUT, y0 + TILE + 4 - BADGE - CUT)] : []),
     ]);
   }

@@ -35918,11 +35918,11 @@
     },
     "--size-rail-badge": {
       "type": "number",
-      "value": 15
+      "value": 13
     },
     "--size-rail-mark": {
       "type": "number",
-      "value": 9
+      "value": 8
     },
     "--status-foreground": {
       "type": "color",
@@ -35937,6 +35937,10 @@
           }
         }
       ]
+    },
+    "--size-rail-badge-text": {
+      "type": "number",
+      "value": 9
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",

@@ -1234,11 +1234,15 @@
     },
     "--size-rail-badge": {
       "type": "number",
-      "value": 15
+      "value": 13
+    },
+    "--size-rail-badge-text": {
+      "type": "number",
+      "value": 9
     },
     "--size-rail-mark": {
       "type": "number",
-      "value": 9
+      "value": 8
     },
     "--size-pane-header": {
       "type": "number",
@@ -83325,23 +83329,23 @@
                                           "id": "psb-rest-l-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     },
                                     {
@@ -83361,28 +83365,28 @@
                                               "content": "2",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -83437,28 +83441,28 @@
                                               "content": "9+",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 21,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 15,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 25,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 19,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 21,
-                                      "y": 23
+                                      "x": 27,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -83514,28 +83518,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -88441,23 +88445,23 @@
                                           "id": "psb-agents-l-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     },
                                     {
@@ -88477,28 +88481,28 @@
                                               "content": "2",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -88553,28 +88557,28 @@
                                               "content": "9+",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 21,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 15,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 25,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 19,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 21,
-                                      "y": 23
+                                      "x": 27,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -88630,28 +88634,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -89796,23 +89800,23 @@
                                           "id": "psb-remote-l-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     },
                                     {
@@ -89832,28 +89836,28 @@
                                               "content": "2",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -89922,28 +89926,28 @@
                                               "content": "9+",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 21,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 15,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 25,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 19,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 21,
-                                      "y": 23
+                                      "x": 27,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -89999,28 +90003,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -91219,23 +91223,23 @@
                                           "id": "psb-off-l-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     },
                                     {
@@ -91255,28 +91259,28 @@
                                               "content": "2",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -91346,28 +91350,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -91423,28 +91427,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -91838,23 +91842,23 @@
                                           "id": "psb-one-l-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     }
                                   ],
@@ -94015,23 +94019,23 @@
                                           "id": "psb-rest-d-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     },
                                     {
@@ -94051,28 +94055,28 @@
                                               "content": "2",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -94127,28 +94131,28 @@
                                               "content": "9+",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 21,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 15,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 25,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 19,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 21,
-                                      "y": 23
+                                      "x": 27,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -94204,28 +94208,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -99131,23 +99135,23 @@
                                           "id": "psb-agents-d-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     },
                                     {
@@ -99167,28 +99171,28 @@
                                               "content": "2",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -99243,28 +99247,28 @@
                                               "content": "9+",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 21,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 15,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 25,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 19,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 21,
-                                      "y": 23
+                                      "x": 27,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -99320,28 +99324,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -100486,23 +100490,23 @@
                                           "id": "psb-remote-d-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     },
                                     {
@@ -100522,28 +100526,28 @@
                                               "content": "2",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -100612,28 +100616,28 @@
                                               "content": "9+",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 21,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 15,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 25,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 19,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 21,
-                                      "y": 23
+                                      "x": 27,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -100689,28 +100693,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -101909,23 +101913,23 @@
                                           "id": "psb-off-d-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     },
                                     {
@@ -101945,28 +101949,28 @@
                                               "content": "2",
                                               "fill": "$--status-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "600"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--warning"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -102036,28 +102040,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -102113,28 +102117,28 @@
                                               "content": "×",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-micro",
+                                              "fontSize": 9,
                                               "fontWeight": "400"
                                             }
                                           ],
-                                          "width": 15,
-                                          "height": 15,
-                                          "cornerRadius": 7.5,
+                                          "width": 13,
+                                          "height": 13,
+                                          "cornerRadius": 6.5,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--card"
                                         }
                                       ],
-                                      "width": 19,
-                                      "height": 19,
-                                      "cornerRadius": 9.5,
+                                      "width": 17,
+                                      "height": 17,
+                                      "cornerRadius": 8.5,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 27,
-                                      "y": 23
+                                      "x": 29,
+                                      "y": 25
                                     }
                                   ],
                                   "layout": "none",
@@ -102528,23 +102532,23 @@
                                           "id": "psb-one-d-rt0-done-m",
                                           "name": "Done",
                                           "children": [],
-                                          "width": 9,
-                                          "height": 9,
-                                          "cornerRadius": 4.5,
+                                          "width": 8,
+                                          "height": 8,
+                                          "cornerRadius": 4,
                                           "layout": "horizontal",
                                           "justifyContent": "center",
                                           "alignItems": "center",
                                           "fill": "$--success"
                                         }
                                       ],
-                                      "width": 13,
-                                      "height": 13,
-                                      "cornerRadius": 6.5,
+                                      "width": 12,
+                                      "height": 12,
+                                      "cornerRadius": 6,
                                       "fill": "$--sidebar",
                                       "layout": "horizontal",
                                       "justifyContent": "center",
                                       "alignItems": "center",
-                                      "x": 31,
+                                      "x": 32,
                                       "y": 0
                                     }
                                   ],

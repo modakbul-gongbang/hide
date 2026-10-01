@@ -142,8 +142,9 @@
   --size-tab-strip: 32px;
   --size-traffic-light-inset: 69px;
   --size-rail: 48px;
-  --size-rail-badge: 15px;
-  --size-rail-mark: 9px;
+  --size-rail-badge: 13px;
+  --size-rail-badge-text: 9px;
+  --size-rail-mark: 8px;
   --size-pane-header: 28px;
   --size-sidebar-min: 220px;
   --size-sidebar-ideal: 292px;

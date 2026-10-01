@@ -114,7 +114,7 @@ export function RailTileView({ tile, selected, counts, connected, onSelect }: { 
                 data-rail-badge="needs_you"
                 data-rail-badge-count={counts.needs_you}
                 className={cn(
-                  "absolute -right-xs -bottom-xs flex h-(--size-rail-badge) min-w-(--size-rail-badge) items-center justify-center rounded-full bg-warning px-xs text-micro leading-none font-semibold text-status-foreground tabular-nums",
+                  "absolute -right-xs -bottom-xs flex h-(--size-rail-badge) min-w-(--size-rail-badge) items-center justify-center rounded-full bg-warning px-xxs text-(length:--size-rail-badge-text) leading-none font-semibold text-status-foreground tabular-nums",
                   CUTOUT,
                 )}
               >
