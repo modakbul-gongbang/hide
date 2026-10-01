@@ -144,6 +144,7 @@ export function createFakeRemote(cliPath) {
       const agents = read(host, "agents.json", {}); agents[pane] = { kind: "claude", status: "idle", ready: true, ...agent }; write(host, "agents.json", agents);
       const panes = read(host, "panes.json", {}); panes[pane] ??= { workspace: `ws-${agent.name}`, cwd: agent.cwd ?? home(host) }; write(host, "panes.json", panes);
     },
+    removeAgent(host, pane) { const agents = read(host, "agents.json", {}); delete agents[pane]; write(host, "agents.json", agents); const panes = read(host, "panes.json", {}); delete panes[pane]; write(host, "panes.json", panes); },
     setAgent(host, pane, patch) { const agents = read(host, "agents.json", {}); agents[pane] = { ...agents[pane], ...patch }; write(host, "agents.json", agents); },
     prompts: (host) => lines(host, "prompts.jsonl"),
     calls: (host) => lines(host, "calls.jsonl"),
