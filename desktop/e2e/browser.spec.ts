@@ -233,9 +233,14 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   const pageB = await viewOf(`${origin}/b.html`);
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
-  // Two View areas side by side need the Workspace's width. In this window the
-  // panel already covers the body, and the tools fold into an overlay there,
-  // closed until asked for (issue 170).
+  // Two View areas side by side need the Workspace's width: the side panel is
+  // expanded over it, from the toolbar's location menu. In this window the
+  // panel already covers the body, so its Expand is not drawn and the menu
+  // stores the state; the tools fold into an overlay there, closed until asked
+  // for (issue 170).
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
   const toolsShown = page.locator('[data-tools-toggle="on"]');
   if (await toolsShown.count()) await toolsShown.click();
   await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
