@@ -248,7 +248,9 @@ impl LabelWorker {
             // came and went inside one burst of Herdr events and was never
             // seen here.
             let ran = status == "working"
-                || (seq_moved && was_stopped && matches!(status.as_str(), "idle" | "done" | "blocked"));
+                || (seq_moved
+                    && was_stopped
+                    && matches!(status.as_str(), "idle" | "done" | "blocked"));
             if ran && (record.question || !record.expected_reply.is_empty()) {
                 record.question = false;
                 record.expected_reply.clear();
