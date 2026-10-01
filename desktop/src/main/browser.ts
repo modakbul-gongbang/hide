@@ -150,7 +150,12 @@ export class BrowserViews {
       // comes back, the page that started it takes the keyboard again, as
       // it would after Escape, unless it has since been hidden or closed.
       if (held) window.once("focus", () => {
-        if (held.page.visible && this.pages.get(held.page.key) === held.page) held.page.view.webContents.focus();
+        if (!held.page.visible || this.pages.get(held.page.key) !== held.page) return;
+        held.page.view.webContents.focus();
+        // One attempt at the moment the window becomes key: whether the page
+        // held the keyboard right after it says if the attempt was refused
+        // (the page not yet accepting focus) or taken back later by the shell.
+        this.log.event("browser.window_return", { page_focused: held.page.view.webContents.isFocused() });
       });
     });
     window.on("closed", () => {
