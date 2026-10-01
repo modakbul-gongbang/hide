@@ -256,7 +256,7 @@ export function ageWords(ms: number): string {
 /** Why a worktree is only there to be removed: its work is merged, or its folder is gone. */
 export type Cleanup = "merged" | "missing";
 
-function cleanupOf(workspace: Workspace, checkout: Checkout): Cleanup | null {
+export function cleanupOf(workspace: Workspace, checkout: Checkout): Cleanup | null {
   if (!checkout.is_worktree || checkout.is_primary === true || workspace.is_git !== true) return null;
   if (!checkout.exists || checkout.worktree?.missing === true) return "missing";
   return stageOf(checkout) === "done" ? "merged" : null;
