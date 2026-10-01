@@ -58,8 +58,7 @@ test.beforeEach(() => {
 test.afterEach(async () => {
   let releaseFailure: string | null = null;
   if (nativeModifiers.size) {
-    const released = postKeys(null, [...nativeModifiers].map((name) => `${name} up`));
-    nativeModifiers = new Set();
+    const released = releaseNativeModifiers();
     if (released.status !== 0) releaseFailure = String(released.stderr) || "native modifier release failed";
   }
   const info = test.info();
@@ -491,14 +490,28 @@ function menuClick(id: string): Promise<void> {
 const MODIFIER_KEYS: Record<string, [code: number, flag: number]> = { control: [59, 0x40000], option: [58, 0x80000], shift: [56, 0x20000] };
 const KEY_CODES: Record<string, number> = { tab: 48, escape: 53, "1": 18, "2": 19, "3": 20 };
 
+/** Posts key events at the HID tap; with a pid, each one is refused unless that process is frontmost. */
+function postEvents(pid: number | null, events: [code: number, down: boolean, modifier: boolean, flags: number][]): ReturnType<typeof spawnSync> {
+  const script = `ObjC.import("CoreGraphics"); ObjC.import("AppKit");
+for (const [code, down, modifier, flags] of ${JSON.stringify(events)}) {
+  if (${pid !== null} && $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier !== ${pid ?? 0}) throw new Error("candidate lost foreground");
+  const event = $.CGEventCreateKeyboardEvent(null, code, down);
+  if (modifier) $.CGEventSetType(event, 12);
+  $.CGEventSetFlags(event, flags);
+  $.CGEventPost(0, event);
+  delay(0.025);
+}`;
+  return spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", timeout: 10_000 });
+}
+
 /**
- * Posts real key events at the HID tap, refused event by event unless `pid`
- * is the foreground process (null skips the check, for releasing modifiers).
- * A modifier is its own flags-changed event carrying its key code, as a
- * physical key sends it; System Events' `key down control` sends none, so a
- * page never sees Control go down or come up and a release proves nothing.
+ * Real macOS input to the candidate `pid`, which must be the foreground
+ * process. A modifier is its own flags-changed event carrying its key code,
+ * as a physical key sends it; System Events' `key down control` sends none,
+ * so a page never sees Control go down or come up and a release proves nothing.
  */
-function postKeys(pid: number | null, keys: string[]): ReturnType<typeof spawnSync> {
+function nativeKeys(pid: number, keys: string[]): void {
+  expect(Number.isInteger(pid) && pid > 0, `candidate pid ${pid}`).toBe(true);
   const held = new Set(nativeModifiers);
   const flagsOf = () => [...held].reduce((sum, name) => sum | MODIFIER_KEYS[name]![1], 0);
   const events: [code: number, down: boolean, modifier: boolean, flags: number][] = [];
@@ -515,27 +528,19 @@ function postKeys(pid: number | null, keys: string[]): ReturnType<typeof spawnSy
     if (code === undefined) throw new Error(`no key code for ${key}`);
     events.push([code, true, false, flagsOf()], [code, false, false, flagsOf()]);
   }
-  const script = `ObjC.import("CoreGraphics"); ObjC.import("AppKit");
-for (const [code, down, modifier, flags] of ${JSON.stringify(events)}) {
-  if (${pid ?? -1} >= 0 && $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier !== ${pid ?? -1}) throw new Error("candidate lost foreground");
-  const event = $.CGEventCreateKeyboardEvent(null, code, down);
-  if (modifier) $.CGEventSetType(event, 12);
-  $.CGEventSetFlags(event, flags);
-  $.CGEventPost(0, event);
-  delay(0.025);
-}`;
   // A modifier counts as down once its event may have been posted, so the
   // test's cleanup releases it even when the script stopped partway.
   for (const key of keys) if (key.endsWith(" down")) nativeModifiers.add(key.split(" ")[0]!);
-  const result = spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", timeout: 10_000 });
+  const result = postEvents(pid, events);
   if (result.status === 0) nativeModifiers = held;
-  return result;
+  expect(result.status, String(result.stderr)).toBe(0);
 }
 
-/** Real macOS input to this candidate, which must be the foreground process. */
-function nativeKeys(pid: number, keys: string[]): void {
-  const result = postKeys(pid, keys);
-  expect(result.status, String(result.stderr)).toBe(0);
+/** Lets go of every modifier a case left down, wherever the keyboard now is: an up event and nothing else. */
+function releaseNativeModifiers(): ReturnType<typeof spawnSync> {
+  const events = [...nativeModifiers].map((name) => [MODIFIER_KEYS[name]![0], false, true, 0] as [number, boolean, boolean, number]);
+  nativeModifiers = new Set();
+  return postEvents(null, events);
 }
 
 test("area cycle native: page input previews one exact area, releases once and cancels", { tag: NEEDS_FOCUS }, async () => {
@@ -633,7 +638,9 @@ test("area cycle native: page input previews one exact area, releases once and c
   await expect(page.locator("[data-cycle=area]")).toBeVisible();
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
-  await focus(current);
+  // The window coming back gives the keyboard to the page that started the hold.
+  await app.evaluate(({ app: electron, BrowserWindow }) => { electron.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
+  await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
   nativeKeys(pid, ["control up"]);
   await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
   expect(sent.get("view_layout") ?? 0).toBe(canceled);
