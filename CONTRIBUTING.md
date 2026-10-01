@@ -58,8 +58,8 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | herdr pin single source | The Herdr version and digest live only in `herdr-bundle.json` | `zsh scripts/check-herdr-pin-single-source.sh` | Derive from the manifest; never restate the value. Bump with `scripts/bump-herdr.sh <version>`. |
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |
 
-A web e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that is the only way a test leaves a required gate.
-Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required shards skip it with `--grep-invert @flaky`, and shard 1 still runs every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
+A web or desktop e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that is the only way a test leaves a required gate.
+Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required web shards and the required desktop step skip it with `--grep-invert @flaky`, and web shard 1 and the desktop job each still run every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
 Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
 
 A web e2e test that exercises what differs by operating system is tagged `{ tag: "@platform" }` with a comment saying what, and a pull request runs those on macOS as well as on Linux: Trash, process ownership, file watching and saving, worktree paths, disk cleanup, terminal input and echo through the platform's Herdr, and the ⌘ chords and Korean input a Mac user types.
