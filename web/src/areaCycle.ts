@@ -1,5 +1,5 @@
 // The focused-area cycle. In a View area it narrows the page MRU to that one
-// drawn area; in the Agent area it walks every terminal pane the keyboard has
+// drawn area; in the Agent area it walks every agent pane the keyboard has
 // been in, across devices, projects and checkouts (issue 301).
 // No committed selection lives here.
 import { areaFrame } from "./areaFrames";
@@ -92,10 +92,10 @@ export function agentOrigin(rest: SnapshotRest | null, owner: KeyboardOwner = ke
 }
 
 /**
- * The Agent area cycle: the pane in use, then every pane the keyboard has
- * been in, most recent first, on any device, project or checkout. With no
- * pane in use the first chord lands on the most recent one, so the cycle
- * starts before it.
+ * The Agent area cycle: the pane in use, then every agent pane the keyboard
+ * has been in, most recent first, on any device, project or checkout. When
+ * the pane in use runs no agent, or there is none, the first chord lands on
+ * the most recent agent pane, so the cycle starts before it.
  */
 export function agentCycle(rest: SnapshotRest | null, owner?: KeyboardOwner): Cycle | null {
   const origin = agentOrigin(rest, owner);

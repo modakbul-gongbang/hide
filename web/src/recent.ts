@@ -11,7 +11,7 @@
 // they were used and restores each one's last Workspace surface, which is
 // this same order narrowed to the project. Beside it, one recent-use order
 // of the terminal panes the keyboard has been in, on every device, project
-// and checkout, which the Agent area's cycle walks (issue 301). The core reports what is in
+// and checkout, whose agent panes the Agent area's cycle walks (issue 301). The core reports what is in
 // front, not what was before, and the screens are the page's own navigation,
 // so the order is the shell's convenience: nothing here is authority, and a
 // reload rebuilds it from use.
@@ -19,7 +19,7 @@
 import { frontDeviceId, localDeviceId } from "./devices";
 import { allProjectsCount } from "./navigation";
 import { remoteContext, remoteView } from "./remote";
-import { catalogWorkspaces, paneTitle, type AgentRow, type Checkout, type PaneRow, type SnapshotRest, type Tab, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
+import { catalogWorkspaces, type AgentRow, type Checkout, type PaneRow, type SnapshotRest, type Tab, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
 import type { Screen } from "./ui";
 import { activeDisplay, areasOf } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
@@ -363,18 +363,17 @@ export function paneKey(paneId: string): string {
 }
 
 /**
- * An Agent pane row: called by the agent the pane runs, else by its tab's
- * label when it is the tab's only pane, as the strip names it, else by the
- * pane's own title; the place and the device chip read as Recent Panels'.
+ * An Agent pane row, for a pane that runs an agent: called by that agent,
+ * with the place and the device chip as Recent Panels reads them. A pane with
+ * no agent is no row, though its visits stay recorded for when one starts.
  */
 export function paneItem(rest: SnapshotRest | null, paneId: string): CycleItem | null {
   const place = allPanes(rest).find((row) => row.pane.id === paneId);
-  if (!place?.tab.id) return null;
-  const agent = agentsOf(rest, place.deviceId).find((row) => row.pane_id === paneId) ?? null;
-  const title = agent?.identity_label ?? (place.tab.panes.length === 1 ? place.tab.label : null) ?? paneTitle(place.pane);
+  const agent = place ? agentsOf(rest, place.deviceId).find((row) => row.pane_id === paneId) : undefined;
+  if (!place?.tab.id || !agent) return null;
   return {
     key: paneKey(paneId),
-    title,
+    title: agent.identity_label,
     detail: `${place.workspace.is_home ? "Home" : placeLabel(place.workspace, place.checkout)} · ${KIND_LABEL[AGENT_SURFACE]}`,
     kind: AGENT_SURFACE,
     chip: deviceChip(rest, place.deviceId),

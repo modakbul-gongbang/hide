@@ -4,6 +4,7 @@
 // server for this file, a private hided and Electron app per test.
 
 import { expect, type ElectronApplication, type Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
@@ -113,13 +114,17 @@ test("pane chords: the macOS app's set comes across, runs once, and Settings edi
 });
 
 test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", async () => {
-  // Two more tabs in the fixture Workspace and two more Projects.
+  // Two more tabs in the fixture Workspace, each running an agent, since the
+  // Agent area's ⌃Tab walks agent panes, and two more Projects.
   const tabs = [herdr.tab];
   for (const label of ["second", "third"]) {
     const made = herdr.run([
       "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", label, "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
-    ]) as { result: { tab: { tab_id: string } } };
+    ]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } };
     tabs.push(made.result.tab.tab_id);
+    const pane = made.result.root_pane.pane_id;
+    await expect.poll(() => execFileSync(herdr.bin, ["pane", "read", pane, "--source", "recent", "--lines", "5"], { env: herdr.env, encoding: "utf8" }), { timeout: 20_000 }).toContain("fixture %");
+    herdr.run(["agent", "start", label, "--kind", "claude", "--pane", pane]);
   }
   const extraWorkspaces: string[] = [];
   for (const name of ["beta", "gamma"]) {

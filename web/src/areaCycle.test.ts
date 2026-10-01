@@ -88,16 +88,18 @@ describe("focused-area recent tabs", () => {
 });
 
 // Two devices, three checkouts: fixture (c) and other on this Mac, and a
-// checkout on the mini. The fixture's t1 is split into two panes and runs a
-// Claude in the first; the mini runs a Codex.
+// checkout on the mini. Every pane runs an agent but two plain shells: t1's
+// second pane (a dev server) and t3's.
 function devices(): SnapshotRest {
   const rest = world();
   const nav = rest.navigator!;
   const fixture = nav.workspaces![0]!.checkouts[0]!;
   fixture.tabs[0]!.panes = [{ id: "t1-pane" }, { id: "t1-side", terminal_title: "vite" }] as never;
   nav.workspaces![0]!.checkouts[1]!.tabs[0]!.panes = [{ id: "other-tab-pane" }] as never;
+  nav.workspaces![0]!.checkouts[1]!.label = "review";
   nav.devices!.push({ id: "mini", label: "mini", kind: "remote", state: "connected" } as never);
-  nav.agents = [{ id: "a", pane_id: "t1-pane", identity_label: "planner", agent_kind: "claude", symbol: "●", status_label: "Working" }] as never;
+  const agent = (pane: string, label: string) => ({ id: label, pane_id: pane, identity_label: label, agent_kind: "claude", symbol: "●", status_label: "Working" });
+  nav.agents = [agent("t1-pane", "planner"), agent("t2-pane", "writer"), agent("other-tab-pane", "fixer"), agent("outside-pane", "porter"), agent("child-pane", "child")] as never;
   const miniTab = { id: "remote:mini:tab:m1", label: "m1", panes: [{ id: "remote:mini:pane:p1" }], workspace_id: "remote:mini:workspace:w", checkout_id: "remote:mini:checkout:c", empty: false, delegated: false };
   const miniCheckout = { id: "remote:mini:checkout:c", workspace_id: "remote:mini:workspace:w", path: "/mini", label: "api", tabs: [miniTab], active_tab_id: miniTab.id, strip: [] };
   rest.status = { remote: [{ target_id: "mini", state: "connected", session: { workspaces: [{ id: "remote:mini:workspace:w", label: "api", device_id: "mini", checkouts: [miniCheckout] }], agents: [{ id: "b", pane_id: "remote:mini:pane:p1", identity_label: "reviewer", agent_kind: "codex", symbol: "●", status_label: "Working" }], active_tab_ids: {}, focused_workspace_id: null, focused_checkout_id: null, focused_tab_id: null, focused_pane_id: null, pane_layouts: [] } }] } as never;
@@ -108,19 +110,31 @@ const panes = (cycle: ReturnType<typeof agentCycle>) => cycle?.items.map((row) =
 describe("Agent pane cycle (issue 301)", () => {
   beforeEach(() => { resetRecent(); useUiStore.setState({ screen: { kind: "workspace" }, cycle: null }); noteAreaFrame("agent", null); noteAreaFrame("view", null); });
 
-  it("walks the panes visited on every device, project and checkout, one row per pane, most recent first", () => {
+  it("walks the agent panes visited on every device, project and checkout, one row per pane, most recent first", () => {
     const rest = devices(); draw(rest);
     for (const pane of ["remote:mini:pane:p1", "other-tab-pane", "t1-side", "t2-pane", "t1-pane"]) observePane(rest, pane);
     const cycle = agentCycle(rest, owner)!;
     expect(cycle.kind).toBe("agents");
-    expect(panes(cycle)).toEqual(["t1-pane", "t2-pane", "t1-side", "other-tab-pane", "remote:mini:pane:p1"]);
+    // t1-side was visited but runs no agent; outside was never visited; no View display is a row.
+    expect(panes(cycle)).toEqual(["t1-pane", "t2-pane", "other-tab-pane", "remote:mini:pane:p1"]);
     expect(cycle.index).toBe(0);
-    // Never visited: t3 and outside stay out, as do the View area's displays.
     const rows = Object.fromEntries(cycle.items.map((row) => [row.target.kind === "pane" ? row.target.paneId : row.key, row]));
     expect(rows["t1-pane"]).toMatchObject({ title: "planner", detail: "fixture · Terminal", chip: null, agent: expect.objectContaining({ agent_kind: "claude" }) });
-    expect(rows["t1-side"]).toMatchObject({ title: "vite", agent: null });
-    expect(rows["t2-pane"]).toMatchObject({ title: "t2", agent: null });
-    expect(rows["remote:mini:pane:p1"]).toMatchObject({ title: "reviewer", detail: "api · Terminal", chip: { label: "mini", local: false } });
+    expect(rows["other-tab-pane"]).toMatchObject({ title: "fixer", detail: "fixture · review · Terminal", chip: null });
+    expect(rows["remote:mini:pane:p1"]).toMatchObject({ title: "reviewer", detail: "api · Terminal", chip: { label: "mini", local: false }, agent: expect.objectContaining({ agent_kind: "codex" }) });
+  });
+
+  it("from a pane with no agent, lands first on the most recent agent pane", () => {
+    const rest = devices(); draw(rest);
+    for (const pane of ["t2-pane", "other-tab-pane", "t1-side"]) observePane(rest, pane);
+    const shell = { kind: "pane", workspace: "c", paneId: "t1-side" } as const;
+    expect(agentOrigin(rest, shell)).toEqual({ paneId: "t1-side" });
+    const cycle = agentCycle(rest, shell)!;
+    expect(panes(cycle)).toEqual(["other-tab-pane", "t2-pane"]);
+    expect(cycle.index).toBe(-1);
+    const sent: { kind: string; payload: Record<string, unknown> }[] = [];
+    commitCycle({ ...cycle, index: 0 }, createActions((event) => { sent.push(event as never); }));
+    expect(sent).toEqual([expect.objectContaining({ kind: "focus_pane", payload: expect.objectContaining({ pane_id: "other-tab-pane" }) })]);
   });
 
   it("commits one event naming the pane, through the device it is on, and nothing for the origin or a preview", () => {
@@ -156,21 +170,23 @@ describe("Agent pane cycle (issue 301)", () => {
     expect(agentCycle(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" })).toBeNull();
   });
 
-  it("starts before the most recent pane when the keyboard is in no pane, and drops a closed pane while held", () => {
+  it("starts before the most recent agent pane when the keyboard is in no pane, and drops a closed pane or ended agent while held", () => {
     const rest = devices(); draw(rest);
-    for (const pane of ["t2-pane", "t3-pane"]) observePane(rest, pane);
+    for (const pane of ["t2-pane", "outside-pane", "other-tab-pane"]) observePane(rest, pane);
     const bar = { kind: "agent", workspace: "c", areaId: "a1" } as const;
     // The core reports no focused pane, so the tab bar is in no pane.
     expect(agentOrigin(rest, bar)).toEqual({ paneId: null });
     const cycle = agentCycle(rest, bar)!;
-    expect(panes(cycle)).toEqual(["t3-pane", "t2-pane"]);
+    expect(panes(cycle)).toEqual(["other-tab-pane", "outside-pane", "t2-pane"]);
     expect(cycle.index).toBe(-1);
     rest.focused = { pane_id: "t1-side" };
     expect(agentOrigin(rest, bar)).toEqual({ paneId: "t1-side" });
     const held = { ...cycle, index: 0 };
-    rest.navigator!.workspaces![0]!.checkouts[0]!.tabs = rest.navigator!.workspaces![0]!.checkouts[0]!.tabs.filter((tab) => tab.id !== "t3");
-    expect(panes(reconcileHeldCycle(held, rest))).toEqual(["t2-pane"]);
-    rest.navigator!.workspaces![0]!.checkouts[0]!.tabs = rest.navigator!.workspaces![0]!.checkouts[0]!.tabs.filter((tab) => tab.id !== "t2");
+    const fixture = rest.navigator!.workspaces![0]!.checkouts[0]!;
+    fixture.tabs = fixture.tabs.filter((tab) => tab.id !== "t2");
+    rest.navigator!.agents = rest.navigator!.agents!.filter((row) => row.pane_id !== "outside-pane");
+    expect(panes(reconcileHeldCycle(held, rest))).toEqual(["other-tab-pane"]);
+    rest.navigator!.agents = [];
     expect(reconcileHeldCycle(held, rest)).toBeNull();
   });
 
