@@ -153,4 +153,30 @@ describe("the flowing dashes", () => {
     vi.advanceTimersByTime(250);
     expect(a.offsets.at(-1)).toBe("-4.5");
   });
+
+  it("says whether the timer runs: on with a working line, off with none, off under less motion, on again when the setting returns", () => {
+    let reduced = false;
+    const told: boolean[] = [];
+    const flow = new Flow({ period: 18, stepMs: 250, steps: 4, reduced: () => reduced, running: (running) => told.push(running) });
+    const a = path();
+    flow.set([]);
+    expect(told.at(-1)).toBe(false);
+    flow.set([a]);
+    expect(told.at(-1)).toBe(true);
+    // A new canvas holding the same line is told again while the timer goes on.
+    flow.set([a]);
+    expect(told.at(-1)).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+    reduced = true;
+    vi.advanceTimersByTime(250);
+    expect(told.at(-1)).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    reduced = false;
+    flow.resume();
+    expect(told.at(-1)).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+    flow.dispose();
+    expect(told.at(-1)).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

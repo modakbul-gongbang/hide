@@ -563,14 +563,18 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await setFixtureLifecycle(herdr, workingPane, "working");
     await expect(edge).toHaveAttribute("data-edge-kind", "flow", { timeout: 20_000 });
     // Reduced motion draws every change at once and stops the flow (B34).
+    const flowSelector = `[data-graph-flow="${mainPane}>${workingPane}"]`;
+    const flowPath = overview.locator(flowSelector);
+    // The canvas names whether its dashes are stepping (the stepping itself, its pace and its stop, is the unit test's); the line the dashes belong to is inside it.
+    const flowing = canvas.and(page.locator('[data-graph-flowing="true"]'));
+    await expect(flowing.locator(flowSelector)).toHaveCount(1);
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect(overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`)).toHaveCSS("display", "none");
+    await expect(flowPath).toHaveCSS("display", "none");
+    await expect(canvas).not.toHaveAttribute("data-graph-flowing", "true");
     await page.emulateMedia({ reducedMotion: "no-preference" });
-    // ...and turning the setting off lets the dashes step again, a few times a second (B9, B34).
-    const flowPath = overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`);
+    // ...and turning the setting off lets the dashes step again on the line that is drawn (B9, B34).
     await expect(flowPath).toHaveAttribute("d", /.+/);
-    const seen = new Set<string | null>();
-    await expect.poll(async () => (seen.add(await flowPath.getAttribute("stroke-dashoffset")), seen.size), { timeout: 5000 }).toBeGreaterThan(2);
+    await expect(flowing.locator(flowSelector)).toHaveCount(1);
 
     // ⌥` brings back the Overview as it was left: the filter and the open fold stay (B29).
     await chip("working").click();

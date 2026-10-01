@@ -254,7 +254,16 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers
     paintedEdges.current = edgeSignature;
     element.dataset.graphRevision = String(tween.current.revision);
     element.dataset.graphFrames = String(tween.current.frames);
-    flow.current ??= new Flow({ ...flowTiming, reduced: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches });
+    flow.current ??= new Flow({
+      ...flowTiming,
+      reduced: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      // The canvas says whether its dashes are stepping, so a check reads the state the stepper owns and not a sample of its output.
+      running: (running) => {
+        if (!canvas.current) return;
+        if (running) canvas.current.dataset.graphFlowing = "true";
+        else delete canvas.current.dataset.graphFlowing;
+      },
+    });
     flow.current.set([...element.querySelectorAll<SVGPathElement>(".graph-edge-flow")]);
     if (changed && settled.current) for (const key of added) enter(index.current, key);
     settled.current = true;
