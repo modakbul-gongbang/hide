@@ -293,7 +293,20 @@ impl Runtime {
     ) {
         let tab_id =
             self.new_file_tab_id(&request.workspace_id, &request.checkout_id, &request.path);
-        if !request.reload && self.document_opens.contains_key(&tab_id) {
+        if !request.reload
+            && let Some(running) = self.document_opens.get_mut(&tab_id)
+        {
+            // One read serves every open of the file while it runs, but the
+            // operator's last word on the tab's kind stands: a double-click is
+            // two single clicks and then the pin, and the pin arrives while the
+            // click's read is still out. The document lands pinned, never as a
+            // preview the operator already kept open.
+            if !request.preview && !running.reload && !running.restore {
+                running.preview = false;
+                if let Some(placement) = running.placement.as_mut() {
+                    placement.preview = false;
+                }
+            }
             return;
         }
         self.next_document_generation += 1;
