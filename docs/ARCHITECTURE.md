@@ -636,7 +636,7 @@ A document that becomes dirty, is saving or has a save state promotes every disp
 In web mode the per-checkout preview slot of `place_editor_tab` gives way to one preview display per area: a preview open retargets the active area's preview display in place, and its old document is retired when no other display shows it, like the preview replacement before it, with no Recent Closed entry; the single-surface editor fallback keeps the per-checkout slot.
 
 A browser display binds to nothing (issue 155, [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md)): it is `open` from the moment it exists, the reconcile never removes it for want of a document tab, and a restore reads nothing for it.
-`browser_open` from the Explorer or a page's new tab places a display in the named Workspace or the front one, a page's new tab beside the page it names (`beside_display`); pane CLI requests use the separate scoped Workspace action.
+`browser_open` from the Explorer or a page's new tab places a display in the named Workspace or the front one, a page's new tab beside the page it names (`beside_display`): in the area next to the page's, else in a new area to its right; pane CLI requests use the separate scoped Workspace action.
 `browser_state` records the address, title, and native load state a page reports, while `view_layout` `navigate` loads the operator's own address.
 UI `browser_open` receipts remain in `status.browser_opens`; pane CLI requests receive their own scoped action result.
 A load stamp (`load`, never saved) is how the core asks the desktop app to load a display's address again, and the address, capped at 8 KiB, holds only `http`, `https`, `file` or `about:blank`; loading repairs a stored display that breaks this to `about:blank`.

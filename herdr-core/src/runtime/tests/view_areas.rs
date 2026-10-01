@@ -2032,7 +2032,8 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
 /// A page's own new tab (a `target=_blank` link, an image a page wraps in
 /// one) opens beside that page, so the page that asked stays in view: in a
 /// new area to its right the first time, then in that area, and never a
-/// third area. With the page gone it opens where any page would.
+/// third area. An address already shown is focused there, and with the page
+/// gone a tab opens where any page would: the area in use.
 #[test]
 fn a_pages_new_tab_opens_beside_it_and_keeps_it_in_view() {
     let (mut runtime, _, _directory) = views_runtime("browser-beside");
@@ -2086,14 +2087,30 @@ fn a_pages_new_tab_opens_beside_it_and_keeps_it_in_view() {
 
     assert!(browser_open(
         &mut runtime,
+        serde_json::json!({"url": "https://a.test/image.png", "beside_display": opener.id})
+    ));
+    assert_eq!(
+        shown(&mut runtime)[1],
+        (
+            vec![
+                "https://a.test/image.png".to_owned(),
+                "https://a.test/other.png".to_owned()
+            ],
+            Some("https://a.test/image.png".to_owned())
+        ),
+        "an address already shown is focused, not opened twice"
+    );
+
+    assert!(browser_open(
+        &mut runtime,
         serde_json::json!({"url": "https://a.test/third.png", "beside_display": "closed-page"})
     ));
     let after = shown(&mut runtime);
     assert_eq!(after.len(), 2, "a gone page adds no area: {after:?}");
-    assert!(
-        after
-            .iter()
-            .any(|(urls, _)| urls.contains(&"https://a.test/third.png".to_owned()))
+    assert_eq!(
+        after[1].1.as_deref(),
+        Some("https://a.test/third.png"),
+        "it opens in the area in use"
     );
 }
 

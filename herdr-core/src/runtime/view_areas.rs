@@ -73,7 +73,9 @@ pub(super) struct ViewWorkspace {
 /// area of a Workspace, which need not be the one in front: the one named,
 /// else the one the pane `pane_id` works in (`hide browser open` from an
 /// agent's pane), else the one in front. A Workspace already showing `url`
-/// shows that page again, loaded again, rather than a second one.
+/// shows that page again, loaded again, rather than a second one. A page's
+/// own new tab names that page (`beside_display`) and opens beside it, in
+/// place of `area_id`.
 #[derive(Debug, Deserialize)]
 pub(super) struct BrowserOpenPayload {
     url: String,
@@ -1254,32 +1256,21 @@ impl Runtime {
                 let display = layout.new_browser_display(url, load);
                 let display_id = display.id.clone();
                 // A page's own new tab stands beside that page (Open to the
-                // side's order): in the area next to it, else in a new area
-                // to its right. With no room for one, or with the page gone,
-                // it opens where any page would.
+                // side's order): in the area next to it, else, its area being
+                // the only one, in a new area to its right, which the area cap
+                // always leaves room for. With the page gone it opens where
+                // any page would.
                 let opener = beside_display
                     .and_then(|opener| layout.area_of(opener))
                     .map(|area| area.id.clone());
                 if let Some(base) = opener {
-                    if let Some(target) = BESIDE_ORDER
+                    match BESIDE_ORDER
                         .iter()
                         .find_map(|edge| layout.neighbour(&base, *edge))
                     {
-                        layout.insert(&target, display, stamp)?;
-                        return Ok((display_id, true));
-                    }
-                    match layout.can_split(&base, Edge::Right) {
-                        Ok(()) => {
+                        Some(target) => layout.insert(&target, display, stamp)?,
+                        None => {
                             layout.split_new(&base, Edge::Right, display, stamp)?;
-                        }
-                        Err(error) => {
-                            crate::diagnostic!(serde_json::json!({
-                                "component": "view_areas",
-                                "kind": "browser.beside_refused",
-                                "device": key.0,
-                                "reason": error.kind(),
-                            }));
-                            layout.insert(&base, display, stamp)?;
                         }
                     }
                     return Ok((display_id, true));

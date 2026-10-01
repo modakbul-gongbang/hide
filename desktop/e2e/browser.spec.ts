@@ -351,7 +351,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   expect(await openFromCli(outside)).toMatchObject({ ok: false, reason: "path_outside_checkout" });
 
   // Closing B's display ends its renderer process. Without the Explorer both
-  // areas show again, B's among them.
+  // areas show again, B's tab among them (behind Page C, which opened beside A).
   await page.locator('[data-tools-toggle="on"]').click();
   await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
   await expect(tab(page, "Page B")).toBeVisible();
