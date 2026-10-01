@@ -189,14 +189,26 @@ describe("columns and bands", () => {
     expect(solo.y).toBeGreaterThanOrEqual(Math.max(...mainBand.map((candidate) => candidate.y + candidate.height)));
   });
 
-  it("orders bands and a column's boxes by attention, the operator's turn first, the primary box first on one project (B4, B5)", () => {
+  it("orders bands and a column's boxes by attention, the operator's turn first, the primary box first only on a tie (B4, B5, D-37)", () => {
     const project = workspace([checkout("quiet", { tabs: [["q"]] }), checkout("main", { primary: true, tabs: [["m"]] }), checkout("busy", { tabs: [["w"]] }), checkout("asks", { tabs: [["k"]] })]);
     const agents = [agent("q", { demand: "none", descendant_counts: { error: 0, approval: 0, question: 0, working: 1, done: 0 } }), agent("m"), agent("w", WORKING), agent("k", ASKING)];
     const board = only(graph(one(project, agents)));
-    expect(board.boxes.slice().sort((a, b) => a.y - b.y).map((candidate) => candidate.id)).toEqual(["main", "asks", "busy", "quiet"]);
+    expect(board.boxes.slice().sort((a, b) => a.y - b.y).map((candidate) => candidate.id)).toEqual(["asks", "busy", "quiet", "main"]);
     const all = only(graph(one(project, agents), { scope: "all" }));
     // On All projects the primary is ranked by its agents like any other box; a resting one folds.
     expect(all.boxes.slice().sort((a, b) => a.y - b.y).map((candidate) => candidate.id)).toEqual(["asks", "busy", "quiet"]);
+  });
+
+  it("ranks a band by its most urgent row, boxes below it included, and keeps the primary band first on a tie (D-37)", () => {
+    const project = workspace([checkout("main", { primary: true, tabs: [["m"]] }), checkout("kid", { tabs: [["k"]] }), checkout("asks", { tabs: [["q"]] })]);
+    const calm = [agent("m", WORKING), child("k", "m", WORKING), agent("q", ASKING)];
+    // The asking band stands above a larger working main band.
+    const ranked = only(graph(one(project, calm)));
+    expect(box(ranked, "asks").y).toBeLessThan(box(ranked, "main").y);
+    // A question deep in the main band lifts that whole band to the same rank, and the primary leads the tie.
+    const deep = [agent("m", WORKING), child("k", "m", ASKING), agent("q", ASKING)];
+    const tied = only(graph(one(project, deep)));
+    expect(box(tied, "main").y).toBeLessThan(box(tied, "asks").y);
   });
 
   it("cuts a cycle where it closes and marks its closing line back (D-03, B10)", () => {

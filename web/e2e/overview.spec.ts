@@ -329,9 +329,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await tile("agents").locator("[data-lens-tile-badge]").hover();
     await expect(page.getByRole("tooltip")).toContainText("승인 1");
 
-    // Boxes (B2-B5): main first with the Observer, the Implementor it delegated one
-    // column right at its row's height, the asking worktree in its own band
-    // below; the merged worktree and the three with no agent fold (B21, B23).
+    // Boxes (B2-B5, D-37): the asking worktree's band stands first, above main's, because
+    // its question outranks main's band; main holds the Observer and the Implementor it
+    // delegated one column right at its row's height; the merged worktree and the three
+    // with no agent fold (B21, B23).
     await expect(boxes).toHaveCount(3, { timeout: 20_000 });
     const mainBox = overview.locator('[data-graph-box][data-graph-primary="true"]');
     const workingBox = box("prd/web-overview-with-a-long-branch-name");
@@ -342,7 +343,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const [mainRect, workingRect, askingRect] = [await place(mainBox), await place(workingBox), await place(askingBox)];
     expect(Math.abs(workingRect.y - mainRect.y)).toBeLessThan(1);
     expect(workingRect.x).toBeGreaterThan(mainRect.x + mainRect.width);
-    expect(askingRect.y).toBeGreaterThan(mainRect.y + mainRect.height);
+    expect(askingRect.y + askingRect.height).toBeLessThan(mainRect.y);
     // main's head says how many agents it has (B12); a worktree head: the branch, ↑N and its changed files, dirty in the warning tone.
     await expect(mainBox.locator("[data-graph-head-agents]")).toHaveText("에이전트 1");
     await expect(workingBox.locator("[data-graph-head-distance]")).toHaveText("↑1");

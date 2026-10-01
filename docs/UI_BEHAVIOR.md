@@ -465,7 +465,8 @@ A delegation inside one checkout has no line: the child row stands one step righ
 Agents sharing one tab stand together on one pale tray, and a row alone in its tab has none.
 A delegation into another checkout is a line from the parent row's right port to the child row's left port, so a box's column is its deepest delegating box's column plus one, and a box nothing delegated into, a worktree started directly included, is in the first column.
 A cycle is cut where it closes, and the closing line is a dashed curve that may cross boxes.
-Each first-column box and everything delegated from it form one horizontal band, a child box standing level with the row that delegated it, and bands never overlap; on a project's Overview the primary checkout's box is the first band.
+Each first-column box and everything delegated from it form one horizontal band, a child box standing level with the row that delegated it, and bands never overlap.
+A band stands where its most urgent row does, the boxes delegated below it included, so a band with a question stands above a larger main band and shows on the first screen; on a project's Overview the primary checkout's band leads only when ranks tie, and its box never folds.
 Bands, boxes within a column and rows within a box go by attention and not by any control: the operator's turn, then working, then waiting on children, then resting, the most recently active first within each.
 A line runs only through the gaps between boxes, turns with rounded corners, has a port dot at each end, and the lines of one parent gather into a single trunk in the gap and branch from it; a line that crosses more than one column keeps to a corridor no box covers.
 A line takes its colour from the child it leads to: warning when the child asks, blue with dashes flowing from parent to child while it works, pale blue while it waits on its own children, grey otherwise.

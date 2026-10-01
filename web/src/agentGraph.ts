@@ -547,9 +547,23 @@ function place(infos: Info[], edges: GraphEdge[], rowOf: ReadonlyMap<string, Gra
     cursor[box.col] = box.y + box.height + g.boxGap;
     placed.add(box.id);
   };
+  // A band stands where its most urgent row does, boxes below it included, and the primary band leads only on a tie (D-37).
+  const children = new Map<string, string[]>();
+  for (const edge of edges) if (!edge.back) children.set(edge.fromBox, [...(children.get(edge.fromBox) ?? []), edge.toBox]);
+  const bandBest = (rootId: string): number => {
+    const seen = new Set<string>();
+    const walk = (id: string): number => {
+      if (seen.has(id)) return 4;
+      seen.add(id);
+      return Math.min(byId.get(id)?.best ?? 4, ...(children.get(id) ?? []).map(walk));
+    };
+    return walk(rootId);
+  };
   const roots = infos
     .filter((info) => info.box.col === 0)
-    .sort((a, b) => (options.scope === "project" ? Number(b.box.primary) - Number(a.box.primary) : 0) || a.best - b.best || Number(b.box.primary) - Number(a.box.primary) || b.recent.localeCompare(a.recent));
+    .map((info) => ({ info, band: bandBest(info.box.id) }))
+    .sort((a, b) => a.band - b.band || Number(b.info.box.primary) - Number(a.info.box.primary) || b.info.recent.localeCompare(a.info.recent))
+    .map(({ info }) => info);
   for (const root of roots) {
     cursor.fill(Math.max(...cursor));
     stand(root);
