@@ -165,6 +165,48 @@ fn a_hide_outside_the_app_refuses_a_daemon_of_another_build() {
     assert_eq!(state_pid(&state), running["pid"].as_i64().unwrap());
 }
 
+/// A `hide` is judged by the file it is, not the link it was invoked
+/// through: a link into the app replaces, a link shaped like a bundle path
+/// that leads to a dev build refuses.
+#[test]
+fn a_link_to_hide_counts_as_the_app_only_when_it_leads_into_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&home).unwrap();
+    let cargo_cli = Path::new(env!("CARGO_BIN_EXE_hided")).with_file_name("hide");
+    let _stop = StopOnDrop {
+        cli: &cargo_cli,
+        home: &home,
+        state: &state,
+    };
+    let running = connect(&cargo_cli, &home, &state)["pid"].as_i64().unwrap() as i32;
+
+    let copy = other_build(&dir.path().join("copy"));
+    let posing = dir.path().join("Posing.app/Contents/Resources");
+    std::fs::create_dir_all(&posing).unwrap();
+    std::os::unix::fs::symlink(&copy, posing.join("hide")).unwrap();
+    let (ok, line) = try_connect(&posing.join("hide"), &home, &state);
+    assert!(!ok, "{line}");
+    assert_eq!(line["reason"], "other_build", "{line}");
+    assert!(alive(running));
+
+    let app = other_build(&dir.path().join("Hide.app/Contents/Resources"));
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(&app, bin.join("hide")).unwrap();
+    let replaced = connect(&bin.join("hide"), &home, &state)["pid"]
+        .as_i64()
+        .unwrap() as i32;
+    assert_ne!(replaced, running);
+    assert!(
+        wait_gone(running),
+        "the link into the app replaced the daemon"
+    );
+    let _ = isolated(&cargo_cli, &home, &state).arg("stop").status();
+    assert!(wait_gone(replaced));
+}
+
 /// Two app connects that both find a daemon of another build leave one
 /// daemon, the one the state names, and both attach to it.
 #[test]

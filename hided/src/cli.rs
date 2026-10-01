@@ -690,7 +690,11 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
         if running == Some(build.as_str()) {
             return Ok(state);
         }
+        // Judged by the file this `hide` is, not the link it was invoked
+        // through: the kit's `~/.local/bin/hide` link into the app is the
+        // app's, and a link that only looks like a bundle path is not.
         let from_app = std::env::current_exe()
+            .and_then(|path| path.canonicalize())
             .ok()
             .as_deref()
             .and_then(hide_kit::bundled_kit_dir)
