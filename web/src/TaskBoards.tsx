@@ -108,7 +108,7 @@ export type BoardHandlers = {
   newIssue: () => void;
   /** A page on GitHub: the issue, a pull request (⌘-click, the GitHub control). */
   openGitHub: (url: string, deviceId: string) => void;
-  /** `이슈 없는 워크트리 N`: Agents › 체크아웃 (B4). */
+  /** `이슈 없는 워크트리 N`: the Agents graph with its `에이전트 없는 워크트리` line open (B4). */
   showCheckouts: () => void;
   /** A PR chip, or `이슈 없는 PR N` with no row: the pull request's row on its Project's PRs tab (PRD overview-lenses-prs B21). */
   openPullRequestRow: (owner: Workspace, number: number | null) => void;
@@ -308,7 +308,7 @@ function StageColumn({
   );
 }
 
-/** `이슈 없는 워크트리 N`: its popover says where it goes and names them; its click opens Agents › 체크아웃 (B4). */
+/** `이슈 없는 워크트리 N`: its popover says where it goes and names them; its click opens the Agents graph with that line open (B4). */
 function LooseWorktreesLine({ worktrees, onOpen }: { worktrees: readonly LooseWorktree[]; onOpen: () => void }) {
   if (worktrees.length === 0) return null;
   return (

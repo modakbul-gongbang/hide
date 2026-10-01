@@ -13,7 +13,7 @@ import type { AgentRow, Checkout, ProjectSessions, Task, Workspace } from "./sna
 /**
  * Where an agent stands for the operator (D-37, D-38): its turn (asking, or
  * finished and not looked at), working, waiting on its children, or resting.
- * Lanes, nodes, lineages and the Agents tile all read this one order.
+ * The graph's status chips and the Agents tile read this one order.
  */
 export type AgentBucket = "turn" | "working" | "delegating" | "resting";
 
