@@ -14,11 +14,27 @@ export function outboxDir(home = os.homedir()): string { return path.join(dataDi
 
 const letterFile = /^(\d{15})-([0-9a-f-]{36})\.json$/;
 
+/**
+ * A write the session's sandbox or the disk refused. The caller needs the
+ * blocked path and the next action, not an `internal` failure: nothing was
+ * saved, so the same command can be retried unchanged once the cause is fixed.
+ */
+function outboxWriteError(error: unknown, dir: string): unknown {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (code === "EPERM" || code === "EACCES" || code === "EROFS") {
+    return new HcoordError("permission_denied", `this session cannot write the hcoord outbox ${dir} (${code}), so nothing was sent; add ${path.dirname(dir)} to the session's writable roots (a Codex workspace-write sandbox lists them as writable_roots) or send from a session that may write it, then run the same command again`, { path: (error as NodeJS.ErrnoException).path ?? dir, errno: code });
+  }
+  if (code === "ENOSPC" || code === "EDQUOT") return new HcoordError("capacity", `the disk holding the hcoord outbox ${dir} is full (${code}), so nothing was sent; free space there, then run the same command again`, { path: dir, errno: code });
+  return error;
+}
+
 export function writeLetter(operation: string, args: Record<string, unknown>, home = os.homedir()): Letter {
   const dir = outboxDir(home);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(dataDir(home), 0o700);
-  fs.chmodSync(dir, 0o700);
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dataDir(home), 0o700);
+    fs.chmodSync(dir, 0o700);
+  } catch (error) { throw outboxWriteError(error, dir); }
   if (fs.readdirSync(dir).filter((name) => letterFile.test(name)).length >= MAX_OUTBOX_LETTERS) {
     throw new HcoordError("capacity", `outbox holds ${MAX_OUTBOX_LETTERS} uncollected letters; start the coordinator or restore its connection before sending more`);
   }
@@ -27,7 +43,7 @@ export function writeLetter(operation: string, args: Record<string, unknown>, ho
   const bytes = Buffer.from(`${JSON.stringify(letter)}\n`);
   if (bytes.length > MAX_MESSAGE_BYTES) throw new HcoordError("capacity", `letter exceeds ${MAX_MESSAGE_BYTES} bytes; shorten context or native arguments before retrying`);
   const name = `${String(created.getTime()).padStart(15, "0")}-${letter.id}.json`;
-  writeFileAtomic(path.join(dir, name), bytes);
+  try { writeFileAtomic(path.join(dir, name), bytes); } catch (error) { throw outboxWriteError(error, dir); }
   return letter;
 }
 

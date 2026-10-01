@@ -6,9 +6,8 @@
 // conversation's resume arguments.
 
 import { expect, test } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
+import { setFixtureSession, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -17,7 +16,7 @@ test.describe.configure({ timeout: 150_000 });
 const SESSION = "11111111-2222-3333-4444-555555555555";
 
 type ProcessInfo = {
-  result: { process_info: { shell_pid: number; foreground_process_group_id: number; foreground_processes: { argv: string[] }[] } };
+  result: { process_info: { shell_pid: number; foreground_process_group_id: number; foreground_processes: { argv?: string[] | null }[] } };
 };
 
 test("an agent slept from the pane menu keeps its row and wakes in the same pane on a visit", async ({ page }) => {
@@ -28,11 +27,7 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     const [, sleeper] = herdr.panes;
     // The official Claude integration's report: the conversation id, under
     // Herdr's own source.
-    execFileSync(
-      herdr.bin,
-      ["pane", "report-agent-session", sleeper, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", SESSION],
-      { env: herdr.env, timeout: 30_000 },
-    );
+    setFixtureSession(herdr, sleeper, SESSION);
     const other = herdr.run([
       "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "other", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
     ]) as { result: { tab: { tab_id: string } } };
@@ -89,7 +84,9 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     await page.locator(`[data-tab="${other.result.tab.tab_id}"]`).click();
     await expect(page.locator(`[data-pane-view="${sleeper}"]`)).toHaveCount(0);
     await page.locator(`[data-tab="${herdr.tab}"]`).click();
-    await expect.poll(() => processInfo().foreground_processes.map((process) => process.argv.join(" ")), { timeout: 30_000 }).toContain(
+    // Herdr's schema makes argv optional and nullable; a process reported without
+    // it must not end the poll before the resumed agent is reported.
+    await expect.poll(() => processInfo().foreground_processes.map((process) => process.argv?.join(" ")), { timeout: 30_000 }).toContain(
       `claude --resume ${SESSION}`,
     );
     await expect(pane.locator("[data-pane-sleep]")).toHaveCount(0, { timeout: 30_000 });

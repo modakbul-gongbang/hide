@@ -22,7 +22,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { agentsIn, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -210,11 +210,11 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     // The Observer on main delegated the working worktree's Implementor,
     // which is working, so the Observer waits on it (B14, B21).
     execFileSync(herdr.bin, ["pane", "report-metadata", workingPane, "--source", "e2e-lineage", "--token", `parent_pane=${mainPane}`], { env: herdr.env, timeout: 30_000 });
-    execFileSync(herdr.bin, ["pane", "report-agent", workingPane, "--source", "e2e", "--agent", "claude", "--state", "working"], { env: herdr.env, timeout: 30_000 });
+    await setFixtureLifecycle(herdr, workingPane, "working");
     // An agent asking the operator: the label plugin's `expected_reply` is
     // its question, and its `progress` the rest of what it said; the node
     // shows the question, its popover the whole message (B21, B22).
-    execFileSync(herdr.bin, ["pane", "report-agent", askingPane, "--source", "e2e", "--agent", "claude", "--state", "blocked"], { env: herdr.env, timeout: 30_000 });
+    await setFixtureLifecycle(herdr, askingPane, "blocked");
     execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "expected_reply=Done 그룹 회색 링을 바꿔도 될까요?"], { env: herdr.env, timeout: 30_000 });
     execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "progress=사이드바 상태 규칙을 세 곳에 적용했고 Done 그룹만 남았습니다."], { env: herdr.env, timeout: 30_000 });
     // A project with only a shell: no agent at all.
@@ -222,7 +222,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     fs.mkdirSync(quiet);
     await workspaceAt(herdr, quiet, null);
 
-    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root)}:${path.join(herdr.root, "bin")}:${process.env.PATH ?? ""}` });
+    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root)}:${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await open(page, daemon);

@@ -107,6 +107,10 @@ pub struct SleepRecord {
     #[serde(default)]
     pub agent_name: Option<String>,
     pub identity_label: String,
+    /// Captured only from a current, guarded core row. Older sleep records
+    /// have no label provenance and cannot synthesize trusted label tokens.
+    #[serde(default)]
+    pub label_owner: Option<String>,
     #[serde(default)]
     pub progress: Option<String>,
     pub elapsed: String,
@@ -142,6 +146,7 @@ impl SleepRecord {
         since_unix_ms: u64,
     ) -> Option<Self> {
         let session_id = agent.session_id.clone()?;
+        let label_owner = hide_session::label_reference_token(&agent.agent_kind, "id", &session_id);
         Some(Self {
             phase: SleepPhase::Ending,
             kind: agent.agent_kind.clone(),
@@ -149,6 +154,7 @@ impl SleepRecord {
             agent_name: (agent.id != agent.pane_id && !agent.id.trim().is_empty())
                 .then(|| agent.id.clone()),
             identity_label: agent.identity_label.clone(),
+            label_owner,
             progress: agent.progress.clone(),
             elapsed: agent.elapsed.clone(),
             last_activity: agent.last_activity.clone(),
@@ -177,19 +183,22 @@ impl SleepRecord {
                 .then(|| self.reason.clone())
                 .flatten(),
             since_unix_ms: self.since_unix_ms,
-            progress: self.progress.clone(),
+            progress: self.label_owner.as_ref().and(self.progress.clone()),
         })
     }
 
     /// The agent row Herdr no longer sends, drawn from what the record kept.
     fn payload(&self, pane_id: &str, workspace_label: Option<String>) -> SessionAgentPayload {
         let mut tokens = BTreeMap::new();
-        tokens.insert(
-            "task".to_owned(),
-            Value::String(self.identity_label.clone()),
-        );
-        if let Some(progress) = &self.progress {
-            tokens.insert("progress".to_owned(), Value::String(progress.clone()));
+        if let Some(owner) = &self.label_owner {
+            tokens.insert("label_owner".to_owned(), Value::String(owner.clone()));
+            tokens.insert(
+                "task".to_owned(),
+                Value::String(self.identity_label.clone()),
+            );
+            if let Some(progress) = &self.progress {
+                tokens.insert("progress".to_owned(), Value::String(progress.clone()));
+            }
         }
         tokens.insert("elapsed".to_owned(), Value::String(self.elapsed.clone()));
         // A thirteen-digit key came from the label plugin's activity token;

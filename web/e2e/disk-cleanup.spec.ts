@@ -16,7 +16,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -265,7 +265,7 @@ test("a checkout with a working agent cannot be ticked, and an open pane alone d
     await at(repo);
     const pane = await at(busy);
     herdr.run(["agent", "start", "agent-busy", "--kind", "claude", "--pane", pane]);
-    execFileSync(herdr.bin, ["pane", "report-agent", pane, "--source", "e2e", "--agent", "claude", "--state", "working"], { env: herdr.env, timeout: 30_000 });
+    await setFixtureLifecycle(herdr, pane, "working");
 
     daemon = await startHided(herdr, "disk-cleanup-busy");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);

@@ -1557,17 +1557,21 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "reopen_closed", payload: {} });
     },
 
-    split(direction: "right" | "down") {
+    /**
+     * Splits `target`, a pane the operator pointed at, else the focused pane.
+     * The core splits its current pane, which the pointing already focused.
+     */
+    split(direction: "right" | "down", target?: string) {
       if (remoteContext(rest())) {
         const host = remoteHost("Split");
         if (!host) return;
-        const pane = host.view?.tab?.panes.find((row) => row.id === host.view?.focusedPaneId);
+        const pane = host.view?.tab?.panes.find((row) => row.id === (target ?? host.view?.focusedPaneId));
         if (!pane) return diagnostic("split_pane: no focused remote pane");
         sendRemote(host.targetId, { action: "split_pane", pane_id: pane.id, direction, cwd: pane.cwd || null });
         return;
       }
       const here = current();
-      const paneId = useShellStore.getState().focusedPaneId;
+      const paneId = target ?? useShellStore.getState().focusedPaneId;
       const pane = here?.tab?.panes.find((row) => row.id === paneId);
       if (!here?.tab?.id || !pane) return diagnostic("create_pane: no focused pane");
       dispatch({
@@ -1577,16 +1581,17 @@ export function createActions(dispatch: DispatchFn) {
       });
     },
 
-    toggleZoom() {
+    /** Zooms or unzooms `target`, a pane the operator pointed at, else the focused pane. */
+    toggleZoom(target?: string) {
       if (remoteContext(rest())) {
         const host = remoteHost("Zoom pane");
         if (!host) return;
-        const paneId = host.view?.focusedPaneId;
+        const paneId = target ?? host.view?.focusedPaneId;
         if (!paneId) return diagnostic("toggle_pane_zoom: no focused remote pane");
         sendRemote(host.targetId, { action: "toggle_pane_zoom", pane_id: paneId });
         return;
       }
-      const paneId = useShellStore.getState().focusedPaneId;
+      const paneId = target ?? useShellStore.getState().focusedPaneId;
       if (!paneId) return diagnostic("toggle_zoom: no focused pane");
       dispatch({ schema_version: 2, kind: "toggle_zoom", payload: { pane_id: paneId } });
     },
@@ -1711,12 +1716,14 @@ export function createActions(dispatch: DispatchFn) {
      * answer); any other pane's find bar opens now. The core searches a
      * device pane through that device's Herdr.
      */
-    openFind() {
+    openFind(target?: string) {
       if (ui().overlay === "find") {
         document.querySelector<HTMLInputElement>("[data-find-bar] input")?.focus();
         return;
       }
-      const paneId = useShellStore.getState().focusedPaneId;
+      // A pointed-at pane is focused by the pointing; the find bar follows the
+      // focused pane, so only the agent's own search needs the target named.
+      const paneId = target ?? useShellStore.getState().focusedPaneId;
       const agent = paneId ? contextAgents(rest(), rest()?.navigator?.agents ?? []).find((row) => row.pane_id === paneId) : undefined;
       if (paneId && agent?.own_find) {
         const requestId = remoteRequestId();

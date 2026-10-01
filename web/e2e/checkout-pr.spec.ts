@@ -117,7 +117,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await workspaceAt(herdr, repo, "메인 체크아웃 정리");
     await workspaceAt(herdr, worktree, "PR 카드 구현");
 
-    daemon = await startHided(herdr, "checkout-pr", undefined, { PATH: `${fakeGh(herdr.root, url)}:${process.env.PATH ?? ""}` });
+    daemon = await startHided(herdr, "checkout-pr", undefined, { PATH: `${fakeGh(herdr.root, url)}:${herdr.fixturePath}` });
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });

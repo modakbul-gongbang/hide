@@ -91,3 +91,62 @@ test("an immediate refusal is returned to the writer and not repeated in the inb
   assert.equal(coordinator.outbox().length, 0);
   assert.equal(coordinator.ok("inbox").some((item) => item.kind === "letter_rejected"), false);
 });
+
+/** A private HCOORD_HOME in a short path, removed with the test. */
+function privateHome(t) {
+  const root = fs.mkdtempSync("/tmp/hcs-");
+  t.after(() => { fs.chmodSync(root, 0o700); fs.rmSync(root, { recursive: true, force: true }); });
+  return root;
+}
+const send = (home) => spawnSync(process.execPath, [CLI, "request", "send", "--from", "a_x", "--to", "human", "--body", "hello", "--intent", "sandboxed", "--json"], { env: { ...process.env, HCOORD_HOME: home }, encoding: "utf8" });
+
+test("a session that may not write the hcoord directory gets a permission error with the blocked path, not internal", { skip: process.platform === "win32" || process.getuid?.() === 0 }, (t) => {
+  // What a workspace-write sandbox without ~/.hcoord looks like: the directory is readable and cannot take a new entry.
+  const home = privateHome(t);
+  fs.chmodSync(home, 0o500);
+  const result = send(home);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(result.status, 1);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error.code, "permission_denied");
+  assert.ok(parsed.error.message.includes(path.join(home, "outbox")), parsed.error.message);
+  assert.match(parsed.error.message, /nothing was sent.*writable roots.*run the same command again/);
+  assert.equal(parsed.error.detail.errno, "EACCES");
+  assert.equal(result.stderr.includes("hcoord.command_failed"), false, "a classified refusal is not an unexpected failure");
+  assert.deepEqual(fs.readdirSync(home), [], "a refused write leaves nothing behind");
+});
+
+test("an exception hcoord does not classify keeps its code and message on stderr", { skip: process.platform === "win32" }, (t) => {
+  const home = privateHome(t);
+  fs.writeFileSync(path.join(home, "outbox"), "");
+  const result = send(home);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(result.status, 1);
+  assert.equal(parsed.error.code, "internal");
+  assert.match(parsed.error.message, /\(EEXIST\).*hcoord\.command_failed/);
+  const event = JSON.parse(result.stderr.trim().split("\n").find((line) => line.includes("hcoord.command_failed")));
+  assert.equal(event.code, "EEXIST");
+  assert.match(event.message, /EEXIST/);
+});
+
+test("a watch whose target and observer have both left is stopped by the daemon and shows why", async (t) => {
+  const fake = createFakeRemote(CLI);
+  t.after(() => fake.cleanup());
+  const coordinator = hq(t, fake);
+  await coordinator.start();
+  const { parent, child } = pair(fake, coordinator);
+  coordinator.ok("watch", "start", child.id, "--observer", parent.id, "--actor", "human", "--interval", "1s");
+  await coordinator.stop();
+  fake.removeAgent("local", "parent-pane");
+  fake.removeAgent("local", "child-pane");
+  // Both panes have been gone for two hours: past the grace, so the next due check ends the watch.
+  const ledger = coordinator.ledger();
+  ledger.watches[child.id].orphanedSince = new Date(Date.now() - 2 * 3_600_000).toISOString();
+  fs.writeFileSync(path.join(coordinator.dir, "ledger.json"), `${JSON.stringify(ledger)}\n`);
+  await coordinator.start();
+  await coordinator.until(() => coordinator.ledger().watches[child.id].status === "stopped", "the daemon ends the orphaned watch");
+  const ended = coordinator.ledger().events.find((entry) => entry.type === "watch.orphaned");
+  assert.equal(ended.subjectId, child.id);
+  assert.equal(ended.detail.observer, parent.id);
+  assert.equal(coordinator.ok("watch", "list").filter((item) => item.status === "active").length, 0);
+});

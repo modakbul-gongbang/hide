@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_BRIEF_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, sameExecution, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type SpawnIntent, type Watch } from "./model";
+import { DEFAULTS, WATCH_ORPHAN_MS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_BRIEF_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, sameExecution, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type SpawnIntent, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 const isHere = (machine: string): boolean => machine === "local" || machine === require("node:os").hostname();
@@ -593,11 +593,24 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       if (retained.length !== state.events.length) { state.events = retained; state.prunedBefore = at; changed = true; }
     }
     const observed = args["observedTargets"] === undefined ? null : new Set(Array.isArray(args["observedTargets"]) ? args["observedTargets"] : []);
+    const readings = args["watchReadings"] !== null && typeof args["watchReadings"] === "object" ? args["watchReadings"] as Record<string, unknown> : {};
     for (const watch of Object.values(state.watches)) {
       if (watch.status !== "active" || Date.parse(watch.dueAt) > Date.parse(at)) continue;
       if (observed !== null && !observed.has(watch.target)) continue;
       changed = true;
       const target = own(state.participants, watch.target);
+      // Nobody left to look at the target or to be woken for it: the watch can only wait, so it ends after a grace and says why.
+      // The grace needs consecutive evaluations: a check this late means the daemon was down or asleep, so the count starts over.
+      const reading = readings[watch.target];
+      if (Date.parse(at) - Date.parse(watch.dueAt) > Math.max(2 * watch.intervalMs, 60_000) || reading === "present") watch.orphanedSince = null;
+      if (reading === "gone") {
+        watch.orphanedSince ??= at;
+        if (Date.parse(at) - Date.parse(watch.orphanedSince) >= WATCH_ORPHAN_MS) {
+          watch.status = "stopped"; watch.stoppedAt = at;
+          event(state, at, "watch.orphaned", watch.target, null, { generation: watch.generation, observer: watch.observer, since: watch.orphanedSince });
+          continue;
+        }
+      }
       const resting = target !== undefined && target.runtime !== "working";
       if (resting && watch.quietSince) { watch.dueAt = timed(at, watch.intervalMs); continue; }
       if (resting) { watch.quietSince = at; event(state, at, "watch.quiet", watch.target, null, { runtime: target!.runtime }); }

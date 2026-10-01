@@ -22,7 +22,8 @@ export function validateBinding(machine: string, session: string, instance: stri
 }
 
 type LocalBinding = Pick<Participant, "machine" | "hostScope" | "session" | "instance" | "pane">;
-type ParticipantInspection = { runtime: Participant["runtime"]; connection: Participant["connection"]; reason: string; interactiveReady: boolean | null };
+/** `gone` is Herdr's own answer that the execution is not there; an unreachable Herdr or remote is `unavailable` and not gone. */
+type ParticipantInspection = { runtime: Participant["runtime"]; connection: Participant["connection"]; reason: string; interactiveReady: boolean | null; gone: boolean };
 export const OFFICIAL_PROMPT_BOUNDARY = {
   transport: "Herdr 0.9.1 agent.prompt",
   preflight: "same pane and session (the terminal only for a sessionless agent), idle or done lifecycle, and interactive readiness unless Herdr reports none",
@@ -31,12 +32,12 @@ export const OFFICIAL_PROMPT_BOUNDARY = {
 } as const;
 
 export function inspectParticipant(participant: LocalBinding): ParticipantInspection {
-  if (participant.pane === null) return { runtime: "unknown", connection: "unverified", reason: "participant has no exact pane binding", interactiveReady: null };
+  if (participant.pane === null) return { runtime: "unknown", connection: "unverified", reason: "participant has no exact pane binding", interactiveReady: null, gone: true };
   const found = getAgent(participant.pane, at(participant), 1000);
-  if (found.kind !== "found") return { runtime: "unknown", connection: "unavailable", reason: found.detail, interactiveReady: null };
+  if (found.kind !== "found") return { runtime: "unknown", connection: "unavailable", reason: found.detail, interactiveReady: null, gone: found.kind === "absent" };
   const agent = found.agent;
-  if (!sameExecution(participant, { machine: participant.machine, hostScope: participant.hostScope, pane: agent.paneId, session: agent.sessionId, instance: agent.terminalId })) return { runtime: "unknown", connection: "unavailable", reason: "execution identity changed", interactiveReady: null };
-  return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: agent.status === "blocked" ? "recipient is blocked" : "the recorded execution observed in its pane", interactiveReady: agent.interactiveReady };
+  if (!sameExecution(participant, { machine: participant.machine, hostScope: participant.hostScope, pane: agent.paneId, session: agent.sessionId, instance: agent.terminalId })) return { runtime: "unknown", connection: "unavailable", reason: "execution identity changed", interactiveReady: null, gone: true };
+  return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: agent.status === "blocked" ? "recipient is blocked" : "the recorded execution observed in its pane", interactiveReady: agent.interactiveReady, gone: false };
 }
 
 /**

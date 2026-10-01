@@ -25,6 +25,8 @@ export const REMOTE_PROTOCOL = 1;
 export const MAX_OUTBOX_LETTERS = 1024;
 export const MAX_LETTER_RECORDS = 20000;
 export const LETTER_OPERATIONS = new Set(["config.set", "agent.register", "agent.spawn", "watch.start", "watch.assign", "watch.stop", "watch.check", "request.send", "request.reply", "request.relay", "request.ack", "request.cancel", "request.escalate", "agent.end"]);
+/** How long a watch whose target and observer are both unreachable stays active before the daemon stops it. */
+export const WATCH_ORPHAN_MS = 60 * 60_000;
 export const DEFAULTS = { watchMs: 5 * 60_000, remindMs: 15 * 60_000, escalateMs: 30 * 60_000, retentionMs: 30 * 24 * 60 * 60_000 };
 
 export type RequestStatus = "open" | "answered" | "canceled";
@@ -67,6 +69,8 @@ export interface Watch {
    * neither reminded nor escalated, until the target works again (D-20).
    */
   quietSince?: string | null;
+  /** When the target and the observer were first both unreachable; cleared as soon as either answers. */
+  orphanedSince?: string | null;
 }
 export interface Delivery {
   id: string; requestId: string; recipient: string; status: DeliveryStatus; reason: string | null;

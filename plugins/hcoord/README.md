@@ -48,6 +48,12 @@ On macOS its LaunchAgent label is derived from that directory, so it does not re
 `stop` records that choice, and a later hide launch or plugin startup leaves the daemon stopped until `start` is run.
 The LaunchAgent starts at login and restarts an unexpected exit, while the ledger and outbox survive executable upgrades.
 
+Every write command saves a letter in `${HCOORD_HOME:-~/.hcoord}/outbox` first.
+A session whose sandbox cannot write there (a Codex `workspace-write` session without that directory in `writable_roots`) gets `permission_denied` naming the blocked path and the next action, and nothing is sent; running the same command again after the fix is safe.
+An unexpected exception keeps its errno code and message in the `hcoord.command_failed` event on stderr.
+A watch check an observer never closes is sent to the observer, reminded once and escalated to the human once, then left alone.
+A watch whose target and observer have both been unreachable for an hour is stopped by the daemon (`watch.orphaned` event) and can be restarted or reassigned by a human.
+
 After deleting hide.app, remove the default login service explicitly:
 
 ```sh
@@ -82,3 +88,5 @@ A retry restores a name Herdr dropped only when the recorded session matches, be
 
 Remote registration, worktree spawn, and outbox collection use the machine names saved by Herdr.
 The remote machine must have `~/.hcoord/bin/hcoord`, the source repository, and a testable Herdr server; hcoord stores no SSH credentials and the HQ always initiates the connection.
+Runs to one machine share a multiplexed SSH connection (a socket under `/tmp/hcoord-ssh-<uid>/`, closed after 60 idle seconds), so a flaky SSH agent is asked to sign far less often.
+A collection that keeps failing the same way logs one `hcoord.collect_failed` line per ten minutes with a `repeated` count, and `hcoord.collect_recovered` when it works again.

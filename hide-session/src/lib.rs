@@ -24,7 +24,10 @@ use std::path::{Path, PathBuf};
 
 mod catalog;
 mod conversation_cursor;
+mod label_owner;
 pub mod search;
+
+pub use label_owner::{ConfirmedLabelSession, confirm_label_session, label_reference_token};
 
 pub use conversation_cursor::{ConversationCheckpoint, ConversationCursor};
 
@@ -486,6 +489,16 @@ pub struct SessionLocator {
 }
 
 impl SessionLocator {
+    /// Release a retired caller's cached discovery result.
+    pub fn forget(&mut self, pane_id: &str) {
+        self.resolved.remove(pane_id);
+    }
+
+    /// Keep discovery caches bounded by their live callers.
+    pub fn retain_callers(&mut self, live: impl Fn(&str) -> bool) {
+        self.resolved.retain(|id, _| live(id));
+    }
+
     pub fn new(home: &Path) -> Self {
         Self {
             home: home.to_path_buf(),

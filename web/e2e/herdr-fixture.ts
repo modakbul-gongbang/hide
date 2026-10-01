@@ -29,7 +29,7 @@ export type HerdrFixture = {
   panes: [string, string];
   /** Per agent pane, the file its `claude` shim appends every byte the PTY delivered to. */
   inputLogs: [string, string];
-  /** The PATH the fixture's `claude` shim is on, for panes created later. */
+  /** The controlled shim and system-tool PATH for the server, panes and daemon. */
   fixturePath: string;
   /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
   run: (args: string[]) => unknown;
@@ -163,6 +163,57 @@ async function waitFor(predicate: () => boolean, what: string, ms = 10_000, deta
   throw new Error(`timed out waiting for ${what}${detail ? `; last seen: ${detail()}` : ""}`);
 }
 
+/** Controlled fake-agent provenance. This publishes the explicit test session,
+ * not a transcript-discovery claim; native isolation tests use raw CLI reports. */
+function declareFixtureSession(env: NodeJS.ProcessEnv, bin: string, pane: string, kind: string, sessionId: string, replacing = false): void {
+  execFileSync(bin, ["pane", "report-agent-session", pane, "--source", `herdr:${kind}`, "--agent", kind, "--agent-session-id", sessionId, "--seq", replacing ? "2" : "1", ...(replacing ? ["--session-start-source", "clear"] : [])], { env, timeout: 30_000 });
+  const hash = crypto.createHash("sha256");
+  for (const part of [kind, "id", sessionId]) {
+    const bytes = Buffer.from(part);
+    const size = Buffer.alloc(8);
+    size.writeBigUInt64BE(BigInt(bytes.length));
+    hash.update(size).update(bytes);
+  }
+  const owner = `v1:${hash.digest("hex")}`;
+  execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `label_owner=${owner}`, "--token", `status_owner=${owner}`, "--token", "label_generation=fixture", "--token", "status_generation=fixture"], { env, timeout: 30_000 });
+}
+
+export function setFixtureSession(fixture: HerdrFixture, pane: string, sessionId: string): void {
+  declareFixtureSession(fixture.env, fixture.bin, pane, "claude", sessionId, true);
+}
+
+/** Drive the fake Claude's actual screen detector while retaining its native
+ * session identity. Lifecycle hook reports may be ignored after declaration. */
+export async function setFixtureLifecycle(fixture: HerdrFixture, pane: string, state: "working" | "blocked"): Promise<void> {
+  type Agent = { pane_id: string; agent_status: string; agent_session?: { source: string; agent: string; kind: string; value: string } };
+  const current = () => (fixture.run(["agent", "list"]) as { result: { agents: Agent[] } }).result.agents.find((agent) => agent.pane_id === pane);
+  const reference = current()?.agent_session;
+  if (!reference || reference.source !== "herdr:claude" || reference.agent !== "claude") {
+    throw new Error("lifecycle fixture requires its declared Claude native session");
+  }
+  // The existing raw-mode shim echoes these bytes, so pinned Herdr's
+  // osc_title_working / bash_permission_prompt rules see a controlled TUI.
+  const screen = state === "working"
+    ? "\x1b]0;\u280b Working\x07"
+    : "\x1b]0;Fixture\x07\x1b[2J\x1b[Hdo you want to proceed?\n"
+      + "bash command\n❯ 1. Yes\n2. No\n";
+  execFileSync(fixture.bin, ["pane", "send-text", pane, screen], { env: fixture.env, timeout: 30_000 });
+  await waitFor(() => current()?.agent_status === state, `native fixture state ${state}`, 10_000,
+    () => JSON.stringify({ expected: state, observed: current()?.agent_status }));
+  const observed = current()!;
+  if (JSON.stringify(observed.agent_session) !== JSON.stringify(reference)) {
+    throw new Error("lifecycle fixture changed its declared native session");
+  }
+  // Detection provenance is run evidence, never product source.
+  const explanation = execFileSync(fixture.bin, ["agent", "explain", pane, "--json"], { env: fixture.env, encoding: "utf8", timeout: 30_000 });
+  const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (evidence) {
+    fs.mkdirSync(evidence, { recursive: true });
+    fs.writeFileSync(path.join(evidence, `lifecycle-${pane.replaceAll(":", "-")}-${state}.json`),
+      JSON.stringify({ expected: state, observed: observed.agent_status, nativeSessionUnchanged: true, explanation: JSON.parse(explanation) }));
+  }
+}
+
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
   const bin = herdrBinary();
   const version = execFileSync(bin, ["--version"], { encoding: "utf8" }).trim().split(/\s+/)[1];
@@ -181,7 +232,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     fs.rmSync(root, { recursive: true, force: true });
     throw error;
   }
-  const fixturePath = `${path.join(root, "bin")}:/usr/bin:/bin`;
+  // Keep host-installed providers out while retaining tools such as lsof.
+  const fixturePath = `${path.join(root, "bin")}:/usr/bin:/bin:/usr/sbin:/sbin`;
   // Workspaces created later inherit the server's PATH, not hided's PATH.
   // Keep every pane on the same fake agent binary, including new workspaces.
   env.PATH = fixturePath;
@@ -268,10 +320,10 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         [first, "Agent one"],
         [second, "Agent two"],
       ]) {
-        execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], {
-          env,
-          timeout: 30_000,
-        });
+        // A label fixture declares the provider's actual native reference;
+        // ownerless metadata deliberately cannot title an agent.
+        declareFixtureSession(env, bin, pane, "claude", `fixture-${pane}`);
+        execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env, timeout: 30_000 });
       }
     }
     return {
@@ -284,7 +336,16 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       panes: [first, second],
       inputLogs,
       fixturePath,
-      run: (args) => herdr(env, bin, args),
+      run: (args) => {
+        const result = herdr(env, bin, args);
+        if (args[0] === "agent" && args[1] === "start") {
+          const pane = args[args.indexOf("--pane") + 1];
+          const kind = args[args.indexOf("--kind") + 1];
+          if (args.includes("--pane") && ["claude", "codex"].includes(kind!))
+            declareFixtureSession(env, bin, pane!, kind!, `fixture-${pane}`);
+        }
+        return result;
+      },
       stop,
     };
   } catch (error) {
