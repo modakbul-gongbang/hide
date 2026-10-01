@@ -1170,7 +1170,6 @@ export function createActions(dispatch: DispatchFn) {
      * the only event is the device's (PRD cmdk-navigation B20).
      */
     openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number }) {
-      ui().setInbox(false);
       if ((rest()?.navigator?.focused_device_id ?? "local") !== deviceId) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
       if (lens && "pullRequest" in lens) return ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, lens.pullRequest));
       const screen = overviewScreen(rest(), projectId);

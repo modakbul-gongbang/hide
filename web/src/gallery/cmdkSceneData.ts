@@ -5,8 +5,8 @@
 
 import type { AgentRow, GithubSearchResult, SnapshotRest } from "../snapshot";
 
-/** The scene is drawn live, so its last GitHub read is a few minutes before it opens. */
-const READ_AT = Date.now() - 4 * 60_000;
+/** When the fixture's projects were last read from GitHub; the gallery scene moves it to a few minutes before it opens. */
+export const READ_AT = 1_000_000;
 
 const agent = (pane: string, label: string, extra: Partial<AgentRow> = {}): AgentRow =>
   ({ id: `a-${pane}`, pane_id: pane, identity_label: label, agent_kind: "claude", symbol: "●", group: "working", status_label: "Working", elapsed: "1m", emphasized: false, unread: false, activity: "working", ...extra }) as AgentRow;

@@ -12,7 +12,7 @@ import type { GithubSearch } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import { noteKeyboardOwner } from "../viewFocus";
-import { CMDK_RESULTS, RICH } from "./cmdkSceneData";
+import { CMDK_RESULTS, READ_AT, RICH } from "./cmdkSceneData";
 
 export type CmdkFront = "agent" | "agent-short" | "terminal" | "none";
 export type CmdkGithub = "results" | "pending" | "failed" | "empty";
@@ -51,7 +51,10 @@ export function CmdkScene({ theme, front, github }: CmdkSceneParams) {
   useLayoutEffect(() => {
     const focused = front === "agent" ? "p-child" : front === "agent-short" ? "p-dag" : null;
     const checkout = front === "agent" || front === "terminal" ? "c-sand" : "c-main";
-    const rest = { ...RICH, navigator: { ...RICH.navigator!, focused_workspace_id: "w1", focused_checkout_id: checkout } };
+    // The scene is drawn live, so the last GitHub read is a few minutes before it opens.
+    const read = JSON.stringify(RICH).replaceAll(String(READ_AT), String(Date.now() - 4 * 60_000));
+    const base = JSON.parse(read) as typeof RICH;
+    const rest = { ...base, navigator: { ...base.navigator!, focused_workspace_id: "w1", focused_checkout_id: checkout } };
     useShellStore.setState({ rest, agents: rest.navigator!.agents ?? [], connection: "live", focusedPaneId: focused });
     noteKeyboardOwner(front === "agent" || front === "agent-short" ? { kind: "agent", workspace: "w1" } : { kind: "none" });
     useUiStore.setState({ screen: front === "none" ? { kind: "main" } : { kind: "workspace" }, overlay: "search", searchOver: "none" });
