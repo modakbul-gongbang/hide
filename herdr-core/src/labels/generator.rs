@@ -130,26 +130,47 @@ fn record_holder(file: &File) {
         .and_then(|_| file.write_all(holder.as_bytes()));
 }
 
-/// What the holder wrote; `null` when it could not be read.
+/// The pid the holder wrote, and nothing else of the file; `null` when it
+/// cannot be read.
 fn holder(path: &Path) -> serde_json::Value {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or(serde_json::Value::Null)
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    let read = open_private(path, false).and_then(|file| file.take(64).read_to_end(&mut bytes));
+    read.ok()
+        .and_then(|_| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|holder| holder.get("pid").and_then(serde_json::Value::as_u64))
+        .map_or(serde_json::Value::Null, serde_json::Value::from)
+}
+
+/// Opens the lock file itself, never what a link at its path names, and
+/// only when it is a regular file of this user: the lock can sit in a
+/// directory other users write (a socket under `/tmp`), where a planted
+/// link would otherwise have its target truncated.
+fn open_private(path: &Path, create: bool) -> std::io::Result<File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let file = std::fs::OpenOptions::new()
+        .create(create)
+        .truncate(false)
+        .read(true)
+        .write(create)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    // SAFETY: geteuid has no preconditions and no memory effects.
+    if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+        return Err(std::io::Error::other(
+            "the lock is not this user's regular file",
+        ));
+    }
+    Ok(file)
 }
 
 fn try_lock(path: &Path) -> std::io::Result<Option<File>> {
-    use std::os::unix::fs::OpenOptionsExt;
     if let Some(directory) = path.parent() {
         std::fs::create_dir_all(directory)?;
     }
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
+    let file = open_private(path, true)?;
     // SAFETY: `flock` on a descriptor this function owns; no memory is
     // shared with the call.
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
@@ -169,6 +190,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_link_planted_at_the_lock_path_is_neither_followed_nor_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("herdr.sock");
+        let target = dir.path().join("operator-file.json");
+        std::fs::write(&target, r#"{"secret":"kept"}"#).unwrap();
+        std::os::unix::fs::symlink(&target, local_lock_path(&socket)).unwrap();
+
+        let mut lock = GeneratorLock::new(Some(local_lock_path(&socket)), "local");
+        assert_eq!(lock.ensure(Instant::now()), (false, false));
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            r#"{"secret":"kept"}"#
+        );
+        assert_eq!(holder(&local_lock_path(&socket)), serde_json::Value::Null);
+    }
+
+    #[test]
     fn a_second_worker_for_the_same_server_stands_by_until_the_first_ends() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("herdr.sock");
@@ -182,7 +220,7 @@ mod tests {
         assert_eq!(first.ensure(now), (true, false));
         assert_eq!(second.ensure(now), (false, false));
         assert_eq!(
-            holder(&local_lock_path(&socket))["pid"],
+            holder(&local_lock_path(&socket)),
             std::process::id(),
             "the standby can name the process that generates"
         );
