@@ -49,7 +49,8 @@ async function screen(page: Page): Promise<string> {
 
 test.describe.configure({ timeout: 90_000 });
 
-test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, context }) => {
+// @platform: Presses ⌘C, the copy chord macOS users type, and splits and closes through the platform's Herdr.
+test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" }, async ({ page, context }) => {
   // A Workspace opens with the Explorer beside its agents; the room keeps
   // the split panes wide enough that typed lines do not wrap.
   await page.setViewportSize({ width: 1680, height: 900 });

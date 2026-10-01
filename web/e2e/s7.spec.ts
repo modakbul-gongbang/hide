@@ -273,7 +273,8 @@ async function composeKorean(page: Page, steps: string[][]): Promise<void> {
   }
 }
 
-test("Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text", async ({ page }) => {
+// @platform: Korean composed through the browser's input-method path, and a save refused by file mode.
+test("Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-beside", { "shared.txt": LONG, "other.txt": "other\n", "keep.txt": "keep on disk\n" });
   const shared = path.join(stack.root, "shared.txt");
