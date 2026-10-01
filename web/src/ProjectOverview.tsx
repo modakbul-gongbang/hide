@@ -10,8 +10,10 @@ import { DiskFact, LowFreeFact, openDiskCleanup } from "./DiskEntrance";
 import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen";
 import { overviewProject } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
-import { AgentsLens, AgentsModeToggle, LensTiles, lensHandlers } from "./OverviewLenses";
-import { agentsTile, buildLanes, buildLineages, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
+import { AgentGraph, GraphFilterControls } from "./GraphView";
+import { chipOfBucket, foldId } from "./agentGraph";
+import { LensTiles, lensHandlers } from "./OverviewLenses";
+import { agentsTile, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
 import { buildPullRequests, buildTasks, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
 import { PullRequestsView } from "./PullRequestsView";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
@@ -26,7 +28,7 @@ import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 // sidebar's project row opens. Under its title sits one line of repository
 // facts with the chosen tile's mode control at its right end, then the lens
 // tiles, Agents, Issues, PRs and Sessions, where the tab row was. Every way in
-// opens Agents › checkouts with the lane in front selected; the lens rides
+// opens the Agents graph with the box in front selected; the lens rides
 // on the screen, so only Recent Panels brings back one as it was left
 // (`OverviewLens`). Issues is the issue-first Tasks board under its new name;
 // the boards are `TaskBoards.tsx`'s and the lenses `OverviewLenses.tsx`'s.
@@ -50,8 +52,6 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const now = Date.now();
   const tasks = useMemo(() => (projects.length > 0 ? buildTasks(projects, "project", Date.now()) : null), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
-  const lanes = useMemo(() => buildLanes(projects, lensAgents, "project"), [projects, lensAgents]);
-  const lineages = useMemo(() => buildLineages(lensAgents), [lensAgents]);
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
   const pullRequests = useMemo(() => (projects[0] ? buildPullRequests(projects[0], Date.now()) : null), [projects]);
   const tiles = useMemo(
@@ -110,7 +110,8 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     openCheckout,
     startIssue: (card) => useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: card.place.projectId, taskKey: card.task.key }),
     newIssue,
-    showCheckouts: () => setLens({ tab: "agents", agentsMode: "checkouts", panel: null }),
+    // `이슈 없는 워크트리 N` opens the graph with its `에이전트 없는 워크트리` line unfolded (agents-graph-view B23).
+    showCheckouts: () => setLens({ tab: "agents", panel: null, folds: lens.folds.includes(foldId("empty", project.id)) ? lens.folds : [...lens.folds, foldId("empty", project.id)] }),
   };
   // An issue chip opens the Issues tile at its card with the issue's panel open.
   const lensActions = lensHandlers(actions, {
@@ -130,7 +131,6 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       data-overview-screen={project.id}
       data-overview-state={state}
       data-overview-view={view}
-      data-agents-mode={view === "agents" ? lens.agentsMode : undefined}
     >
       <header className="flex shrink-0 flex-col gap-sm border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
@@ -162,7 +162,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-md">
           <Stats workspace={project} stats={stats} refreshing={!!rest?.git_worktrees_loading || project.checkouts.some((checkout) => checkout.github?.loading)} onMerged={showCleanup} />
           {view === "agents" ? (
-            <AgentsModeToggle mode={lens.agentsMode} onChange={(agentsMode) => setLens({ agentsMode })} />
+            <GraphFilterControls agents={lensAgents} filter={lens.graph} onChange={(graph) => setLens({ graph })} />
           ) : view === "issues" ? (
             <span className="flex items-center gap-xs" data-issues-controls="true">
               <IssueFilterControl filter={lens.filter} onChange={(filter) => setLens({ filter })} />
@@ -170,7 +170,12 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
             </span>
           ) : null}
         </div>
-        <LensTiles tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, prs: { ...lens.prs, focus: null } })} />
+        <LensTiles
+          tiles={tiles}
+          selected={view}
+          onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, prs: { ...lens.prs, focus: null } })}
+          onSegment={(bucket) => setLens({ tab: "agents", focusTask: null, panel: null, graph: { ...lens.graph, chips: [chipOfBucket(bucket)] } })}
+        />
       </header>
       <OpeningStatus actions={actions} />
       {device ? <UnavailableNotice device={device} availability={availability} actions={actions} /> : null}
@@ -188,7 +193,12 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       ) : view === "prs" ? (
         <PullRequestsView board={pullRequests} project={project} lens={lens.prs} onLens={(prs) => setLens({ prs: { ...lens.prs, ...prs } })} handlers={lensActions} now={now} />
       ) : view === "agents" ? (
-        <AgentsLens mode={lens.agentsMode} lanes={lanes} lineages={lineages} scope="project" selectedLane={lens.lane} folds={lens.folds} handlers={lensActions} now={now} />
+        // A device that does not answer shows its reason above and no graph: the last picture is not left standing (B32).
+        availability.state === "ready" ? (
+          <AgentGraph projects={projects} agents={lensAgents} scope="project" selectedBox={lens.box} filter={lens.graph} onFilter={(graph) => setLens({ graph })} folds={lens.folds} handlers={lensActions} now={now} />
+        ) : (
+          <div className="flex-1" data-graph-unavailable={availability.state} />
+        )
       ) : (
         <IssuesView
           board={tasks}

@@ -6,6 +6,7 @@ import { create } from "zustand";
 import type { Filter as DiskFilter } from "./diskCleanup";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
+import { NO_GRAPH_FILTER, type GraphFilter } from "./agentGraph";
 import { NO_FILTER, type IssueFilter } from "./projectBoard";
 import type { SettingsTab } from "./settings";
 import type { CycleItem } from "./recent";
@@ -69,27 +70,24 @@ export type PrLens = { open: readonly number[]; focus: number | null; merged: bo
 
 export const NO_PR_LENS: PrLens = { open: [], focus: null, merged: false };
 
-/** The Agents tab's two modes (D-03): a lane per checkout, or a row per lineage. */
-export type AgentsMode = "checkouts" | "lineage";
-
-/** A folded line the operator opened: worktrees with no agent, the ones only there to be removed, resting lineages. */
-export type LensFold = "empty" | "cleanup" | "resting";
-
 /**
  * How a Project's Overview is looked at, the screen's own page state (D-04,
- * D-17): the tile, the Agents mode, the Issues mode, the selected lane, the
- * folds opened, and the issue card an issue chip asked for. It rides on the
+ * D-17, agents-graph-view D-22): the tile, the Issues mode, the selected box,
+ * the graph's folds opened (by `foldId`) and its filter, and the issue card an
+ * issue chip asked for. It rides on the
  * screen, so Recent Panels brings a Project's Overview back exactly as it was
  * left (B11); every other way in starts from `entryLens`. Nothing here is
  * stored.
  */
 export type OverviewLens = {
   tab: OverviewTab;
-  agentsMode: AgentsMode;
   tasksMode: TasksMode;
-  /** The checkout whose lane is selected, or null. */
-  lane: string | null;
-  folds: readonly LensFold[];
+  /** The checkout whose box is selected in the Agents graph, or null. */
+  box: string | null;
+  /** The Agents graph's opened fold lines, by `foldId`. */
+  folds: readonly string[];
+  /** The Agents graph's status chips, search and device (B29). */
+  graph: GraphFilter;
   /** The issue card to bring into view on the Issues tab. */
   focusTask: string | null;
   /** The issue whose panel is open beside the Issues board, by task key (PRD overview-lenses-issues D-08). */
@@ -101,17 +99,18 @@ export type OverviewLens = {
 };
 
 /** `folds` with `fold` opened, or closed again when it was open. */
-export function toggledFold(folds: readonly LensFold[], fold: LensFold): LensFold[] {
+export function toggledFold(folds: readonly string[], fold: string): string[] {
   return folds.includes(fold) ? folds.filter((open) => open !== fold) : [...folds, fold];
 }
 
 /**
- * Where every way into a Project's Overview lands (D-04, D-17): Agents ›
- * checkouts, the given lane selected. The Issues mode is the page's, the one
- * All projects' Tasks shows too (task-agents-views D-10).
+ * Where every way into a Project's Overview lands (D-04, D-17, agents-graph-view
+ * D-22): the Agents graph with the given box selected and no filter. The
+ * Issues mode is the page's, the one All projects' Tasks shows too
+ * (task-agents-views D-10).
  */
-export function entryLens(lane: string | null, tasksMode: TasksMode): OverviewLens {
-  return { tab: "agents", agentsMode: "checkouts", tasksMode, lane, folds: [], focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS };
+export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLens {
+  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS };
 }
 
 /**
@@ -196,8 +195,6 @@ type UiStore = {
   mainView: MainView;
   /** All projects' Tasks mode. */
   tasksMode: TasksMode;
-  /** All projects' Agents mode. */
-  agentsMode: AgentsMode;
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
   sidebarMode: SidebarMode;
@@ -278,7 +275,6 @@ type UiStore = {
   setScreen: (screen: Screen) => void;
   setMainView: (view: MainView) => void;
   setTasksMode: (mode: TasksMode) => void;
-  setAgentsMode: (mode: AgentsMode) => void;
   /** Changes the Project Overview's lens in place; a no-op on any other screen. */
   setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
@@ -322,7 +318,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
   mainView: "tasks",
   tasksMode: "board",
-  agentsMode: "checkouts",
   relation: null,
   sidebarMode: "projects",
   homeStart: null,
@@ -356,7 +351,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setScreen: (screen) => set({ screen, opening: null }),
   setMainView: (mainView) => set({ mainView }),
   setTasksMode: (tasksMode) => set({ tasksMode }),
-  setAgentsMode: (agentsMode) => set({ agentsMode }),
   // A lens change is a new screen value, so Recent Panels records the
   // Overview as it now is; the open request stays, since nothing moved away.
   // An Issues mode chosen here is the page's as well.

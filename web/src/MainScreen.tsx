@@ -8,15 +8,17 @@ import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { AGENT_GROUPS, boardProjects, mainSections, overviewScreen, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
-import { AgentsLens, AgentsModeToggle, lensHandlers } from "./OverviewLenses";
-import { agentsTile, buildLanes, buildLineages, scopeAgents } from "./overviewLens";
+import { AgentGraph, GraphFilterControls } from "./GraphView";
+import { NO_GRAPH_FILTER, type GraphFilter } from "./agentGraph";
+import { lensHandlers } from "./OverviewLenses";
+import { agentsTile, scopeAgents } from "./overviewLens";
 import { allProjectsStats, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
 import { frontDeviceId } from "./devices";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
-import { toggledFold, useUiStore, type LensFold, type MainView } from "./ui";
+import { toggledFold, useUiStore, type MainView } from "./ui";
 import { hostBridge, hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
@@ -46,10 +48,10 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const setView = useUiStore((s) => s.setMainView);
   const tasksMode = useUiStore((s) => s.tasksMode);
   const setTasksMode = useUiStore((s) => s.setTasksMode);
-  const agentsMode = useUiStore((s) => s.agentsMode);
-  const setAgentsMode = useUiStore((s) => s.setAgentsMode);
   const [doneOpen, setDoneOpen] = useState(false);
-  const [folds, setFolds] = useState<readonly LensFold[]>([]);
+  // The Agents graph's folds and filter are this screen's own page state, gone with it (agents-graph-view B29).
+  const [folds, setFolds] = useState<readonly string[]>([]);
+  const [graphFilter, setGraphFilter] = useState<GraphFilter>(NO_GRAPH_FILTER);
   const [focusTask, setFocusTask] = useState<string | null>(null);
   // The Tasks view's issue panel and filter, this screen's own page state (PRD overview-lenses-issues).
   const [panel, setPanel] = useState<string | null>(null);
@@ -64,8 +66,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const projects = useMemo(() => boardProjects(rest, agents, deviceId), [rest, agents, deviceId]);
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
-  const lanes = useMemo(() => buildLanes(projects, lensAgents, "all"), [projects, lensAgents]);
-  const lineages = useMemo(() => buildLineages(lensAgents), [lensAgents]);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
   const boards = view !== "projects";
@@ -95,7 +95,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
     newIssue,
     showCheckouts: () => {
       setView("agents");
-      setAgentsMode("checkouts");
       setPanel(null);
     },
   };
@@ -166,7 +165,9 @@ export function MainScreen({ actions }: { actions: Actions }) {
             <IssueFilterControl filter={filter} onChange={setFilter} />
             <TasksModeToggle mode={tasksMode} onChange={setTasksMode} />
           </span>
-        ) : view === "agents" ? <AgentsModeToggle mode={agentsMode} onChange={setAgentsMode} /> : null}
+        ) : view === "agents" ? (
+          <GraphFilterControls agents={lensAgents} filter={graphFilter} onChange={setGraphFilter} />
+        ) : null}
       </div>
       {boards ? (
         // A device that cannot answer keeps its last rows off these boards and says why here.
@@ -193,7 +194,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           page={page}
         />
       ) : view === "agents" ? (
-        <AgentsLens mode={agentsMode} lanes={lanes} lineages={lineages} scope="all" selectedLane={null} folds={folds} handlers={lensActions} now={Date.now()} />
+        <AgentGraph projects={projects} agents={lensAgents} scope="all" selectedBox={null} filter={graphFilter} onFilter={setGraphFilter} folds={folds} handlers={lensActions} now={Date.now()} />
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>No project is registered yet.</p>

@@ -122,6 +122,7 @@
   --graph-tray-inset-x: 6px;
   --graph-tray-inset-y: 2px;
   --graph-edge-width: 1.5px;
+  --graph-search-width: 176px;
   --graph-edge-flow-width: 2px;
   --graph-motion-ms: 320;
   --issue-panel-min-width: 360px;
