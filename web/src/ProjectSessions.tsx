@@ -515,21 +515,22 @@ function DetailHeader({ detail, row, workspace, reading = false }: { detail: Pro
   const time = sessionTime(row.updated_at_unix_ms);
   return (
     <header className="flex shrink-0 flex-col gap-xxs border-b border-border bg-card px-md py-sm" data-session-header={detail.session_id}>
-      <div className="flex items-center gap-xs text-micro text-subtle-foreground">
+      <div className="flex flex-wrap items-center gap-x-xs gap-y-xxs text-micro text-subtle-foreground">
         <AgentMark kind={row.provider} />
         <span>{row.provider_label}</span>
-        <Hint label={checkout.path}>
-        <span className="truncate text-muted-foreground">
-          {checkout.label}
-        </span>
-        </Hint>
-        {time ? <span className="shrink-0 text-muted-foreground">{time}</span> : null}
-        {reading ? (
-          <span role="status" className="shrink-0 text-muted-foreground">
-            Reading…
+        <span className="flex min-w-0 flex-1 basis-0 items-center gap-xs">
+          <Hint label={checkout.path}>
+          <span className="min-w-0 truncate text-muted-foreground">
+            {checkout.label}
           </span>
-        ) : null}
-        <span className="flex-1" />
+          </Hint>
+          {time ? <span className="shrink-0 text-muted-foreground">{time}</span> : null}
+          {reading ? (
+            <span role="status" className="shrink-0 text-muted-foreground">
+              Reading…
+            </span>
+          ) : null}
+        </span>
         <CopySource key={detail.session_id} locator={detail.locator || row.locator} id="detail" />
       </div>
       <h2 className={`break-words break-keep text-subhead font-semibold ${title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? "Untitled session"}</h2>
