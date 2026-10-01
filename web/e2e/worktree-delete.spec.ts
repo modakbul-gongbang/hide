@@ -8,7 +8,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { screenshot } from "./wire";
 
@@ -55,7 +55,7 @@ test("a dirty worktree with an unmerged branch and an agent is deleted once both
     const pane = created.result.root_pane.pane_id;
     await prompt(herdr, pane);
     herdr.run(["agent", "start", "agent-delete", "--kind", "claude", "--pane", pane]);
-    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", "task=삭제 대상"], { env: herdr.env, timeout: 30_000 });
+    labelAgent(herdr, pane, { task: "삭제 대상 작업 정리" });
 
     daemon = await startHided(herdr, "worktree-delete");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
@@ -76,7 +76,7 @@ test("a dirty worktree with an unmerged branch and an agent is deleted once both
     const consequences = dialog.locator("[data-delete-consequences]");
     await expect(consequences).toContainText("1 changed file not committed", { timeout: 30_000 });
     await expect(consequences).toContainText("ahead 1 unmerged");
-    await expect(consequences).toContainText(/stops 1 agent: 삭제 대상 \(/);
+    await expect(consequences).toContainText(/stops 1 agent: 삭제 대상 작업 정리 \(/);
     await expect(dialog.locator("[data-delete-branch-warning]")).toHaveText("1 commit not on main is lost with it");
     await expect(dialog).toContainText("Discard 1 changed file");
 

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { herdrBinary, startHerdr } from "./herdr-fixture";
+import { herdrBinary, linkFixtureTranscripts, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { enterWorkspace } from "./wire";
 
 type Daemon = {
@@ -13,8 +13,10 @@ type Daemon = {
   stop: () => void;
 };
 
-async function startHided(extra: Record<string, string> = {}): Promise<Daemon> {
+/** `herdr` lends the daemon its transcripts and its `claude` label provider. */
+async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixture): Promise<Daemon> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-"));
+  if (herdr) linkFixtureTranscripts(herdr, dir);
   const bin = path.resolve("..", "target", "debug", "hided");
   const uiDir = path.resolve("dist");
   const env = { ...process.env };
@@ -34,6 +36,7 @@ async function startHided(extra: Record<string, string> = {}): Promise<Daemon> {
       // Resolve the fixture binary even when this test creates no server.
       // An inherited app-bundle override may have moved since this shell began.
       HERDR_BIN_PATH: herdrBinary(),
+      ...(herdr ? { PATH: herdr.fixturePath } : {}),
       ...extra,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -116,7 +119,7 @@ test("a sidebar row click switches the pane and typed text echoes there", async 
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
-    daemon = await startHided({ HERDR_SOCKET_PATH: herdr.socket, HERDR_BIN_PATH: herdr.bin });
+    daemon = await startHided({ HERDR_SOCKET_PATH: herdr.socket, HERDR_BIN_PATH: herdr.bin }, herdr);
     const [first, second] = herdr.panes;
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page);

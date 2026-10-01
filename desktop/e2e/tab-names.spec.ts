@@ -2,7 +2,7 @@ import { expect, type ElectronApplication } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr } from "../../web/e2e/herdr-fixture";
+import { labelAgent, startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { isolate, launch, test } from "./fixture";
 
@@ -12,7 +12,7 @@ test("native tab composition and Korean inline naming", async () => {
   let app: ElectronApplication | undefined;
   try {
     const title = "한글 작업 이름 · focused session";
-    execFileSync(herdr.bin, ["pane", "report-metadata", herdr.panes[0], "--source", "tab-names", "--token", `task=${title}`], { env: herdr.env });
+    labelAgent(herdr, herdr.panes[0], { task: title });
     const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;

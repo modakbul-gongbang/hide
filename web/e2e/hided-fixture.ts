@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HerdrFixture } from "./herdr-fixture";
+import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
 
 /**
  * `restart` stops the daemon and starts it again on the same state directory
@@ -35,6 +35,7 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
   fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
   fs.writeFileSync(path.join(home, "projects", "notes.txt"), "x");
+  linkFixtureTranscripts(herdr, home);
   return launch(herdr, label, dir, home, "0", extraEnv);
 }
 

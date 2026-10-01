@@ -8,7 +8,7 @@ import { spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
@@ -24,10 +24,17 @@ export type Isolated = {
   cleanup: () => void;
 };
 
-export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin">, label: string): Isolated {
+/**
+ * A Herdr fixture with its `root` also lends the daemon its `claude`, which
+ * is the label provider the fixture's transcripts are answered by, and those
+ * transcripts; without one the daemon finds whatever `claude` PATH has, on a
+ * HOME where it is not logged in.
+ */
+export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pick<HerdrFixture, "root">>, label: string): Isolated {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `hide-desktop-${label}-`));
   const home = path.join(root, "home");
   fs.mkdirSync(path.join(home, "projects"), { recursive: true });
+  if (herdr.root) linkFixtureTranscripts({ root: herdr.root }, home);
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] =>
@@ -47,6 +54,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin">, label: stri
     HIDED_UI_DIR: path.join(REPO, "web", "dist"),
     HERDR_SOCKET_PATH: herdr.socket,
     HERDR_BIN_PATH: herdr.bin,
+    ...(herdr.root ? { PATH: `${path.join(herdr.root, "bin")}:${inherited.PATH ?? "/usr/bin:/bin"}` } : {}),
     // `open_external` must not launch a GUI application during a test.
     HIDE_OPEN_COMMAND: "/usr/bin/true",
   };

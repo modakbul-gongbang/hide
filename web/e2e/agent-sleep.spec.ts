@@ -7,7 +7,7 @@
 
 import { expect, test } from "@playwright/test";
 import path from "node:path";
-import { setFixtureSession, startHerdr } from "./herdr-fixture";
+import { claudeProjects, setFixtureSession, startHerdr, writeFixtureTranscript } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -27,6 +27,7 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     const [, sleeper] = herdr.panes;
     // The official Claude integration's report: the conversation id, under
     // Herdr's own source.
+    writeFixtureTranscript(claudeProjects(herdr), SESSION, { task: "Agent two" });
     setFixtureSession(herdr, sleeper, SESSION);
     const other = herdr.run([
       "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "other", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",

@@ -12,7 +12,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { claudeProjects, labelAgent, setFixtureSession, writeFixtureTranscript, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { rest, screenshot } from "./wire";
 
@@ -43,7 +43,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string): Prom
   const pane = created.result.root_pane.pane_id;
   await prompt(herdr, pane);
   herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
-  execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env: herdr.env, timeout: 30_000 });
+  labelAgent(herdr, pane, { task });
   return pane;
 }
 
@@ -89,8 +89,10 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     git(repo, ["commit", "-m", "initial"]);
     const worktree = path.join(herdr.root, "repo-menus");
     git(repo, ["worktree", "add", "-b", BRANCH, worktree]);
-    await workspaceAt(herdr, repo, "메인 정리");
-    const worktreePane = await workspaceAt(herdr, worktree, "메뉴 구현");
+    await workspaceAt(herdr, repo, "메인 체크아웃 정리");
+    const worktreePane = await workspaceAt(herdr, worktree, "사이드바 메뉴 구현");
+    // The session the menu copies carries the row's title too.
+    writeFixtureTranscript(claudeProjects(herdr), SESSION, { task: "사이드바 메뉴 구현" });
     setFixtureSession(herdr, worktreePane, SESSION);
 
     daemon = await startHided(herdr, "sidebar-menus");
@@ -165,19 +167,19 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     await page.locator('[data-sidebar-mode="agents"]').click();
     const agentRow = page.locator(`[data-agent-list] li[data-pane="${worktreePane}"]`);
     await expect(agentRow).toBeVisible();
-    menu = await openMenu(page, agentRow, "메뉴 구현 actions");
+    menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     expect(await menuLines(menu)).toEqual(["Show", "─", "Copy title", "Copy session id", "─", "Close tab…"]);
     await screenshot(page, "sidebar-menus-agent-dark");
     await menu.locator('[data-menu-item="copy_session_id"]').click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(SESSION);
-    menu = await openMenu(page, agentRow, "메뉴 구현 actions");
+    menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     await menu.locator('[data-menu-item="copy_title"]').click();
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("메뉴 구현");
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("사이드바 메뉴 구현");
 
     // The three menus in Light too.
     await chooseTheme(page, "light");
     await rest(page);
-    menu = await openMenu(page, agentRow, "메뉴 구현 actions");
+    menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     await screenshot(page, "sidebar-menus-agent-light");
     await page.keyboard.press("Escape");
     await page.locator('[data-sidebar-mode="projects"]').click();
@@ -193,7 +195,7 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     // idle agent's tab closes without asking (close.ts asks only for working
     // or attention panes), and the row leaves with its pane.
     await page.locator('[data-sidebar-mode="agents"]').click();
-    menu = await openMenu(page, agentRow, "메뉴 구현 actions");
+    menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     await menu.locator('[data-menu-item="close_tab"]').click();
     await expect(agentRow).toHaveCount(0, { timeout: 20_000 });
     await expect(page.locator('[data-confirm-close="tab"]')).toHaveCount(0);
