@@ -1,0 +1,954 @@
+//! One Herdr server's labels: which session each agent pane runs, when its
+//! conversation is read, when it is analyzed, and what the projection shows.
+//!
+//! The session-sync coordinator owns one worker and drives it from the agent
+//! state it already follows (`observe`), from its tick (`tick`) and from the
+//! worker's own wake (`drain`). Nothing here runs under the runtime mutex:
+//! conversation reads run on the worker's reader thread, analyses on the
+//! core's one analyzer, and the coordinator lays the result onto the
+//! session payload just before it hands the payload to the runtime
+//! (`apply`).
+//!
+//! A read happens only when a pane's state, status or session reference
+//! moved, when a read left a backlog, when a provider wait ran out, or once
+//! three seconds after a turn started with its prompt not yet written
+//! (B12). A label is shown only while the pane's current reference proves
+//! the session it was made for (D-04): a new session, a reused pane, a
+//! provider change or an A -> B -> A switch shows nothing of the old session
+//! until the new one is proven, and every read and analysis result carries
+//! the generation it started under so a late one is dropped.
+
+use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use hide_session::label_transcript::{LabelEvent, LabelTranscript, LabelTranscriptRequest};
+use hide_session::{Agent, label_reference_token};
+use serde_json::json;
+
+use super::analysis::AnalysisFailure;
+use super::analysis::{
+    AnalysisPhase, analysis_context, analysis_phase, context_fingerprint, interrupted,
+    new_human_turns, newest_user_is_last, retain_bounded, rolling_analysis_context,
+    task_input_cursor, turn_key,
+};
+use super::analyzer::{AnalysisJob, AnalysisResult, LabelAnalyzer};
+use super::context_label;
+use super::generator::GeneratorLock;
+use super::store::{LabelStore, PaneRecord};
+use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
+
+/// How long after a turn starts a pane whose prompt was not in the
+/// transcript yet is read once more.
+const FOLLOW_UP_READ: Duration = Duration::from_secs(3);
+
+/// Why a read produced nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ReadFailure {
+    /// The machine cannot be reached now (a device without a helper
+    /// connection). The pane keeps its label and waits for its next change.
+    Unavailable(String),
+    /// The read ran and refused, with a stable reason code.
+    Refused(String),
+}
+
+/// Where a server's conversations are read: this machine's files, or a
+/// device's through its helper. Blocks; called only on the reader thread.
+pub(crate) trait TranscriptSource: Send + Sync {
+    fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure>;
+}
+
+/// One agent as the coordinator's replica holds it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ObservedAgent {
+    pub(crate) pane_id: String,
+    pub(crate) agent: Option<String>,
+    pub(crate) status: Option<String>,
+    /// Herdr's `agent_session` as `(kind, value)`.
+    pub(crate) reference: Option<(String, String)>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) state_change_seq: u64,
+}
+
+pub(crate) struct WorkerConfig {
+    /// The store key: `local`, or `device:<id>`.
+    pub(crate) target: String,
+    /// What names the Herdr server for the generator lock.
+    pub(crate) server_key: String,
+    pub(crate) lock_dir: Option<PathBuf>,
+}
+
+pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
+
+enum WorkerResult {
+    Read {
+        pane: String,
+        generation: u64,
+        reference: String,
+        from_start: bool,
+        result: Box<Result<LabelTranscript, ReadFailure>>,
+    },
+    Analysis(AnalysisOutcome),
+}
+
+/// What an analysis was asked under, carried back with its answer.
+struct AnalysisMeta {
+    pane: String,
+    generation: u64,
+    owner: String,
+    turn: u64,
+    phase: AnalysisPhase,
+    task_input_cursor: Option<u64>,
+    initial_context: bool,
+    context_chars: usize,
+}
+
+struct AnalysisOutcome {
+    meta: AnalysisMeta,
+    result: AnalysisResult,
+}
+
+struct ReadJob {
+    pane: String,
+    generation: u64,
+    reference: String,
+    from_start: bool,
+    request: LabelTranscriptRequest,
+}
+
+struct PaneState {
+    agent: Agent,
+    status: String,
+    reference: Option<(String, String)>,
+    reference_token: Option<String>,
+    cwd: Option<String>,
+    generation: u64,
+    /// The conversation since the anchor, bounded; empty until the first
+    /// read of this process.
+    events: VecDeque<LabelEvent>,
+    events_loaded: bool,
+    needs_read: bool,
+    next_analysis_at: Option<Instant>,
+    follow_up_at: Option<Instant>,
+    follow_up_armed: bool,
+    /// The last failure logged, so a repeating one is logged once.
+    last_failure: Option<String>,
+}
+
+pub(crate) struct LabelWorker {
+    target: String,
+    store: Arc<LabelStore>,
+    analyzer: Arc<LabelAnalyzer>,
+    records: BTreeMap<String, PaneRecord>,
+    panes: BTreeMap<String, PaneState>,
+    generator: GeneratorLock,
+    reader: Reader,
+    results: Receiver<WorkerResult>,
+    sender: Sender<WorkerResult>,
+    wake: Wake,
+    read_in_flight: Option<String>,
+    analysis_in_flight: Option<String>,
+    /// Panes owing an analysis while another runs, in arrival order.
+    waiting: VecDeque<String>,
+    next_generation: u64,
+    dirty: bool,
+}
+
+impl LabelWorker {
+    pub(crate) fn spawn(
+        config: WorkerConfig,
+        store: Arc<LabelStore>,
+        analyzer: Arc<LabelAnalyzer>,
+        source: Arc<dyn TranscriptSource>,
+        wake: Wake,
+    ) -> Result<Self, String> {
+        let (sender, results) = channel();
+        let reader = Reader::spawn(source, sender.clone(), Arc::clone(&wake))?;
+        Ok(Self {
+            records: store.target(&config.target),
+            generator: GeneratorLock::new(
+                config.lock_dir.as_deref(),
+                &config.server_key,
+                &config.target,
+            ),
+            target: config.target,
+            store,
+            analyzer,
+            panes: BTreeMap::new(),
+            reader,
+            results,
+            sender,
+            wake,
+            read_in_flight: None,
+            analysis_in_flight: None,
+            waiting: VecDeque::new(),
+            next_generation: 0,
+            dirty: false,
+        })
+    }
+
+    /// Follows the server's agents. `live_panes` is the server's complete
+    /// pane topology when the caller has one; records of panes outside it
+    /// are dropped (D-08), while an agent list alone never drops a record,
+    /// because a restored server lists its agents late. Returns whether
+    /// anything the projection shows changed.
+    pub(crate) fn observe(
+        &mut self,
+        agents: &[ObservedAgent],
+        live_panes: Option<&HashSet<String>>,
+        now: Instant,
+        now_unix_ms: u64,
+    ) -> bool {
+        // Settled before anything is laid on a payload, so the first
+        // projection already shows what the store proves.
+        let mut changed = self.ensure_generator(now);
+        let mut seen = HashSet::new();
+        for observed in agents {
+            seen.insert(observed.pane_id.as_str());
+            let mut fresh = false;
+            let record = self
+                .records
+                .entry(observed.pane_id.clone())
+                .or_insert_with(|| {
+                    fresh = true;
+                    PaneRecord::first_seen(observed.state_change_seq, now_unix_ms)
+                });
+            if fresh {
+                self.dirty = true;
+                changed = true;
+            }
+            let seq_moved = record.state_change_seq != observed.state_change_seq;
+            if seq_moved {
+                record.state_change_seq = observed.state_change_seq;
+                record.changed_unix_ms = now_unix_ms;
+                self.dirty = true;
+                changed = true;
+            }
+            let status = observed
+                .status
+                .clone()
+                .unwrap_or_else(|| "unknown".to_owned());
+            let status_moved = record.agent_status.as_deref() != Some(status.as_str());
+            if status_moved {
+                record.agent_status = Some(status.clone());
+                self.dirty = true;
+            }
+            // A running agent is not waiting on anyone: the question and the
+            // reply it asked for are over, and the turn's end writes anew.
+            if status == "working" && (record.question || !record.expected_reply.is_empty()) {
+                record.question = false;
+                record.expected_reply.clear();
+                self.dirty = true;
+                changed = true;
+            }
+            let Some(agent) = provider(observed.agent.as_deref()) else {
+                self.forget_pane(&observed.pane_id);
+                continue;
+            };
+            let reference_token = observed
+                .reference
+                .as_ref()
+                .and_then(|(kind, value)| label_reference_token(agent.as_str(), kind, value));
+            match self.panes.get_mut(&observed.pane_id) {
+                None => {
+                    // A restart resumes where it stopped: an unchanged pane
+                    // whose position belongs to its current reference is
+                    // not read until something moves (B10).
+                    let resumable = !fresh
+                        && !seq_moved
+                        && !status_moved
+                        && reference_token.is_some()
+                        && record.read_reference == reference_token
+                        && record.checkpoint.is_some();
+                    self.next_generation += 1;
+                    self.panes.insert(
+                        observed.pane_id.clone(),
+                        PaneState {
+                            agent,
+                            status,
+                            reference: observed.reference.clone(),
+                            reference_token: reference_token.clone(),
+                            cwd: observed.cwd.clone(),
+                            generation: self.next_generation,
+                            events: VecDeque::new(),
+                            events_loaded: false,
+                            needs_read: reference_token.is_some() && !resumable,
+                            next_analysis_at: None,
+                            follow_up_at: None,
+                            follow_up_armed: status_moved,
+                            last_failure: None,
+                        },
+                    );
+                }
+                Some(pane) => {
+                    if pane.reference_token != reference_token || pane.agent != agent {
+                        // Another session, or none: everything in flight
+                        // for the old one is dropped when it lands.
+                        self.next_generation += 1;
+                        pane.generation = self.next_generation;
+                        pane.events.clear();
+                        pane.events_loaded = false;
+                        pane.next_analysis_at = None;
+                        pane.follow_up_at = None;
+                        pane.needs_read = reference_token.is_some();
+                        self.waiting.retain(|id| id != &observed.pane_id);
+                        changed = true;
+                        crate::diagnostic!(json!({
+                            "component": "labels",
+                            "kind": "session.reference_changed",
+                            "target": self.target,
+                            "pane_id": observed.pane_id,
+                            "reference": reference_token,
+                            "generation": pane.generation,
+                        }));
+                    }
+                    if seq_moved || status_moved {
+                        pane.needs_read |= reference_token.is_some();
+                        pane.follow_up_armed = status == "working";
+                    }
+                    pane.agent = agent;
+                    pane.status = status;
+                    pane.reference = observed.reference.clone();
+                    pane.reference_token = reference_token;
+                    pane.cwd = observed.cwd.clone();
+                }
+            }
+        }
+        let gone: Vec<String> = self
+            .panes
+            .keys()
+            .filter(|id| !seen.contains(id.as_str()))
+            .cloned()
+            .collect();
+        for id in gone {
+            self.forget_pane(&id);
+        }
+        if let Some(live) = live_panes {
+            let before = self.records.len();
+            self.records.retain(|id, _| live.contains(id));
+            if self.records.len() != before {
+                self.dirty = true;
+            }
+        }
+        self.schedule(now);
+        self.persist();
+        changed
+    }
+
+    /// Runs what came due: the generator role, provider waits, follow-up
+    /// reads. Returns whether anything shown changed.
+    pub(crate) fn tick(&mut self, now: Instant) -> bool {
+        let mut changed = self.ensure_generator(now);
+        if !self.generator.held() {
+            return false;
+        }
+        let ids: Vec<String> = self.panes.keys().cloned().collect();
+        for id in ids {
+            let pane = self.panes.get_mut(&id).expect("listed above");
+            if pane.follow_up_at.is_some_and(|at| now >= at) {
+                pane.follow_up_at = None;
+                pane.needs_read |= pane.reference_token.is_some();
+            }
+            if pane.next_analysis_at.is_some_and(|at| now >= at) {
+                pane.next_analysis_at = None;
+                if pane.events_loaded {
+                    changed |= self.decide(&id, now);
+                } else {
+                    pane.needs_read |= pane.reference_token.is_some();
+                }
+            }
+        }
+        self.schedule(now);
+        self.persist();
+        changed
+    }
+
+    /// Takes the reader's and the analyzer's results. Returns whether
+    /// anything shown changed.
+    pub(crate) fn drain(&mut self, now: Instant) -> bool {
+        let mut changed = false;
+        while let Ok(result) = self.results.try_recv() {
+            changed |= match result {
+                WorkerResult::Read {
+                    pane,
+                    generation,
+                    reference,
+                    from_start,
+                    result,
+                } => self.handle_read(&pane, generation, &reference, from_start, *result, now),
+                WorkerResult::Analysis(outcome) => self.handle_analysis(outcome, now),
+            };
+        }
+        self.schedule(now);
+        self.persist();
+        changed
+    }
+
+    /// Lays each agent's label and state-change time onto the payload the
+    /// runtime projects. A label goes only onto a row whose current session
+    /// reference proves it; a daemon that is not this server's generator
+    /// shows none (D-10).
+    pub(crate) fn apply(&self, payload: &mut SessionSnapshotPayload) {
+        let held = self.generator.held();
+        for agent in &mut payload.agents {
+            let Some(pane_id) = agent.pane_id.as_deref().or(agent.id.as_deref()) else {
+                continue;
+            };
+            let Some(record) = self.records.get(pane_id) else {
+                continue;
+            };
+            agent.changed_at_unix_ms = Some(record.changed_unix_ms);
+            if !held {
+                continue;
+            }
+            let reference = agent.agent_session.as_ref().and_then(|session| {
+                label_reference_token(
+                    agent.agent.as_deref().unwrap_or_default(),
+                    &session.kind,
+                    &session.value,
+                )
+            });
+            if !record.proven_for(reference.as_deref()) {
+                continue;
+            }
+            let non_empty = |value: &str| (!value.trim().is_empty()).then(|| value.to_owned());
+            agent.label = Some(AgentLabel {
+                task: record.task.clone(),
+                progress: non_empty(&record.progress),
+                expected_reply: non_empty(&record.expected_reply),
+                question: record.question && agent.agent_status.as_deref() != Some("working"),
+            });
+        }
+    }
+
+    /// Nothing is being read or analyzed and nothing waits to be.
+    #[cfg(test)]
+    pub(crate) fn settled(&self) -> bool {
+        self.read_in_flight.is_none()
+            && self.analysis_in_flight.is_none()
+            && self.waiting.is_empty()
+            && !self
+                .panes
+                .values()
+                .any(|pane| pane.needs_read && pane.reference_token.is_some())
+    }
+
+    /// Takes the generator role when it is free. Returns whether this worker
+    /// just took it over from a standby, in which case whatever moved while
+    /// another daemon generated is read again.
+    fn ensure_generator(&mut self, now: Instant) -> bool {
+        let (_, took_over) = self.generator.ensure(now);
+        if took_over {
+            for pane in self.panes.values_mut() {
+                pane.needs_read |= pane.reference_token.is_some();
+            }
+        }
+        took_over
+    }
+
+    fn forget_pane(&mut self, pane_id: &str) {
+        if self.panes.remove(pane_id).is_some() {
+            self.waiting.retain(|id| id != pane_id);
+        }
+    }
+
+    fn persist(&mut self) {
+        if std::mem::take(&mut self.dirty) {
+            self.store.save_target(&self.target, &self.records);
+        }
+    }
+
+    fn schedule(&mut self, now: Instant) {
+        if !self.generator.held() {
+            return;
+        }
+        self.schedule_read();
+        self.schedule_analysis(now);
+    }
+
+    fn schedule_read(&mut self) {
+        if self.read_in_flight.is_some() {
+            return;
+        }
+        let next = self
+            .panes
+            .iter()
+            .find(|(_, pane)| pane.needs_read && pane.reference_token.is_some())
+            .map(|(id, _)| id.clone());
+        let Some(id) = next else {
+            return;
+        };
+        let pane = self.panes.get_mut(&id).expect("found above");
+        pane.needs_read = false;
+        let record = self.records.get(&id);
+        let reference = pane.reference_token.clone().expect("filtered above");
+        let same_file =
+            record.is_some_and(|record| record.read_reference.as_ref() == Some(&reference));
+        // An in-memory reader appends after the checkpoint; a reader that
+        // lost its events (a restart) starts at the last human record, and a
+        // new file starts at its beginning.
+        let checkpoint = if !same_file {
+            None
+        } else if pane.events_loaded {
+            record.and_then(|record| record.checkpoint.clone())
+        } else {
+            record.and_then(|record| record.anchor.clone())
+        };
+        let (kind, value) = pane.reference.clone().expect("a token has a reference");
+        let job = ReadJob {
+            pane: id.clone(),
+            generation: pane.generation,
+            reference,
+            from_start: !pane.events_loaded || checkpoint.is_none(),
+            request: LabelTranscriptRequest {
+                agent: pane.agent,
+                reference_kind: kind,
+                reference_value: value,
+                cwd: pane.cwd.clone(),
+                checkpoint,
+            },
+        };
+        self.read_in_flight = Some(id);
+        self.reader.submit(job);
+    }
+
+    fn schedule_analysis(&mut self, now: Instant) {
+        while self.analysis_in_flight.is_none() {
+            let Some(id) = self.waiting.pop_front() else {
+                return;
+            };
+            self.decide(&id, now);
+        }
+    }
+
+    fn log_failure(&mut self, pane_id: &str, kind: &str, reason: &str) {
+        let Some(pane) = self.panes.get_mut(pane_id) else {
+            return;
+        };
+        let key = format!("{kind}:{reason}");
+        if pane.last_failure.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        pane.last_failure = Some(key);
+        crate::diagnostic!(json!({
+            "component": "labels",
+            "kind": kind,
+            "target": self.target,
+            "pane_id": pane_id,
+            "reference": pane.reference_token,
+            "generation": pane.generation,
+            "reason": reason,
+        }));
+    }
+
+    fn handle_read(
+        &mut self,
+        pane_id: &str,
+        generation: u64,
+        reference: &str,
+        from_start: bool,
+        result: Result<LabelTranscript, ReadFailure>,
+        now: Instant,
+    ) -> bool {
+        if self.read_in_flight.as_deref() == Some(pane_id) {
+            self.read_in_flight = None;
+        }
+        let Some(pane) = self.panes.get(pane_id) else {
+            return false;
+        };
+        if pane.generation != generation || pane.reference_token.as_deref() != Some(reference) {
+            return false;
+        }
+        let transcript = match result {
+            Ok(transcript) => transcript,
+            Err(ReadFailure::Unavailable(reason)) => {
+                self.log_failure(pane_id, "read.unavailable", &reason);
+                return false;
+            }
+            Err(ReadFailure::Refused(reason)) => {
+                self.log_failure(pane_id, "read.refused", &reason);
+                return false;
+            }
+        };
+        let mut changed = false;
+        let target = self.target.clone();
+        let record = self
+            .records
+            .get_mut(pane_id)
+            .expect("an observed pane has a record");
+        let owner = transcript.confirmed.owner.clone();
+        if record.owner.as_deref() != Some(owner.as_str()) {
+            if record.owner.is_some() || record.task.is_some() {
+                crate::diagnostic!(json!({
+                    "component": "labels",
+                    "kind": "session.reset",
+                    "target": target,
+                    "pane_id": pane_id,
+                    "reference": reference,
+                    "generation": generation,
+                }));
+            }
+            record.reset_session(Some(owner));
+            record.forget_position();
+            self.waiting.retain(|id| id != pane_id);
+            changed = true;
+        } else if transcript.rescanned.is_some()
+            || record
+                .incarnation
+                .as_ref()
+                .is_some_and(|incarnation| *incarnation != transcript.confirmed.incarnation)
+        {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "session.transcript_restarted",
+                "target": target,
+                "pane_id": pane_id,
+                "generation": generation,
+                "reason": transcript.rescanned,
+            }));
+            record.reset_analysis();
+        }
+        if record.proven_reference.as_deref() != Some(reference) {
+            record.proven_reference = Some(reference.to_owned());
+            changed = true;
+        }
+        record.read_reference = Some(reference.to_owned());
+        record.checkpoint = Some(transcript.checkpoint.clone());
+        if from_start || transcript.anchor.is_some() {
+            record.anchor = transcript.anchor.clone();
+        }
+        record.incarnation = Some(transcript.confirmed.incarnation.clone());
+        self.dirty = true;
+        if transcript.skipped_lines > 0 {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "read.lines_skipped",
+                "target": target,
+                "pane_id": pane_id,
+                "lines": transcript.skipped_lines,
+                "reasons": transcript.skipped_reasons,
+            }));
+        }
+        let pane = self.panes.get_mut(pane_id).expect("checked above");
+        pane.last_failure = None;
+        if from_start || transcript.rescanned.is_some() {
+            pane.events.clear();
+        }
+        pane.events.extend(transcript.events);
+        retain_bounded(&mut pane.events);
+        pane.events_loaded = true;
+        if transcript.has_more {
+            // Finish the backlog before naming a task from part of it.
+            pane.needs_read = true;
+            return changed;
+        }
+        let armed = std::mem::take(&mut pane.follow_up_armed);
+        let submitted_before = self.analysis_in_flight.clone();
+        changed |= self.decide(pane_id, now);
+        // The turn started but its prompt was not written yet: one more
+        // read shortly after, rather than naming the task at its end.
+        if armed
+            && let Some(pane) = self.panes.get_mut(pane_id)
+            && pane.status == "working"
+            && self.analysis_in_flight == submitted_before
+            && !self.waiting.iter().any(|id| id == pane_id)
+        {
+            let record = &self.records[pane_id];
+            let start_owed = turn_key(pane.events.make_contiguous())
+                .is_none_or(|turn| record.analysis_turn_start == Some(turn));
+            if start_owed {
+                pane.follow_up_at = Some(now + FOLLOW_UP_READ);
+            }
+        }
+        changed
+    }
+
+    /// Whether the pane owes an analysis now and, if the analyzer is free
+    /// for this server, hands it in. Returns whether anything shown changed.
+    fn decide(&mut self, pane_id: &str, now: Instant) -> bool {
+        let Some(pane) = self.panes.get_mut(pane_id) else {
+            return false;
+        };
+        let Some(record) = self.records.get_mut(pane_id) else {
+            return false;
+        };
+        let (Some(owner), Some(reference)) = (record.owner.clone(), pane.reference_token.clone())
+        else {
+            return false;
+        };
+        if !record.proven_for(Some(&reference)) || !pane.events_loaded {
+            return false;
+        }
+        let events = pane.events.make_contiguous();
+        let working = pane.status == "working";
+        // An interruption is the user's own act, not a new task: the turn is
+        // settled and no request is spent on it.
+        if !working && interrupted(events) {
+            let turn = turn_key(events);
+            if record.analysis_turn_start != turn || record.analysis_turn_end != turn {
+                record.analysis_turn_start = turn;
+                record.analysis_turn_end = turn;
+                self.dirty = true;
+            }
+            return false;
+        }
+        let Some(turn) = turn_key(events) else {
+            return false;
+        };
+        let initial_context = record.task.is_none() || record.task_input_cursor.is_none();
+        let Some(phase) = analysis_phase(
+            newest_user_is_last(events),
+            working,
+            record.analysis_turn_start == Some(turn),
+            record.analysis_turn_end == Some(turn),
+        ) else {
+            pane.next_analysis_at = None;
+            return false;
+        };
+        if pane.next_analysis_at.is_some_and(|at| now < at) {
+            return false;
+        }
+        if self.analysis_in_flight.as_deref() == Some(pane_id) {
+            return false;
+        }
+        if self.analysis_in_flight.is_some() {
+            if !self.waiting.iter().any(|id| id == pane_id) {
+                self.waiting.push_back(pane_id.to_owned());
+            }
+            return false;
+        }
+        let context = if initial_context {
+            analysis_context(events)
+        } else {
+            let delta = new_human_turns(events, record.task_input_cursor);
+            rolling_analysis_context(
+                record.task.as_deref().unwrap_or_default(),
+                if phase == AnalysisPhase::TurnStart {
+                    &delta
+                } else {
+                    &[]
+                },
+                events,
+            )
+        };
+        if context.is_empty() {
+            return false;
+        }
+        let generation = pane.generation;
+        let request_id = format!(
+            "{}/{pane_id}:{owner}:{generation}:{turn:016x}:{}:{:016x}",
+            self.target,
+            phase.label(),
+            context_fingerprint(&context)
+        );
+        let request =
+            context_label::request(&format!("{}/{pane_id}", self.target), request_id, &context);
+        let meta = AnalysisMeta {
+            pane: pane_id.to_owned(),
+            generation,
+            owner,
+            turn,
+            phase,
+            task_input_cursor: task_input_cursor(events),
+            initial_context,
+            context_chars: context.chars().count(),
+        };
+        self.analysis_in_flight = Some(pane_id.to_owned());
+        let sender = self.sender.clone();
+        let wake = Arc::clone(&self.wake);
+        self.analyzer.submit(AnalysisJob {
+            request,
+            done: Box::new(move |result| {
+                let _ = sender.send(WorkerResult::Analysis(AnalysisOutcome { meta, result }));
+                wake();
+            }),
+        });
+        false
+    }
+
+    fn handle_analysis(&mut self, outcome: AnalysisOutcome, now: Instant) -> bool {
+        let AnalysisOutcome {
+            meta: outcome,
+            result,
+        } = outcome;
+        if self.analysis_in_flight.as_deref() == Some(outcome.pane.as_str()) {
+            self.analysis_in_flight = None;
+        }
+        let pane_id = outcome.pane.as_str();
+        let current = self.panes.get(pane_id).is_some_and(|pane| {
+            pane.generation == outcome.generation
+                && self
+                    .records
+                    .get(pane_id)
+                    .and_then(|record| record.owner.as_deref())
+                    == Some(outcome.owner.as_str())
+        });
+        if !current {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "analysis.discarded_session",
+                "target": self.target,
+                "pane_id": pane_id,
+                "generation": outcome.generation,
+            }));
+            if self.panes.contains_key(pane_id) && !self.waiting.iter().any(|id| id == pane_id) {
+                self.waiting.push_back(pane_id.to_owned());
+            }
+            return false;
+        }
+        match result {
+            Ok((provider, analysis)) => {
+                let record = self.records.get_mut(pane_id).expect("checked above");
+                let previous_task = record.task.clone();
+                let may_update_task = outcome.initial_context
+                    || previous_task.is_none()
+                    || (outcome.phase == AnalysisPhase::TurnStart && analysis.task_changed);
+                let task_changed =
+                    may_update_task && previous_task.as_deref() != Some(analysis.task.as_str());
+                if task_changed {
+                    record.task = Some(analysis.task.clone());
+                }
+                record.progress = analysis.progress.clone();
+                record.expected_reply = analysis.expected_reply.clone();
+                record.task_input_cursor = outcome.task_input_cursor.or(record.task_input_cursor);
+                record.question = analysis.question;
+                match outcome.phase {
+                    AnalysisPhase::TurnStart => record.analysis_turn_start = Some(outcome.turn),
+                    // Recording the start too keeps a turn first seen at its
+                    // end from going back for a task it no longer needs.
+                    AnalysisPhase::TurnEnd => {
+                        record.analysis_turn_start = Some(outcome.turn);
+                        record.analysis_turn_end = Some(outcome.turn);
+                    }
+                }
+                self.dirty = true;
+                // Enough to reconstruct a verdict later without any content.
+                crate::diagnostic!(json!({
+                    "component": "labels",
+                    "kind": "analysis.recorded",
+                    "target": self.target,
+                    "pane_id": pane_id,
+                    "generation": outcome.generation,
+                    "phase": outcome.phase.label(),
+                    "task_changed": task_changed,
+                    "task_chars": analysis.task.chars().count(),
+                    "progress_chars": analysis.progress.chars().count(),
+                    "expected_reply_chars": analysis.expected_reply.chars().count(),
+                    "question": analysis.question,
+                    "context_chars": outcome.context_chars,
+                    "turn": format!("{:016x}", outcome.turn),
+                    "provider": provider.to_string(),
+                }));
+                if let Some(pane) = self.panes.get_mut(pane_id) {
+                    pane.next_analysis_at = None;
+                }
+                true
+            }
+            // A stopping daemon records nothing; the next one asks again.
+            Err(AnalysisFailure::Stopped) => false,
+            Err(failure) => {
+                match failure.retry_after() {
+                    Some(wait) => {
+                        if let Some(pane) = self.panes.get_mut(pane_id) {
+                            pane.next_analysis_at = Some(now + wait);
+                        }
+                        self.log_failure(
+                            pane_id,
+                            "analysis.provider_unavailable",
+                            &failure.detail(),
+                        );
+                    }
+                    None => {
+                        // Park the turn so it is not asked again until the
+                        // user takes the next one.
+                        let record = self.records.get_mut(pane_id).expect("checked above");
+                        record.analysis_turn_start = Some(outcome.turn);
+                        record.analysis_turn_end = Some(outcome.turn);
+                        self.dirty = true;
+                        self.log_failure(pane_id, "analysis.abandoned", &failure.detail());
+                    }
+                }
+                false
+            }
+        }
+    }
+}
+
+fn provider(kind: Option<&str>) -> Option<Agent> {
+    match kind? {
+        "claude" => Some(Agent::Claude),
+        "codex" => Some(Agent::Codex),
+        _ => None,
+    }
+}
+
+/// The worker's one reader thread: reads run one at a time, in the order
+/// the worker hands them in, and each answer wakes the coordinator.
+struct Reader {
+    jobs: Option<Sender<ReadJob>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Reader {
+    fn spawn(
+        source: Arc<dyn TranscriptSource>,
+        results: Sender<WorkerResult>,
+        wake: Wake,
+    ) -> Result<Self, String> {
+        let (jobs, receiver) = channel::<ReadJob>();
+        let thread = std::thread::Builder::new()
+            .name("herdr-core-labels-reader".to_owned())
+            .spawn(move || {
+                while let Ok(job) = receiver.recv() {
+                    let result = source.read(&job.request);
+                    if results
+                        .send(WorkerResult::Read {
+                            pane: job.pane,
+                            generation: job.generation,
+                            reference: job.reference,
+                            from_start: job.from_start,
+                            result: Box::new(result),
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    wake();
+                }
+            })
+            .map_err(|error| format!("label reader could not be started: {error}"))?;
+        Ok(Self {
+            jobs: Some(jobs),
+            thread: Some(thread),
+        })
+    }
+
+    fn submit(&self, job: ReadJob) {
+        if let Some(jobs) = self.jobs.as_ref() {
+            let _ = jobs.send(job);
+        }
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        self.jobs.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// This machine's conversations, read in place.
+pub(crate) struct LocalTranscripts {
+    pub(crate) home: PathBuf,
+}
+
+impl TranscriptSource for LocalTranscripts {
+    fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
+        hide_session::label_transcript::read(&self.home, request).map_err(ReadFailure::Refused)
+    }
+}

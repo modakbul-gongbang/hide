@@ -79,6 +79,7 @@ pub struct Core {
     _kit: Option<crate::kit::KitPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     _session_search: Option<crate::runtime::session_search::SearchWorker>,
+    labels: Option<Arc<crate::labels::LabelServices>>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     owner_thread: ThreadId,
@@ -97,6 +98,11 @@ impl Drop for Core {
         // to lock the runtime, so a join under the lock never returns.
         let remote_syncs = { lock_recover(&self.runtime).take_remote_syncs() };
         drop(remote_syncs);
+        // Every worker has stopped handing in analyses; the one running is
+        // cancelled, which ends its provider child (labels-in-hided B22).
+        if let Some(labels) = self.labels.take() {
+            labels.analyzer.shutdown();
+        }
         if let Some(worker) = attachment_worker {
             let _ = worker.join();
         }
@@ -180,6 +186,28 @@ impl Core {
         let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
+        // Before any coordinator starts, because each builds its label worker
+        // on these, and before the kit runs, because the plugin state the
+        // store imports once is what the kit's retirement deletes.
+        let labels = match crate::labels::LabelServices::start(
+            std::path::Path::new(&options.app_state_path)
+                .parent()
+                .filter(|directory| !directory.as_os_str().is_empty()),
+            environment_home.clone(),
+            Arc::downgrade(&runtime),
+        ) {
+            Ok(services) => {
+                let services = Arc::new(services);
+                lock_recover(&runtime).install_label_services(Arc::clone(&services));
+                Some(services)
+            }
+            Err(message) => {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"labels","kind":"services.start_failed","message":message})
+                );
+                None
+            }
+        };
         let session_search = match crate::runtime::session_search::SearchWorker::spawn(
             Arc::downgrade(&runtime),
             notifier.clone(),
@@ -279,6 +307,7 @@ impl Core {
             _kit: kit,
             _session_sync: session_sync,
             _session_search: session_search,
+            labels,
             runtime,
             notifier,
             owner_thread: thread::current().id(),

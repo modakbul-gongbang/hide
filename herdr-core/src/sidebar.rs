@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -98,15 +98,30 @@ pub struct SessionLayoutSplitPayload {
     pub rect: SessionLayoutRect,
 }
 
-/// The most a name or sentence read off a pane token may run to. Herdr caps
-/// a token value at 80 characters; the row draws one line, so anything past
-/// this is the tooltip's.
-const MAX_TOKEN_TEXT_CHARS: usize = 80;
+/// The most a label sentence may run to on a row; anything past this is the
+/// tooltip's.
+const MAX_LABEL_TEXT_CHARS: usize = 80;
 
-/// The longest `expected_reply` the label plugin publishes (PRD D-05). The
-/// core cuts at the same length so a plugin that outran its own rule cannot
-/// push the row past one line.
+/// The longest `expected_reply` a label carries (PRD D-05). The projection
+/// cuts at the same length so a reply that outran the rule cannot push the
+/// row past one line.
 pub const MAX_EXPECTED_REPLY_CHARS: usize = 40;
+
+/// What the core's label worker says about an agent (PRD labels-in-hided
+/// D-04): set by `labels::worker::LabelWorker::apply` only while the pane's
+/// current session reference proves the session the label was made for.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct AgentLabel {
+    #[serde(default)]
+    pub task: Option<String>,
+    #[serde(default)]
+    pub progress: Option<String>,
+    #[serde(default)]
+    pub expected_reply: Option<String>,
+    /// The agent's last message asks the operator something specific.
+    #[serde(default)]
+    pub question: bool,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionAgentPayload {
@@ -138,6 +153,12 @@ pub struct SessionAgentPayload {
     pub state_change_seq: Option<u64>,
     #[serde(default)]
     pub tokens: BTreeMap<String, Value>,
+    /// The core's label for this agent's current session, if proven.
+    #[serde(default)]
+    pub label: Option<AgentLabel>,
+    /// When the core last saw this agent change state, in epoch ms.
+    #[serde(default)]
+    pub changed_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -165,12 +186,11 @@ pub struct SessionPanePayload {
 
 /// What an agent needs from the operator.
 ///
-/// The label plugin reports each of the three in an unread form
-/// (`status_question_new`) and a read form (`status_question`); both mean the
-/// demand exists, because whether the operator has read it is Hide's own
-/// judgment and not the token's. Herdr's `blocked` lifecycle is an approval:
-/// the plugin defines `!` as "Herdr's blocked lifecycle, or the hook seeing a
-/// permission request".
+/// A question is the core label's verdict on the agent's last message;
+/// Herdr's `blocked` lifecycle is an approval. Whether the operator has read
+/// either is Hide's own judgment (`apply_read_state`). `Error` has no source
+/// since the hand-installed hook path was retired (PRD labels-in-hided D-06)
+/// and stays only so the wire value keeps its meaning.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentDemand {
     Error,
@@ -1270,134 +1290,7 @@ pub fn rederive(agent: &mut SidebarAgentSnapshot) {
     derive_from_axes(agent);
 }
 
-/// Remember the publication invalidated by each observed reference change.
-/// One entry per live pane; no I/O and no history that grows with sessions.
-/// The producer rejects old workers; this fence also rejects retained metadata
-/// on A -> B -> A until a fresh publication generation arrives.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct LabelPublicationGuard {
-    panes: HashMap<String, LabelPublicationFence>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct LabelPublicationFence {
-    reference: Option<String>,
-    label: (Option<String>, Option<String>),
-    status: (Option<String>, Option<String>),
-    blocked_label: Option<(Option<String>, Option<String>)>,
-    blocked_status: Option<(Option<String>, Option<String>)>,
-}
-
-impl LabelPublicationGuard {
-    pub(crate) fn apply(&mut self, payload: &mut SessionSnapshotPayload) {
-        let live: HashSet<&str> = payload
-            .agents
-            .iter()
-            .filter_map(|agent| agent.pane_id.as_deref().or(agent.id.as_deref()))
-            .chain(payload.panes.iter().map(|pane| pane.pane_id.as_str()))
-            .collect();
-        self.panes.retain(|id, _| live.contains(id.as_str()));
-        for agent in &mut payload.agents {
-            let Some(id) = agent.pane_id.as_ref().or(agent.id.as_ref()) else {
-                continue;
-            };
-            let reference = agent.agent_session.as_ref().and_then(|session| {
-                hide_session::label_reference_token(
-                    agent.agent.as_deref().unwrap_or_default(),
-                    &session.kind,
-                    &session.value,
-                )
-            });
-            let publication = |kind: &str| {
-                (
-                    agent
-                        .tokens
-                        .get(&format!("{kind}_owner"))
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    agent
-                        .tokens
-                        .get(&format!("{kind}_generation"))
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                )
-            };
-            let label = publication("label");
-            let status = publication("status");
-            let fence = self
-                .panes
-                .entry(id.clone())
-                .or_insert_with(|| LabelPublicationFence {
-                    reference: reference.clone(),
-                    label: label.clone(),
-                    status: status.clone(),
-                    ..Default::default()
-                });
-            // Missing proof hides through projection without retiring the last
-            // concrete session. Only an observed replacement invalidates it.
-            if reference.is_some() && fence.reference != reference {
-                if fence.reference.is_some() {
-                    fence.blocked_label = Some(fence.label.clone());
-                    fence.blocked_status = Some(fence.status.clone());
-                }
-                fence.reference = reference;
-            }
-            fence.label = label.clone();
-            fence.status = status.clone();
-            if fence.blocked_label.as_ref() == Some(&label) {
-                for key in ["task", "progress", "expected_reply"] {
-                    agent.tokens.remove(key);
-                }
-            }
-            if fence.blocked_status.as_ref() == Some(&status) {
-                agent.tokens.retain(|key, _| !key.starts_with("status_"));
-            }
-        }
-    }
-}
-
-fn project_agent(mut agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
-    // Token guards in Herdr do not cover metadata patches. Validate at the
-    // common projection boundary so a native-session change suppresses stale
-    // strings in the very first frame, before the watcher can clear them.
-    let reference = agent.agent_session.as_ref().and_then(|session| {
-        hide_session::label_reference_token(
-            agent.agent.as_deref().unwrap_or_default(),
-            &session.kind,
-            &session.value,
-        )
-    });
-    let owns = |name: &str| {
-        reference.as_deref().is_some_and(|reference| {
-            agent.tokens.get(name).and_then(Value::as_str) == Some(reference)
-        })
-    };
-    let labels_current = owns("label_owner");
-    let status_current = owns("status_owner");
-    if !labels_current {
-        for key in ["task", "progress", "expected_reply"] {
-            agent.tokens.remove(key);
-        }
-    }
-    if !status_current {
-        agent.tokens.retain(|key, _| {
-            !matches!(
-                key.as_str(),
-                "status_question"
-                    | "status_question_new"
-                    | "status_approval"
-                    | "status_approval_new"
-                    | "status_error"
-                    | "status_error_new"
-                    | "status_working"
-                    | "status_done"
-                    | "status_done_new"
-                    | "status_interrupted"
-                    | "status_idle"
-                    | "status_stale"
-            )
-        });
-    }
+fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
     let pane_id = non_empty(agent.pane_id.as_deref().or(agent.id.as_deref()))
         .map(str::to_owned)
         .ok_or_else(|| "session agent is missing a pane id".to_owned())?;
@@ -1415,17 +1308,16 @@ fn project_agent(mut agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot,
         })
         .unwrap_or("workspace")
         .to_owned();
-    // The label-plugin title and sentences, each one line. The plugin already
+    // The label's title and sentences, each one line. The worker already
     // bounds them; the cut here is the same bound applied once more so a
     // value that outran it cannot reach a row.
-    let task = token_text(&agent.tokens, "task", MAX_TOKEN_TEXT_CHARS);
-    let progress = token_text(&agent.tokens, "progress", MAX_TOKEN_TEXT_CHARS);
-    let expected_reply = token_text(&agent.tokens, "expected_reply", MAX_EXPECTED_REPLY_CHARS);
-    // The label plugin's elapsed time, or empty when it reported none: a time
-    // nobody measured is not drawn as `0s` (PRD sidebar-readability B7).
-    let elapsed = token_string(&agent.tokens, "elapsed")
-        .filter(|value| valid_elapsed(value))
-        .unwrap_or_default();
+    let label = agent.label.as_ref();
+    let task = label.and_then(|label| line_text(label.task.as_deref(), MAX_LABEL_TEXT_CHARS));
+    let progress =
+        label.and_then(|label| line_text(label.progress.as_deref(), MAX_LABEL_TEXT_CHARS));
+    let expected_reply = label
+        .and_then(|label| line_text(label.expected_reply.as_deref(), MAX_EXPECTED_REPLY_CHARS));
+    let message = label.and_then(agent_message);
 
     let agent_kind = non_empty(agent.agent.as_deref()).unwrap_or("unknown");
     // Until its first task, an agent is named by what it is, never by the
@@ -1456,9 +1348,9 @@ fn project_agent(mut agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot,
         progress,
         expected_reply,
         detail: None,
-        message: agent_message(&agent.tokens),
+        message,
         status_word_visible: true,
-        elapsed,
+        changed_at_unix_ms: agent.changed_at_unix_ms,
         last_activity,
         state_change_seq: agent.state_change_seq,
         session_id: agent
@@ -1724,117 +1616,71 @@ fn derive_read_state(
     sort_agents(agents);
 }
 
-/// The demand axis. Error outranks question, which outranks approval, so the
-/// worst thing waiting is the one the row names.
+/// The demand axis. A question outranks an approval, so the worse thing
+/// waiting is the one the row names.
 fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
-    let tokens = &agent.tokens;
-    if demand_token(tokens, "status_error") {
-        AgentDemand::Error
-    } else if demand_token(tokens, "status_question") {
+    if agent.label.as_ref().is_some_and(|label| label.question) {
         AgentDemand::Question
-    } else if demand_token(tokens, "status_approval")
-        || agent.agent_status.as_deref() == Some("blocked")
-    {
+    } else if agent.agent_status.as_deref() == Some("blocked") {
         AgentDemand::Approval
     } else {
         AgentDemand::None
     }
 }
 
-/// The activity axis. A state Herdr does not name and no token describes is
-/// reported as unknown rather than folded into idle (engineering rule 4).
+/// The activity axis. A state Herdr does not name is reported as unknown
+/// rather than folded into idle (engineering rule 4).
 fn agent_activity(agent: &SessionAgentPayload) -> AgentActivity {
-    let tokens = &agent.tokens;
-    if present_token(tokens, "status_working") || agent.agent_status.as_deref() == Some("working") {
-        AgentActivity::Working
-    } else if matches!(agent.agent_status.as_deref(), Some("idle") | Some("done"))
-        || present_token(tokens, "status_idle")
-        || demand_token(tokens, "status_done")
-    {
-        AgentActivity::Stopped
-    } else {
-        AgentActivity::Unknown
+    match agent.agent_status.as_deref() {
+        Some("working") => AgentActivity::Working,
+        Some("idle") | Some("done") => AgentActivity::Stopped,
+        _ => AgentActivity::Unknown,
     }
 }
 
-/// Whether this stopped pane has actually completed work.
-///
-/// This is deliberately separate from activity and read state. `idle` plus an
-/// idle token is the ready state of a newly opened agent; `done` or either
-/// completion token form is evidence that a turn finished. Herdr's tab-scoped
-/// seen value still never decides Hide's pane-level read axis.
+/// Whether this stopped pane has actually completed work: Herdr's `done`.
+/// It is deliberately separate from activity and read state; Herdr's
+/// tab-scoped seen value never decides Hide's pane-level read axis.
 fn agent_completed(agent: &SessionAgentPayload) -> bool {
-    agent.agent_status.as_deref() == Some("done") || demand_token(&agent.tokens, "status_done")
+    agent.agent_status.as_deref() == Some("done")
 }
 
+/// The ordering key: when the core saw the agent change state, as thirteen
+/// digits, or Herdr's own state change sequence padded to twenty when the
+/// core has not observed it.
 fn projected_last_activity(agent: &SessionAgentPayload, pane_id: &str) -> Result<String, String> {
-    match agent.tokens.get("activity") {
-        None => agent
-            .state_change_seq
-            .map(|sequence| format!("{sequence:020}"))
-            .ok_or_else(|| {
-                format!("agent {pane_id} has neither an activity token nor state_change_seq")
-            }),
-        Some(Value::String(value)) => {
-            let value = value.trim();
-            if value.len() == 13 && value.bytes().all(|byte| byte.is_ascii_digit()) {
-                Ok(value.to_owned())
-            } else {
-                Err(format!("agent {pane_id} has an invalid activity token"))
-            }
-        }
-        Some(_) => Err(format!("agent {pane_id} has an invalid activity token")),
+    match (agent.changed_at_unix_ms, agent.state_change_seq) {
+        (Some(changed), _) => Ok(format!("{changed:013}")),
+        (None, Some(sequence)) => Ok(format!("{sequence:020}")),
+        (None, None) => Err(format!(
+            "agent {pane_id} has neither a state change time nor state_change_seq"
+        )),
     }
 }
 
-/// A label plugin status token in either form. `status_question_new` is the
-/// unread form and `status_question` the read one; both say the question
-/// exists. Only Hide's own pane record decides whether it has been read, so the
-/// `_new` suffix is an input to the demand axis and never to the read axis.
-/// The legacy boolean form (`status_question: true`) still counts.
-fn demand_token(tokens: &BTreeMap<String, Value>, name: &str) -> bool {
-    present_token(tokens, &format!("{name}_new")) || present_token(tokens, name)
-}
-
-fn present_token(tokens: &BTreeMap<String, Value>, name: &str) -> bool {
-    tokens
-        .get(name)
-        .is_some_and(|value| value.as_bool() != Some(false) && !value.is_null())
-}
-
-fn token_string(tokens: &BTreeMap<String, Value>, name: &str) -> Option<String> {
-    tokens
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
-/// One line of text off a token: whitespace collapsed, empty dropped, cut
-/// at `max_chars`.
-fn token_text(tokens: &BTreeMap<String, Value>, name: &str, max_chars: usize) -> Option<String> {
-    token_string(tokens, name)
-        .map(collapse_whitespace)
+/// One line of label text: whitespace collapsed, empty dropped, cut at
+/// `max_chars`.
+fn line_text(value: Option<&str>, max_chars: usize) -> Option<String> {
+    value
+        .map(|value| collapse_whitespace(value.trim().to_owned()))
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(max_chars).collect())
 }
 
-/// What the agent last said through its hooks (PRD overview-lenses-tiles-agents
-/// D-50): the `expected_reply` and `progress` tokens whole, request first,
-/// each trimmed but not collapsed or cut to a row, joined by a line break.
-/// Herdr already bounds a token value, and each part is held to
-/// `MAX_TOKEN_TEXT_CHARS` so a token that outran Herdr's cap cannot grow the
+/// What the agent's label last said (PRD overview-lenses-tiles-agents
+/// D-50): the expected reply and the progress whole, request first, each
+/// trimmed but not collapsed or cut to a row, joined by a line break, and
+/// each held to `MAX_LABEL_TEXT_CHARS` so a sentence cannot grow the
 /// snapshot.
-fn agent_message(tokens: &BTreeMap<String, Value>) -> Option<String> {
-    let parts: Vec<String> = ["expected_reply", "progress"]
+fn agent_message(label: &AgentLabel) -> Option<String> {
+    let parts: Vec<String> = [label.expected_reply.as_deref(), label.progress.as_deref()]
         .into_iter()
-        .filter_map(|name| token_string(tokens, name))
+        .flatten()
         .map(|value| {
             value
                 .trim()
                 .chars()
-                .take(MAX_TOKEN_TEXT_CHARS)
+                .take(MAX_LABEL_TEXT_CHARS)
                 .collect::<String>()
         })
         .filter(|value| !value.is_empty())
@@ -1850,51 +1696,66 @@ fn collapse_whitespace(value: String) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn valid_elapsed(value: &str) -> bool {
-    let Some((digits, suffix)) = value.split_at_checked(value.len().saturating_sub(1)) else {
-        return false;
-    };
-    !digits.is_empty()
-        && digits.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(suffix, "s" | "m" | "h" | "d")
-}
-
-/// Existing status/lineage fixtures describe labels belonging to the current
-/// session. Supply the now-required provenance without changing their expected
-/// axes. Isolation regressions intentionally deserialize their raw input.
+/// Status and lineage fixtures were written as the retired plugin's tokens.
+/// This turns them into what the core's label worker lays on the payload:
+/// `task`, `progress`, `expected_reply` and a `status_question*` token become
+/// the agent's `label`, and an `activity` token its state change time. Other
+/// tokens stay, as the payload carries them.
 #[cfg(test)]
 pub(crate) fn owned_label_fixture<T: serde::de::DeserializeOwned>(
     mut value: Value,
 ) -> Result<T, serde_json::Error> {
     if let Some(agents) = value.get_mut("agents").and_then(Value::as_array_mut) {
         for agent in agents {
-            let has_labels = agent
-                .get("tokens")
-                .and_then(Value::as_object)
-                .is_some_and(|tokens| {
-                    tokens.keys().any(|key| {
-                        matches!(key.as_str(), "task" | "progress" | "expected_reply")
-                            || key.starts_with("status_")
-                    })
-                });
-            if !has_labels {
+            let Some(tokens) = agent.get_mut("tokens").and_then(Value::as_object_mut) else {
                 continue;
+            };
+            let text = |tokens: &mut serde_json::Map<String, Value>, key: &str| {
+                tokens
+                    .remove(key)
+                    .and_then(|value| value.as_str().map(str::to_owned))
+            };
+            let task = text(tokens, "task");
+            let progress = text(tokens, "progress");
+            let expected_reply = text(tokens, "expected_reply");
+            let question = ["status_question", "status_question_new"]
+                .iter()
+                .any(|key| tokens.remove(*key).is_some_and(|value| !value.is_null()));
+            let activity = text(tokens, "activity").and_then(|value| value.parse::<u64>().ok());
+            // The plugin mirrored Herdr's lifecycle into a status token; a
+            // fixture that gave only the token meant that lifecycle.
+            let present = |name: &str| {
+                [name.to_owned(), format!("{name}_new")]
+                    .iter()
+                    .any(|key| tokens.get(key).is_some_and(|value| !value.is_null()))
+            };
+            let status = if present("status_working") {
+                Some("working")
+            } else if present("status_approval") {
+                Some("blocked")
+            } else if present("status_done") {
+                Some("done")
+            } else if present("status_idle") || question {
+                Some("idle")
+            } else {
+                None
+            };
+            tokens.retain(|key, _| !key.starts_with("status_"));
+            if let Some(status) = status
+                && agent.get("agent_status").is_none_or(Value::is_null)
+            {
+                agent["agent_status"] = Value::from(status);
             }
-            if agent.get("agent").is_none() {
-                agent["agent"] = Value::String("codex".into());
+            if task.is_some() || progress.is_some() || expected_reply.is_some() || question {
+                agent["label"] = serde_json::json!({
+                    "task": task,
+                    "progress": progress,
+                    "expected_reply": expected_reply,
+                    "question": question,
+                });
             }
-            if agent.get("agent_session").is_none() {
-                agent["agent_session"] =
-                    serde_json::json!({"kind":"id", "value":"owned-fixture-session"});
-            }
-            let session = &agent["agent_session"];
-            if let Some(owner) = hide_session::label_reference_token(
-                agent["agent"].as_str().unwrap_or_default(),
-                session["kind"].as_str().unwrap_or_default(),
-                session["value"].as_str().unwrap_or_default(),
-            ) {
-                agent["tokens"]["label_owner"] = Value::String(owner.clone());
-                agent["tokens"]["status_owner"] = Value::String(owner);
+            if let Some(activity) = activity {
+                agent["changed_at_unix_ms"] = Value::from(activity);
             }
         }
     }
@@ -1908,22 +1769,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_agent_without_a_reported_elapsed_time_carries_none() {
+    fn an_agent_carries_its_state_change_time_only_when_the_worker_measured_one() {
         let agents = project_agents(payload(json!([
-            {"pane_id": "measured", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {"elapsed": "3m"}},
-            {"pane_id": "unmeasured", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {}},
-            {"pane_id": "garbled", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {"elapsed": "soon"}}
+            {"pane_id": "measured", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {"activity": "1700000000000"}},
+            {"pane_id": "unmeasured", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {}}
         ])))
         .agents;
-        let elapsed = |pane: &str| {
+        let changed_at = |pane: &str| {
             agents
                 .iter()
                 .find(|agent| agent.pane_id == pane)
-                .map(|agent| agent.elapsed.as_str())
+                .map(|agent| agent.changed_at_unix_ms)
         };
-        assert_eq!(elapsed("measured"), Some("3m"));
-        assert_eq!(elapsed("unmeasured"), Some(""));
-        assert_eq!(elapsed("garbled"), Some(""));
+        assert_eq!(changed_at("measured"), Some(Some(1_700_000_000_000)));
+        assert_eq!(changed_at("unmeasured"), Some(None));
     }
 
     #[test]
@@ -2098,7 +1957,7 @@ mod tests {
             cleanup: None,
         }];
         let mut agents = project_agents(payload(json!([
-            {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},
+            {"pane_id":"error", "state_change_seq":1, "agent_status":"idle"},
             {"pane_id":"question", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_question":"?"}},
             {"pane_id":"done", "state_change_seq":1, "agent_status":"done"},
             {"pane_id":"working", "state_change_seq":1, "agent_status":"working"},
@@ -2106,7 +1965,10 @@ mod tests {
             {"pane_id":"child", "state_change_seq":1, "agent_status":"blocked", "spawned_from_pane_id":"working"}
         ])))
         .agents;
+        // No input reports an error today (labels-in-hided D-06); the row
+        // is set on the axis so the summary's rule for it stays covered.
         let error = agents.iter_mut().find(|a| a.pane_id == "error").unwrap();
+        error.demand = "error".to_owned();
         error.unread = false;
         derive_from_axes(error);
         let duplicate = agents.iter().find(|a| a.pane_id == "done").unwrap().clone();
@@ -2172,212 +2034,6 @@ mod tests {
     }
 
     #[test]
-    fn native_session_changes_suppress_every_stale_label_and_status_before_the_watcher_runs() {
-        let a = hide_session::label_reference_token("codex", "id", "session-a").unwrap();
-        for (provider, reference, owner) in [
-            (
-                "codex",
-                json!({"kind":"id","value":"session-b"}),
-                Some(a.as_str()),
-            ),
-            (
-                "claude",
-                json!({"kind":"id","value":"session-a"}),
-                Some(a.as_str()),
-            ),
-            ("codex", Value::Null, Some(a.as_str())),
-            (
-                "codex",
-                json!({"kind":"opaque","value":"session-a"}),
-                Some(a.as_str()),
-            ),
-            ("codex", json!({"kind":"id","value":"session-a"}), None),
-        ] {
-            let snapshot: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
-                "pane_id":"w1:p1","agent":provider,"agent_status":"working","agent_session":reference,
-                "state_change_seq":7,"tokens":{"label_owner":owner,"status_owner":owner,
-                    "task":"이전 세션 작업","progress":"이전 진행","expected_reply":"이전 답변 요청","status_question_new":"?"}
-            }]})).unwrap();
-            let row = project_agents(snapshot).agents.remove(0);
-            assert_eq!(
-                row.identity_label,
-                if provider == "claude" {
-                    "Claude"
-                } else {
-                    "Codex"
-                }
-            );
-            assert_eq!(
-                (row.progress, row.expected_reply, row.message, row.detail),
-                (None, None, None, None)
-            );
-            assert_eq!(
-                (row.demand.as_str(), row.activity.as_str()),
-                ("none", "working")
-            );
-            assert_eq!(row.status_label, "Working");
-        }
-        let snapshot: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
-            "pane_id":"w1:p1","agent":"codex","agent_status":"idle","agent_session":{"kind":"id","value":"session-a"},
-            "state_change_seq":7,"tokens":{"label_owner":a,"status_owner":a,"task":"현재 작업","progress":"현재 진행","expected_reply":"현재 답변 요청","status_question":"?"}
-        }]})).unwrap();
-        let row = project_agents(snapshot).agents.remove(0);
-        assert_eq!(row.identity_label, "현재 작업");
-        assert_eq!(row.expected_reply.as_deref(), Some("현재 답변 요청"));
-        assert_eq!(row.message.as_deref(), Some("현재 답변 요청\n현재 진행"));
-        assert_eq!(row.demand, "question");
-    }
-
-    #[test]
-    fn an_observed_return_cannot_revalidate_retained_publications() {
-        let owner = hide_session::label_reference_token("codex", "id", "session-a").unwrap();
-        let snapshot = |reference: &str, label_generation: &str, status_generation: &str| {
-            serde_json::from_value::<SessionSnapshotPayload>(json!({"agents":[{
-                "pane_id":"w1:p1", "agent":"codex", "agent_status":"idle", "state_change_seq":7,
-                "agent_session":{"kind":"id","value":reference},
-                "tokens":{"label_owner":owner,"status_owner":owner,
-                    "label_generation":label_generation,"status_generation":status_generation,
-                    "task":"현재 작업","progress":"현재 진행","expected_reply":"현재 답변 요청",
-                    "status_question":"?"}
-            }]}))
-            .unwrap()
-        };
-        let mut guard = LabelPublicationGuard::default();
-        let mut first = snapshot("session-a", "instance:1", "instance:1");
-        guard.apply(&mut first);
-        assert_eq!(project_agents(first).agents[0].identity_label, "현재 작업");
-        for reference in ["session-b", "session-a"] {
-            let mut retained = snapshot(reference, "instance:1", "instance:1");
-            guard.apply(&mut retained);
-            let row = project_agents(retained).agents.remove(0);
-            assert_eq!(row.identity_label, "Codex");
-            assert_eq!(
-                (row.progress, row.expected_reply, row.message),
-                (None, None, None)
-            );
-            assert_eq!(
-                (row.demand.as_str(), row.activity.as_str()),
-                ("none", "stopped")
-            );
-        }
-        // The two atomic metadata groups can arrive in either order.
-        let mut fresh_label = snapshot("session-a", "instance:3", "instance:1");
-        guard.apply(&mut fresh_label);
-        let row = project_agents(fresh_label).agents.remove(0);
-        assert_eq!(row.identity_label, "현재 작업");
-        assert_eq!(row.demand, "none");
-        let mut fresh = snapshot("session-a", "instance:3", "instance:3");
-        guard.apply(&mut fresh);
-        assert_eq!(project_agents(fresh).agents[0].demand, "question");
-        guard.apply(&mut serde_json::from_value(json!({"agents":[]})).unwrap());
-        assert!(
-            guard.panes.is_empty(),
-            "retired pane fences do not accumulate"
-        );
-    }
-
-    #[test]
-    fn a_consumer_only_missing_reference_restores_the_same_publication() {
-        let owner = hide_session::label_reference_token("claude", "id", "session-a").unwrap();
-        let snapshot = |reference: Option<&str>, generation: &str| {
-            serde_json::from_value::<SessionSnapshotPayload>(json!({"agents":[{
-                "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle", "state_change_seq":7,
-                "agent_session":reference.map(|value| json!({"kind":"id","value":value})),
-                "tokens":{"label_owner":owner,"status_owner":owner,
-                    "label_generation":generation,"status_generation":generation,
-                    "task":"현재 작업","progress":"현재 진행","expected_reply":"현재 답변",
-                    "status_question":"?"}
-            }]}))
-            .unwrap()
-        };
-        for replacement in [false, true] {
-            let mut guard = LabelPublicationGuard::default();
-            let mut initial_absence = snapshot(None, "writer:1");
-            guard.apply(&mut initial_absence);
-            assert_eq!(
-                project_agents(initial_absence).agents[0].identity_label,
-                "Claude"
-            );
-            let mut first = snapshot(Some("session-a"), "writer:1");
-            guard.apply(&mut first);
-            assert_eq!(project_agents(first).agents[0].identity_label, "현재 작업");
-            let mut absent = snapshot(None, "writer:1");
-            guard.apply(&mut absent);
-            let row = project_agents(absent).agents.remove(0);
-            assert_eq!(
-                (row.identity_label.as_str(), row.demand.as_str()),
-                ("Claude", "none")
-            );
-            assert_eq!(
-                (row.progress, row.expected_reply, row.message),
-                (None, None, None)
-            );
-            if replacement {
-                let mut other = snapshot(Some("session-b"), "writer:1");
-                guard.apply(&mut other);
-                assert_eq!(project_agents(other).agents[0].identity_label, "Claude");
-            }
-            let mut returned = snapshot(Some("session-a"), "writer:1");
-            guard.apply(&mut returned);
-            let row = project_agents(returned).agents.remove(0);
-            if replacement {
-                assert_eq!(
-                    (row.identity_label.as_str(), row.demand.as_str()),
-                    ("Claude", "none")
-                );
-                let mut fresh = snapshot(Some("session-a"), "writer:3");
-                guard.apply(&mut fresh);
-                assert_eq!(project_agents(fresh).agents[0].identity_label, "현재 작업");
-            } else {
-                assert_eq!(
-                    (row.identity_label.as_str(), row.demand.as_str()),
-                    ("현재 작업", "question")
-                );
-                assert_eq!(row.progress.as_deref(), Some("현재 진행"));
-                assert_eq!(row.expected_reply.as_deref(), Some("현재 답변"));
-            }
-        }
-    }
-
-    #[test]
-    fn fresh_equivalent_reference_publication_restores_after_a_coalesced_middle_report() {
-        let path = "/fixture/same-session.jsonl";
-        let owner = hide_session::label_reference_token("claude", "path", path).unwrap();
-        let snapshot = |kind: &str, value: &str, generation: &str| {
-            serde_json::from_value::<SessionSnapshotPayload>(json!({"agents":[{
-                "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle", "state_change_seq":7,
-                "agent_session":{"kind":kind,"value":value},
-                "tokens":{"label_owner":owner,"status_owner":owner,
-                    "label_generation":generation,"status_generation":generation,
-                    "task":"현재 작업","progress":"현재 진행","expected_reply":"현재 답변",
-                    "status_question":"?"}
-            }]}))
-            .unwrap()
-        };
-        let mut guard = LabelPublicationGuard::default();
-        let mut first = snapshot("path", path, "writer:1");
-        guard.apply(&mut first);
-        assert_eq!(project_agents(first).agents[0].identity_label, "현재 작업");
-        // The consumer observes the ID reference while retaining path tokens.
-        // The producer's equivalent ID publication is coalesced before return.
-        let mut middle = snapshot("id", "same-session", "writer:1");
-        guard.apply(&mut middle);
-        assert_eq!(project_agents(middle).agents[0].identity_label, "Claude");
-        let mut retained = snapshot("path", path, "writer:1");
-        guard.apply(&mut retained);
-        assert_eq!(project_agents(retained).agents[0].identity_label, "Claude");
-        let mut fresh = snapshot("path", path, "writer:3");
-        guard.apply(&mut fresh);
-        let row = project_agents(fresh).agents.remove(0);
-        assert_eq!(
-            (row.identity_label.as_str(), row.demand.as_str()),
-            ("현재 작업", "question")
-        );
-        assert_eq!(row.progress.as_deref(), Some("현재 진행"));
-        assert_eq!(row.expected_reply.as_deref(), Some("현재 답변"));
-    }
-
-    #[test]
     fn current_label_changes_preserve_read_records_lineage_and_control_names() {
         let snapshot = |task: &str| {
             payload(json!([
@@ -2404,84 +2060,38 @@ mod tests {
         assert_eq!(after[0].identity_label, "갱신된 현재 작업");
     }
 
-    /// AC1. Every token form and every Herdr lifecycle lands on the pair the
-    /// PRD names. The read and unread forms of a demand token classify the
-    /// same, because whether it has been read is Hide's own judgment.
+    /// AC1. A question comes only from the core's label and outranks the
+    /// approval a blocked pane shows; a label without one leaves the demand
+    /// to Herdr's lifecycle.
     #[test]
-    fn axes_classify_every_token_form_and_lifecycle() {
-        let cases = [
-            (
-                json!({"status_question_new": "?"}),
-                "question",
-                "unknown",
-                "?",
-            ),
-            (json!({"status_question": "?"}), "question", "unknown", "?"),
-            (
-                json!({"status_approval_new": "!"}),
-                "approval",
-                "unknown",
-                "!",
-            ),
-            (json!({"status_approval": "!"}), "approval", "unknown", "!"),
-            (
-                json!({"status_error_new": "\u{d7}"}),
-                "error",
-                "unknown",
-                "\u{d7}",
-            ),
-            (
-                json!({"status_error": "\u{d7}"}),
-                "error",
-                "unknown",
-                "\u{d7}",
-            ),
-            (
-                json!({"status_working": "\u{25cf}"}),
-                "none",
-                "working",
-                "\u{25cf}",
-            ),
-            (
-                json!({"status_done_new": "\u{25cf}"}),
-                "none",
-                "stopped",
-                "✓",
-            ),
-            (
-                json!({"status_idle": "\u{25cb}"}),
-                "none",
-                "stopped",
-                "\u{25cb}",
-            ),
-            (json!({"status_unknown": "~"}), "none", "unknown", "~"),
-        ];
-        let agents = cases
+    fn a_labels_question_is_the_only_question_demand() {
+        let label = |question: bool| json!({"task": "작업", "question": question});
+        let projected = project_agents(payload(json!([
+            {"pane_id":"asks","agent_status":"idle","state_change_seq":1,"label":label(true)},
+            {"pane_id":"asks-done","agent_status":"done","state_change_seq":2,"label":label(true)},
+            {"pane_id":"asks-blocked","agent_status":"blocked","state_change_seq":3,"label":label(true)},
+            {"pane_id":"quiet","agent_status":"idle","state_change_seq":4,"label":label(false)},
+            {"pane_id":"blocked","agent_status":"blocked","state_change_seq":5,"label":label(false)}
+        ])))
+        .agents;
+        let axes = projected
             .iter()
-            .enumerate()
-            .map(|(index, (tokens, _, _, _))| {
-                let mut tokens = tokens.as_object().expect("token object").clone();
-                tokens.insert("activity".to_owned(), json!(format!("{index:013}")));
-                json!({
-                    "pane_id": format!("pane-{index}"),
-                    "workspace_label": "Fixture",
-                    "agent": "codex",
-                    "agent_status": "unknown",
-                    "tokens": tokens
-                })
+            .map(|agent| {
+                (
+                    agent.pane_id.as_str(),
+                    (
+                        agent.demand.as_str(),
+                        agent.activity.as_str(),
+                        agent.symbol.as_str(),
+                    ),
+                )
             })
-            .collect::<Vec<_>>();
-        let projected = project_agents(payload(json!(agents))).agents;
-        let by_pane = projected
-            .iter()
-            .map(|agent| (agent.pane_id.as_str(), agent))
             .collect::<BTreeMap<_, _>>();
-        for (index, (_, demand, activity, symbol)) in cases.iter().enumerate() {
-            let agent = by_pane[format!("pane-{index}").as_str()];
-            assert_eq!(&agent.demand, demand, "demand for pane-{index}");
-            assert_eq!(&agent.activity, activity, "activity for pane-{index}");
-            assert_eq!(&agent.symbol, symbol, "symbol for pane-{index}");
-        }
+        assert_eq!(axes["asks"], ("question", "stopped", "?"));
+        assert_eq!(axes["asks-done"], ("question", "stopped", "?"));
+        assert_eq!(axes["asks-blocked"], ("question", "unknown", "?"));
+        assert_eq!(axes["quiet"], ("none", "stopped", "\u{25cb}"));
+        assert_eq!(axes["blocked"], ("approval", "unknown", "!"));
     }
 
     /// AC1. Herdr's own lifecycle words, with no plugin token at all. Blocked
@@ -3020,7 +2630,7 @@ mod tests {
     fn one_broken_agent_excludes_only_itself_and_names_why() {
         let projection = project_agents(payload(json!([
             {"pane_id":"good","tokens":{"status_working":"●","activity":"0000000000002"}},
-            {"pane_id":"bad-activity","tokens":{"status_idle":"○","activity":"oops"}},
+            {"pane_id":"unordered","tokens":{"status_idle":"○"}},
             {"tokens":{"status_idle":"○","activity":"0000000000000"}},
             {"pane_id":"also-good","tokens":{"status_idle":"○","activity":"0000000000003"}}
         ])));
@@ -3034,36 +2644,32 @@ mod tests {
             ["good", "also-good"]
         );
         assert_eq!(projection.excluded.len(), 2);
-        assert_eq!(
-            projection.excluded[0].pane_id.as_deref(),
-            Some("bad-activity")
-        );
-        assert!(projection.excluded[0].reason.contains("invalid activity"));
+        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("unordered"));
+        assert!(projection.excluded[0].reason.contains("state_change_seq"));
         assert_eq!(projection.excluded[1].pane_id, None);
         assert!(projection.excluded[1].reason.contains("pane id"));
     }
 
     #[test]
-    fn official_state_change_sequence_replaces_only_a_missing_activity_token() {
+    fn official_state_change_sequence_orders_an_agent_the_core_has_not_timed() {
         let projection = project_agents(payload(json!([
             {
                 "pane_id":"remote",
                 "state_change_seq":218,
                 "agent_status":"done",
-                "tokens":{"status_done":"●","task":"finished up"}
+                "tokens":{"task":"finished up"}
             },
             {
-                "pane_id":"malformed",
+                "pane_id":"timed",
                 "state_change_seq":219,
-                "tokens":{"status_idle":"○","activity":"not-a-time"}
+                "agent_status":"idle",
+                "changed_at_unix_ms": 1_700_000_000_000_u64
             }
         ])));
 
-        assert_eq!(projection.agents.len(), 1);
-        assert_eq!(projection.agents[0].pane_id, "remote");
         assert_eq!(projection.agents[0].last_activity, "00000000000000000218");
-        assert_eq!(projection.excluded.len(), 1);
-        assert!(projection.excluded[0].reason.contains("invalid activity"));
+        assert_eq!(projection.agents[1].last_activity, "1700000000000");
+        assert!(projection.excluded.is_empty());
     }
 
     fn projected(agents: Value) -> Vec<SidebarAgentSnapshot> {

@@ -14,10 +14,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::model::{AgentSleepActionSnapshot, AgentSleepSnapshot, SidebarAgentSnapshot};
-use crate::sidebar::{SessionAgentPayload, SessionAgentSessionPayload, SessionSnapshotPayload};
+use crate::sidebar::{
+    AgentLabel, SessionAgentPayload, SessionAgentSessionPayload, SessionSnapshotPayload,
+};
 
 /// The Settings choices besides Never, in hours (PRD D-10).
 pub const SLEEP_AFTER_CHOICES_HOURS: [u32; 3] = [12, 24, 72];
@@ -108,13 +109,14 @@ pub struct SleepRecord {
     pub agent_name: Option<String>,
     pub identity_label: String,
     /// Captured only from a current, guarded core row. Older sleep records
-    /// have no label provenance and cannot synthesize trusted label tokens.
+    /// have no label provenance and cannot bring a label back.
     #[serde(default)]
     pub label_owner: Option<String>,
     #[serde(default)]
     pub progress: Option<String>,
-    pub elapsed: String,
-    /// The row's ordering key when it slept, so it keeps its place (B10).
+    /// The row's ordering key when it slept, so it keeps its place (B10);
+    /// thirteen digits are the core's state change time, which the row's
+    /// elapsed time is counted from.
     pub last_activity: String,
     /// Herdr's state change sequence of the agent that was ended. A listed
     /// agent on the pane with this sequence is that agent still being
@@ -156,7 +158,6 @@ impl SleepRecord {
             identity_label: agent.identity_label.clone(),
             label_owner,
             progress: agent.progress.clone(),
-            elapsed: agent.elapsed.clone(),
             last_activity: agent.last_activity.clone(),
             state_change_seq: agent.state_change_seq,
             completed: agent.completed,
@@ -189,27 +190,18 @@ impl SleepRecord {
 
     /// The agent row Herdr no longer sends, drawn from what the record kept.
     fn payload(&self, pane_id: &str, workspace_label: Option<String>) -> SessionAgentPayload {
-        let mut tokens = BTreeMap::new();
-        if let Some(owner) = &self.label_owner {
-            tokens.insert("label_owner".to_owned(), Value::String(owner.clone()));
-            tokens.insert(
-                "task".to_owned(),
-                Value::String(self.identity_label.clone()),
-            );
-            if let Some(progress) = &self.progress {
-                tokens.insert("progress".to_owned(), Value::String(progress.clone()));
-            }
-        }
-        tokens.insert("elapsed".to_owned(), Value::String(self.elapsed.clone()));
-        // A thirteen-digit key came from the label plugin's activity token;
-        // any other is Herdr's padded sequence, which the sequence below
+        // Only a label the core had proven for this session comes back.
+        let label = self.label_owner.as_ref().map(|_| AgentLabel {
+            task: Some(self.identity_label.clone()),
+            progress: self.progress.clone(),
+            expected_reply: None,
+            question: false,
+        });
+        // Any other key is Herdr's padded sequence, which the sequence below
         // reproduces.
-        if self.last_activity.len() == 13 {
-            tokens.insert(
-                "activity".to_owned(),
-                Value::String(self.last_activity.clone()),
-            );
-        }
+        let changed_at_unix_ms = (self.last_activity.len() == 13)
+            .then(|| self.last_activity.parse().ok())
+            .flatten();
         SessionAgentPayload {
             id: Some(
                 self.agent_name
@@ -228,7 +220,9 @@ impl SleepRecord {
             spawned_from_pane_id: self.parent_pane_id.clone(),
             spawned_from_machine_id: None,
             state_change_seq: self.state_change_seq,
-            tokens,
+            tokens: BTreeMap::new(),
+            label,
+            changed_at_unix_ms,
         }
     }
 }
@@ -531,7 +525,7 @@ mod tests {
             detail: None,
             message: None,
             status_word_visible: true,
-            elapsed: "3m".to_owned(),
+            changed_at_unix_ms: Some(1_788_871_000_000),
             last_activity: "1788871000000".to_owned(),
             state_change_seq: Some(4),
             session_id: Some("session-a".to_owned()),

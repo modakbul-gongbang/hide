@@ -1,0 +1,540 @@
+//! Label worker regressions (PRD labels-in-hided D-04, D-10, B4-B12),
+//! driven through real session files and a scripted provider.
+
+use std::collections::{HashSet, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+use hide_ai::{
+    AiBackend, AiError, AiRequest, AiResponse, AiRouter, AiSettings, Availability, CancelToken,
+    ModelCatalog, NoopLogSink, ProviderId, RouterConfig,
+};
+use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
+use serde_json::{Value, json};
+
+use super::analyzer::LabelAnalyzer;
+use super::store::{LOCAL_TARGET, LabelStore};
+use super::worker::{
+    LabelWorker, LocalTranscripts, ObservedAgent, ReadFailure, TranscriptSource, WorkerConfig,
+};
+use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
+
+/// A provider that answers from a queue and can hold an answer back.
+struct Scripted {
+    answers: Mutex<VecDeque<Value>>,
+    calls: AtomicUsize,
+    /// While set, an answer waits for `release`.
+    held: Mutex<bool>,
+    released: Condvar,
+}
+
+impl Scripted {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            answers: Mutex::new(VecDeque::new()),
+            calls: AtomicUsize::new(0),
+            held: Mutex::new(false),
+            released: Condvar::new(),
+        })
+    }
+
+    fn answer(&self, task: &str, attention: &str, expected_reply: &str) {
+        self.answers.lock().unwrap().push_back(json!({
+            "task": task, "task_changed": true, "progress": format!("{task} 진행"),
+            "expected_reply": expected_reply, "attention": attention,
+        }));
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    fn hold(&self) {
+        *self.held.lock().unwrap() = true;
+    }
+
+    fn release(&self) {
+        *self.held.lock().unwrap() = false;
+        self.released.notify_all();
+    }
+}
+
+impl AiBackend for Scripted {
+    fn id(&self) -> ProviderId {
+        ProviderId::Claude
+    }
+    fn availability(&self) -> Availability {
+        Availability::Ready
+    }
+    fn models(&self) -> ModelCatalog {
+        ModelCatalog::Offered(vec!["fixture".to_owned()])
+    }
+    fn execute(&self, _: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let mut held = self.held.lock().unwrap();
+        while *held {
+            // A provider child ends when its request is cancelled.
+            if cancel.is_cancelled() {
+                return Err(AiError::Cancelled);
+            }
+            held = self
+                .released
+                .wait_timeout(held, Duration::from_millis(20))
+                .unwrap()
+                .0;
+        }
+        drop(held);
+        let value = self
+            .answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| AiError::Transient("no scripted answer".to_owned()))?;
+        Ok(AiResponse {
+            value,
+            usage: Default::default(),
+        })
+    }
+}
+
+/// Counts the reads it passes on to this machine's files.
+struct CountingSource {
+    inner: LocalTranscripts,
+    reads: AtomicUsize,
+}
+
+impl TranscriptSource for CountingSource {
+    fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.inner.read(request)
+    }
+}
+
+struct Harness {
+    home: tempfile::TempDir,
+    state: tempfile::TempDir,
+    locks: tempfile::TempDir,
+    backend: Arc<Scripted>,
+    analyzer: Arc<LabelAnalyzer>,
+}
+
+impl Harness {
+    fn new() -> Self {
+        let backend = Scripted::new();
+        let router_backend: Arc<dyn AiBackend> = backend.clone();
+        let analyzer = LabelAnalyzer::spawn_with(
+            Box::new(AiSettings::default),
+            Box::new(move |_| {
+                Arc::new(AiRouter::new(
+                    vec![Arc::clone(&router_backend)],
+                    RouterConfig {
+                        priority: vec![ProviderId::Claude],
+                        max_transient_attempts: 1,
+                        ..RouterConfig::default()
+                    },
+                    Arc::new(NoopLogSink),
+                ))
+            }),
+        )
+        .unwrap();
+        Self {
+            home: tempfile::tempdir().unwrap(),
+            state: tempfile::tempdir().unwrap(),
+            locks: tempfile::tempdir().unwrap(),
+            backend,
+            analyzer: Arc::new(analyzer),
+        }
+    }
+
+    fn store(&self) -> Arc<LabelStore> {
+        Arc::new(LabelStore::open(
+            Some(self.state.path()),
+            Some(self.home.path()),
+        ))
+    }
+
+    fn worker(&self, store: Arc<LabelStore>) -> (LabelWorker, Receiver<()>, Arc<CountingSource>) {
+        let (wake, woken) = channel();
+        let wake = Mutex::new(wake);
+        let source = Arc::new(CountingSource {
+            inner: LocalTranscripts {
+                home: self.home.path().to_path_buf(),
+            },
+            reads: AtomicUsize::new(0),
+        });
+        let worker = LabelWorker::spawn(
+            WorkerConfig {
+                target: LOCAL_TARGET.to_owned(),
+                server_key: "local:/fixture/herdr.sock".to_owned(),
+                lock_dir: Some(self.locks.path().to_path_buf()),
+            },
+            store,
+            Arc::clone(&self.analyzer),
+            source.clone(),
+            Arc::new(move || {
+                let _ = wake.lock().unwrap().send(());
+            }),
+        )
+        .unwrap();
+        (worker, woken, source)
+    }
+
+    /// A Claude session file the worker reads by path.
+    fn session(&self, name: &str, session_id: &str, turns: &[(&str, &str)]) -> PathBuf {
+        let path = self.home.path().join(format!("{name}.jsonl"));
+        let mut lines = String::new();
+        for (index, (kind, text)) in turns.iter().enumerate() {
+            let at = format!("2026-10-01T00:00:{index:02}Z");
+            let record = if *kind == "user" {
+                json!({"type":"user","sessionId":session_id,"timestamp":at,
+                    "origin":{"kind":"human"},"message":{"role":"user","content":text}})
+            } else {
+                json!({"type":"assistant","sessionId":session_id,"timestamp":at,
+                    "message":{"role":"assistant","content":[{"type":"text","text":text}]}})
+            };
+            lines.push_str(&format!("{record}\n"));
+        }
+        std::fs::write(&path, lines).unwrap();
+        path
+    }
+}
+
+fn agent(path: &Path, status: &str, seq: u64) -> ObservedAgent {
+    ObservedAgent {
+        pane_id: "w1:p1".to_owned(),
+        agent: Some("claude".to_owned()),
+        status: Some(status.to_owned()),
+        reference: Some(("path".to_owned(), path.display().to_string())),
+        cwd: None,
+        state_change_seq: seq,
+    }
+}
+
+fn observe(worker: &mut LabelWorker, agent: &ObservedAgent) {
+    let live = HashSet::from([agent.pane_id.clone()]);
+    worker.observe(
+        std::slice::from_ref(agent),
+        Some(&live),
+        Instant::now(),
+        1_000,
+    );
+    worker.tick(Instant::now());
+}
+
+/// Takes results until nothing is read or analyzed.
+fn settle(worker: &mut LabelWorker, woken: &Receiver<()>) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !worker.settled() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        assert!(!left.is_zero(), "the worker did not settle");
+        let _ = woken.recv_timeout(left.min(Duration::from_millis(200)));
+        worker.drain(Instant::now());
+    }
+}
+
+/// What the row would carry for the agent as it is now.
+fn shown(worker: &LabelWorker, agent: &ObservedAgent) -> Option<AgentLabel> {
+    let (kind, value) = agent.reference.clone().unwrap();
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id": agent.pane_id, "agent": agent.agent, "agent_status": agent.status,
+        "state_change_seq": agent.state_change_seq,
+        "agent_session": {"kind": kind, "value": value},
+    }]}))
+    .unwrap();
+    worker.apply(&mut payload);
+    payload.agents.remove(0).label
+}
+
+fn task(label: Option<AgentLabel>) -> Option<String> {
+    label.and_then(|label| label.task)
+}
+
+#[test]
+fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "파서 버그 고쳐줘"), ("assistant", "고쳤습니다")],
+    );
+    harness.backend.answer("파서 버그 수정 작업", "none", "");
+    let idle = agent(&path, "idle", 3);
+
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("파서 버그 수정 작업")
+    );
+    assert_eq!(harness.backend.calls(), 1);
+
+    let reads = source.reads.load(Ordering::SeqCst);
+    for _ in 0..3 {
+        observe(&mut worker, &idle);
+        settle(&mut worker, &woken);
+    }
+    assert_eq!(harness.backend.calls(), 1, "an unchanged pane asks nothing");
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        reads,
+        "nor reads anything"
+    );
+}
+
+#[test]
+fn a_running_agent_is_not_asking_anything() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "배포할까?"), ("assistant", "A와 B 중 고르세요")],
+    );
+    harness
+        .backend
+        .answer("배포 방식 결정 작업", "question", "A/B 선택");
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    let label = shown(&worker, &idle).unwrap();
+    assert!(label.question);
+    assert_eq!(label.expected_reply.as_deref(), Some("A/B 선택"));
+
+    let working = agent(&path, "working", 4);
+    worker.observe(std::slice::from_ref(&working), None, Instant::now(), 2_000);
+    let label = shown(&worker, &working).unwrap();
+    assert!(!label.question);
+    assert_eq!(label.expected_reply, None);
+    assert_eq!(label.task.as_deref(), Some("배포 방식 결정 작업"));
+}
+
+#[test]
+fn another_session_shows_nothing_of_the_last_one_until_it_is_proven() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let a = harness.session(
+        "a",
+        "native-a",
+        &[("user", "세션 A 요청"), ("assistant", "A 끝")],
+    );
+    let b = harness.session(
+        "b",
+        "native-b",
+        &[("user", "세션 B 요청"), ("assistant", "B 끝")],
+    );
+    harness.backend.answer("세션 A의 작업 이름", "none", "");
+    harness.backend.answer("세션 B의 작업 이름", "none", "");
+    harness.backend.answer("다시 세션 A의 작업", "none", "");
+
+    let on_a = agent(&a, "idle", 1);
+    observe(&mut worker, &on_a);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &on_a)).as_deref(),
+        Some("세션 A의 작업 이름")
+    );
+
+    // A reused pane (or a new session) hides A at once, before any read.
+    let on_b = agent(&b, "idle", 2);
+    worker.observe(std::slice::from_ref(&on_b), None, Instant::now(), 2_000);
+    assert_eq!(shown(&worker, &on_b), None);
+    worker.tick(Instant::now());
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &on_b)).as_deref(),
+        Some("세션 B의 작업 이름")
+    );
+
+    // Back to A: B's label never stands in for it, and A is proven again.
+    let back = agent(&a, "idle", 3);
+    worker.observe(std::slice::from_ref(&back), None, Instant::now(), 3_000);
+    assert_eq!(shown(&worker, &back), None);
+    worker.tick(Instant::now());
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &back)).as_deref(),
+        Some("다시 세션 A의 작업")
+    );
+}
+
+#[test]
+fn an_analysis_that_lands_after_the_session_changed_is_dropped() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let a = harness.session(
+        "a",
+        "native-a",
+        &[("user", "세션 A 요청"), ("assistant", "A 끝")],
+    );
+    let b = harness.session(
+        "b",
+        "native-b",
+        &[("user", "세션 B 요청"), ("assistant", "B 끝")],
+    );
+    harness.backend.answer("늦게 도착한 A 작업", "none", "");
+    harness.backend.answer("세션 B의 작업 이름", "none", "");
+    harness.backend.hold();
+
+    let on_a = agent(&a, "idle", 1);
+    observe(&mut worker, &on_a);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.backend.calls() == 0 {
+        assert!(Instant::now() < deadline, "A was never analyzed");
+        let _ = woken.recv_timeout(Duration::from_millis(50));
+        worker.drain(Instant::now());
+    }
+    let on_b = agent(&b, "idle", 2);
+    observe(&mut worker, &on_b);
+    harness.backend.release();
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &on_b)).as_deref(),
+        Some("세션 B의 작업 이름")
+    );
+}
+
+#[test]
+fn a_restart_restores_the_label_with_no_read_and_no_request() {
+    let harness = Harness::new();
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "재시작 전 요청"), ("assistant", "완료")],
+    );
+    harness.backend.answer("재시작 전에 붙은 작업", "none", "");
+    let idle = agent(&path, "idle", 5);
+    {
+        let (mut worker, woken, _) = harness.worker(harness.store());
+        observe(&mut worker, &idle);
+        settle(&mut worker, &woken);
+        assert!(shown(&worker, &idle).is_some());
+    }
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    observe(&mut worker, &idle);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("재시작 전에 붙은 작업")
+    );
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 0);
+    assert_eq!(harness.backend.calls(), 1);
+}
+
+#[test]
+fn an_imported_label_shows_only_for_the_session_it_was_proven_for() {
+    let harness = Harness::new();
+    let owner = hide_session::label_reference_token("claude", "id", "native-a").unwrap();
+    let plugin = harness
+        .home
+        .path()
+        .join(".local/state/hide.agent-context-labels");
+    std::fs::create_dir_all(&plugin).unwrap();
+    std::fs::write(
+        plugin.join("display-state.json"),
+        json!({"panes": {
+            "w1:p1": {"session_owner": owner, "state_change_seq": 4, "changed_unix_ms": 1,
+                      "task": "플러그인이 붙인 작업"},
+            "w1:p2": {"state_change_seq": 4, "changed_unix_ms": 1, "task": "주인 없는 라벨"}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let (mut worker, _woken, _) = harness.worker(harness.store());
+    let by_id = |pane: &str, id: &str| ObservedAgent {
+        pane_id: pane.to_owned(),
+        agent: Some("claude".to_owned()),
+        status: Some("idle".to_owned()),
+        reference: Some(("id".to_owned(), id.to_owned())),
+        cwd: None,
+        state_change_seq: 4,
+    };
+    let proven = by_id("w1:p1", "native-a");
+    let other = by_id("w1:p1", "native-b");
+    let ownerless = by_id("w1:p2", "native-c");
+    worker.observe(
+        &[proven.clone(), ownerless.clone()],
+        None,
+        Instant::now(),
+        1_000,
+    );
+    assert_eq!(
+        task(shown(&worker, &proven)).as_deref(),
+        Some("플러그인이 붙인 작업")
+    );
+    assert_eq!(shown(&worker, &ownerless), None);
+    assert_eq!(shown(&worker, &other), None);
+    assert_eq!(harness.backend.calls(), 0);
+}
+
+#[test]
+fn a_second_daemon_on_the_same_server_stands_by_and_shows_no_labels() {
+    let harness = Harness::new();
+    let path = harness.session("a", "native-a", &[("user", "요청"), ("assistant", "끝")]);
+    harness.backend.answer("첫 데몬이 붙인 작업", "none", "");
+    let idle = agent(&path, "idle", 1);
+    let (mut first, woken, _) = harness.worker(harness.store());
+    observe(&mut first, &idle);
+    settle(&mut first, &woken);
+    assert!(shown(&first, &idle).is_some());
+
+    let (mut second, second_woken, source) = harness.worker(harness.store());
+    observe(&mut second, &idle);
+    assert_eq!(shown(&second, &idle), None);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 0);
+    assert_eq!(harness.backend.calls(), 1);
+
+    // The first daemon exits; the standby takes over on its next attempt,
+    // catches up by reading, and spends no request on a turn already named.
+    drop(first);
+    second.tick(Instant::now() + Duration::from_secs(31));
+    settle(&mut second, &second_woken);
+    assert_eq!(
+        task(shown(&second, &idle)).as_deref(),
+        Some("첫 데몬이 붙인 작업")
+    );
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    assert_eq!(harness.backend.calls(), 1);
+}
+
+#[test]
+fn a_shutdown_answers_the_running_request_without_recording_it() {
+    let harness = Harness::new();
+    let path = harness.session("a", "native-a", &[("user", "요청"), ("assistant", "끝")]);
+    harness.backend.answer("기록되면 안 되는 작업", "none", "");
+    harness.backend.hold();
+    let idle = agent(&path, "idle", 1);
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    observe(&mut worker, &idle);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.backend.calls() == 0 {
+        assert!(Instant::now() < deadline, "nothing was analyzed");
+        let _ = woken.recv_timeout(Duration::from_millis(50));
+        worker.drain(Instant::now());
+    }
+    harness.analyzer.shutdown();
+    settle(&mut worker, &woken);
+    let record = &store.target(LOCAL_TARGET)["w1:p1"];
+    assert_eq!(record.task, None);
+    assert_eq!(
+        record.analysis_turn_end, None,
+        "the turn is asked again next time"
+    );
+}
+
+#[test]
+fn the_providers_answer_is_judged_before_it_is_shown() {
+    let question_without_reply = super::context_label::parse_text(
+        r#"{"task":"배포 방식 결정 작업","task_changed":true,"progress":"선택지 정리","expected_reply":"","attention":"question"}"#,
+    )
+    .unwrap();
+    assert!(
+        !question_without_reply.question,
+        "a question needs a reply to ask for"
+    );
+    assert!(super::context_label::parse_text(r#"{"task":"짧음"}"#).is_err());
+}

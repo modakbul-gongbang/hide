@@ -77,7 +77,7 @@ fn tree_payload_in(
             "tokens": {"task": format!("Task {pane}")}
         }));
     }
-    serde_json::from_value(serde_json::json!({
+    crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": agents,
         "focused_workspace_id": "w1",
         "focused_pane_id": "w1:p1",

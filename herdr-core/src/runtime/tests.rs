@@ -284,7 +284,7 @@ fn assert_owner_conflict_observes_and_reconnects(owner_conflict: &str) {
 }
 
 fn context_payload() -> SessionSnapshotPayload {
-    serde_json::from_value(serde_json::json!({
+    crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [
             {"pane_id":"w1:p1", "agent":"codex", "agent_status":"working", "state_change_seq":10,
              "cwd":"/tmp/hide-context-alpha", "tokens":{"activity":"1788871000000"}},
@@ -428,7 +428,7 @@ fn finished_tab_payload(panes: &[(&str, u64)], focused: &str) -> SessionSnapshot
             })
         })
         .collect::<Vec<_>>();
-    serde_json::from_value(serde_json::json!({
+    crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": agents,
         "tabs": [{"workspace_id": "w1", "tab_id": "t1", "label": ""}],
         "layouts": [{
@@ -448,7 +448,7 @@ fn finished_tab_payload(panes: &[(&str, u64)], focused: &str) -> SessionSnapshot
 }
 
 fn working_payload() -> SessionSnapshotPayload {
-    serde_json::from_value(serde_json::json!({
+    crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [{
             "pane_id": "w1:p1",
             "workspace_label": "Fixture",
@@ -616,7 +616,7 @@ fn tab_order_payload(
         .collect::<Vec<_>>();
     // Herdr's keyboard is in the workspace, on the active tab's pane,
     // which is what a live `session.snapshot` reports.
-    serde_json::from_value(serde_json::json!({
+    crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "focused_workspace_id": "w-order",
         "focused_pane_id": format!("{active_tab_id}:p"),
@@ -678,7 +678,7 @@ fn split_checkout_payload(
         .find(|(workspace_id, _, _)| *workspace_id == focused_workspace_id)
         .map(|(_, _, active_tab_id)| format!("{active_tab_id}:p"))
         .expect("the focused workspace is one of the listed workspaces");
-    serde_json::from_value(serde_json::json!({
+    crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "focused_workspace_id": focused_workspace_id,
         "focused_pane_id": focused_pane_id,
@@ -990,7 +990,7 @@ fn split_workspace_payload(
             })
         })
         .collect::<Vec<_>>();
-    serde_json::from_value(serde_json::json!({
+    crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "workspaces": [{
             "workspace_id": "w-order",

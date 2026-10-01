@@ -1319,6 +1319,7 @@ dependencies = [
  "hide-herdr-client",
  "hide-kit",
  "hide-project",
+ "hide-session",
  "ignore",
  "libc",
  "serde",

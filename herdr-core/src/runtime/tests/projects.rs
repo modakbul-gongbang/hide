@@ -389,7 +389,7 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
             "splits": []
         }))
         .collect();
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "workspaces": [{"workspace_id": "w1", "label": "three"}],
         "panes": panes,
@@ -451,7 +451,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
     std::fs::create_dir_all(&root).expect("fixture directory");
     let cwd = root.to_string_lossy().into_owned();
     let payload = || -> SessionSnapshotPayload {
-        serde_json::from_value(serde_json::json!({
+        crate::sidebar::owned_label_fixture(serde_json::json!({
             "agents": [],
             "workspaces": [{"workspace_id": "w1", "label": "one"}],
             "panes": [{"pane_id": "w1:p1", "cwd": cwd}],
@@ -1137,7 +1137,7 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
                 base_registrations: Vec::new(),
                 registrations: vec![registration.clone()],
                 workspaces: Vec::new(),
-                session: serde_json::from_value(serde_json::json!({
+                session: crate::sidebar::owned_label_fixture(serde_json::json!({
                     "agents": [],
                     "layouts": [],
                 }))
@@ -1989,9 +1989,7 @@ fn projects_follow_authoritative_activity_and_identical_snapshots_settle() {
             "Unchanged activity must not resend the navigator"
         );
     }
-    payload.agents[0]
-        .tokens
-        .insert("activity".into(), serde_json::json!("1788873000000"));
+    payload.agents[0].changed_at_unix_ms = Some(1_788_873_000_000);
     runtime.ingest_session(Ok(payload));
     assert!(
         runtime.snapshot.navigator.workspaces[0]
@@ -2290,7 +2288,7 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
     runtime.reset_terminal_projection(None);
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "workspaces": [{"workspace_id": "w3M", "label": "herdr-ide"}],
         "panes": [{"pane_id": "w3M:p1", "cwd": checkout_path}],
@@ -2372,7 +2370,7 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
     runtime.snapshot.terminal.pane_id = Some("w3Z:p1".to_owned());
     runtime.restore_hint_pending = false;
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "workspaces": [
             {"workspace_id": "w3P", "label": "other"},
@@ -2491,7 +2489,7 @@ fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
     }];
     let project_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&project_id, Path::new(checkout_path));
-    let occupied: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let occupied: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "workspaces": [{"workspace_id": "w5", "label": "hide main"}],
         "tabs": [{"workspace_id": "w5", "tab_id": "w5:t1", "label": "1"}],
@@ -2532,7 +2530,7 @@ fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
     assert_eq!(runtime.snapshot().ui_state.workspace_registrations.len(), 1);
 
     // Herdr then drops the workspace with the pane.
-    let released: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let released: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "workspaces": [],
         "tabs": [],
@@ -2615,7 +2613,7 @@ fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
     }];
     runtime.restore_hint_pending = false;
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "panes": [],
         "layouts": []
@@ -2694,7 +2692,7 @@ fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
     }];
     runtime.restore_hint_pending = false;
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "panes": [{"pane_id": "w-focused:p2", "cwd": checkout_path}],
         "focused_pane_id": "w-focused:p2",
@@ -2775,7 +2773,7 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
     // authoritative selection rather than a restore hint.
     runtime.restore_hint_pending = false;
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "panes": [{"pane_id": "w3P:p1", "cwd": "/tmp/old-context"}],
         "tabs": [{"workspace_id": "w3P", "tab_id": "w3P:t1", "label": ""}],
@@ -2931,7 +2929,7 @@ fn owner_payload(path: &str, bound: serde_json::Value) -> SessionSnapshotPayload
             "splits": []
         })
     };
-    serde_json::from_value(serde_json::json!({
+    crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "workspaces": [{"workspace_id": "w8P", "label": "home-graph"}, bound],
         "panes": [

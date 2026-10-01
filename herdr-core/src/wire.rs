@@ -151,10 +151,6 @@ pub(crate) fn agents_response(value: Value) -> Result<Vec<ProjectedAgent>, Sessi
     }
 }
 
-pub(crate) fn agent_activity(agent: &ProjectedAgent) -> Option<&str> {
-    agent.tokens.get("activity").and_then(Value::as_str)
-}
-
 pub(crate) fn parse_subscription_line(line: &str) -> Result<SubscriptionLine, SessionFetchError> {
     if line.trim().is_empty() {
         return Err(malformed("Herdr event stream emitted an empty line"));

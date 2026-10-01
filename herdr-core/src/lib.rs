@@ -27,6 +27,7 @@ pub mod herdr_contract;
 pub mod host_access;
 pub mod issues;
 mod kit;
+mod labels;
 pub mod live;
 pub mod local_issues;
 mod model;

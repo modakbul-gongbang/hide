@@ -370,7 +370,7 @@ mod tests {
     /// validates.
     fn agents(rows: Value) -> Vec<SidebarAgentSnapshot> {
         crate::sidebar::project_agents(
-            serde_json::from_value(json!({ "agents": rows })).expect("valid fixture"),
+            crate::sidebar::owned_label_fixture(json!({ "agents": rows })).expect("valid fixture"),
         )
         .agents
     }

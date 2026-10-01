@@ -329,7 +329,7 @@ fn the_minute_decision_sleeps_only_an_off_screen_agent_past_the_chosen_hours() {
     let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
     let mut payload = session(Some(4));
     payload.agents.push(
-        serde_json::from_value(serde_json::json!({
+        crate::sidebar::owned_label_fixture(serde_json::json!({
             "pane_id": "w-order:t1:p", "agent": "codex", "agent_status": "idle",
             "state_change_seq": 2, "cwd": CHECKOUT,
             "agent_session": {"kind": "id", "value": "on-screen-session"}

@@ -105,6 +105,9 @@ impl ProjectionState {
                     spawned_from_machine_id: agent.spawned_from_machine_id.clone(),
                     state_change_seq: Some(agent.state_change_seq),
                     tokens: agent.tokens.clone(),
+                    // The coordinator's label worker lays these on.
+                    label: None,
+                    changed_at_unix_ms: None,
                 }
             })
             .collect();

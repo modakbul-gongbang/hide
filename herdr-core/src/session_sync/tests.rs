@@ -537,19 +537,27 @@ fn remote_projects_follow_activity_order_rather_than_label_order() {
         {
             "pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1",
             "agent": "codex", "agent_status": "idle", "focused": false, "revision": 0,
-            "terminal_id": "fixture-terminal", "state_change_seq": 1,
-            "tokens": {"activity": "0000001000000"}
+            "terminal_id": "fixture-terminal", "state_change_seq": 1, "tokens": {}
         },
         {
             "pane_id": "w2:p1", "workspace_id": "w2", "tab_id": "w2:t1",
             "agent": "codex", "agent_status": "working", "focused": false, "revision": 0,
-            "terminal_id": "fixture-terminal", "state_change_seq": 2,
-            "tokens": {"activity": "0000009000000"}
+            "terminal_id": "fixture-terminal", "state_change_seq": 2, "tokens": {}
         },
     ]);
-    let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+    let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+    // The label worker times each agent's last state change.
+    let mut payload = replica.project();
+    for agent in &mut payload.agents {
+        agent.changed_at_unix_ms = match agent.pane_id.as_deref() {
+            Some("w1:p1") => Some(1_000_000),
+            _ => Some(9_000_000),
+        };
+    }
 
-    let (projected, _) = replica.project_remote("mini").expect("remote projection");
+    let (projected, _) = replica
+        .project_remote("mini", payload)
+        .expect("remote projection");
 
     assert_eq!(
         projected
@@ -581,9 +589,11 @@ fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
         "state_change_seq": 1,
         "tokens": {}
     }]);
-    let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+    let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
 
-    let (projected, excluded) = replica.project_remote("mini").expect("remote projection");
+    let (projected, excluded) = replica
+        .project_remote("mini", replica.project())
+        .expect("remote projection");
 
     assert!(excluded.is_empty());
     assert_eq!(projected.workspaces.len(), 1);
@@ -637,7 +647,9 @@ fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
         Some("remote:mini:tab:w1:t1")
     );
 
-    let (other_target, _) = replica.project_remote("build-mini").expect("other target");
+    let (other_target, _) = replica
+        .project_remote("build-mini", replica.project())
+        .expect("other target");
     assert_ne!(
         projected.focused_tab_id, other_target.focused_tab_id,
         "the same remote tab id must not collide across targets"
@@ -656,9 +668,11 @@ fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
 fn remote_projection_keeps_workspace_purpose_tokens() {
     let mut value = snapshot();
     value["workspaces"][0]["tokens"] = json!({"purpose": "Remote purpose"});
-    let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+    let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
 
-    let (projected, _) = replica.project_remote("mini").expect("remote projection");
+    let (projected, _) = replica
+        .project_remote("mini", replica.project())
+        .expect("remote projection");
     let purpose = projected.workspaces[0].checkouts[0]
         .purpose
         .as_ref()
@@ -678,9 +692,11 @@ fn remote_projection_preserves_official_worktree_metadata() {
         "is_linked_worktree": true
     });
     value["panes"][0]["cwd"] = json!("/tmp/repo-linked/subdirectory");
-    let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+    let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
 
-    let (projected, _) = replica.project_remote("mini").expect("remote projection");
+    let (projected, _) = replica
+        .project_remote("mini", replica.project())
+        .expect("remote projection");
     let workspace = &projected.workspaces[0];
     let checkout = &workspace.checkouts[0];
 
@@ -695,10 +711,10 @@ fn remote_projection_preserves_official_worktree_metadata() {
 fn remote_projection_rejects_an_empty_layout_area() {
     let mut value = snapshot();
     value["layouts"][0]["area"]["width"] = json!(0);
-    let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot shape");
+    let replica = SessionReplica::from_snapshot(&value).expect("snapshot shape");
 
     let error = replica
-        .project_remote("mini")
+        .project_remote("mini", replica.project())
         .expect_err("empty layout area must be visible");
 
     assert_eq!(error.state(), "malformed");
@@ -916,8 +932,10 @@ fn last_pane_close_waits_for_the_authoritative_fallback_tab_focus() {
 /// so its strip is the Herdr tab list in Herdr's order and nothing else.
 #[test]
 fn remote_projection_tab_list_and_order_are_herdr_only() {
-    let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
-    let (projected, _) = replica.project_remote("mini").expect("remote projection");
+    let replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+    let (projected, _) = replica
+        .project_remote("mini", replica.project())
+        .expect("remote projection");
     let checkout = projected
         .workspaces
         .iter()
@@ -1839,7 +1857,9 @@ fn a_device_agents_declared_parent_is_scoped_to_the_device() {
     child.tokens.remove("activity");
     replica.replace_agents(vec![child]);
     replica.refresh_published_state().expect("published");
-    let (remote, excluded) = replica.project_remote("mini").expect("remote projection");
+    let (remote, excluded) = replica
+        .project_remote("mini", replica.project())
+        .expect("remote projection");
     assert!(excluded.is_empty(), "{excluded:?}");
     let row = remote
         .agents
@@ -1858,7 +1878,9 @@ fn a_device_agents_declared_parent_is_scoped_to_the_device() {
     cross_device.tokens.remove("activity");
     replica.replace_agents(vec![cross_device]);
     replica.refresh_published_state().expect("published");
-    let (remote, excluded) = replica.project_remote("mini").expect("remote projection");
+    let (remote, excluded) = replica
+        .project_remote("mini", replica.project())
+        .expect("remote projection");
     assert!(excluded.is_empty(), "{excluded:?}");
     let row = &remote.agents[0];
     assert_eq!(
@@ -1867,116 +1889,4 @@ fn a_device_agents_declared_parent_is_scoped_to_the_device() {
         "a machine-qualified parent stays raw until the runtime matches that machine"
     );
     assert_eq!(row.declared_parent_pane_id.as_deref(), Some("w9:p3"));
-}
-
-#[test]
-fn remote_publication_fence_survives_native_return_and_replica_reconnect() {
-    let owner = hide_session::label_reference_token("claude", "id", "native-a").unwrap();
-    let held = |reference: &str, generation: &str| {
-        wire::agents_response(json!({"type":"agent_list","agents":[{
-            "pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1", "agent":"claude",
-            "agent_status":"idle","terminal_id":"fixture-terminal","focused":false,"revision":0,
-            "agent_session":{"agent":"claude","source":"herdr:claude","kind":"id","value":reference},
-            "tokens":{"label_owner":owner,"status_owner":owner,"label_generation":generation,
-                "status_generation":generation,"task":"현재 세션 작업","progress":"현재 진행",
-                "expected_reply":"현재 답변","status_question":"?"}
-        }]}))
-        .unwrap()
-    };
-    let mut replica = SessionReplica::from_snapshot(&snapshot()).unwrap();
-    replica.replace_agents(held("native-a", "instance:1"));
-    replica.refresh_published_state().unwrap();
-    assert_eq!(
-        replica.project_remote("mini").unwrap().0.agents[0].identity_label,
-        "현재 세션 작업"
-    );
-    replica.replace_agents(held("native-b", "instance:1"));
-    replica.refresh_published_state().unwrap();
-    assert_eq!(
-        replica.project_remote("mini").unwrap().0.agents[0].identity_label,
-        "Claude"
-    );
-    let mut reconnect = SessionReplica::from_snapshot(&snapshot()).unwrap();
-    reconnect.retain_label_publications(&replica);
-    reconnect.replace_agents(held("native-a", "instance:1"));
-    reconnect.refresh_published_state().unwrap();
-    let row = reconnect.project_remote("mini").unwrap().0.agents.remove(0);
-    assert_eq!(row.identity_label, "Claude");
-    assert_eq!(
-        (row.progress, row.expected_reply, row.demand),
-        (None, None, "none".into())
-    );
-    reconnect.replace_agents(held("native-a", "new-instance:1"));
-    reconnect.refresh_published_state().unwrap();
-    let row = reconnect.project_remote("mini").unwrap().0.agents.remove(0);
-    assert_eq!(row.identity_label, "현재 세션 작업");
-    assert_eq!(row.demand, "question");
-}
-
-#[test]
-fn remote_missing_reference_restores_only_without_a_concrete_replacement() {
-    let owner = hide_session::label_reference_token("claude", "id", "native-a").unwrap();
-    let held = |reference: Option<&str>, generation: &str| {
-        wire::agents_response(json!({"type":"agent_list","agents":[{
-            "pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"claude",
-            "agent_status":"idle","terminal_id":"fixture-terminal","focused":false,"revision":0,
-            "agent_session":reference.map(|value| json!({"agent":"claude","source":"herdr:claude","kind":"id","value":value})),
-            "tokens":{"label_owner":owner,"status_owner":owner,"label_generation":generation,
-                "status_generation":generation,"task":"현재 작업","progress":"현재 진행",
-                "expected_reply":"현재 답변","status_question":"?"}
-        }]})).unwrap()
-    };
-    for replacement in [false, true] {
-        let mut replica = SessionReplica::from_snapshot(&snapshot()).unwrap();
-        replica.replace_agents(held(Some("native-a"), "writer:1"));
-        replica.refresh_published_state().unwrap();
-        assert_eq!(
-            replica.project_remote("mini").unwrap().0.agents[0].identity_label,
-            "현재 작업"
-        );
-        replica.replace_agents(held(None, "writer:1"));
-        replica.refresh_published_state().unwrap();
-        let row = replica.project_remote("mini").unwrap().0.agents.remove(0);
-        assert_eq!(
-            (row.identity_label.as_str(), row.demand.as_str()),
-            ("Claude", "none")
-        );
-        assert_eq!(
-            (row.progress, row.expected_reply, row.message),
-            (None, None, None)
-        );
-        if replacement {
-            replica.replace_agents(held(Some("native-b"), "writer:1"));
-            replica.refresh_published_state().unwrap();
-            assert_eq!(
-                replica.project_remote("mini").unwrap().0.agents[0].identity_label,
-                "Claude"
-            );
-        }
-        let mut reconnect = SessionReplica::from_snapshot(&snapshot()).unwrap();
-        reconnect.retain_label_publications(&replica);
-        reconnect.replace_agents(held(Some("native-a"), "writer:1"));
-        reconnect.refresh_published_state().unwrap();
-        let row = reconnect.project_remote("mini").unwrap().0.agents.remove(0);
-        assert_eq!(
-            row.identity_label,
-            if replacement {
-                "Claude"
-            } else {
-                "현재 작업"
-            }
-        );
-        assert_eq!(row.demand, if replacement { "none" } else { "question" });
-        if replacement {
-            reconnect.replace_agents(held(Some("native-a"), "writer:3"));
-            reconnect.refresh_published_state().unwrap();
-            assert_eq!(
-                reconnect.project_remote("mini").unwrap().0.agents[0].identity_label,
-                "현재 작업"
-            );
-        } else {
-            assert_eq!(row.progress.as_deref(), Some("현재 진행"));
-            assert_eq!(row.expected_reply.as_deref(), Some("현재 답변"));
-        }
-    }
 }

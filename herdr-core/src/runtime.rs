@@ -1228,7 +1228,9 @@ pub struct Runtime {
     /// rebuild triggered by a registration change is not a session update, so
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
-    label_publications: crate::sidebar::LabelPublicationGuard,
+    /// The label store and analyzer every session-sync coordinator's worker
+    /// shares; `None` when the core was made without them (tests).
+    label_services: Option<std::sync::Arc<crate::labels::LabelServices>>,
     issue_tokens: crate::wire::IssueTokens,
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
     issue_write_pending: Option<(u64, String, String)>,
@@ -1625,7 +1627,7 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
-            label_publications: Default::default(),
+            label_services: None,
             issue_tokens: Default::default(),
             issue_candidates: Default::default(),
             issue_write_pending: None,
@@ -1973,7 +1975,7 @@ fn project_layout_panes(
                 requires_close_status_check: agent
                     .is_some_and(|agent| agent.requires_close_status_check),
                 identity_label: agent.map(|agent| agent.identity_label.clone()),
-                activity_at_unix_ms: agent.and_then(|agent| agent.last_activity.parse().ok()),
+                activity_at_unix_ms: agent.and_then(|agent| agent.changed_at_unix_ms),
                 fork: pane_fork_snapshot(agent),
                 ports,
                 servers: crate::ports::attributed_servers(&cwd, listening_ports),

@@ -556,7 +556,7 @@ fn instrumented_rows(agent_kind: &str) -> Vec<SidebarAgentSnapshot> {
              "tokens":{"task":"Coordinate delegated work"}},
             {"id":"Worker","pane_id":"child","agent":agent_kind,"spawned_from_pane_id":"parent",
              "agent_status":"idle","state_change_seq":2,
-             "tokens":{"status_error_new":"x","task":"Resolve hook failure"}},
+             "tokens":{"status_question_new":"?","task":"Resolve hook failure"}},
             {"id":"Runner","pane_id":"sibling","agent":agent_kind,"spawned_from_pane_id":"parent",
              "agent_status":"working","state_change_seq":3,
              "tokens":{"task":"Run verification"}}
@@ -596,13 +596,13 @@ fn a_pane_with_children_lists_them_and_names_the_one_that_speaks_for_them() {
         "chips follow the lineage's own child order"
     );
     assert!(children.chips.iter().all(|chip| chip.delegated));
-    // An unread error outranks a working sibling, by the same rule the
+    // An unread question outranks a working sibling, by the same rule the
     // Workspace summary chip uses.
     assert_eq!(
         children.representative.as_ref().unwrap().label,
         "Resolve hook failure"
     );
-    assert_eq!(children.representative.as_ref().unwrap().symbol, "\u{d7}");
+    assert_eq!(children.representative.as_ref().unwrap().symbol, "?");
 
     // In-process subagents are summarised separately and never folded into
     // the chip count.
@@ -1112,7 +1112,7 @@ fn a_descendants_demand_or_completion_turns_every_ancestor_unread_and_nothing_el
         &[
             ("w1:p1", None, "working", ""),
             ("w1:p2", Some("w1:p1"), "working", ""),
-            ("w1:p3", Some("w1:p2"), "idle", "status_approval_new"),
+            ("w1:p3", Some("w1:p2"), "blocked", ""),
         ],
     );
     assert!(agent_row(&runtime, "w1:p1").unread);
@@ -1208,7 +1208,7 @@ fn an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_y
         &mut runtime,
         &[
             ("w1:p1", None, "working", ""),
-            ("w1:p2", Some("w1:p1"), "idle", "status_error_new"),
+            ("w1:p2", Some("w1:p1"), "idle", "status_question_new"),
             ("w1:p3", Some("w1:p1"), "blocked", ""),
         ],
     );
@@ -1225,7 +1225,7 @@ fn an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_y
     );
     assert_eq!(
         (
-            root.descendant_counts.error,
+            root.descendant_counts.question,
             root.descendant_counts.approval
         ),
         (1, 1)

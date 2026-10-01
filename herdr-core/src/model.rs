@@ -745,7 +745,7 @@ pub struct SidebarAgentSnapshot {
     /// The title every surface calls this agent by; `sidebar.rs` owns the
     /// ladder that picks it (PRD D-01).
     pub identity_label: String,
-    /// The label plugin's one-line progress sentence.
+    /// The label's one-line progress sentence (`labels`).
     #[serde(skip_serializing)]
     pub progress: Option<String>,
     /// The one action the operator is being asked for, at most 40 characters.
@@ -765,9 +765,13 @@ pub struct SidebarAgentSnapshot {
     /// read rows, where the mark already says it, and stays on rows that
     /// still concern the operator.
     pub status_word_visible: bool,
-    pub elapsed: String,
-    /// The ordering key: the label plugin's activity timestamp when it has one,
-    /// otherwise Herdr's state change sequence zero-padded to the same width.
+    /// When the core last saw this agent change state, in epoch
+    /// milliseconds; `None` before the core has observed it. The shell turns
+    /// it into the elapsed time on its own one-second clock, so time passing
+    /// never republishes the snapshot (PRD labels-in-hided D-07).
+    pub changed_at_unix_ms: Option<u64>,
+    /// The ordering key: `changed_at_unix_ms` as thirteen digits when the
+    /// core has it, otherwise Herdr's state change sequence zero-padded.
     pub last_activity: String,
     /// Herdr's own state change sequence, one of the three inputs to a pane's
     /// read record.
@@ -3892,7 +3896,7 @@ pub struct DocumentsDelta {
 /// are present only when the caller's `have_revision` predates their last
 /// change; `chunks` carries only sequences past the caller's cursor. The
 /// changes view holds a whole file's diff text, so it is kept off `rest`,
-/// which restamps whenever any agent's elapsed time ticks.
+/// which restamps whenever any agent row changes.
 ///
 /// It borrows from a `SnapshotDeltaPayload`, never from the runtime, so
 /// building and serializing it needs no lock.
