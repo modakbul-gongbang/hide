@@ -4,13 +4,13 @@
 // with a primary checkout and six worktrees at different stages whose issues
 // and pull requests a fake `gh` answers, an Observer on main that delegated to an Implementor in
 // a worktree, a folder project with agents, and a project with no agent at
-// all. Every entry opens the Agents lens on its checkout lanes with the front
-// checkout's lane selected (B11, B12); the tiles in the tab row's place count
-// agents, issues and today's sessions (B1-B6); lanes are ordered, folded,
-// lined and headed as the PRD draws them (B13-B21); a node's line opens the
-// agent's whole message (B22); the lineage mode (B23-B25), the arrow keys
-// (B26), hover publishing nothing (B27), ⌥` restoring the lens (B11) and the
-// All projects lanes (B30) follow. The Issues tile is the issues-only board
+// all. Every entry opens the Agents graph with the front checkout's box
+// selected (agents-graph-view B1); the tiles in the tab row's place count
+// agents, issues and today's sessions (B1-B6); boxes are columned, ordered,
+// folded, lined and headed as the PRD draws them (B2-B23); a row's popover
+// opens the agent's whole message (B19); the filter (B24-B28), the arrow keys
+// (B35), hover publishing nothing (B38), an unchanged snapshot moving nothing
+// (B39), ⌥` restoring the lens (B29) and the All projects graph (B30) follow. The Issues tile is the issues-only board
 // of PRD overview-lenses-issues: issue cards with the lines of work that have
 // none (B1-B4), the issue panel beside the board with its read, failure and
 // retry (B10-B16, B19), the keyboard (B20), the preview and quiet hover (B6-B8,
@@ -176,7 +176,7 @@ async function atRest(page: Page): Promise<void> {
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 }
 
-test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board", async ({ page }) => {
+test("a project's Overview: tiles, the Agents graph, and the Issues board", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -243,8 +243,8 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await open(page, daemon);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
 
-    // The sidebar's project name opens that project's Overview on Agents ›
-    // 체크아웃, with no front checkout in it so main's lane selected (B11, B12).
+    // The sidebar's project name opens that project's Overview on the Agents
+    // graph, with no front checkout in it so main's box selected (B1).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const repoRow = page.locator("[data-project-row]", { hasText: /^repo/ });
     const refreshesBefore = sent.get("sessions_refresh") ?? 0;
@@ -256,10 +256,13 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(overview.locator('[data-overview-refreshing="true"]')).toBeVisible();
     await expect(overview.locator('[data-overview-refreshing="true"] svg')).toHaveClass(/animate-spin/);
     await overview.screenshot({ path: path.join(process.env.HIDE_E2E_SCREENSHOT_DIR ?? herdr.root, "overview-refreshing-stats.png") });
-    await expect(overview).toHaveAttribute("data-agents-mode", "checkouts");
-    const lanes = overview.locator("[data-lens-mode=checkouts] [data-lens-lane]");
-    const lane = (branch: string) => overview.locator("[data-lens-lane]", { has: page.locator("[data-lens-head]", { hasText: branch }) });
-    await expect(overview.locator('[data-lens-lane][data-selected="true"]')).toHaveAttribute("data-lane-rank", "primary");
+    const boxes = overview.locator("[data-graph-box]");
+    const box = (branch: string) => overview.locator("[data-graph-box]", { has: page.locator("[data-graph-head]", { hasText: branch }) });
+    const row = (pane: string) => overview.locator(`[data-graph-row="${pane}"]`);
+    const canvas = overview.locator("[data-graph-canvas]");
+    await expect(overview.locator('[data-graph-box][data-selected="true"]')).toHaveAttribute("data-graph-primary", "true");
+    // The coordinates the layout drew, by the box's own place.
+    const place = async (locator: ReturnType<typeof box>) => (await locator.boundingBox())!;
     // Opening the Overview reads the project's session history once (B5).
     await expect.poll(() => (sent.get("sessions_refresh") ?? 0) - refreshesBefore).toBe(1);
     expect(last.get("sessions_refresh")?.workspace_id).toEqual(await overview.getAttribute("data-overview-screen"));
@@ -296,7 +299,10 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     git(repo, ["update-ref", "refs/remotes/origin/main", "main"]);
     await expect(overview.locator('[data-stat="behind"]')).toHaveCount(0, { timeout: 20_000 });
     await expect(overview.locator('[data-stat="open-prs"], [data-stat="open-issues"]')).toHaveCount(0);
-    await expect(overview.locator("[data-agents-mode-item]")).toHaveCount(2);
+    // The filter is at the right end of that line: three status chips and a search, and no device choice with one device (B24).
+    await expect(overview.locator("[data-graph-chip]")).toHaveCount(3);
+    await expect(overview.locator("[data-graph-search]")).toBeVisible();
+    await expect(overview.locator("[data-graph-devices]")).toHaveCount(0);
     // New agent and 새 이슈 stay on the title row (B9).
     await expect(overview.locator("[data-overview-new-agent]")).toBeVisible();
 
@@ -323,112 +329,144 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await tile("agents").locator("[data-lens-tile-badge]").hover();
     await expect(page.getByRole("tooltip")).toContainText("승인 1");
 
-    // Lanes: main pinned on top, then the asking agent's lane, then the
-    // working one; the merged worktree and the one with no agent fold (B13, B20).
-    await expect(lanes).toHaveCount(3, { timeout: 20_000 });
-    expect(await lanes.evaluateAll((rows) => rows.map((row) => row.getAttribute("data-lane-rank")))).toEqual(["primary", "turn", "working"]);
-    await expect(lanes.nth(1)).toContainText("prd/asking");
-    await expect(lanes.nth(2)).toContainText("prd/web-overview-with-a-long-branch-name");
-    // main's head is the house, main and its agent count (B15).
-    await expect(lanes.nth(0).locator("[data-lens-head-agents]")).toHaveText("에이전트 1");
-    // A worktree head: the branch, ↑N and its changed files, dirty in the warning tone (B15).
-    const workingLane = lane("prd/web-overview-with-a-long-branch-name");
-    await expect(workingLane.locator("[data-lens-head-distance]")).toHaveText("↑1");
-    await expect(workingLane.locator("[data-lens-head-files]")).toHaveText("1 file");
-    await expect(workingLane.locator("[data-lens-head-files]")).toHaveClass(/text-warning/);
-    // Nodes: the Implementor stands in its worktree's lane, and one line
-    // runs from the Observer on main down to it (B14); the Observer says how
-    // its child is doing, the asking node is the only one outlined (B21).
-    await expect(workingLane.locator(`[data-lens-node="${workingPane}"]`)).toHaveAttribute("data-bucket", "working");
-    const observer = lanes.nth(0).locator(`[data-lens-node="${mainPane}"]`);
-    await expect(observer).toHaveAttribute("data-bucket", "delegating");
-    await expect(observer).toContainText("일하는 중 1");
-    await expect(overview.locator(`[data-lens-line="${mainPane}>${workingPane}"]`)).toHaveAttribute("d", /^M \S+ \S+ V /);
-    const askingNode = overview.locator(`[data-lens-node="${askingPane}"]`);
-    await expect(askingNode).toHaveAttribute("data-bucket", "turn");
-    await expect(askingNode).toHaveClass(/border-warning/);
-    await expect(askingNode.locator(`[data-lens-node-line="${askingPane}"]`)).toHaveText("Done 그룹 회색 링을 바꿔도 될까요?");
-    await expect(observer).not.toHaveClass(/border-warning/);
-    // The folds: one line each, a click unfolding it in place (B20).
-    const emptyFold = overview.locator('[data-lens-fold="empty"]');
-    const cleanupFold = overview.locator('[data-lens-fold="cleanup"]');
+    // Boxes (B2-B5, D-37): the asking worktree's band stands first, above main's, because
+    // its question outranks main's band; main holds the Observer and the Implementor it
+    // delegated one column right at its row's height; the merged worktree and the three
+    // with no agent fold (B21, B23).
+    await expect(boxes).toHaveCount(3, { timeout: 20_000 });
+    const mainBox = overview.locator('[data-graph-box][data-graph-primary="true"]');
+    const workingBox = box("prd/web-overview-with-a-long-branch-name");
+    const askingBox = box("prd/asking");
+    await expect(mainBox).toHaveAttribute("data-graph-col", "0");
+    await expect(workingBox).toHaveAttribute("data-graph-col", "1");
+    await expect(askingBox).toHaveAttribute("data-graph-col", "0");
+    const [mainRect, workingRect, askingRect] = [await place(mainBox), await place(workingBox), await place(askingBox)];
+    expect(Math.abs(workingRect.y - mainRect.y)).toBeLessThan(1);
+    expect(workingRect.x).toBeGreaterThan(mainRect.x + mainRect.width);
+    expect(askingRect.y + askingRect.height).toBeLessThan(mainRect.y);
+    // main's head says how many agents it has (B12); a worktree head: the branch, ↑N and its changed files, dirty in the warning tone.
+    await expect(mainBox.locator("[data-graph-head-agents]")).toHaveText("에이전트 1");
+    await expect(workingBox.locator("[data-graph-head-distance]")).toHaveText("↑1");
+    await expect(workingBox.locator("[data-graph-head-files]")).toHaveText("1 file");
+    await expect(workingBox.locator("[data-graph-head-files]")).toHaveClass(/text-warning/);
+    // Rows: the Observer waits on its child, the Implementor works, the asking row is the operator's turn and the only one with a second line (B17).
+    await expect(row(workingPane)).toHaveAttribute("data-bucket", "working");
+    await expect(row(mainPane)).toHaveAttribute("data-bucket", "delegating");
+    await expect(row(askingPane)).toHaveAttribute("data-bucket", "turn");
+    await expect(row(askingPane)).toHaveAttribute("data-attention", "0");
+    await expect(row(askingPane).locator(`[data-graph-row-line="${askingPane}"]`)).toHaveText("Done 그룹 회색 링을 바꿔도 될까요?");
+    await expect(overview.locator("[data-graph-row-line]")).toHaveCount(1);
+    // One line from the Observer's row to the Implementor's, blue with flowing dashes while it works (B8, B9).
+    const edge = overview.locator(`[data-graph-edge="${mainPane}>${workingPane}"]`);
+    await expect(edge).toHaveAttribute("data-edge-kind", "flow");
+    await expect(edge.locator(".graph-edge-base")).toHaveAttribute("d", /^M \S+ \S+ /);
+    await expect(overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`)).toHaveCount(1);
+    await expect(overview.locator("[data-graph-edge]")).toHaveCount(1);
+    // The folds: one line each, per project, a click unfolding it in place (B21, B23).
+    const emptyFold = overview.locator('[data-graph-fold="empty"]');
+    const cleanupFold = overview.locator('[data-graph-fold="cleanup"]');
     await expect(emptyFold).toHaveText(/에이전트 없는 워크트리 3/);
     await expect(cleanupFold).toHaveText(/정리할 것 1/);
     await emptyFold.click();
     await expect(emptyFold).toHaveAttribute("aria-expanded", "true");
-    await expect(lanes).toHaveCount(6);
+    await expect(boxes).toHaveCount(6);
     // The linked worktree's head carries its issue chip, which opens the
-    // Issues tab at that card (B17).
-    const linkedLane = lane("2-task-source");
-    await expect(linkedLane.locator("[data-lens-issue-chip]")).toHaveAttribute("data-lens-issue-chip", "github:acme/repo#2");
+    // Issues tab at that card (B14).
+    const linkedBox = box("2-task-source");
+    await expect(linkedBox.locator("[data-lens-issue-chip]")).toHaveAttribute("data-lens-issue-chip", "github:acme/repo#2");
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       await atRest(page);
-      await screenshot(page, `overview-agents-checkouts-${theme}`);
+      await screenshot(page, `overview-agents-graph-${theme}`);
     }
 
-    // Hover, focus and a half-second rest publish nothing (B27).
+    // Hover, focus and a half-second rest publish nothing (B38).
     const quietBefore = [...sent.values()].reduce((sum, count) => sum + count, 0);
-    await workingLane.locator("[data-lens-head-open]").hover();
-    // Resting on a lane head opens the checkout card, whose ↵ Workspace is the click (B16).
+    await workingBox.locator("[data-graph-head-open]").hover();
+    // ↵ Workspace appears at the end of the branch line without moving it (B15).
+    await expect(workingBox.locator("[data-graph-head-hint]")).toBeVisible();
+    // Resting on a head opens the checkout card, whose ↵ Workspace is the click.
     const card = page.locator("[data-checkout-card]");
     await expect(card).toBeVisible();
     await expect(card.locator('[data-checkout-card-row="base"]')).toContainText("↑1");
     await expect(card.locator('[data-checkout-card-row="changes"]')).toContainText("1 file");
     await expect(card.locator("[data-checkout-card-workspace]")).toBeVisible();
-    await screenshot(page, "overview-lane-card-light");
-    // Resting on the asking node's line opens its whole message (B22). The
-    // pointer leaves the card first: Radix clears its in-transit mark from a
-    // hoverable card on a move after the one that left it, and a trigger
-    // ignores moves while that mark is set.
+    await screenshot(page, "overview-box-card-light");
+    // The pointer leaves the card first: Radix clears its in-transit mark from a hoverable card on a move after the one that left it, and a trigger ignores moves while that mark is set.
     await leaveHoverCard(page, card);
-    await askingNode.locator(`[data-lens-node-line="${askingPane}"]`).hover();
+    // Hovering a row keeps its delegation chain bright and fades the rest, then restores (B19).
+    await page.mouse.move(2, 998);
+    await page.mouse.move(4, 996);
+    await row(workingPane).locator("[data-graph-open]").hover();
+    await expect(row(mainPane)).toHaveCSS("opacity", "1");
+    await expect(row(askingPane)).not.toHaveCSS("opacity", "1");
+    await expect(edge).toHaveCSS("opacity", "1");
+    await expect(row(workingPane).locator("[data-graph-row-hint]")).toHaveText("↵ 패널");
+    await page.mouse.move(2, 998);
+    await page.mouse.move(4, 996);
+    await expect(row(askingPane)).toHaveCSS("opacity", "1");
+    // Resting on the asking row opens the agent's whole message with where it stands (B19).
+    await row(askingPane).locator("[data-graph-open]").hover();
     const message = page.locator(`[data-lens-message="${askingPane}"]`);
     await expect(message).toBeVisible();
     await expect(message).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
     await expect(message).toContainText("사이드바 상태 규칙을 세 곳에 적용했고 Done 그룹만 남았습니다.");
+    await expect(message.locator("[data-lens-message-context]")).toContainText("prd/asking");
+    await expect(message.locator("[data-lens-message-context]")).toContainText("직접 시작");
+    await expect(row(askingPane).locator("[data-graph-row-hint]")).toHaveText("↵ 답하기");
     await screenshot(page, "overview-message-light");
     expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quietBefore);
-    // Its ↵ 패널에서 답하기 is the node's click: that agent's pane (B22).
+    // A delegated row's popover names who delegated it.
+    await page.mouse.move(2, 998);
+    await page.mouse.move(4, 996);
+    await row(workingPane).locator("[data-graph-open]").hover();
+    await expect(page.locator(`[data-lens-message="${workingPane}"] [data-lens-message-context]`)).toContainText("최신 hide 서버 웹 실행");
+    // ...and says in words what colour its line is (B36).
+    await expect(page.locator(`[data-lens-message="${workingPane}"] [data-lens-message-context]`)).toContainText("선일하는 중");
+    await page.mouse.move(2, 998);
+    await page.mouse.move(4, 996);
+    await row(askingPane).locator("[data-graph-open]").hover();
+    await expect(message).toBeVisible();
+    // Its ↵ 패널에서 답하기 is the row's click: that agent's pane (B18, B19).
     await message.locator(`[data-lens-message-open="${askingPane}"]`).click();
     const workspace = page.locator("[data-workspace-screen]");
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${askingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
 
-    // ⌘⇧H from that Workspace opens Agents › 체크아웃 with its lane selected (B11, B12).
+    // ⌘⇧H from that Workspace opens the graph with its box selected (B1).
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
-    await expect(lane("prd/asking")).toHaveAttribute("data-selected", "true");
-    await expect(overview.locator('[data-lens-lane][data-selected="true"]')).toHaveCount(1);
-    // A node's click is that agent's pane (B22); Esc leaves the Overview (B26).
-    await overview.locator(`[data-lens-open="${workingPane}"]`).click();
+    await expect(askingBox).toHaveAttribute("data-selected", "true");
+    await expect(overview.locator('[data-graph-box][data-selected="true"]')).toHaveCount(1);
+    // A row's click is that agent's pane (B18); the way back selects its box again.
+    await overview.locator(`[data-graph-open="${workingPane}"]`).click();
     await expect(page.locator(`[data-pane-view="${workingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await page.keyboard.press("Meta+Shift+KeyH");
-    await expect(lane("prd/web-overview-with-a-long-branch-name")).toHaveAttribute("data-selected", "true");
-    // The keyboard: a lane head takes focus, → moves to its node, ↵ opens it (B26).
-    await lane("prd/web-overview-with-a-long-branch-name").locator("[data-lens-head-open]").focus();
-    await page.keyboard.press("ArrowRight");
-    await expect(overview.locator(`[data-lens-open="${workingPane}"]`)).toBeFocused();
-    // ↑ goes to the node drawn straight above it: its Observer, whose line
-    // keeps that column free in the asking lane between them.
-    await page.keyboard.press("ArrowUp");
-    await expect(overview.locator(`[data-lens-open="${mainPane}"]`)).toBeFocused();
+    await expect(workingBox).toHaveAttribute("data-selected", "true");
+    // The keyboard: a head takes focus, ↓ moves to its row, ← to the row drawn beside it, ↵ opens it (B35).
+    await workingBox.locator("[data-graph-head-open]").focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(overview.locator(`[data-graph-open="${workingPane}"]`)).toBeFocused();
+    // Focus shows the same chain a hover does.
+    await expect(row(askingPane)).not.toHaveCSS("opacity", "1");
+    await page.keyboard.press("ArrowLeft");
+    await expect(overview.locator(`[data-graph-open="${mainPane}"]`)).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(workspace).toBeVisible();
-    // A lane head's click is its Workspace, main's included (B17).
+    // A head's click is its Workspace, main's included (B15).
     await page.keyboard.press("Meta+Shift+KeyH");
-    await lanes.nth(0).locator("[data-lens-head-open]").click();
+    await mainBox.locator("[data-graph-head-open]").click();
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toBeVisible();
     await page.keyboard.press("Meta+Shift+KeyH");
 
     // `N merged → 정리` opens the disk cleanup sheet on the finished filter and
-    // leaves the lane's 정리할 것 fold as it was; Escape closes the sheet, the
-    // fold's own line unfolds it (disk-layers B3). The merged lane is dimmed
+    // leaves the 정리할 것 fold as it was; Escape closes the sheet, the
+    // fold's own line unfolds it (disk-layers B3). The merged box is dimmed
     // with the merge glyph and offers 정리, whose popover says what it
     // removes; 정리 opens the Delete worktree dialog, and cancelling changes
-    // nothing (B18, B19).
+    // nothing (B16).
     await page.locator('[data-stat="merged"]').click();
     await expect(page.locator("[data-disk-sheet]")).toHaveAttribute("data-disk-filter", "done");
     await expect(cleanupFold).toHaveAttribute("aria-expanded", "false");
@@ -436,56 +474,120 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(page.locator("[data-disk-sheet]")).toHaveCount(0);
     await cleanupFold.click();
     await expect(cleanupFold).toHaveAttribute("aria-expanded", "true");
-    const shippedLane = lane("prd/shipped");
-    await expect(shippedLane.locator(`[data-lens-node="${shippedPane}"]`)).toHaveAttribute("data-bucket", "resting");
-    const cleanup = shippedLane.locator("[data-lens-cleanup]");
+    const shippedBox = box("prd/shipped");
+    await expect(row(shippedPane)).toHaveAttribute("data-bucket", "resting");
+    const cleanup = shippedBox.locator("[data-graph-cleanup]");
     await cleanup.hover();
     await expect(page.getByRole("tooltip")).toContainText("지운다");
     await cleanup.click();
     const dialog = page.locator("[data-delete-worktree]");
     await expect(dialog).toBeVisible();
     await screenshot(page, "overview-cleanup-dialog-light");
-    // Pane closing is counted on the button, the branch kept by default (B19).
+    // Pane closing is counted on the button, the branch kept by default (B16).
     await expect(dialog.locator("[data-delete-confirm]")).toHaveText("Close 1 pane and delete", { timeout: 15_000 });
     await dialog.locator("[data-delete-cancel]").click();
     await expect(dialog).toHaveCount(0);
-    await expect(shippedLane).toBeVisible();
+    await expect(shippedBox).toBeVisible();
 
-    // The lineage mode: Observer, Implementor, then children; the asking
-    // lineage first; one arrow from parent to child; each node's third line
-    // names its checkout, issue and PR (B23, B24); resting lineages fold (B25).
-    await overview.locator('[data-agents-mode-item="lineage"]').click();
-    await expect(overview).toHaveAttribute("data-agents-mode", "lineage");
-    const lineages = overview.locator("[data-lens-lineage]");
-    await expect(lineages.first()).toHaveAttribute("data-lens-lineage", askingPane);
-    await expect(lineages.first()).toHaveAttribute("data-lineage-rank", "turn");
-    const observerLineage = overview.locator(`[data-lens-lineage="${mainPane}"]`);
-    await expect(observerLineage.locator("[data-lens-node]")).toHaveCount(2);
-    await expect(overview.locator(`[data-lens-line="${mainPane}>${workingPane}"]`)).toHaveAttribute("d", /^M \S+ \S+ H /);
-    await expect(overview.locator("[data-lens-mode=lineage]")).toContainText("Observer · 보통 main");
-    await expect(overview.locator("[data-lens-mode=lineage]")).toContainText("Implementor · 워크트리");
-    await expect(overview.locator(`[data-lens-node="${workingPane}"] [data-lens-checkout-chip]`)).toContainText("prd/web-overview-with-a-long-branch-name");
-    await expect(overview.locator('[data-lens-mode=lineage] [data-lens-fold="cleanup"]')).toHaveText(/정리할 것 1/);
-    for (const theme of ["dark", "light"] as const) {
-      await chooseTheme(page, theme);
-      await atRest(page);
-      await screenshot(page, `overview-agents-lineage-${theme}`);
-    }
-    // A checkout chip's click is its Workspace (B24).
-    await overview.locator(`[data-lens-node="${askingPane}"] [data-lens-checkout-chip]`).click();
+    // The filter (B24-B28). A tile bar's segment lights its status chip alone
+    // (B25); chips are OR, search and chips AND; folds and non-matching rows go,
+    // the parent chain stays dimmed (B27); nothing matching says so with a way back (B28).
+    const chip = (name: string) => overview.locator(`[data-graph-chip="${name}"]`);
+    const rows = overview.locator("[data-graph-row]");
+    await chip("working").click();
+    await chip("turn").click();
+    await expect(rows).toHaveCount(3);
+    await tile("agents").locator('[data-lens-tile-segment="resting"]').click();
+    await expect(chip("resting")).toHaveAttribute("data-state", "on");
+    await expect(chip("turn")).toHaveAttribute("data-state", "off");
+    await expect(chip("working")).toHaveAttribute("data-state", "off");
+    await expect(rows).toHaveCount(1);
+    await expect(row(shippedPane)).toBeVisible();
+    await expect(overview.locator("[data-graph-fold]")).toHaveCount(0);
+    await chip("resting").click();
+    await chip("turn").click();
+    await expect(rows).toHaveCount(1);
+    await expect(row(askingPane)).toBeVisible();
+    await chip("working").click();
+    await expect(rows).toHaveCount(3);
+    await chip("turn").click();
+    await expect(rows).toHaveCount(2);
+    await expect(boxes).toHaveCount(2);
+    await chip("working").click();
+    const search = overview.locator("[data-graph-search]");
+    // `웹 디자인` is the Implementor's title: its Observer stays only as the dimmed chain to it (B26, B27).
+    await search.fill("웹 디자인");
+    await expect(rows).toHaveCount(2);
+    await expect(row(workingPane)).toHaveCSS("opacity", "1");
+    await expect(row(mainPane)).not.toHaveCSS("opacity", "1");
+    await search.fill("ASKING");
+    await expect(rows).toHaveCount(1);
+    await expect(row(askingPane)).toBeVisible();
+    await search.fill("zzzz");
+    await expect(overview.locator("[data-graph-filter-empty]")).toBeVisible();
+    await expect(boxes).toHaveCount(0);
+    await atRest(page);
+    await screenshot(page, "overview-agents-filter-empty-light");
+    await overview.locator("[data-graph-filter-clear]").click();
+    await expect(search).toHaveValue("");
+    await expect(rows).toHaveCount(4);
+    // The first Escape in the search clears only it, chips staying; on an empty field Escape leaves the Overview (B29).
+    await chip("turn").click();
+    await search.fill("zz");
+    await search.press("Escape");
+    await expect(search).toHaveValue("");
+    await expect(chip("turn")).toHaveAttribute("data-state", "on");
+    await expect(overview).toBeVisible();
+    await chip("turn").click();
+    await expect(rows).toHaveCount(4);
+
+    // Nothing moves when the picture is the same, and a changed one moves once (B33, B39).
+    // The graph's own relayouts and animation frames are counted on its canvas;
+    // the last glide (a chip just changed the picture) is let finish first.
+    await atRest(page);
+    await page.waitForTimeout(800);
+    const revision = async () => Number(await canvas.getAttribute("data-graph-revision"));
+    const frames = async () => Number(await canvas.getAttribute("data-graph-frames"));
+    const revisionBefore = await revision();
+    const framesBefore = await frames();
+    execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "progress=한 번 더 바뀐 말: 사이드바 규칙을 정리했습니다."], { env: herdr.env, timeout: 30_000 });
+    await page.waitForTimeout(1500);
+    expect(await revision()).toBe(revisionBefore);
+    expect(await frames()).toBe(framesBefore);
+    // The Implementor asks: its row grows a second line, its line turns orange, the graph is laid out once and glides.
+    execFileSync(herdr.bin, ["pane", "report-metadata", workingPane, "--source", "e2e", "--token", "expected_reply=이 줄을 그대로 둬도 될까요?"], { env: herdr.env, timeout: 30_000 });
+    await setFixtureLifecycle(herdr, workingPane, "blocked");
+    await expect(edge).toHaveAttribute("data-edge-kind", "ask", { timeout: 20_000 });
+    await expect.poll(revision).toBeGreaterThan(revisionBefore);
+    await expect(row(workingPane)).toHaveAttribute("data-attention", "0");
+    await setFixtureLifecycle(herdr, workingPane, "working");
+    await expect(edge).toHaveAttribute("data-edge-kind", "flow", { timeout: 20_000 });
+    // Reduced motion draws every change at once and stops the flow (B34).
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`)).toHaveCSS("display", "none");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    // ...and turning the setting off lets the dashes step again, a few times a second (B9, B34).
+    const flowPath = overview.locator(`[data-graph-flow="${mainPane}>${workingPane}"]`);
+    await expect(flowPath).toHaveAttribute("d", /.+/);
+    const seen = new Set<string | null>();
+    await expect.poll(async () => (seen.add(await flowPath.getAttribute("stroke-dashoffset")), seen.size), { timeout: 5000 }).toBeGreaterThan(2);
+
+    // ⌥` brings back the Overview as it was left: the filter and the open fold stay (B29).
+    await chip("working").click();
+    await expect(cleanupFold).toHaveCount(0);
+    await page.locator('[data-checkout][aria-label^="prd/asking"]').first().click();
     await expect(workspace).toBeVisible();
-    // Recent Panels brings back the Overview as it was left: lineage mode,
-    // 정리할 것 open (B11). ⌥` now cycles the focused area, so the global
+    // Recent Panels brings back the Overview as it was left: the chip filter and
+    // the opened 정리할 것 fold (B29). ⌥` now cycles the focused area, so the global
     // command has no chord until one is bound in Settings (focused-area-tab-cycle D-05).
     await bindChordlessCommand(page, "recent_panel", "Alt+Shift+KeyP");
     await page.keyboard.press("Alt+Shift+KeyP");
     await expect(overview).toBeVisible();
-    await expect(overview).toHaveAttribute("data-agents-mode", "lineage");
-    await expect(overview.locator('[data-lens-mode=lineage] [data-lens-fold="cleanup"]')).toHaveAttribute("aria-expanded", "true");
-    // Any other entry resets it to Agents › 체크아웃 (B11).
+    await expect(chip("working")).toHaveAttribute("data-state", "on");
+    // Any other entry resets it to the graph without a filter or an open fold (B29).
     await repoRow.click();
     await repoRow.click();
-    await expect(overview).toHaveAttribute("data-agents-mode", "checkouts");
+    await expect(chip("working")).toHaveAttribute("data-state", "off");
     await expect(cleanupFold).toHaveAttribute("aria-expanded", "false");
 
     // The issue chip opens the Issues tab with that issue's panel beside the
@@ -493,7 +595,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     // card per issue in Backlog, In progress and Review, and the worktree and
     // pull request with no issue as one line each under their columns (B1-B4).
     await emptyFold.click();
-    await linkedLane.locator("[data-lens-issue-chip]").click();
+    await linkedBox.locator("[data-lens-issue-chip]").click();
     await expect(overview).toHaveAttribute("data-overview-view", "issues");
     await expect(tile("issues")).toHaveAttribute("data-selected", "true");
     const column = (id: string) => page.locator(`[data-overview-column="${id}"]`);
@@ -632,16 +734,16 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     expect((sent.get("issue_detail_request") ?? 0) - previewBefore).toBeLessThanOrEqual(1);
 
     // A line of work with no issue (B4): the worktree line's popover says
-    // where it goes and names them, its click is Agents › 체크아웃; the pull
+    // where it goes and names them, its click is the graph with that line open; the pull
     // request line's is the PRs tab, where each has an issue cell to link
     // (overview-lenses-prs B21).
     const looseWorktrees = column("working").locator("[data-loose-worktrees]");
     await looseWorktrees.hover();
-    await expect(page.getByRole("tooltip")).toContainText("Agents › 체크아웃에서 보기");
+    await expect(page.getByRole("tooltip")).toContainText("Agents 그래프에서 보기");
     await expect(page.getByRole("tooltip")).toContainText("prd/asking");
     await looseWorktrees.click();
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
-    await expect(overview).toHaveAttribute("data-agents-mode", "checkouts");
+    await expect(emptyFold).toHaveAttribute("aria-expanded", "true");
     await tile("issues").locator("[data-lens-tile-button]").click();
     const loosePrs = column("review").locator("[data-loose-prs]");
     await loosePrs.hover();
@@ -708,8 +810,8 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await atRest(page);
     await screenshot(page, "overview-sessions-light");
 
-    // All projects keeps its tab row; its Agents view is the same lanes,
-    // each head carrying its project's name (B30).
+    // All projects keeps its tab row; its Agents view is the same graph, a
+    // band per project under its name, the one with the operator's turn first (B30).
     const allProjects = page.locator("[data-home-destination]");
     await allProjects.click();
     await expect(main).toBeVisible();
@@ -718,19 +820,20 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(main.locator("[data-main-tab]")).toHaveCount(3);
     await expect(main.locator('[data-main-tab="agents"] [data-agents-waiting]')).toBeVisible();
     await page.locator('[data-main-tab="agents"]').click();
-    await expect(main.locator("[data-lens-mode=checkouts]")).toBeVisible();
-    await expect(main.locator("[data-lens-lane]", { has: page.locator("[data-lens-head]", { hasText: "prd/asking" }) }).locator("[data-lens-head-project]")).toHaveText("repo");
-    await expect(main.locator(`[data-lens-node="${askingPane}"]`)).toHaveAttribute("data-bucket", "turn");
+    await expect(main.locator("[data-graph=all]")).toBeVisible();
+    await expect(main.locator("[data-graph-project]").first()).toHaveText("repo");
+    await expect(main.locator("[data-graph-section]", { has: page.locator("[data-graph-project]", { hasText: "repo" }) }).locator(`[data-graph-row="${askingPane}"]`)).toHaveAttribute("data-bucket", "turn");
+    await expect(main.locator("[data-graph-devices]")).toHaveCount(0);
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       await atRest(page);
       await screenshot(page, `all-projects-agents-${theme}`);
     }
-    await page.locator('[data-agents-mode-item="lineage"]').click();
-    await expect(main.locator("[data-lens-mode=lineage]")).toBeVisible();
-    await atRest(page);
-    await screenshot(page, "all-projects-lineage-light");
-    await page.locator('[data-agents-mode-item="checkouts"]').click();
+    // The filter applies to every project: `ASKING` keeps one row of one project (B30).
+    await main.locator("[data-graph-search]").fill("asking");
+    await expect(main.locator("[data-graph-row]")).toHaveCount(1);
+    await main.locator("[data-graph-search]").fill("");
+    await expect(main.locator("[data-graph-row]")).not.toHaveCount(1);
 
     // A folder's issues are Local ones kept by Hide: C makes an issue, 만들고
     // 바로 시작 goes on to the Start dialog, and the card's menu closes it.
@@ -799,15 +902,15 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await page.locator('[data-card-issue-open="close"]').click();
     await expect(page.locator('[data-overview-column="backlog"] [data-overview-card]')).toHaveCount(0);
 
-    // A project with no agent: its main lane stays pinned, counting none
+    // A project with no agent: its main box stays, counting none
     // (B13); New agent on a folder opens its Workspace.
     await page.locator("[data-go-main]").click();
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
-    await expect(lanes).toHaveCount(1);
-    await expect(lanes.first().locator("[data-lens-head-agents]")).toHaveText("에이전트 0");
-    await expect(lanes.first().locator("[data-lens-node]")).toHaveCount(0);
+    await expect(boxes).toHaveCount(1);
+    await expect(boxes.first().locator("[data-graph-head-agents]")).toHaveText("에이전트 0");
+    await expect(boxes.first().locator("[data-graph-row]")).toHaveCount(0);
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "0");
     await expect(tile("agents").locator("[data-lens-tile-badge]")).toHaveCount(0);
     await atRest(page);
@@ -833,7 +936,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
 
     // 시작 on the backlog issue makes a worktree linked to it, so the card
     // moves from Backlog to In progress; its Workspace comes to the front,
-    // and ⌘⇧H selects its lane.
+    // and ⌘⇧H selects its box.
     await tile("issues").locator("[data-lens-tile-button]").click();
     const backlogCard = column("backlog").locator('[data-overview-card][data-task-key="github:acme/repo#3"]');
     await backlogCard.hover();
@@ -855,8 +958,11 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(page.locator('[data-task-agent="failed"]')).toHaveCount(0);
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
-    await expect(lane("3-graph-view")).toHaveAttribute("data-selected", "true");
-    await expect(lane("3-graph-view").locator("[data-lens-node]")).toHaveCount(1);
+    // A fresh agent only rests, so its box is folded away: main's box carries the selection until the fold is opened (B1).
+    await expect(box("3-graph-view")).toHaveCount(0);
+    await expect(overview.locator("[data-graph-box][data-selected]")).toHaveAttribute("data-graph-primary", "true");
+    await overview.locator('[data-graph-fold="resting"]').click();
+    await expect(box("3-graph-view").locator("[data-graph-row]")).toHaveCount(1);
     await tile("issues").locator("[data-lens-tile-button]").click();
     await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(0, { timeout: 30_000 });
     await expect(column("working").locator('[data-overview-card][data-task-key="github:acme/repo#3"]')).toContainText("3-graph-view", { timeout: 30_000 });

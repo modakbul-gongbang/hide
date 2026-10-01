@@ -718,6 +718,180 @@ export function componentFoldSheets(legacy) {
   ];
 }
 
+// -- Component / Agent graph box ------------------------------------------------
+// The Agents tab's box (PRD agents-graph-view D-34, web/src/GraphView.tsx BoxView):
+// a checkout's head and one row per agent. One master, with three rows that a
+// state turns on, and every state a ref of it with descendant overrides, so the
+// head, the chips and the row parts keep their identity. The sizes are the
+// `--graph-*` tokens; width and height are numbers read at generation time.
+// The lines between boxes are not part of the master: a delegation is drawn by
+// the screen that lays boxes out (Screen / Project Overview).
+
+const BOX_ROWS = [1, 2, 3];
+
+function disabled(node) {
+  return {...node, enabled: false};
+}
+
+function buildAgentGraphBox(tokens) {
+  const W = num(tokens, '--graph-box-width'), HEAD = num(tokens, '--graph-head-height'), LINE = num(tokens, '--graph-head-line');
+  const ROW = num(tokens, '--graph-row-height'), ROW_LINE = num(tokens, '--graph-row-line'), PAD_BOTTOM = num(tokens, '--graph-box-pad-bottom');
+  const DOT = num(tokens, '--size-status-mark'), MARK = num(tokens, '--size-agent-mark'), ICON = num(tokens, '--size-icon-sm');
+  const GLYPH = num(tokens, '--size-checkout-icon'), INDENT = num(tokens, '--size-lineage-indent');
+  const SM = num(tokens, '--spacing-sm');
+  const DIMMED = num(tokens, '--opacity-secondary');
+  const HAIR = '$--size-hairline';
+  const caption = (id, content, fill, mono = false) => text(id, content, {size: '$--text-caption', fill, mono});
+  const grow = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
+
+  const head = frame('agb-head', 'Head', {layout: 'vertical', justifyContent: 'center', width: 'fill_container', height: HEAD, padding: [0, '$--spacing-sm']}, [
+    frame('agb-l1', 'Branch', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container', height: LINE}, [
+      icon('agb-glyph', 'git-branch', {size: GLYPH, fill: '$--muted-foreground'}),
+      text('agb-branch', 'branch-name', {mono: true}),
+    ]),
+    frame('agb-l2', 'Purpose', {layout: 'horizontal', alignItems: 'center', width: 'fill_container', height: LINE}, [caption('agb-purpose', 'purpose', '$--muted-foreground')]),
+    frame('agb-l3', 'Chips', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: 'fill_container', height: LINE}, [
+      frame('agb-issue', 'Issue chip', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+        icon('agb-issue-g', 'circle-dot', {size: ICON, fill: '$--muted-foreground'}), caption('agb-issue-t', '#192', '$--muted-foreground', true),
+      ]),
+      frame('agb-pr', 'PR chip', {
+        layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: LINE, cornerRadius: '$--radius-sm',
+        stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner',
+      }, [
+        icon('agb-pr-g', 'git-pull-request', {size: ICON, fill: '$--pr-open'}), caption('agb-pr-n', '#221', '$--pr-open', true),
+        icon('agb-pr-ci', 'check', {size: ICON, fill: '$--success'}), disabled(caption('agb-pr-rv', '변경 요청', '$--warning')),
+      ]),
+      caption('agb-dist', '↑3', '$--muted-foreground', true),
+      caption('agb-files', '4 files', '$--warning', true),
+      disabled(caption('agb-agents', '에이전트 1', '$--muted-foreground', true)),
+      grow('agb-sp'),
+      disabled(caption('agb-clean', '정리', '$--subtle-foreground')),
+    ]),
+  ]);
+
+  // A row: the mark, provider, title and age on one line; a step in with a
+  // corner arrow for a delegation inside the checkout; the tucked badge before
+  // the age; and the question as a second line, only while the agent asks.
+  function rowMaster(n) {
+    const p = `agb-row${n}`;
+    return frame(p, `Row ${n}`, {layout: 'vertical', gap: 0, width: 'fill_container'}, [
+      frame(`${p}-l1`, 'Line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container', height: ROW, padding: [0, '$--spacing-sm']}, [
+        frame(`${p}-ind`, 'Indent', {width: INDENT, height: 1, enabled: false}, []),
+        icon(`${p}-arrow`, 'corner-down-right', {size: ICON, fill: '$--muted-foreground', enabled: false}),
+        frame(`${p}-mark`, 'Status mark', {width: MARK, height: MARK, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
+          {type: 'ellipse', id: `${p}-dot`, name: 'Dot', enabled: false, width: DOT, height: DOT, fill: '$--agent-working'},
+          {type: 'ellipse', id: `${p}-ring`, name: 'Ring', width: DOT, height: DOT, stroke: '$--muted-foreground', strokeWidth: HAIR, strokeAlignment: 'inner'},
+          disabled(text(`${p}-glyph`, '?', {fill: '$--warning', mono: true, size: '$--text-caption'})),
+        ]),
+        frame(`${p}-provider`, 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'fit'}}, []),
+        text(`${p}-title`, 'agent title'),
+        grow(`${p}-sp`),
+        frame(`${p}-tucked`, 'Tucked badge', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: ROW_LINE, cornerRadius: '$--radius-sm', fill: '$--secondary', enabled: false}, [
+          caption(`${p}-tk-g`, '✓', '$--success', true), caption(`${p}-tk-n`, '2', '$--foreground', true),
+        ]),
+        caption(`${p}-age`, '3m', '$--muted-foreground', true),
+      ]),
+      frame(`${p}-q`, 'Question', {layout: 'horizontal', alignItems: 'center', width: 'fill_container', height: ROW_LINE, padding: [0, '$--spacing-sm', 0, SM + MARK], enabled: false}, [
+        caption(`${p}-q-t`, 'question', '$--warning'),
+      ]),
+    ]);
+  }
+
+  const master = frame('agb-m', 'Agent graph box', {
+    reusable: true, layout: 'vertical', gap: 0, width: W, cornerRadius: '$--radius-md', fill: '$--card',
+    stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', padding: [0, 0, PAD_BOTTOM, 0],
+  }, [head, rowMaster(1), ...BOX_ROWS.slice(1).map(n => ({...rowMaster(n), enabled: false}))]);
+
+  // What a state names about one row; every other part keeps the master's own.
+  const mark = (p, symbol, fill) => symbol === '●'
+    ? {[`${p}-dot`]: {enabled: true, fill}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: false}}
+    : symbol === '○'
+      ? {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: true, stroke: fill}, [`${p}-glyph`]: {enabled: false}}
+      : {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: true, content: symbol, fill}};
+  const row = (n, {symbol, fill, provider = 'claude', title, age, line, depth = 0, tucked, asking = false}) => {
+    const p = `agb-row${n}`;
+    return {
+      ...mark(p, symbol, fill),
+      [`${p}-provider`]: {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}},
+      [`${p}-title`]: {content: title, ...(asking ? {fontWeight: '600'} : {})},
+      [`${p}-age`]: {content: age},
+      [`${p}-ind`]: {enabled: depth > 0},
+      [`${p}-arrow`]: {enabled: depth > 0},
+      [`${p}-tucked`]: tucked ? {enabled: true} : {enabled: false},
+      [`${p}-tk-n`]: {content: String(tucked ?? 0)},
+      [`${p}-q`]: line ? {enabled: true, padding: [0, '$--spacing-sm', 0, SM + MARK + depth * INDENT]} : {enabled: false},
+      [`${p}-q-t`]: {content: line ?? ''},
+    };
+  };
+  const rowsOn = (...specs) => Object.assign({}, ...BOX_ROWS.map((n, index) => specs[index] ? {[`agb-row${n}`]: {enabled: true}, ...row(n, specs[index])} : {[`agb-row${n}`]: {enabled: false}}));
+  const headOf = ({glyph, tone, branch, purpose, issue, pr, distance, files, agents, cleanup}) => ({
+    'agb-glyph': {icon: glyph, fill: tone},
+    'agb-branch': {content: branch},
+    'agb-purpose': {content: purpose},
+    'agb-issue': {enabled: Boolean(issue)},
+    'agb-issue-t': {content: issue ?? ''},
+    'agb-pr': {enabled: Boolean(pr)},
+    ...(pr ? {
+      'agb-pr-g': {icon: pr.merged ? 'git-merge' : 'git-pull-request', fill: pr.tone},
+      'agb-pr-n': {content: `#${pr.number}`, fill: pr.tone},
+      'agb-pr-ci': {enabled: Boolean(pr.ci), ...(pr.ci ? {icon: pr.ci === 'passing' ? 'check' : 'x', fill: pr.ci === 'passing' ? '$--success' : '$--destructive'} : {})},
+      'agb-pr-rv': {enabled: Boolean(pr.changes)},
+    } : {}),
+    'agb-dist': {enabled: Boolean(distance), content: distance ?? ''},
+    'agb-files': {enabled: Boolean(files), content: `${files ?? 0} files`},
+    'agb-agents': {enabled: Boolean(agents), content: `에이전트 ${agents ?? 0}`},
+    'agb-clean': {enabled: Boolean(cleanup)},
+    'agb-head': cleanup ? {opacity: DIMMED} : {opacity: 1},
+  });
+
+  function states(suffix) {
+    const state = (key, name, overrides, descendants) => cell(name, ref(`agb-${key}-${suffix}`, master.id, name, overrides, descendants));
+    return [
+      state('primary', 'Primary', {}, {
+        ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2}),
+        ...rowsOn({symbol: '○', fill: '$--muted-foreground', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {symbol: '●', fill: '$--agent-working', title: 'Overview 진입 흐름', age: '1m'}),
+      }),
+      state('asking', 'Worktree with asking row', {}, {
+        ...headOf({glyph: 'git-pull-request', tone: '$--pr-draft', branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', issue: '#192', pr: {number: 221, tone: '$--pr-draft', ci: 'failed', changes: true}, distance: '↑3', files: 4}),
+        ...rowsOn(
+          {symbol: '?', fill: '$--warning', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', age: '4m', line: '기존 stdin 종료 경로도 남길까요?', asking: true},
+          {symbol: '●', fill: '$--agent-working', title: '리뷰: 종료 경로 회귀', age: '2m', depth: 1},
+        ),
+      }),
+      state('resting', 'Resting (merged, dimmed)', {opacity: DIMMED}, {
+        ...headOf({glyph: 'git-merge', tone: '$--pr-merged', branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', pr: {number: 216, tone: '$--pr-merged', merged: true}, cleanup: true}),
+        ...rowsOn({symbol: '○', fill: '$--muted-foreground', title: '체크아웃 기능 구현 및 정리', age: '2h'}),
+      }),
+      state('tucked', 'Row with tucked badge', {}, {
+        ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 1}),
+        ...rowsOn({symbol: '●', fill: '$--agent-working', title: 'agent-tab-groups', age: '8m', tucked: 2}),
+      }),
+      state('selected', 'Selected', {stroke: '$--primary'}, {
+        ...headOf({glyph: 'git-branch', tone: '$--muted-foreground', branch: 'prd/agent-tab-groups', purpose: 'Agent tab groups', distance: '↑39 ↓17'}),
+        ...rowsOn({symbol: '○', fill: '$--muted-foreground', provider: 'codex', title: 'Agent tab groups 구현', age: '8m'}),
+      }),
+    ];
+  }
+
+  const id = 'cmp-agent-graph-box';
+  return frame(id, 'Component / Agent graph box', {
+    layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
+  }, [
+    text(`${id}-title`, 'Agent graph box', {size: '$--text-headline', weight: '600'}),
+    text(`${id}-spec`, 'A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph in its pull request’s colour and the mono branch, the purpose, then the issue chip, PR chip with its CI mark and 변경 요청, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    masterCard(`${id}-master-card`, 'Master', master),
+    themeFrame(`${id}-light`, 'Light', states('l')),
+    themeFrame(`${id}-dark`, 'Dark', states('d')),
+  ]);
+}
+
+/** The generated `Component /` sheets that are neither folded legacy masters nor hand-authored; `at` is where a new one lands until a person moves it. */
+export function componentSheets(tokens) {
+  return [
+    {name: 'Component / Agent graph box', build: () => buildAgentGraphBox(tokens), at: {x: 1200, y: 8281}},
+  ];
+}
+
 // -- assembly ------------------------------------------------------------------
 
 /** Find a node anywhere in the (already variable-renamed) document tree by id. */

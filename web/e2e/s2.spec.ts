@@ -105,7 +105,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.locator("[data-go-main]").click();
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
-    await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-lens-lane]')).toHaveCount(1);
+    await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-graph-box]')).toHaveCount(1);
     await firstRow.click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);

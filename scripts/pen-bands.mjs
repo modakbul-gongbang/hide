@@ -1,13 +1,15 @@
 // The library holds foundations and System/Component sheets only.
 // Screen proposals belong in ignored agents/runs/<task>/ documents.
-// Regeneration owns Foundations, every System / <Part> sheet's content, and the two
+// Regeneration owns Foundations, every System / <Part> sheet's content, the two
 // Component / Panel Tab and Component / Keycap sheets that carry the folded legacy
-// masters (they are generated content, not hand-authored, the same way a System
-// sheet is) - never the designer's placement of any sheet, and never any other
-// Component / content.
+// masters, and the generated Component / Agent graph box sheet (they are generated
+// content, not hand-authored, the same way a System sheet is) - never the
+// designer's placement of any sheet, and never any other Component / content.
+// A generated sheet that names an `at` lands there when it is new; one without
+// it lands on the grid below.
 
 import {foundations} from './pen-foundations.mjs';
-import {systemSheets, componentFoldSheets, RETIRED_SHEETS} from './pen-system.mjs';
+import {systemSheets, componentFoldSheets, componentSheets, RETIRED_SHEETS} from './pen-system.mjs';
 
 export const FOUNDATIONS = 'System / Foundations';
 export const BANDS = [{prefix: 'System /'}, {prefix: 'Component /'}];
@@ -26,16 +28,18 @@ export function layout(document, tokens, legacy) {
     .filter(node => !BANDS.some(band => (node.name ?? '').startsWith(band.prefix)))
     .map(node => node.name || `<${node.type} ${node.id}>`);
 
-  const generated = [{name: FOUNDATIONS, build: () => foundations(document.variables)}, ...systemSheets(tokens, legacy), ...componentFoldSheets(legacy)];
+  const generated = [{name: FOUNDATIONS, build: () => foundations(document.variables)}, ...systemSheets(tokens, legacy), ...componentFoldSheets(legacy), ...componentSheets(tokens)];
 
   let children = kept;
   let placed = 0;
-  for (const {name, build} of generated) {
+  for (const {name, build, at} of generated) {
     const existing = children.find(node => node.name === name);
     const sheet = existing
       ? {...build(), x: existing.x, y: existing.y}
-      : {...build(), x: (placed % GRID_COLUMNS) * GRID_STRIDE_X, y: Math.floor(placed / GRID_COLUMNS) * GRID_STRIDE_Y};
-    if (!existing) placed++;
+      : at
+        ? {...build(), x: at.x, y: at.y}
+        : {...build(), x: (placed % GRID_COLUMNS) * GRID_STRIDE_X, y: Math.floor(placed / GRID_COLUMNS) * GRID_STRIDE_Y};
+    if (!existing && !at) placed++;
     children = existing ? children.map(node => node === existing ? sheet : node) : [...children, sheet];
   }
   return {document: {...document, children}, unknown};

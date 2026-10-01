@@ -13,8 +13,12 @@
     "values because variable-bound opacity renders invisible in the installed Pen toolchain.",
     "A node this generator draws itself materializes its own disabled/pending opacity as a",
     "plain number at generation time instead of registering here; this list is for the",
-    "hand-authored Component sheets that still carry a variable-bound override."
+    "hand-authored Component sheets that still carry a variable-bound override.",
+    "",
+    "`retired` names tokens removed from tokens.json whose canvas variable the next gen-pen run",
+    "drops; delete an entry once the canvas has been regenerated."
   ],
+  "retired": [],
   "renderedOpacity": [
     {"node": "fm-menu-disabled", "descendant": "fm-open-browser", "variable": "--opacity-disabled"},
     {"node": "fm-menu-opening", "descendant": "fm-open-browser", "variable": "--opacity-disabled"}

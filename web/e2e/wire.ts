@@ -51,9 +51,9 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
 /**
  * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
  * through its Project's Overview (the one named `project`, else the first)
- * to that Project's first Workspace: the Overview opens on the Agents lens,
- * whose first lane head is a checkout's Workspace (overview-lenses B11, B17);
- * a project whose only worktrees have no agent shows no lane, so it goes
+ * to that Project's first Workspace: the Overview opens on the Agents graph,
+ * whose first box head is a checkout's Workspace (agents-graph-view B1, B15);
+ * a project that draws no box goes
  * through the sidebar's project list, put back on the list it showed. A page
  * that already shows a Workspace is left where it is.
  */
@@ -65,8 +65,8 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   await main.locator('[data-main-tab="projects"]').click();
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
   const overview = page.locator("[data-overview-screen]");
-  const head = overview.locator("[data-lens-lane] [data-lens-head-open]").first();
-  await expect(head.or(overview.locator("[data-lens-empty], [data-lens-fold]")).first()).toBeVisible();
+  const head = overview.locator("[data-graph-box] [data-graph-head-open]").first();
+  await expect(head.or(overview.locator("[data-graph-empty], [data-graph-fold]")).first()).toBeVisible();
   if ((await head.count()) > 0) {
     await head.click();
   } else {

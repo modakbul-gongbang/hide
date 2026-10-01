@@ -432,7 +432,7 @@ Neither the core nor the plugin renames the Herdr tab for this; the Recent Panel
 ### Project Home
 
 Project Home is the empty local checkout surface and the Shift-Command-H overlay.
-Every entry opens its Agents view on the checkout lanes (PRD overview-lenses-tiles-agents D-04, D-17); the Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the lanes, the lineages and a lane's nodes and fill the Agents tile's bar (`web/src/overviewLens.ts`).
+Every entry opens its Agents view on the graph with the checkout in front selected (PRD agents-graph-view D-22); the Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the graph's bands, boxes and rows (`web/src/agentGraph.ts`), fill the Agents tile's bar and give the status chips their states (`web/src/overviewLens.ts`).
 The Issues view is the Tasks board below.
 Tasks derives delivery in priority order: merged worktree or merged PR, open PR, then in progress; an open issue no checkout works on is the backlog.
 Needs You changes the halo and stable sort priority, never this delivery stage.
