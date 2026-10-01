@@ -148,7 +148,7 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
     await page.keyboard.down("Control");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
-    await expect(cycleRow("panels")).toHaveAttribute("data-cycle-row", tabs[2]!);
+    await expect(cycleRow("area")).toHaveAttribute("data-cycle-row", tabs[2]!);
     expect(sent.get("focus_tab") ?? 0).toBe(focused);
     await page.keyboard.up("Control");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
@@ -162,7 +162,7 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Shift+Tab");
-    await expect(cycleRow("panels")).toHaveAttribute("data-cycle-row", tabs[0]!);
+    await expect(cycleRow("area")).toHaveAttribute("data-cycle-row", tabs[0]!);
     await page.keyboard.up("Control");
     await expect(canvas).toHaveAttribute("data-canvas", tabs[0]!);
     await exactlyOnce(sent, "focus_tab", focused + 1, page);

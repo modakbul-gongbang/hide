@@ -355,6 +355,8 @@ fn rename_exclusive(from_dir: &Dir, from: &OsStr, to_dir: &Dir, to: &OsStr) -> i
 /// subprocess. What it gives up is Finder's "Put Back" on some systems; the
 /// item is still in the Trash and restores by dragging it out.
 fn move_to_trash(path: &Path) -> Result<(), String> {
+    // Only the macOS branch below mutates the context.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut context = trash::TrashContext::default();
     #[cfg(target_os = "macos")]
     {

@@ -105,6 +105,26 @@ The host checks every field of a sync before it places anything and drops a mess
 Native page reports carry the display's current load stamp, so a late report from a previous reload cannot mark the new request loaded.
 An evicted page reports its disappearance as disconnected until shown again.
 
+## Keyboard ownership and cycling
+
+Only a visible native page can report keyboard focus to the shell; the shell resolves its complete Workspace identity and current View area.
+The page's `before-input-event` matches the shell's effective Electron shortcut registry for focused-area, global panel and project cycle commands before the page or menu sees them.
+One host slot holds the initiating page, actual release modifier and cycle identifier, including input received after the overlay hides that page.
+The first native cycle chord gives keyboard response to the shell in the same focused window, even when the overlay leaves the initiating page visible.
+Held repeats, release and Escape received by the shell follow the same host IPC route as the first chord, so a quick release cannot arrive before cycle initialization or also run through the DOM listener.
+After hiding that held page, the host reasserts shell keyboard response, because hiding a WebContentsView removes its native keyboard response.
+The shell retains the initiating page's logical ownership until release commits or Escape restores its input destination.
+When a first start is rejected or has zero or one eligible item, or a release commits nothing because the cycle came back to its origin, or the hold ends because its area shrank to one tab or the daemon went away, it restores the initiating visible page; a release that commits instead follows the chosen page.
+The trusted bridge carries only cycle keydown/keyup and cancellation; the shell keeps the frozen scope and preview and owns the single commit.
+The shell also reports the matching identifier when release arrived in its renderer, so a late completion cannot erase a newer hold.
+Release or Escape received by another native page still ends the frozen initiating cycle.
+Window blur, page renderer failure and destruction of the held page cancel the host slot, and a hidden or unfocused page cannot begin a cycle.
+After a blur cancels a hold, the window's next focus gives the keyboard back to the initiating page if it is still shown, as Escape does.
+After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
+The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
+Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.
+The keyboard area has a strong tab accent and a content boundary outside the native slot; other selected tabs remain readable, with no page blur or recurring capture for focus styling.
+
 ## Popups
 
 A sized popup a page on screen opens (`window.open` with window features: Chromium's `new-window` disposition with features, `isPopup` in `browserSync.ts`) is a real window above hide that keeps its opener, so a sign-in popup can post its result to the page and close itself; a display would have no opener, and the page would wait forever.
@@ -132,7 +152,7 @@ Electron turns pinch off by default, and the limit lives in the page's renderer,
 ## Overlays
 
 A native view is drawn above the page's HTML, so the shell cannot draw over it.
-When the palette, a menu, a dialog, a popover, or the Recent Panels or Recent Projects list meets a page's rectangle, the shell asks the host for a capture of the page, draws it in the page's place, and hides the page until the overlay is gone.
+When the palette, a menu, a dialog, a popover, or a focused-area, Global Recent Panels or Recent Projects list meets a page's rectangle, the shell asks the host for a capture of the page, draws it in the page's place, and hides the page until the overlay is gone.
 A shell drag (a tab, a divider, the side panel's edge, an Explorer item) marks the document root with `data-view-drag` or `data-agent-drag` while it runs (`web/src/shellDrag.ts`), and every page of the front Workspace freezes the same way until the mark is gone, so the drag's guide or preview draws over the pages and its drop never reaches one.
 A new shell drag sets that mark rather than adding its guide to the overlay selector; a drag inside a page never touches the shell and is the page's own.
 Tooltips are left alone, so a tooltip over a page is drawn under it.

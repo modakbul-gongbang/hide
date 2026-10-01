@@ -1,3 +1,4 @@
+import { REGISTRY, isCycleCommand, type CommandId } from "./shortcuts";
 import { agentCommands, type AgentCommand, type AgentFrame } from "./agentLayout";
 // The two palettes' data (PRD B12, B13, D-05): ⌘K searches the snapshot the
 // shell already holds, and ⌘P shows what hided's index ranked. The search
@@ -41,7 +42,7 @@ export type SearchEntry = {
   workspaceId?: string;
   checkoutId?: string;
   /** What a command entry changes on the Workspace in front. */
-  command?: { panel: PanelState } | { pinned: boolean } | { tool: Tool; visible: boolean } | { agent: AgentCommand } | { view: ViewCommandId } | { openBeside: true } | { startAgent: true };
+  command?: { panel: PanelState } | { pinned: boolean } | { tool: Tool; visible: boolean } | { agent: AgentCommand } | { view: ViewCommandId } | { openBeside: true } | { startAgent: true } | { navigation: CommandId };
   /** Why a command cannot run now; the palette shows it and runs nothing. */
   unavailable?: string | null;
 };
@@ -188,6 +189,9 @@ function searchDevices(rest: SnapshotRest): SearchDevice[] {
 export function searchEntries(rest: SnapshotRest | null, screen: WorkspaceOnScreen | null = null): SearchEntry[] {
   if (!rest) return [];
   const entries: SearchEntry[] = [...(screen ? workspaceCommands(rest, screen) : []), START_AGENT_ENTRY];
+  entries.push(...REGISTRY.filter((command) => isCycleCommand(command.id)).map((command): SearchEntry => ({
+    id: `command:navigation:${command.id}`, title: command.title, subtitle: command.id.endsWith("area_tab") ? "Focused Agent or View area" : command.id.endsWith("panel") ? "Across all panels and screens" : "Across projects", kind: "command", group: GLOBAL_COMMANDS_GROUP, command: { navigation: command.id },
+  })));
   const front = frontDeviceId(rest);
   const devices = searchDevices(rest);
   for (const { device, agents, workspaces, allWorkspaces } of devices) {

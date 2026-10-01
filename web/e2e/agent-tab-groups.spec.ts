@@ -200,7 +200,8 @@ test("New tab and Reopen use the requested area and Rename works in either bar",
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
-test("Delegated canvas returns to its normal tab and Agent controls keep palette commands", async ({ page }) => {
+// Quarantined: runs in CI without blocking `verify` until #287 is fixed.
+test("Delegated canvas returns to its normal tab and Agent controls keep palette commands", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/287" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;

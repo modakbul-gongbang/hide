@@ -134,7 +134,7 @@ const TabButton = memo(function TabButton({
       data-tab-kind={entry.kind}
       data-closing={closing ? "true" : "false"}
       className={`group relative flex min-w-0 flex-1 cursor-default select-none items-center gap-xs text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${fit.tab} ${
-        active ? "bg-background text-foreground" : "text-subtle-foreground hover:bg-accent"
+        active ? `text-foreground ${areaActive ? "bg-background" : "bg-secondary"}` : "text-subtle-foreground hover:bg-accent"
       } ${dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={onPointerDown}
       onClick={onSelect}

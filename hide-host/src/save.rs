@@ -375,10 +375,33 @@ fn sync_directory(parent: &Dir) {
     #[cfg(unix)]
     {
         use std::os::fd::AsRawFd;
-        unsafe {
-            libc::fsync(parent.as_raw_fd());
+        if let Ok(folder) = reopen_for_io(parent) {
+            unsafe {
+                libc::fsync(folder.as_raw_fd());
+            }
         }
     }
+}
+
+/// A readable descriptor for the folder `dir` holds. cap-std opens its
+/// directory handles with `O_PATH` on Linux, and the kernel answers `EBADF`
+/// to `flock` and `fsync` on such a descriptor, so a lock or a flush has to
+/// go through a fresh one; macOS has no `O_PATH` and the same call works there.
+#[cfg(unix)]
+fn reopen_for_io(dir: &Dir) -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            c".".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: openat returned a new descriptor that nothing else owns.
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
 }
 
 /// The content revision of `relative` now, read the same way a save reads it
@@ -414,17 +437,23 @@ fn resolve_link(dir: &Dir, relative: &Path) -> HostResult<std::path::PathBuf> {
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// The folder's advisory lock, released when dropped (or when the process
-/// holding it ends).
-struct FolderLock<'a> {
-    #[cfg_attr(not(unix), allow(dead_code))]
-    folder: &'a Dir,
+/// holding it ends). It owns its descriptor, so dropping it closes the lock.
+struct FolderLock {
+    #[cfg(unix)]
+    folder: std::os::fd::OwnedFd,
 }
 
-impl<'a> FolderLock<'a> {
-    fn acquire(folder: &'a Dir, exclusive: bool) -> HostResult<Self> {
+impl FolderLock {
+    fn acquire(folder: &Dir, exclusive: bool) -> HostResult<Self> {
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
+            let folder = reopen_for_io(folder).map_err(|error| {
+                HostError::io(
+                    &error,
+                    "The folder could not be locked for the save; the draft was preserved",
+                )
+            })?;
             let operation = if exclusive {
                 libc::LOCK_EX
             } else {
@@ -453,20 +482,18 @@ impl<'a> FolderLock<'a> {
         }
         #[cfg(not(unix))]
         {
-            let _ = exclusive;
-            Ok(Self { folder })
+            let _ = (folder, exclusive);
+            Ok(Self {})
         }
     }
 }
 
-impl Drop for FolderLock<'_> {
+#[cfg(unix)]
+impl Drop for FolderLock {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            unsafe {
-                libc::flock(self.folder.as_raw_fd(), libc::LOCK_UN);
-            }
+        use std::os::fd::AsRawFd;
+        unsafe {
+            libc::flock(self.folder.as_raw_fd(), libc::LOCK_UN);
         }
     }
 }

@@ -7,14 +7,19 @@
 # Runner placement is a capacity decision. This organization's plan runs five
 # macOS jobs at a time across every repository, and on 2026-09-28 one run held
 # all five for 26 minutes, so a second pull request waited up to 70 minutes
-# before its lanes started. The unit suites and the invariant checks run on
-# Linux. The Rust suite, the web end-to-end and the Electron end-to-end stay on
-# macOS, the platform hide ships on: a Linux web e2e was tried on 2026-09-29
-# and 22 of 87 tests failed on Linux-only behaviour (the daemon's terminal
-# control socket broke its pipe, headless Chromium read an empty clipboard,
-# and a visible scrollbar moved a menu by 20 px). The web end-to-end is split
-# into three shards, so no macOS job holds a slot for more than about ten
-# minutes.
+# before its lanes started. A run therefore uses two macOS jobs: the Electron
+# end-to-end and the web end-to-end's `@platform` tests, the ones that touch
+# what differs by operating system (Trash, process ownership, file watching and
+# saving, worktree paths, terminal input, ⌘ chords and Korean input).
+# Everything else runs on Linux: the Rust suite, the unit suites, the invariant
+# checks and the whole web end-to-end, dealt out to eight shards by
+# `web-e2e.yml`. `nightly.yml` runs the whole web end-to-end on macOS, so the
+# move costs no macOS coverage, only its delay.
+#
+# Every job and every long step has a timeout a few times its usual length
+# (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that
+# usually takes two minutes hung for 48 and for 156 in two runs, holding a
+# required check, and a job without a timeout runs for six hours.
 name: verify
 
 on:
@@ -32,7 +37,8 @@ concurrency:
 jobs:
   rust:
     name: rust workspace
-    runs-on: macos-15
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
@@ -41,7 +47,7 @@ jobs:
           # A cache per pull request ref pushed the repository past the 10 GB
           # cache limit and evicted main's; main's is the one every run reads.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The macos-15 image ships rustfmt and Clippy with its Rust toolchain.
+      # The ubuntu image ships rustfmt and Clippy with its Rust toolchain.
       # The workspace is the core, the hide-ai provider boundary and the
       # context-label plugin; every lane covers all three.
       - name: Check formatting
@@ -55,6 +61,7 @@ jobs:
   checks:
     name: checks and unit suites
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -89,6 +96,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: hcoord typecheck, build, unit test, and end-to-end test
+        timeout-minutes: 10
         run: |
           pnpm --dir plugins/hcoord typecheck
           pnpm --dir plugins/hcoord build
@@ -108,70 +116,34 @@ jobs:
           pnpm --dir desktop lint
           pnpm --dir desktop test
 
+  # The web shell is the same code on every operating system, so the whole
+  # suite runs once, on Linux, where runners are plentiful. What differs by
+  # system is the daemon and Herdr under it, and the `@platform` tests cover
+  # that on macOS.
   web-e2e:
-    name: web e2e ${{ matrix.shard }}/3
-    runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          shared-key: web-e2e
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build hided for Playwright
-        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
-      - name: Install web dependencies
-        run: pnpm --dir web install --frozen-lockfile
-      - name: Build the web shell
-        run: pnpm --dir web build
-      - name: Install Playwright Chromium
-        run: pnpm --dir web exec playwright install chromium
-      - name: Fetch the pinned Herdr runtime
-        id: herdr
-        # The click-flow e2e attaches hided to an isolated real Herdr; the
-        # fixture refuses any binary whose version is not the pin.
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
-      - name: End-to-end
-        # Each spec starts its own Herdr, hided and Chromium, so one worker per
-        # runner keeps timing assertions honest; the shards are the parallelism.
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-          HIDE_E2E_TRACE: "1"
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir web exec playwright test --shard=${{ matrix.shard }}/3
-      - name: Keep the e2e run's logs
-        # The daemon, Herdr server and PTY input logs behind a failed flow
-        # (with the screenshots the specs take, under the same directory),
-        # and Playwright's own test-results: with no screenshot or trace
-        # option set that is the error-context page snapshot. The wire trace
-        # is on the step's stdout. A screen assertion alone cannot say which
-        # side moved.
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hide-web-e2e-logs-${{ matrix.shard }}
-          path: |
-            ${{ runner.temp }}/hide-e2e
-            web/test-results
-          if-no-files-found: ignore
+    name: web e2e
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: linux
+      runner: ubuntu-latest
+      herdr-platform: linux-x86_64
+      shards: 8
+      quarantine: true
+
+  web-e2e-platform:
+    name: web e2e (macOS)
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: macos
+      runner: macos-15
+      herdr-platform: macos-aarch64
+      shards: 1
+      grep: "@platform"
 
   desktop-e2e:
     name: desktop e2e
     runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -204,6 +176,7 @@ jobs:
         # The desktop app against an isolated Herdr, starting its own hided
         # through the hide CLI built above. Electron downloads its runtime on
         # first launch.
+        timeout-minutes: 20
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
@@ -222,9 +195,10 @@ jobs:
 
   verify:
     name: verify
-    needs: [rust, checks, web-e2e, desktop-e2e]
+    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Every lane succeeded
         # A skipped or cancelled lane is a failure here; `needs` alone would

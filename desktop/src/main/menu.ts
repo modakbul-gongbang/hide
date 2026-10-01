@@ -7,7 +7,7 @@
 // `menuBindings` resolves with the rules the shell's listener runs.
 
 import type { MenuItemConstructorOptions } from "electron";
-import { effectiveRegistry, isNumberedCommand, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
+import { effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
   Enter: "Return",
@@ -43,11 +43,9 @@ export function accelerator(chord: Chord): string {
 
 /**
  * Which commands each menu carries, in order; null is a separator. The
- * cycles (held-modifier ⌃Tab and ⌥Tab walks), Move to Trash (a chord the
- * terminal keeps) and the numbered ⌘1-9 / ⌥1-9 selections (whose target is
- * the screen order the page knows, so the page answers them and no
- * accelerator here may take the press first) have no click form and stay
- * keyboard-only.
+ * numbered ⌘1-9 / ⌥1-9 selections and Move to Trash stay keyboard-only.
+ * Cycles have an immediate click form, with input owned by the renderer or
+ * native page rather than an app-menu accelerator.
  */
 export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pane" | "Help", readonly (CommandId | null)[]>> = {
   app: ["settings"],
@@ -57,6 +55,10 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "search",
     "open_file",
     "project_home",
+    null,
+    "recent_area_tab", "previous_recent_area_tab",
+    "recent_panel", "previous_recent_panel",
+    "recent_project", "previous_recent_project",
     null,
     "toggle_left_sidebar",
     "toggle_sidebar_view",
@@ -73,17 +75,13 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
 };
 
 export const KEYBOARD_ONLY: readonly CommandId[] = [
-  "recent_panel",
-  "previous_recent_panel",
-  "recent_project",
-  "previous_recent_project",
   "move_to_trash",
   ...REGISTRY.map((command) => command.id).filter(isNumberedCommand),
 ];
 
 function commandItem(command: Command, send: (id: CommandId) => void): MenuItemConstructorOptions {
   // A command with no chord (the sidebar switch until the operator binds one) is a plain item.
-  return { id: command.id, label: command.title, accelerator: command.electron ? accelerator(command.electron) : undefined, click: () => send(command.id) };
+  return { id: command.id, label: command.title, accelerator: command.electron && !isCycleCommand(command.id) ? accelerator(command.electron) : undefined, click: () => send(command.id) };
 }
 
 // A reported set is a few pane commands; anything past these caps is not one.

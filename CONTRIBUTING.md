@@ -10,13 +10,14 @@ Use [docs/README.md](docs/README.md) to find current guides and distinguish hist
 
 Run the same required lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
-CI runs the unit suites and the invariant checks on Linux (the Herdr schema comparison uses the pinned release's Linux asset), and keeps the Rust suite, the web end-to-end (three shards) and the Electron end-to-end on macOS, the platform hide ships on; `.github/workflows/pr.yml` says why, including what a Linux web end-to-end broke on.
+CI runs the Rust suite, the unit suites, the invariant checks and the whole web end-to-end (eight shards) on Linux, where the Herdr schema comparison and the web end-to-end use the pinned release's Linux asset, and keeps two jobs on macOS, the platform hide ships on: the Electron end-to-end and the web end-to-end's `@platform` tests.
+`.github/workflows/pr.yml` says why, and `nightly.yml` runs the whole web end-to-end on macOS every night.
 
 ```sh
 bash scripts/verify-cargo.sh lint                # cargo fmt --check, then clippy over every target
 bash scripts/verify-cargo.sh test                # herdr-core, hided, hide-ai, hide-agent-hooks and the context-label plugin
 bash scripts/verify-web.sh                       # hcoord typecheck/build/unit/e2e, then web and desktop typecheck, lint, test and build
-cargo build -p hided && pnpm --dir web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the S2 flows and the S3 Explorer, editor, viewers, attach, watch and reconnect flows (one worker, because each spec starts its own Herdr, hided and browser; CI deals the same tests out to three macOS shards)
+cargo build -p hided && pnpm --dir web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the S2 flows and the S3 Explorer, editor, viewers, attach, watch and reconnect flows (one worker, because each spec starts its own Herdr, hided and browser; CI deals the same tests out to eight Linux shards)
 pnpm --dir desktop e2e                           # Playwright `_electron` against a private hided and the pinned Herdr; windows never activate the app except in `@needs-focus` specs, which `--grep-invert @needs-focus` skips
 MEASURE_SCENARIO=multi HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh   # echo and frame gates with four splits and five attached tabs; review-required evidence, not a CI check
 bash scripts/check-harness-ignore-anchor.sh
@@ -56,6 +57,16 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | worktree removal boundary | The host's confirmed removal (`hide_host::worktrees::remove_confirmed`) forces only what the operator accepted in the delete confirmation: `git worktree remove --force` only with Discard ticked, `git branch -D` only for a branch they were told is unmerged; the Overview cleanup (`worktree_cleanup.rs`) never forces | `bash scripts/check-worktree-removal-boundary.sh` | Tie any force to the operator's recorded choice; a removal nobody confirmed must fail and surface the reason. |
 | herdr pin single source | The Herdr version and digest live only in `herdr-bundle.json` | `zsh scripts/check-herdr-pin-single-source.sh` | Derive from the manifest; never restate the value. Bump with `scripts/bump-herdr.sh <version>`. |
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |
+
+A web e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that is the only way a test leaves a required gate.
+Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required shards skip it with `--grep-invert @flaky`, and shard 1 still runs every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
+Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
+
+A web e2e test that exercises what differs by operating system is tagged `{ tag: "@platform" }` with a comment saying what, and a pull request runs those on macOS as well as on Linux: Trash, process ownership, file watching and saving, worktree paths, disk cleanup, terminal input and echo through the platform's Herdr, and the ⌘ chords and Korean input a Mac user types.
+Everything else is the same web shell on every system and runs on Linux only; the nightly workflow runs the whole suite on macOS, quarantined tests included, and, when it fails, opens one `bug` issue or comments on the one already open.
+Quarantined tests (`@flaky`) run only in shard 1 of the Linux lane and in the nightly run, never in the macOS `@platform` job.
+Run the macOS set locally with `pnpm --dir web e2e --grep @platform`.
+Press an editor or clipboard chord in a spec with `ControlOrMeta`: Playwright binds its editing commands (copy, start of document) to the host system, so a `Meta` press only works on macOS.
 
 The gates that read a running Herdr server, drive the built app, or reach the network are local steps and are not required in CI.
 They are listed under "Local gates" below; every script in `scripts/` is either a required gate above, a local gate there, or a generator named in [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md).

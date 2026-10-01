@@ -7,6 +7,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
 import { spawnAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
@@ -35,22 +36,60 @@ async function livePanes(herdr: HerdrFixture): Promise<Set<string>> {
 }
 
 /**
- * Watches Herdr until every pane in `watched` is gone and returns them in
- * the order they went. Each tree node waits for Herdr to confirm the one
- * below it, so a poll this fast sees every step.
+ * Records the order Herdr closes the panes in `watched`, from its own
+ * `pane.closed` events. Polling `pane list` from a subprocess was slower than
+ * the core's ~140 ms steps on a loaded runner and saw two panes go in one
+ * look (CI, 2026-10-01); the events carry the order itself. Resolves once
+ * the subscription is live, so nothing the caller does next is missed; the
+ * caller closes it on every exit path.
  */
-async function closeOrder(herdr: HerdrFixture, watched: string[]): Promise<string[]> {
+async function watchCloseOrder(herdr: HerdrFixture, watched: string[]): Promise<{ order: Promise<string[]>; close: () => void }> {
+  const socket = net.createConnection(herdr.socket);
   const order: string[] = [];
-  const deadline = Date.now() + 60_000;
-  while (order.length < watched.length && Date.now() < deadline) {
-    const live = await livePanes(herdr);
-    const gone = watched.filter((pane) => !live.has(pane) && !order.includes(pane));
-    // Two gone in one poll would make the order unreadable; the core never
-    // starts a parent before its child is confirmed gone.
-    expect(gone.length, `closed together: ${gone.join(", ")}`).toBeLessThanOrEqual(1);
-    order.push(...gone);
-  }
-  return order;
+  let buffer = "";
+  let ack: (error?: Error) => void = () => undefined;
+  let settle: (error?: Error) => void = () => undefined;
+  const live = new Promise<void>((resolve, reject) => {
+    ack = (error) => (error ? reject(error) : resolve());
+  });
+  const done = new Promise<string[]>((resolve, reject) => {
+    settle = (error) => {
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(order);
+    };
+  });
+  // A failure before the caller awaits `done` still reaches it; this only
+  // keeps the runner from reporting the same rejection as unhandled.
+  done.catch(() => undefined);
+  const fail = (error: Error) => {
+    ack(error);
+    settle(error);
+  };
+  const timer = setTimeout(() => fail(new Error(`closed so far: ${order.join(", ") || "none"}`)), 60_000);
+  socket.on("error", fail);
+  // Herdr ending the stream before every pane closed is a failure, not a wait.
+  socket.on("close", () => fail(new Error(`Herdr closed the event stream; closed so far: ${order.join(", ") || "none"}`)));
+  socket.on("data", (chunk) => {
+    buffer += chunk.toString("utf8");
+    for (let newline = buffer.indexOf("\n"); newline >= 0; newline = buffer.indexOf("\n")) {
+      const text = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!text) continue;
+      const line = JSON.parse(text) as { id?: string; error?: unknown; data?: { type?: string; pane_id?: string } };
+      if (line.id === "close-order") {
+        ack(line.error ? new Error(`events.subscribe refused: ${JSON.stringify(line.error)}`) : undefined);
+        continue;
+      }
+      const pane = line.data?.type === "pane_closed" ? line.data.pane_id : undefined;
+      if (pane && watched.includes(pane) && !order.includes(pane)) order.push(pane);
+      if (order.length === watched.length) settle();
+    }
+  });
+  socket.write(`${JSON.stringify({ id: "close-order", method: "events.subscribe", params: { subscriptions: [{ type: "pane.closed" }] } })}\n`);
+  await live;
+  return { order: done, close: () => fail(new Error("closed by the test")) };
 }
 
 async function agentsMode(page: Page): Promise<void> {
@@ -152,6 +191,7 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
+  let closeWatch: { order: Promise<string[]>; close: () => void } | null = null;
   try {
     const [keeper, target] = herdr.panes;
     // target spawned child, which spawned grandchild; keeper spawned kept.
@@ -197,9 +237,9 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press("Alt+KeyW");
     await expect(sheet.locator("[data-subtree-close-all]")).toBeFocused();
-    const order = closeOrder(herdr, [target, child, grandchild]);
+    closeWatch = await watchCloseOrder(herdr, [target, child, grandchild]);
     await page.keyboard.press("Enter");
-    expect(await order).toEqual([grandchild, child, target]);
+    expect(await closeWatch.order).toEqual([grandchild, child, target]);
     expect(sent.get("close_tree")).toBe(1);
     expect(last.get("close_tree")).toMatchObject({ target: { kind: "pane", pane_id: target }, pane_ids: [grandchild, child], confirmed: true });
     for (const pane of [target, child, grandchild]) await expect(page.locator(`[data-pane="${pane}"]`)).toHaveCount(0, { timeout: 20_000 });
@@ -216,6 +256,7 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
     await expect(page.locator(`[data-pane="${kept}"]`)).toHaveAttribute("data-depth", "0", { timeout: 20_000 });
     await screenshot(page, "close-subtree-close-only");
   } finally {
+    closeWatch?.close();
     daemon?.stop();
     herdr.stop();
   }
@@ -303,7 +344,8 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
 }
 
-test("Delete worktree closes the agents its checkout spawned outside it before the folder goes", async ({ page }) => {
+// @platform: Process ownership: which processes belong to a checkout, read through libproc on macOS and /proc on Linux.
+test("Delete worktree closes the agents its checkout spawned outside it before the folder goes", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;

@@ -34,8 +34,8 @@ export function CycleOverlay() {
   const registry = useShellStore((s) => hostRegistry(s.rest?.ui_state, hostKind()).registry);
   if (!cycle) return null;
   const { start, rows } = visibleWindow(cycle.items, cycle.index);
-  const title = cycle.kind === "panels" ? "Recent Panels" : "Recent Projects";
-  const chord = displayCommand(cycle.kind === "panels" ? "recent_panel" : "recent_project", hostKind(), registry);
+  const title = cycle.kind === "area" ? `Recent ${cycle.scope?.kind === "view" ? "View" : "Agent"} tabs` : cycle.kind === "panels" ? "Global Recent Panels" : "Recent Projects";
+  const chord = displayCommand(cycle.kind === "area" ? "recent_area_tab" : cycle.kind === "panels" ? "recent_panel" : "recent_project", hostKind(), registry);
   return createPortal(
     <div className="fixed inset-x-0 top-[var(--size-tab-strip)] z-30 flex justify-center" data-cycle={cycle.kind}>
       <div role="listbox" aria-label={title} data-slot="cycle-overlay" className="w-[var(--size-pr-popover)] rounded-md border border-border bg-popover py-xs shadow-lg">

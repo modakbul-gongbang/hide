@@ -1,0 +1,149 @@
+# The web end-to-end suite as one reusable lane, so the pull request's Linux
+# shards, its macOS `@platform` job and the nightly macOS run build, fetch and
+# run the suite the same way and differ only in what they are asked here: the
+# runner, which Herdr asset to run, how many shards deal the tests out, and
+# which tests (`grep`) to keep.
+#
+# Each spec starts its own Herdr, hided and Chromium, so one worker per runner
+# keeps timing assertions honest; the shards are the parallelism.
+name: web e2e lane
+
+on:
+  workflow_call:
+    inputs:
+      lane:
+        description: Names the lane in job names and artifact names.
+        type: string
+        required: true
+      runner:
+        description: The GitHub-hosted runner label.
+        type: string
+        required: true
+      herdr-platform:
+        description: The pinned Herdr asset to run, as `fetch-herdr-runtime.sh --platform` names it.
+        type: string
+        required: true
+      shards:
+        description: How many shards deal the tests out.
+        type: number
+        required: true
+      grep:
+        description: Playwright `--grep` filter; empty runs every test.
+        type: string
+        required: false
+        default: ""
+      quarantine:
+        description: Run the `@flaky` tests once, in shard 1, in a step that cannot fail the lane.
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Fans the shard numbers out as a matrix; a matrix cannot count to an input.
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - id: plan
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: echo "shards=$(seq 1 "$SHARDS" | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    name: web e2e ${{ inputs.lane }} ${{ matrix.shard }}/${{ inputs.shards }}
+    needs: plan
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: web-e2e
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install zsh
+        if: runner.os == 'Linux'
+        # Herdr starts each pane's shell from SHELL, and the fixture names zsh
+        # so its private .zshrc sets the prompt the tests wait for. macOS has it.
+        run: sudo apt-get install -y --no-install-recommends zsh
+      - name: Build hided for Playwright
+        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+      - name: Install web dependencies
+        run: pnpm --dir web install --frozen-lockfile
+      - name: Build the web shell
+        run: pnpm --dir web build
+      - name: Install Playwright Chromium
+        # --with-deps adds the system libraries a bare Linux image lacks.
+        run: pnpm --dir web exec playwright install --with-deps chromium
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        # The click-flow e2e attaches hided to an isolated real Herdr; the
+        # fixture refuses any binary whose version is not the pin.
+        env:
+          HERDR_PLATFORM: ${{ inputs.herdr-platform }}
+        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")" >> "$GITHUB_OUTPUT"
+      - name: End-to-end
+        timeout-minutes: 20
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          HIDE_E2E_TRACE: "1"
+          GREP: ${{ inputs.grep }}
+          SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          args=(--shard="$SHARD" --grep-invert @flaky)
+          if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
+          pnpm --dir web exec playwright test "${args[@]}"
+      - name: Quarantined end-to-end (does not block verify)
+        # A test tagged @flaky carries the issue that tracks its cause. It still
+        # runs here, once, so a fix shows up as a pass and a regression of the
+        # product it covers still shows up in the log; it cannot turn verify red.
+        timeout-minutes: 10
+        id: quarantine
+        # Only after the setup it needs succeeded, and into its own output
+        # directory: Playwright empties its output directory when a run starts,
+        # which would delete the required step's failure snapshots.
+        if: ${{ inputs.quarantine && matrix.shard == 1 && !cancelled() && steps.herdr.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          HIDE_E2E_TRACE: "1"
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          pnpm --dir web exec playwright test --grep @flaky --output=test-results-quarantine
+      - name: Keep the e2e run's logs
+        # The daemon, Herdr server and PTY input logs behind a failed flow
+        # (with the screenshots the specs take, under the same directory),
+        # and Playwright's own test-results: with no screenshot or trace
+        # option set that is the error-context page snapshot. The wire trace
+        # is on the step's stdout. A screen assertion alone cannot say which
+        # side moved.
+        if: failure() || steps.quarantine.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hide-web-e2e-logs-${{ inputs.lane }}-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/hide-e2e
+            web/test-results
+            web/test-results-quarantine
+          if-no-files-found: ignore

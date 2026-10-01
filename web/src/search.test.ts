@@ -39,7 +39,7 @@ const REST = {
 
 /** The one command every screen has; the tests below read the rows around it. */
 const START_AGENT = "command:start-agent";
-const without = (entries: SearchEntry[]) => entries.filter((entry) => entry.id !== START_AGENT && entry.kind !== "device");
+const without = (entries: SearchEntry[]) => entries.filter((entry) => entry.id !== START_AGENT && !entry.id.startsWith("command:navigation:") && entry.kind !== "device");
 
 describe("search entries", () => {
   it("lists agents, projects and checkouts with the ids that activate them", () => {
@@ -222,4 +222,11 @@ describe("grouping (issue 154)", () => {
     const ranked = filterEntries(searchEntries(REST), "fixture");
     expect(groupEntries(ranked)[0]?.entries[0]?.id).toBe(ranked[0]?.id);
   });
+});
+
+
+it("offers distinct focused-area, global panel and project commands in the palette", () => {
+  const entries = searchEntries(REST).filter((entry) => entry.id.startsWith("command:navigation:"));
+  expect(entries.map((entry) => entry.title)).toEqual(["Next recent tab in focused area", "Previous recent tab in focused area", "Next global recent panel", "Previous global recent panel", "Next recent project", "Previous recent project"]);
+  expect(entries.find((entry) => entry.id === "command:navigation:recent_panel")?.command).toEqual({ navigation: "recent_panel" });
 });

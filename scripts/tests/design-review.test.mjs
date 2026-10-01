@@ -9,6 +9,21 @@ import {childIndent, evaluate, rootsAligned, sharedColumns, stable} from '../des
 
 const repository = fileURLToPath(new URL('../../', import.meta.url));
 
+test('area focus follows the keyboard without changing selected tabs or geometry', () => {
+  const row = (id, keyboard) => ({id, keyboard, x: id === 'a1' ? 0 : 480, y: 0, width: 480, height: 440, selected: 1, filter: 'none'});
+  const measured = {areaFocus: {before: [row('a1', true), row('a2', false)], after: [row('a1', false), row('a2', true)]}};
+  assert.equal(evaluate({areaFocus: true}, measured)[0].pass, true);
+  measured.areaFocus.after[0].keyboard = true;
+  measured.areaFocus.after[1].width -= 2;
+  measured.areaFocus.after[1].filter = 'blur(1px)';
+  const failed = evaluate({areaFocus: true}, measured)[0];
+  assert.equal(failed.pass, false);
+  assert.ok(failed.problems.some(problem => problem.includes('keyboard')));
+  assert.ok(failed.problems.some(problem => problem.includes('moved or resized')));
+  assert.ok(failed.problems.some(problem => problem.includes('filter')));
+  assert.equal(evaluate({areaFocus: true}, {})[0].pass, null);
+});
+
 // -- the rules, with expected answers written from the rule, not the code -----
 
 const columns = (...rows) => [{list: 'main', rows: rows.map(([pane, depth, mark, title]) => ({pane, depth, mark, title}))}];

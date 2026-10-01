@@ -28,7 +28,7 @@ The Workspace holds the agent column (the toolbar, then the Agent area), always 
 The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed with the tool column hidden, so the first file or page it opens shows alone and ⌘E brings the Explorer.
 Open, the panel floats over the right part of the agent column and the Agent area keeps its full size underneath, so opening, closing, resizing and expanding the panel never resizes a terminal.
 The panel is a `--card` surface with a `--border` hairline and a `--radius-lg` top-left corner, and no shadow; a `--spacing-sm` gap in `--background` on its left separates it from the agents.
-Everything inside it sits on `--card`: the tabs, the document header, the editor, the diff, a page and a loading view, so a shown View tab is marked by its indicator and title alone, never by a surface of its own.
+Everything inside it sits on `--card`: the tabs, the document header, the editor, the diff, a page and a loading view, with the keyboard area's selection accent and the other areas' readable selected-tab background described under View areas.
 The pane header actions and the right part of an agent's lines under an open panel stay under it; Pin is the remedy.
 Pin docks the panel instead: the agents end at its left edge and their terminals resize once to fit, and Unpin gives them the body's width back.
 Pin is not a fourth state: it is stored per Workspace with the width, and a pinned panel still closes, opens, and expands, its agents keeping their docked width under an expanded panel so expanding and restoring resize nothing.
@@ -99,7 +99,8 @@ This boundary is an Observer-approved, user-vetoable implementation assumption f
 
 The Agent column has its own area tree, separate from the side panel's View tree.
 Each area has a tab bar, a New tab button and the active tab's live pane canvas; dividers separate areas.
-Only the active area's selected tab carries the accent; clicking a tab or pane activates its area and sends the keyboard to that pane.
+Only the area holding the keyboard carries the strong selected-tab accent and content boundary, across both Agent and View columns.
+Clicking a tab or pane activates its area and sends the keyboard to that pane.
 All shown tabs stay attached and awake, while only the active area's tab receives read and sleep-visit updates.
 Pane headers, child chips, relationship controls and pane splits remain inside each canvas; find belongs to the focused pane.
 ⌘F on a full-screen Claude Code or Codex pane opens that agent's own search over its whole conversation in the pane, with the agent's own keys and count (Claude Code: type, Enter, `n`/`N`; Codex: type, Enter, Ctrl+P), and no find bar appears; any other pane, and an agent drawing inline, gets the find bar.
@@ -139,8 +140,11 @@ Retry close reuses that intent's shell, while Dismiss ends the failed intent; de
 
 The side panel holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
 A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
-One area is active: the next file opens there, the palette and the keyboard act on it, and only its active view's tab carries the accent indicator.
-Every other area still shows its own active view's tab, with a primary title and no indicator, so the operator sees what each area holds and which one is in charge.
+Each layout keeps its own active area for opening and layout actions.
+The recorded keyboard owner alone gives one Agent or View area the strong tab accent and content boundary.
+Every other area's tab bar uses the card background, and its selected tab keeps a foreground title and secondary background without the strong accent.
+The content stays readable and unfiltered; focus adds no content blur, opacity reduction, capture loop or geometry change.
+The same rule applies to floating, pinned and expanded View panels, narrow single-area presentation and both themes.
 An area's tabs each ask for the preferred width and shrink alike down to the title minimum; a file's type mark does not tell files apart, so a View tab keeps its title and never turns to marks the way an Agent tab does.
 An area whose tabs outrun its width even at that minimum scrolls its own strip so the shown view's tab stays in sight whenever the shown view changes or the area is resized.
 Clicking a tab or a view, or moving focus to another area from the palette, makes that area active.
@@ -446,7 +450,7 @@ A value not yet read leaves the number and the bar out, and zero is drawn as zer
 The Agents tile's agents are the device's live rows, so it has no last value to age: while the device cannot answer, its ⚠ says why and the number stays empty.
 
 Every way into a project's Overview, the project row, its Overview row, the palette and ⌘⇧H, opens Agents in its checkout mode with the lane of the checkout in front selected (outlined and scrolled into view), or main's lane when the checkout in front is elsewhere.
-Only Recent Panels (`` ⌥` `` in a browser, `⌃Tab` in the desktop app) brings an Overview back as it was left, its tile, modes, selected lane and opened folds; the view lives on the screen, not in stored settings.
+Only Global Recent Panels (a separate command, unbound by default) brings an Overview back as it was left, its tile, modes, selected lane and opened folds; the view lives on the screen, not in stored settings.
 The PRs view opens only from its tile, a PR chip, `이슈 없는 PR N`, the sidebar's PR card and Recent Panels.
 The facts line's right end carries the chosen view's mode control: `체크아웃 · 계보` for Agents, the filter and `Board · List · Dependencies` for Issues, and nothing for PRs.
 
@@ -625,6 +629,8 @@ The field draws on an elevated surface so it reads as an input among labels; not
 
 The filesystem change is the core's: one event carries the request, the core refuses paths outside the focused checkout and any overwrite, runs the exclusive call off the runtime mutex, and settles one operation slot.
 The tree reads a finished slot to re-read only the folders it touched, keeping every loaded folder and its expansion, and a failed slot to place the reason under the row the change started from.
+A folder being re-read, after a settled change, a change the watcher saw, or the refresh button, keeps its rows drawn until the new listing lands; it never empties for the round trip.
+A device folder whose re-read is refused keeps those rows under its could-not-be-listed reason until Retry, or until the helper is ready again; a local subfolder whose re-read is refused keeps them until the next change reads it again.
 The selection moves to the new or moved item because the core sets it explicitly; expanded folders and open file tabs inside a renamed folder follow it.
 
 A drag moves one item inside the tree.
@@ -913,17 +919,27 @@ A Home agent reads and edits the projects through their links, the change shows 
 
 ## Recent navigation
 
-Web owner: `web/src/recent.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
+Web owner: `web/src/recent.ts`, `web/src/areaCycle.ts`, `web/src/viewFocus.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
 
-Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, file/editor, and diff tabs, and on the web every View-area display (file, diff, and browser) of this machine and every Herdr tab of each connected device, whose displays the snapshot does not carry (PRD home-device-rail D-16).
-On the web, each device's Home Overview and each Project's Overview are rows of the same order once the page has shown them, each reading as its sidebar row does: `Home` over that device's project count with the house mark, or the Project over `Overview` with the layout-dashboard mark; a revisit moves the one row to the front, a Home Overview leaves with its device, and an Overview leaves with its Project.
-Committing one of them shows that screen at once, committing a Workspace surface from one shows the Workspace once its checkout is in front, and Recent Projects still restores a Project's last Workspace surface, never its Overview.
-The overlay ("Recent Panels", ⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser, where Chrome keeps ⌃Tab) returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
-A second cycle ("Recent Projects", ⌥Tab / ⌥⇧Tab) scopes to projects globally and restores each project's last used surface.
-Committing a row brings its surface forward in its own project and checkout, switching the Workspace when needed, as one event; a display's View area shows if only Agents showed, and the keyboard lands in it.
-On the web a surface is in use where the keyboard is: the focused checkout's active display while the keyboard is in its View area (including native browser pages), else its visible Herdr tab, and while a device is in front the tab that device's Herdr shows; a commit's intermediate frames are not visits.
-Recent Panels and Recent Projects are one order over every connected device: a row not on the device in front carries that device's chip (`mini`, or `This Mac` with the laptop glyph), and committing it moves the rail, the sidebar and the center to that device and its surface together.
-Holding the chord's modifier previews; releasing it commits; Escape keeps the original selection; a menu action commits immediately.
+Focused-area cycling (⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser) walks the tabs of the exact area holding the keyboard, in recent-use order.
+The scope includes device, checkout, Agent or View, and area ID, so identical area IDs in the two columns or another checkout cannot widen the cycle.
+A terminal pane or Agent tab bar names its normal Agent area; a document, diff, View tab bar or visible native browser page names its View area.
+A delegated canvas outside the area's normal strip, hidden View, tool, search, Settings, dialog or Overview supplies no scope; zero or one tab is a no-op.
+Holding the chord's actual modifier freezes the order and scope and previews in Recent Agent tabs or Recent View tabs without moving the committed tab, layout or keyboard owner.
+Repeated forward and backward chords walk that frozen order; releasing the modifier commits one in-place selection, and Escape or losing the window cancels without a selection event.
+Closed or moved tabs leave the frozen candidates; removal of the origin area or checkout cancels, and no other area replaces it.
+
+Global Recent Panels is a separate, named command, unbound by default and assignable in Settings alongside the focused-area commands.
+It walks every unified surface in recent-use order across projects, checkouts and connected devices: terminal tabs, View files, diffs and browser displays, plus every visited Home and Project Overview.
+An Overview revisit moves its one row to the front; its saved tile, modes, selected lane and folds remain page-local, and it leaves the order with its Project or device.
+A Global Recent Panels commit shows an Overview at once or brings one Workspace surface forward with one event; a View target also receives the keyboard.
+Menu and palette invocations of either family select the next or previous valid target immediately, with no held modifier or second selection.
+A bound Global Recent Panels chord keeps the same hold, release and cancellation behavior.
+Recent Projects (⌥Tab / ⌥⇧Tab) retains its global project order and restores each Project's last Workspace surface, never its Overview.
+Both global lists carry a device chip on a row outside the device in front and move the rail, sidebar and center together when committed.
+The session uses one bounded recent-surface history; the area cycle filters it and appends normal area tabs not yet visited.
+The shown tab of the recorded keyboard area is the current visit, including native browser pages; intermediate commit frames are not visits.
+
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
 Restoration is one action with no confirmation: an in-flight pane shows inline progress, and a restore without a target pane shows a compact inline warning.
 Missing cwd, an unavailable prior conversation, a missing file, and a retryable failure all use the same inline notice vocabulary, without a banner, card, or modal.
