@@ -210,7 +210,7 @@ export function installKeyboard(actions: Actions): () => void {
         const cycle = event && current?.kind === kind ? reconcileHeldCycle(current, rest) : fresh();
         if (!cycle) return;
         const next = advance(cycle, backward);
-        if (!event) { ui().setCycle(null); commitCycle(next, actions); return; }
+        if (!event) { endNativeCycle(); ui().setCycle(null); commitCycle(next, actions); return; }
         const command = hostRegistry(rest?.ui_state, host).registry.find((row) => row.id === id);
         const chord = command && hostChord(command, host);
         const release = chord && releaseModifier(chord);
@@ -318,7 +318,14 @@ export function installKeyboard(actions: Actions): () => void {
     state.overlay !== "none" || state.escapeLayers.length > 0 || state.workspaceDialog !== null || state.pendingClose !== null || state.pendingTrash !== null || state.cycle !== null;
   const unsubscribeLayers = useUiStore.subscribe((state, previous) => {
     if (layerOpen(state) && !layerOpen(previous)) endHold();
-    if (previous.cycle && !state.cycle) endNativeCycle();
+    // Release, Escape and blur settle a native hold themselves. One that
+    // ends any other way (its scope shrank to one tab, the daemon went away)
+    // moved nothing, so the page that started it takes the keyboard back.
+    if (previous.cycle && !state.cycle && nativeCycle) {
+      const originalPage = nativeCycle;
+      endNativeCycle();
+      focusBrowserDisplay(originalPage.workspace, originalPage.id);
+    }
   });
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -346,6 +353,7 @@ export function installKeyboard(actions: Actions): () => void {
       };
       if (ui().cycle) {
         const originalPage = nativeCycle;
+        endNativeCycle();
         ui().setCycle(null);
         if (originalPage) focusBrowserDisplay(originalPage.workspace, originalPage.id);
         consume();
@@ -395,6 +403,7 @@ export function installKeyboard(actions: Actions): () => void {
     const cycle = ui().cycle;
     if (!cycle) return;
     const originalPage = nativeCycle;
+    endNativeCycle();
     ui().setCycle(null);
     // A release that moved nothing returns the keyboard to the page that
     // started the hold; a commit hands it to the chosen destination instead.
@@ -404,6 +413,8 @@ export function installKeyboard(actions: Actions): () => void {
   // Losing the window mid-cycle (⌥-Tab switching apps) cancels it; nothing
   // is committed for a chord the operator did not finish here.
   const onBlur = () => {
+    // The host gives the page back its keyboard when the window returns.
+    endNativeCycle();
     if (ui().cycle) ui().setCycle(null);
     endHold();
   };

@@ -105,7 +105,7 @@ The first native cycle chord gives keyboard response to the shell in the same fo
 Held repeats, release and Escape received by the shell follow the same host IPC route as the first chord, so a quick release cannot arrive before cycle initialization or also run through the DOM listener.
 After hiding that held page, the host reasserts shell keyboard response, because hiding a WebContentsView removes its native keyboard response.
 The shell retains the initiating page's logical ownership until release commits or Escape restores its input destination.
-When a first start is rejected or has zero or one eligible item, or a release commits nothing because the cycle came back to its origin, it restores the initiating visible page; a release that commits instead follows the chosen page.
+When a first start is rejected or has zero or one eligible item, or a release commits nothing because the cycle came back to its origin, or the hold ends because its area shrank to one tab or the daemon went away, it restores the initiating visible page; a release that commits instead follows the chosen page.
 The trusted bridge carries only cycle keydown/keyup and cancellation; the shell keeps the frozen scope and preview and owns the single commit.
 The shell also reports the matching identifier when release arrived in its renderer, so a late completion cannot erase a newer hold.
 Release or Escape received by another native page still ends the frozen initiating cycle.

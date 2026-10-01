@@ -4,7 +4,7 @@ import { noteAreaFrame } from "./areaFrames";
 import { areaGeometry } from "./areaLayout";
 import { registerBrowserSlot, syncBrowserFront } from "./browserViews";
 import type { BrowserHostEvent, HostBridge } from "./host";
-import { installKeyboard } from "./keyboard";
+import { installKeyboard, reconcileHeldCycle } from "./keyboard";
 import { resetRecent } from "./recent";
 import type { SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
@@ -147,6 +147,19 @@ describe("native cycle responder return", () => {
     input();
     input();
     input("keyUp", "Control");
+    flushFrames();
+    expect(useUiStore.getState().cycle).toBeNull();
+    expect(events).toEqual([]);
+    expect(ended).toEqual([1]);
+    expect(pageCommands).toEqual([["local\u0000/fixture", "d1", "focus"]]);
+  });
+
+  it("a hold whose area shrinks to one tab ends with the keyboard back on the page", () => {
+    input();
+    unregister?.();
+    draw(1);
+    const cycle = useUiStore.getState().cycle!;
+    useUiStore.getState().setCycle(reconcileHeldCycle(cycle, useShellStore.getState().rest));
     flushFrames();
     expect(useUiStore.getState().cycle).toBeNull();
     expect(events).toEqual([]);
