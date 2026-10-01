@@ -20,7 +20,7 @@ function pair(fake, coordinator) {
 test("letters written while the daemon is down are applied once, in order, after it starts", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   const { parent, child } = pair(fake, coordinator);
   await coordinator.stop();
@@ -46,7 +46,7 @@ test("letters written while the daemon is down are applied once, in order, after
 test("a letter recorded before a crash is removed on restart without a second effect", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   const { parent, child } = pair(fake, coordinator);
   const delivered = coordinator.json("request", "send", "--from", child.id, "--to", parent.id, "--body", "once", "--intent", "crash-1");
@@ -65,7 +65,7 @@ test("a letter recorded before a crash is removed on restart without a second ef
 test("an unknown letter version stays in the outbox and is shown with its reason", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   pair(fake, coordinator);
   const id = "00000000-0000-4000-8000-000000000001";
@@ -83,7 +83,7 @@ test("an unknown letter version stays in the outbox and is shown with its reason
 test("an immediate refusal is returned to the writer and not repeated in the inbox", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   const { child } = pair(fake, coordinator);
   const refused = coordinator.json("request", "send", "--from", child.id, "--to", "a_missing", "--body", "x", "--intent", "bad");
@@ -132,7 +132,7 @@ test("an exception hcoord does not classify keeps its code and message on stderr
 test("a watch whose target and observer have both left is stopped by the daemon and shows why", async (t) => {
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   const { parent, child } = pair(fake, coordinator);
   coordinator.ok("watch", "start", child.id, "--observer", parent.id, "--actor", "human", "--interval", "1s");

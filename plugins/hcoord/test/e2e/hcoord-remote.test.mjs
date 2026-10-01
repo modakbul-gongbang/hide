@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { createFakeRemote } from "../helpers/fake-remote.mjs";
@@ -29,7 +30,7 @@ async function setup(t) {
   fake.installHcoord("mini");
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
   fake.addAgent("mini", "w1:p1", { name: "worker", session: "s-worker", instance: "i-worker" });
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   const parent = coordinator.ok("agent", "register", "--machine", "local", "--session", "s-parent", "--instance", "i-parent", "--pane", "parent-pane", "--name", "parent");
   return { fake, coordinator, parent };
@@ -63,7 +64,8 @@ test("a saved Herdr machine name registers a remote agent with the existing comm
   assert.deepEqual([worker.machine, worker.hostScope, worker.pane], ["mini", "default", "w1:p1"]);
   assert.ok(fake.calls("mini").some((argv) => argv.join(" ") === "agent get w1:p1"), "the pane was confirmed on the remote Herdr server");
   assert.ok(fake.sshCommands("mini").some((command) => /^HCOORD_HOME="\$HOME\/\.hcoord" exec "\$HOME\/\.hcoord"\/bin\/hcoord remote 'hello' '--hq' '[^']+' --json$/.test(command)));
-  assert.deepEqual(fake.pane("mini", "w1:p1").tokens, { parent_pane: "parent-pane", parent_machine: worker.lineage.parentMachine });
+  const digest = (session) => createHash("sha256").update(session, "utf8").digest("hex");
+  assert.deepEqual(fake.pane("mini", "w1:p1").tokens, { parent_pane: "parent-pane", parent_machine: worker.lineage.parentMachine, child_session: digest("s-worker"), parent_session: digest("s-parent") });
   assert.equal(JSON.parse(fs.readFileSync(path.join(fake.home("mini"), ".hcoord", "hq.json"), "utf8")).hq, os.hostname());
   assert.equal(fs.existsSync(path.join(fake.home("mini"), ".hcoord", "ledger.json")), false, "the remote keeps no conversation record");
 });

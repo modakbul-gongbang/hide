@@ -86,6 +86,17 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
   await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById("toggle_device_rail")?.click());
   await expect(page.locator("[data-device-rail]")).toBeVisible();
 
+  // The Agent and View area commands ⌘K no longer carries are Pane menu items with no chord until Settings gives one (PRD cmdk-navigation B24).
+  const areaItems = await app.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu();
+    return ["focus_next_agent_area", "focus_previous_agent_area", "grow_agent_area", "shrink_agent_area", "focus_next_view_area", "focus_previous_view_area", "grow_view_area", "shrink_view_area"].map((id) => {
+      const item = menu?.getMenuItemById(id);
+      return { id, label: item?.label ?? null, accelerator: item?.accelerator ?? null };
+    });
+  });
+  expect(areaItems.map((item) => item.label)).toEqual(["Focus next Agent area", "Focus previous Agent area", "Grow Agent area", "Shrink Agent area", "Focus next View area", "Focus previous View area", "Grow View area", "Shrink View area"]);
+  expect(areaItems.every((item) => item.accelerator === null)).toBe(true);
+
   // B9: the ⌘/ sheet lists this host's chords, with no "moved for Chrome" note.
   await page.keyboard.press("Meta+Slash");
   const sheet = page.locator("[data-shortcut-sheet]");

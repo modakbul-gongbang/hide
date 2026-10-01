@@ -234,13 +234,14 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
   // Two View areas side by side need the Workspace's width: the side panel
-  // is expanded over it. In this window the panel already covers the body,
-  // so its Expand is not drawn and the palette stores the state; the tools
-  // fold into an overlay there, closed until asked for (issue 170).
-  await page.keyboard.press("Meta+KeyK");
-  await page.keyboard.type("Expand side panel");
-  await page.locator('[data-palette-row="command:panel:expanded"]').click();
-  await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+  // is expanded over it (issue 170), from the toolbar's location menu. The open
+  // panel beside the agents leaves the View area too narrow to split, and the
+  // core stores the expansion, so the menu below offers Split right only once
+  // the expanded panel is drawn: it reads the geometry drawn when it opens.
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
   const toolsShown = page.locator('[data-tools-toggle="on"]');
   if (await toolsShown.count()) await toolsShown.click();
   await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
@@ -342,7 +343,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect(tab(page, "Page A")).toBeVisible();
   pageA = await viewOf(`${origin}/a.html`);
 
-  // A page's new window is another browser display of the Workspace, not a window.
+  // A page's new tab is another browser display of the Workspace, not a window.
   await inPage(`${origin}/a.html`, `void window.open(${JSON.stringify(`${origin}/c.html`)}, "_blank")`);
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
   expect((await views()).filter((view) => view.url === `${origin}/c.html`)).toHaveLength(1);
@@ -369,7 +370,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   expect(await openFromCli(outside)).toMatchObject({ ok: false, reason: "path_outside_checkout" });
 
   // Closing B's display ends its renderer process. Without the Explorer both
-  // areas show again, B's among them.
+  // areas show again, B's tab among them (behind Page C, which opened beside A).
   await page.locator('[data-tools-toggle="on"]').click();
   await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
   await expect(tab(page, "Page B")).toBeVisible();
@@ -406,8 +407,9 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
     await plain.goto(status.url);
     await enterWorkspace(plain, "fixture");
     await tab(plain, "Page A").click();
-    await expect(plain.locator('[data-area-empty="browser-host"]')).toContainText("Pages open in the hide desktop app.");
-    await expect(plain.locator("[data-browser-open-external]")).toBeVisible();
+    // Page C, opened beside Page A, shows the same notice in its own area.
+    await expect(plain.locator(`[data-browser-display="${a}"] [data-area-empty="browser-host"]`)).toContainText("Pages open in the hide desktop app.");
+    await expect(plain.locator(`[data-browser-open-external="${a}"]`)).toBeVisible();
     await screenshot(plain, "browser-plain-tab");
   } finally {
     await browser.close();
@@ -456,6 +458,8 @@ test("browser: a login in one Workspace is available in another", async () => {
 test("browser: a sign-in popup keeps its opener, belongs to its page, and a link to another app asks first", async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
+  // The window a CI runner's screen holds.
+  await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setSize(size.width, size.height), WINDOW);
   await enterWorkspace(page, "fixture");
   const signin = `${origin}/signin.html`;
   const opened = await openFromCli(signin, ["--reveal", "--wait"]);
@@ -533,7 +537,8 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
   await expect.poll(() => events("browser.app_link_refused", "no_app").length).toBe(1);
 
   // A shift-click on a link is Chromium's new-window too, but with no window
-  // features it is a tab: another browser display, not a popup.
+  // features it is a tab: another browser display, not a popup, and it opens
+  // beside the page that asked, which stays in view.
   await inPage(signin, `document.body.insertAdjacentHTML("afterbegin", '<a href="${origin}/c.html" style="position:fixed;left:0;top:0;width:160px;height:60px;display:block">Page C</a>')`);
   await app.evaluate(({ BrowserWindow }, target) => {
     const main = BrowserWindow.getAllWindows().find((window) => window.getParentWindow() === null)!;
@@ -541,9 +546,20 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
     for (const type of ["mouseDown", "mouseUp"] as const) child.webContents.sendInputEvent({ type, x: 20, y: 20, button: "left", clickCount: 1, modifiers: ["shift"] });
   }, signin);
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
+  // Two View areas side by side need the Workspace's width: in this run's
+  // window the side panel is expanded over it, as the first test does.
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
+  await expect.poll(async () => (await views()).filter((view) => view.visible).map((view) => view.url).sort()).toEqual([`${origin}/c.html`, signin].sort());
   expect(await windows()).toBe(1);
 
-  // The sign-in page is behind Page C now: a hidden page opens no popup and asks nothing.
+  // Behind another page in its own area, the sign-in page is hidden: a
+  // hidden page opens no popup and asks nothing.
+  await tab(page, "Sign in").click();
+  expect(await openFromCli(`${origin}/b.html`, ["--wait"])).toMatchObject({ status: 0, ok: true });
+  await expect.poll(async () => (await viewOf(signin)).visible).toBe(false);
   await inPage(signin, `void window.open(${JSON.stringify(`${origin}/stay.html`)}, "hidden", "width=300,height=300"); location.href = "hide-e2e-app://hidden"`);
   await expect.poll(() => events("browser.popup_refused", "hidden").length).toBe(1);
   await expect.poll(() => events("browser.app_link_refused", "hidden").length).toBe(1);
@@ -662,9 +678,11 @@ test("area cycle native: page input previews one exact area, releases once and c
   const previous = `${origin}/b.html`;
   const current = `${origin}/korean.html`;
   for (const url of [outside, previous]) expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ ok: true });
-  await page.keyboard.press("Meta+KeyK");
-  await page.keyboard.type("Expand side panel");
-  await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  // Two View areas side by side need the Workspace's width: expand the side panel from the toolbar's location menu.
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
   if (await page.locator('[data-tools-toggle="on"]').count()) await page.locator('[data-tools-toggle="on"]').click();
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role=menu] [data-menu-item=split_right]').click();
@@ -674,12 +692,14 @@ test("area cycle native: page input previews one exact area, releases once and c
   const previousId = await displayIdOf(page, "Page B");
   const outsideId = await displayIdOf(page, "Page A");
   const pid = app.process().pid!;
-  const focus = async (url: string) => {
+  const focus = async (url: string, displayId: string) => {
     await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows()[0]!;
       electron.focus({ steal: true }); window.focus();
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-      child.webContents.focus();
+      // A page already holding native focus announces nothing when focused
+      // again, so the shell takes it first and the page enters as an operator's click would.
+      window.webContents.focus(); child.webContents.focus();
     }, url);
     // macOS activates the window asynchronously, and an activation still in
     // flight can hand the keyboard back to the shell a moment after the page
@@ -690,16 +710,25 @@ test("area cycle native: page input previews one exact area, releases once and c
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
       return window.isFocused() && child.webContents.isFocused();
     }, url);
+    // Native focus is not yet a hold the shell admits. The host starts one
+    // only from a page it shows, and the shell only when its keyboard owner
+    // is that page's area and the core's snapshot selects the page there
+    // (`web/src/keyboard.ts`). A tab click or a closed sheet just before
+    // reaches both through a round trip, and the window's own activation can
+    // hand the owner to the shell element it focuses, so keys posted on
+    // native focus alone drew nothing.
+    const admitted = async () => (await viewOf(url)).visible && (await page.evaluate((id) =>
+      document.querySelector("[data-keyboard-area=true] [data-view-tab-bar] [aria-selected=true]")?.getAttribute("data-display") === id, displayId));
     await expect.poll(async () => {
       await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
         const window = BrowserWindow.getAllWindows()[0]!;
         electron.focus({ steal: true }); window.focus();
         const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-        child.webContents.focus();
+        window.webContents.focus(); child.webContents.focus();
       }, url);
       if (!(await holds())) return false;
       await new Promise((resolve) => setTimeout(resolve, 250));
-      return holds();
+      return (await holds()) && (await admitted());
     }).toBe(true);
   };
   const capture = async (name: string) => {
@@ -710,7 +739,7 @@ test("area cycle native: page input previews one exact area, releases once and c
     expect(result.status, "exact native window capture failed: " + result.stderr).toBe(0);
     fs.writeFileSync(path.join(dir, "area-native-identity.json"), JSON.stringify({ pid, window: source, daemonPid: run.daemonPid(), socket: herdr.socket, state: run.env.HIDE_STATE_DIR, userData: run.env.HIDE_DESKTOP_USER_DATA_DIR, pages: await views() }, null, 2));
   };
-  await focus(current);
+  await focus(current, originalId);
   await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
   const selections = () => page.locator('[data-view-tab-bar] [aria-selected=true]').evaluateAll(tabs => tabs.map(tab => tab.getAttribute("data-display")));
   const before = await selections();
@@ -739,7 +768,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   // Escape from the actual native page preserves both the selection and owner.
   await tab(page, "한글 브라우저").click();
   await inPage(current, "document.querySelector('input').focus()");
-  await focus(current);
+  await focus(current, originalId);
   const canceled = sent.get("view_layout") ?? 0;
   nativeKeys(pid, ["control down", "tab"]);
   await expect(page.locator("[data-cycle=area]")).toBeVisible();
@@ -774,12 +803,17 @@ test("area cycle native: page input previews one exact area, releases once and c
   await page.locator('[data-settings-tab="shortcuts"]').click();
   await page.locator('[data-shortcut-record="recent_area_tab"]').click();
   await page.keyboard.press("Control+Alt+Tab");
+  // A native page's hold starts from the host's copy of the chords, which
+  // the shell reports after the core stores the binding; the host takes it
+  // and then rebuilds the menu in one call, so a new menu means it has it.
+  await app.evaluate(({ Menu }) => { (globalThis as { menuBeforeRebind?: unknown }).menuBeforeRebind = Menu.getApplicationMenu(); });
   await page.locator('[data-shortcut-apply="recent_area_tab"]').click();
   await expect(page.locator('[data-shortcut-effective="recent_area_tab"]')).toHaveText("⌃⌥⇥");
+  await expect.poll(() => app!.evaluate(({ Menu }) => Menu.getApplicationMenu() !== (globalThis as { menuBeforeRebind?: unknown }).menuBeforeRebind)).toBe(true);
   await page.keyboard.press("Escape");
   await inPage(previous, "document.getElementById('q').value = ''");
   await inPage(current, "document.querySelector('input').focus()");
-  await focus(current);
+  await focus(current, originalId);
   const rebound = sent.get("view_layout") ?? 0;
   const originText = await inPage(current, "document.querySelector('input').value");
   nativeKeys(pid, ["option down", "control down", "tab"]);

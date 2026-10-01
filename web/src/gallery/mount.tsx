@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import type { Root } from "react-dom/client";
 import { Gallery, GalleryFrame } from "./Gallery";
+import { CmdkScene, cmdkSceneParams } from "./CmdkScene";
 import { GALLERY, type Section } from "./manifest";
 import { ServerSessionScene } from "./ServerSessionScene";
 import { sceneParams, SidebarScene } from "./SidebarScene";
@@ -17,6 +18,11 @@ export function mountGallery(root: Root) {
     // A scene seeds the app's own stores, so it is one document per scene.
     if (scene === "workspace-servers" || scene === "session-search") {
       root.render(<StrictMode><ServerSessionScene scene={scene} {...sceneParams(params)}/></StrictMode>);
+      return;
+    }
+    if (scene === "search-palette") {
+      document.title = "hide · ⌘K scene";
+      root.render(<StrictMode><CmdkScene {...cmdkSceneParams(params)} /></StrictMode>);
       return;
     }
     if (scene !== "projects-sidebar") throw new Error(`Unknown gallery scene ${scene}`);

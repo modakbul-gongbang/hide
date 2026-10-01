@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DIGITS,
+  AREA_COMMANDS,
   EDITABLE_PANE_COMMANDS,
   REGISTRY,
   bindingProblem,
@@ -82,6 +83,8 @@ describe("shortcut registry", () => {
       move_to_trash: "⌘⌫",
       settings: "⌘,",
       shortcuts: "⌘/",
+      // The area commands have no chord until the operator binds one (PRD cmdk-navigation D-05).
+      ...Object.fromEntries(AREA_COMMANDS.map((id) => [id, ""])),
       // ⌘n selects the nth tab and ⌥n the nth Agents row (electron-digit-shortcuts-hints D-02).
       ...Object.fromEntries(DIGITS.map((digit) => [`select_tab_${digit}`, `⌘${digit}`])),
       ...Object.fromEntries(DIGITS.map((digit) => [`select_agent_${digit}`, `⌥${digit}`])),
@@ -241,11 +244,28 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect(effectiveRegistry({ split_right: "alt+KeyR", split_down: "alt+KeyR" }).registry).toBe(REGISTRY);
   });
 
-  it("edits the pane commands the browser host runs, the cycle commands, the sidebar switch and the device rail toggle", () => {
+  it("edits the pane commands, the cycle commands, the sidebar switch, the device rail toggle and the eight area commands", () => {
     expect([...EDITABLE_PANE_COMMANDS].sort()).toEqual(
-      ["recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel", "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "toggle_sidebar_view", "toggle_zoom"].sort(),
+      [
+        "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
+        "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "toggle_sidebar_view", "toggle_zoom",
+        "focus_next_agent_area", "focus_previous_agent_area", "grow_agent_area", "shrink_agent_area",
+        "focus_next_view_area", "focus_previous_view_area", "grow_view_area", "shrink_view_area",
+      ].sort(),
     );
     for (const id of EDITABLE_PANE_COMMANDS) expect(REGISTRY.some((command) => command.id === id)).toBe(true);
+  });
+
+  it("leaves the area commands unbound on every host until the operator binds one (PRD cmdk-navigation B24)", () => {
+    for (const id of AREA_COMMANDS) {
+      for (const host of ["browser", "electron"] as const) expect(displayCommand(id, host), `${id} ${host}`).toBe("");
+    }
+    const bound = effectiveRegistry({ grow_view_area: "meta+alt+KeyG", focus_next_agent_area: "alt+KeyJ" });
+    expect(bound.diagnostic).toBeNull();
+    expect(displayCommand("grow_view_area", "browser", bound.registry)).toBe("⌥⌘G");
+    const desktop = effectiveRegistry({ shrink_agent_area: "command+option+h" }, "electron");
+    expect(desktop.diagnostic).toBeNull();
+    expect(displayCommand("shrink_agent_area", "electron", desktop.registry)).toBe("⌥⌘H");
   });
 
   it("runs the Explorer on ⌘E and leaves the sidebar switch unbound until the operator binds it (issue 170)", () => {

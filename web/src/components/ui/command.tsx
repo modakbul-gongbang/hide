@@ -36,9 +36,9 @@ function CommandDialog({
 }
 
 /** `trailing` sits at the end of the field's row, such as a palette's Esc keycap. */
-function CommandInput({ className, trailing, ...props }: ComponentProps<typeof CommandPrimitive.Input> & { trailing?: ReactNode }) {
+function CommandInput({ className, trailing, wrapperClassName, ...props }: ComponentProps<typeof CommandPrimitive.Input> & { trailing?: ReactNode; wrapperClassName?: string }) {
   return (
-    <div data-slot="command-input-wrapper" className="flex h-(--size-control-lg) items-center gap-sm border-b border-border px-md">
+    <div data-slot="command-input-wrapper" className={cn("flex h-(--size-control-lg) items-center gap-sm border-b border-border px-md", wrapperClassName)}>
       <SearchIcon className="size-(--size-icon) shrink-0 text-muted-foreground" />
       <CommandPrimitive.Input
         data-slot="command-input"

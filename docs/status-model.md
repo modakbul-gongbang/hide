@@ -127,16 +127,22 @@ Done is therefore scoped to the lineage root: a delegated child that finishes le
 ## Where a parent comes from
 
 Ownership, the tree, the breadcrumb and the descendant badge all start from one fact per agent: the pane it was spawned from.
-Herdr records no lineage, so hcoord is the sole writer of two pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, and `parent_machine` names the machine that owns that pane when the parent is on another device.
+Herdr records no lineage, so hcoord is the sole writer of four pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, `parent_machine` names the machine that owns that pane when the parent is on another device, and `child_session` and `parent_session` carry a digest of the session each pane hosted when the relationship was written.
 The complete writer, value, lifetime, machine identity, and clone-limit contract lives in [plugins/hcoord/docs/pane-tokens.md](../plugins/hcoord/docs/pane-tokens.md).
 Hide's fork and an external coordinator both register a completed spawn through the fixed hcoord binary; neither Hide nor another integration writes the tokens directly.
 `wire.rs` is the only conversion point from those tokens into the projection, and the runtime resolves machine-qualified parents only after it has read each connected device's immutable hcoord machine identity outside the runtime mutex.
 A declaration whose machine cannot be matched stays a root and records one diagnostic for that pane instead of guessing.
 
+A pane outlives the agent it hosted and the tokens outlive the agent with it, so a declaration is only a claim until the sessions prove it: it holds while the child's pane reports the `child_session` and the parent's pane the `parent_session`.
+`wire.rs` checks the child as it turns the tokens into a row, and `sidebar::apply_lineage` checks the parent because that is where both rows are known, on this machine or another.
+An agent that took over a pane is therefore a root, and a parent pane taken over by another agent adopts none of the old children: no line, no descendant badge, and no orphan hint, since the child was never that agent's.
+A pane Herdr reports without a session cannot prove a match, so its relationship does not hold until it reports the recorded session again, and a `parent_pane` without the session tokens is not a relationship at all.
+A parent whose pane no longer lists an agent is a different case: the child stays an orphan root with its hint.
+
 An empty token is a cleared declaration, not a parent named by an empty string.
 The token is display-only in Herdr's own terms and dies with the pane, so a closed child leaves no edge behind, and a parent that has gone makes the child an orphan root.
 
-Regression owner: `a_parent_declared_as_a_pane_token_is_the_lineage`.
+Regression owners: `a_parent_declared_as_a_pane_token_is_the_lineage`, `a_child_whose_pane_now_hosts_another_session_declares_no_parent` and the `lineage_sessions` tests in `herdr-core/src/session_sync/tests.rs`, `a_parent_pane_on_another_machine_reused_by_another_agent_adopts_no_local_child`, `a_sleeping_child_stays_under_its_parent_only_while_its_record_can_prove_it`, and `web/e2e/lineage-session.spec.ts`.
 
 ## The descendant badge
 
@@ -418,8 +424,8 @@ The accessibility label of a row and of a header always carries the status word,
 
 ### Search and Recent Panels
 
-The ⌘K sheet's agent row is titled by the identity and subtitled by the second line above; when the state chose no sentence it falls to the status word because the rolling `task` is already the title.
-The pane id is no longer printed on the row but still matches the query and is read by accessibility.
+The ⌘K sheet's agent row is titled by the identity and subtitled by its checkout and the second line above; when the state chose no sentence it falls to the status word because the rolling `task` is already the title.
+The pane id is not printed on the row and does not match the query.
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
 Neither the core nor the plugin renames the Herdr tab for this; the Recent Panels label is projection only.
 

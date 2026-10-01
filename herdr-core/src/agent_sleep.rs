@@ -125,6 +125,11 @@ pub struct SleepRecord {
     pub completed: bool,
     #[serde(default)]
     pub parent_pane_id: Option<String>,
+    /// The parent's session digest the declaration was written for. A record
+    /// from before it was kept has none, and its row is a root until the agent
+    /// wakes, because a declaration with no session cannot be proven.
+    #[serde(default)]
+    pub parent_session: Option<String>,
     pub workspace_label: String,
     #[serde(default)]
     pub cwd: Option<String>,
@@ -161,6 +166,7 @@ impl SleepRecord {
             state_change_seq: agent.state_change_seq,
             completed: agent.completed,
             parent_pane_id: agent.spawned_from_pane_id.clone(),
+            parent_session: agent.declared_parent_session.clone(),
             workspace_label: agent.workspace_label.clone(),
             cwd,
             since_unix_ms,
@@ -227,6 +233,8 @@ impl SleepRecord {
             }),
             spawned_from_pane_id: self.parent_pane_id.clone(),
             spawned_from_machine_id: None,
+            declared_parent_session: self.parent_session.clone(),
+            lineage_session: crate::wire::session_digest(&self.session_id),
             state_change_seq: self.state_change_seq,
             tokens,
         }
@@ -539,6 +547,8 @@ mod tests {
             spawned_from_pane_id: None,
             declared_parent_pane_id: None,
             spawned_from_machine_id: None,
+            declared_parent_session: None,
+            lineage_session: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             waiting_on_descendants: false,
@@ -665,6 +675,34 @@ mod tests {
             12 * HOUR,
         );
         assert_eq!(due, ["w1:p1", "w1:p10"]);
+    }
+
+    /// The sleeping row is drawn from the record, so the record has to carry
+    /// what proves its parent: the session the declaration was written for.
+    #[test]
+    fn a_sleeping_child_stays_under_its_parent_only_while_its_record_can_prove_it() {
+        let parent_session = crate::wire::session_digest("session-parent");
+        let mut parent = agent("w1:p1");
+        parent.lineage_session = parent_session.clone();
+        let mut child = agent("w1:p2");
+        child.spawned_from_pane_id = Some("w1:p1".into());
+        child.declared_parent_session = parent_session;
+
+        let lineage_of = |child: &SidebarAgentSnapshot| {
+            let mut store = AgentSleepStore::default();
+            asleep(&mut store, child);
+            let mut session = payload(serde_json::json!([]), &["w1:p1", "w1:p2"]);
+            assert!(store.settle_payload(&mut session).is_empty());
+            let mut rows = vec![parent.clone()];
+            rows.extend(crate::sidebar::project_agents(session).agents);
+            crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+            rows.remove(1).lineage_parent_pane_id
+        };
+        assert_eq!(lineage_of(&child).as_deref(), Some("w1:p1"));
+
+        // A record written before the parent's session was kept proves nothing.
+        child.declared_parent_session = None;
+        assert_eq!(lineage_of(&child), None);
     }
 
     #[test]

@@ -16,8 +16,7 @@ class NumberMarker extends GutterMarker {
 const patchTheme = EditorView.theme({
   "&": { overflow: "hidden" },
   ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono)" },
-  ".cm-content": { minWidth: "max-content", paddingTop: "0", whiteSpace: "pre" },
-  ".cm-line": { width: "max-content", minWidth: "100%" },
+  ".cm-content": { paddingTop: "0" },
   ".cm-gutter": { width: "var(--size-editor-diff-line-number-col)", textAlign: "right" },
   ".cm-gutterElement": { paddingRight: "var(--spacing-xs)" },
   ".cm-patch-added": { backgroundColor: "color-mix(in srgb, var(--diff-added) 15%, transparent)" },
@@ -26,7 +25,14 @@ const patchTheme = EditorView.theme({
   ".cm-patch-header": { color: "var(--muted-foreground)" },
 });
 
-export function PatchView({ text, scale }: { text: string; scale: number }) {
+// Unwrapped, a row keeps its full width so an added or removed row's band
+// runs past the viewport under a horizontal scroll.
+const unwrappedTheme = EditorView.theme({
+  ".cm-content": { minWidth: "max-content", whiteSpace: "pre" },
+  ".cm-line": { width: "max-content", minWidth: "100%" },
+});
+
+export function PatchView({ text, wrap, scale }: { text: string; wrap: boolean; scale: number }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!host.current || !text) return;
@@ -45,6 +51,7 @@ export function PatchView({ text, scale }: { text: string; scale: number }) {
       extensions: [
         ...baseTheme(),
         patchTheme,
+        wrap ? EditorView.lineWrapping : unwrappedTheme,
         scaleTheme(scale),
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
@@ -61,6 +68,6 @@ export function PatchView({ text, scale }: { text: string; scale: number }) {
     });
     const view = new EditorView({ state, parent: host.current });
     return () => view.destroy();
-  }, [text, scale]);
+  }, [text, wrap, scale]);
   return <div ref={host} className="min-h-0 min-w-0 flex-1" data-patch-view="true" />;
 }

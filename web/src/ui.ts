@@ -121,8 +121,7 @@ export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLen
  */
 export type TasksMode = "board" | "list" | "dependencies";
 
-/** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
-export type Overlay = "none" | "shortcuts" | "find" | "add_project" | "file_palette" | "file_palette_beside" | "diff_palette" | "search" | "settings";
+export type Overlay = "none" | "shortcuts" | "find" | "add_project" | "file_palette" | "diff_palette" | "search" | "settings";
 
 /**
  * A notice the operator can act on: `refreshable` offers `refresh_status`
@@ -232,8 +231,6 @@ type UiStore = {
   settingsTab: SettingsTab;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
-  commandRequest: { id: import("./shortcuts").CommandId } | null;
-  setCommandRequest: (commandRequest: { id: import("./shortcuts").CommandId } | null) => void;
   /** A notice the operator can act on. */
   notice: Notice | null;
   /** The management dialog a sidebar menu opened, or null. */
@@ -296,6 +293,8 @@ type UiStore = {
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
+  /** The overlay ⌘K replaced when it opened, so Settings in front reads as a screen with nothing to relate to (PRD cmdk-navigation B7). */
+  searchOver: Overlay;
   closeOverlay: (overlay?: Overlay) => void;
   openSettings: (tab: SettingsTab) => void;
   setPendingClose: (pending: PendingClose | null) => void;
@@ -334,8 +333,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   settingsTab: "general",
   pendingClose: null,
   cycle: null,
-  commandRequest: null,
-  setCommandRequest: (commandRequest) => set({ commandRequest }),
   notice: null,
   workspaceDialog: null,
   watchedTask: null,
@@ -387,7 +384,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),
-  openOverlay: (overlay) => set({ overlay }),
+  searchOver: "none",
+  openOverlay: (overlay) => set((state) => (overlay === "search" ? { overlay, searchOver: state.overlay } : { overlay })),
   closeOverlay: (overlay) => {
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });
   },

@@ -175,8 +175,9 @@ The Mobile tab sits after Devices; its strip and content are drawn on `Screen / 
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
-It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette with its grouped two-line results and its no-match and nothing-to-search states, and the ⌘P file palette on the same shell.
-Its web files are `web/src/Palette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
+It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette's wide list-and-detail layout with its relation list, grouped results, collapsed, no-match and GitHub states, and the ⌘P file palette on the same shell.
+`/gallery?scene=search-palette` is the real ⌘K over `web/src/gallery/cmdkSceneData.ts` (`front=agent|agent-short|terminal|none`, `github=results|pending|failed|empty`), which answers `github_search` as the core would.
+Its web files are `web/src/Palette.tsx`, `web/src/SearchPalette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 
 Dialogs and Sheets is `Screen / Dialogs and Sheets`.
 It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, Add a project, Keyboard shortcuts, New issue (with `만들고 바로 시작` unchecked and checked), and Start from an issue; the committed sheet still draws the removed sidebar New workspace panel in Add a project's place until the screen is redrawn.

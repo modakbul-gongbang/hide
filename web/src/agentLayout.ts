@@ -1,4 +1,4 @@
-import { activeDisplay, adjacentInOrder, locateDisplay, neighbourArea, resizeTarget, splitEligibility, type AreaLayout, type Edge, type Geometry, type LayoutSizes } from "./areaLayout";
+import { adjacentInOrder, locateDisplay, neighbourArea, resizeTarget, splitEligibility, type AreaLayout, type Edge, type Geometry, type LayoutSizes } from "./areaLayout";
 import type { MenuEntry } from "./components/entry-menu";
 
 export type AgentItem = { id: string };
@@ -8,7 +8,7 @@ export const REMOTE_GROUP_REASON = "Agent groups are available in local Workspac
 const EDGES: Edge[] = ["right", "left", "up", "down"];
 export type AgentCommand = "rename_tab" | "new_tab" | "copy_name" | "close_tab" | `split_${Edge}` | `move_${Edge}` | "focus_next" | "focus_previous" | "grow" | "shrink";
 export type AgentFrame = { workspace: { device_id: string; path: string }; layout: AgentLayout; geometry: Geometry; sizes: LayoutSizes };
-export function agentMenu(frame: AgentFrame, id: string, palette = false): MenuEntry<AgentCommand>[] {
+export function agentMenu(frame: AgentFrame, id: string): MenuEntry<AgentCommand>[] {
   const located = locateDisplay(frame.layout.root, id);
   if (!located) return [];
   const entries: MenuEntry<AgentCommand>[] = [{ id: "new_tab", label: "New tab", unavailable: null }];
@@ -18,23 +18,19 @@ export function agentMenu(frame: AgentFrame, id: string, palette = false): MenuE
   }
   for (const edge of EDGES) {
     const neighbour = neighbourArea(frame.layout.root, located.area.id, edge);
-    if (neighbour || palette) entries.push({ id: `move_${edge}`, label: `Move ${edge}`, unavailable: neighbour ? null : `There is no Agent area ${edge}.` });
+    if (neighbour) entries.push({ id: `move_${edge}`, label: `Move ${edge}`, unavailable: null });
   }
-  if (!palette) entries.push({ id: "rename_tab", label: "Rename…", unavailable: null });
+  entries.push({ id: "rename_tab", label: "Rename…", unavailable: null });
   entries.push({ id: "copy_name", label: "Copy name", unavailable: null, separated: true }, { id: "close_tab", label: "Close tab…", unavailable: null, separated: true });
   return entries;
 }
-export function agentCommands(frame: AgentFrame): MenuEntry<AgentCommand>[] {
-  const active = activeDisplay(frame.layout);
-  const entries = active ? agentMenu(frame, active.display.id, true) : [{ id: "new_tab" as const, label: "New tab", unavailable: null }];
-  for (const forward of [true, false]) {
-    entries.push({ id: forward ? "focus_next" : "focus_previous", label: `Focus ${forward ? "next" : "previous"} Agent area`, unavailable: adjacentInOrder(frame.layout.root, frame.layout.active_area, forward ? 1 : -1) ? null : "There is only one Agent area." });
-  }
-  for (const grow of [true, false]) {
-    const target = resizeTarget(frame.layout, frame.geometry, grow, AGENT_WORDS);
-    entries.push({ id: grow ? "grow" : "shrink", label: `${grow ? "Grow" : "Shrink"} Agent area`, unavailable: "reason" in target ? target.reason : null });
-  }
-  return entries;
+export type AgentAreaStep = "focus_next" | "focus_previous" | "grow" | "shrink";
+
+/** Why an Agent area focus or resize step cannot run now, or null when it can. */
+export function agentAreaStepUnavailable(frame: AgentFrame, step: AgentAreaStep): string | null {
+  if (step === "focus_next" || step === "focus_previous") return adjacentInOrder(frame.layout.root, frame.layout.active_area, step === "focus_next" ? 1 : -1) ? null : "There is only one Agent area.";
+  const target = resizeTarget(frame.layout, frame.geometry, step === "grow", AGENT_WORDS);
+  return "reason" in target ? target.reason : null;
 }
 
 /** Shared one-line capacity notice; authoritative tabs remain available upstream. */

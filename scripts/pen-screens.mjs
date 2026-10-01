@@ -2054,11 +2054,10 @@ function buildSettings(tokens) {
 
 // -- Screen / Palette ------------------------------------------------------------
 
-// The ⌘K palette in the search view's form (issue #154): the sidebar's
-// Search field that opens it, the query row with its Esc keycap, results under
-// `<project> > AGENTS` / `WORKSPACE > COMMANDS` / `WORKSPACES > PROJECTS` /
-// `WORKSPACES > CHECKOUTS` headers, two-line rows with the agent's own mark,
-// and ↵ on the selected row. Rows are authored here on local tokens, as the
+// The ⌘K palette (PRD cmdk-navigation) and the ⌘P file palette on the same
+// shell: the sidebar's Search icon that opens ⌘K, the query row with its Esc
+// keycap, two-line rows with the agent's own mark and ↵ on the selected row,
+// and for ⌘K a detail beside the list. Rows are authored here on local tokens, as the
 // Overview board authors its agent rows, since no library master draws a
 // palette row; the keycaps are System / Kbd refs. The marks are the provider
 // artwork the web shell bundles (web/src/assets), not a stand-in.
@@ -2136,44 +2135,133 @@ function buildPalette(tokens) {
       ]),
     ]);
 
-    const results = surface('default', {placeholder: 'Search agents and workspaces', list: [
-      heading('g-herdr', 'herdr-ide > AGENTS'),
-      row('r0', {lead: mark('r0m', 'claude'), title: 'Electron포팅지침이행', detail: '웹 E2E 테스트 60개 통과, verify 진행 중', selected: true}),
-      row('r1', {lead: mark('r1m', 'claude'), title: 'Electron 기본 포팅 구현', detail: 'PR #149 main 병합 진행: 단위테스트 통과, e2e 및 코드 리뷰 실행 중'}),
-      row('r2', {lead: mark('r2m', 'codex'), title: 'macOS 단축키 Electron 포팅', detail: 'Idle'}),
-      heading('g-sasu', 'sasu > AGENTS'),
-      row('r3', {lead: mark('r3m', 'claude'), title: 'hcoord 원격 에이전트 구현', detail: '방안 A와 데몬 재시작을 승인하세요'}),
-      heading('g-projects', 'WORKSPACES > PROJECTS'),
-      row('r4', {lead: glyph('r4i', 'folder'), title: 'herdr-ide', detail: '~/projects/herdr-ide', mono: true}),
-      heading('g-checkouts', 'WORKSPACES > CHECKOUTS'),
-      row('r5', {lead: glyph('r5i', 'git-branch'), title: 'herdr-ide / main', detail: '~/projects/herdr-ide', mono: true}),
-      row('r6', {lead: glyph('r6i', 'git-branch'), title: 'herdr-ide / quick/154-search-palette', detail: '~/projects/herdr-ide.worktrees/web-search-palette', mono: true}),
-    ]});
+    // ⌘K's own wide layout (PRD cmdk-navigation D-01): the list at the shared
+    // palette width and the highlighted row's detail beside it.
+    const WIDE = Math.round(W * 1.5);
+    const DETAIL = WIDE - W;
+    const pill = (key, label, fill = '$--secondary', color = '$--subtle-foreground') => frame(id(key), 'Pill', {padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill}, [
+      text(`${id(key)}-t`, label, {size: '$--text-caption', fill: color}),
+    ]);
+    const status = (key, label, color) => text(id(key), label, {size: '$--text-caption', fill: color});
+    function wide(key, {query, placeholder, list, detail, footer}) {
+      const hasBody = list !== null;
+      return frame(id(key), 'Palette · wide', {width: WIDE, cornerRadius: '$--radius-lg', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', layout: 'vertical', clip: true}, [
+        frame(`${id(key)}-in`, 'Query', {height: num(tokens, '--size-control-lg'), width: WIDE, layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', padding: [0, '$--spacing-md'], ...(hasBody ? {stroke: '$--border', strokeWidth: {bottom: num(tokens, '--size-hairline')}} : {})}, [
+          icon(`${id(key)}-ini`, 'search', {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
+          frame(`${id(key)}-inf`, 'Field', {width: 'fill_container'}, [
+            query ? text(`${id(key)}-inq`, query) : text(`${id(key)}-inp`, placeholder, {fill: '$--muted-foreground'}),
+          ]),
+          kbd(`${key}-esc`, 'Esc'),
+        ]),
+        ...(hasBody ? [
+          frame(`${id(key)}-body`, 'Body', {layout: 'horizontal', width: WIDE}, [
+            frame(`${id(key)}-list`, 'List', {layout: 'vertical', gap: 0, padding: '$--spacing-xxs', width: W, stroke: '$--border', strokeWidth: {right: num(tokens, '--size-hairline')}}, list),
+            frame(`${id(key)}-detail`, 'Detail', {layout: 'vertical', gap: '$--spacing-sm', padding: '$--spacing-md', width: DETAIL}, detail),
+          ]),
+          frame(`${id(key)}-foot`, 'Footer', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center', width: WIDE, padding: ['$--spacing-xxs', '$--spacing-md'], stroke: '$--border', strokeWidth: {top: num(tokens, '--size-hairline')}}, footer ?? [
+            text(`${id(key)}-f1`, '↑ ↓ 이동', {size: '$--text-caption', fill: '$--muted-foreground'}),
+            text(`${id(key)}-f2`, '↵ 열기', {size: '$--text-caption', fill: '$--muted-foreground'}),
+            text(`${id(key)}-f3`, 'Esc 닫기', {size: '$--text-caption', fill: '$--muted-foreground'}),
+          ]),
+        ] : []),
+      ]);
+    }
+    const detailLines = (key, kind, title, pills, facts, related) => [
+      text(`${id(key)}-k`, kind, {size: '$--text-caption', weight: '600', fill: '$--muted-foreground'}),
+      text(`${id(key)}-t`, title, {weight: '600'}),
+      frame(`${id(key)}-p`, 'Pills', {layout: 'horizontal', gap: '$--spacing-xs'}, pills),
+      ...facts.map(([label, value], i) => frame(`${id(key)}-fact${i}`, 'Fact', {layout: 'horizontal', gap: '$--spacing-md'}, [
+        text(`${id(key)}-fl${i}`, label, {size: '$--text-caption', fill: '$--muted-foreground'}),
+        text(`${id(key)}-fv${i}`, value, {size: '$--text-caption'}),
+      ])),
+      ...(related ? [text(`${id(key)}-rh`, '관계', {size: '$--text-caption', weight: '600', fill: '$--muted-foreground'}), ...related.map(([label, depth, bold], i) => frame(`${id(key)}-rel${i}`, 'Relation', {padding: [0, 0, 0, depth * 12]}, [
+        text(`${id(key)}-rl${i}`, label, {size: '$--text-caption', weight: bold ? '600' : '400', fill: bold ? '$--foreground' : '$--subtle-foreground'}),
+      ]))] : []),
+    ];
 
-    const commands = surface('commands', {query: 'split', list: [
-      heading('g-commands', 'WORKSPACE > COMMANDS'),
-      row('c0', {lead: glyph('c0i', 'chevron-right'), title: 'Split right', selected: true}),
-      row('c1', {lead: glyph('c1i', 'chevron-right'), title: 'Split down', detail: 'This Workspace already shows 6 view areas, the most it can.', unavailable: true}),
-    ]});
-    const noMatch = surface('nomatch', {query: 'zzz', list: [empty('nomatch-e', 'No matching agents or workspaces')]});
-    const nothing = surface('nothing', {placeholder: 'Search agents and workspaces', list: [empty('nothing-e', 'No agents or workspaces yet')]});
+    // Empty query in front of an agent: the Overview's grouping, issues on
+    // top, the checkout's group with its pull request and lineage, a parent
+    // elsewhere as one `↑ 부모` line.
+    const relations = wide('related', {placeholder: '이름이나 #번호를 입력하세요', list: [
+      heading('g-related', 'Related'),
+      row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide', selected: true}),
+      row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/hcoord-sandbox-letters', detail: 'herdr-ide'}),
+      row('q2', {lead: glyph('q2i', 'git-pull-request'), title: '#275 Surface hcoord sandbox refusals', detail: 'PR · Open · fix/hcoord-sandbox-letters'}),
+      row('q3', {lead: mark('q3m', 'claude'), title: 'hcoord 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/hcoord-sandbox-letters · Done'}),
+      row('q4', {lead: mark('q4m', 'codex'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'herdr-ide › main · Working'}),
+    ], detail: detailLines('rel-d', 'Issue', 'hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'herdr-ide'], ['맡은 곳', 'fix/hcoord-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 hcoord 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/hcoord-sandbox-letters', 0, false], ['#275 Surface hcoord sandbox refusals', 1, false]])});
+
+    const typed = wide('typed', {query: 'sand', list: [
+      heading('g-issues', 'Issues'),
+      row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide'}),
+      heading('g-agents', 'Agents'),
+      row('t1', {lead: mark('t1m', 'claude'), title: 'hcoord 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/hcoord-sandbox-letters · Done', selected: true}),
+      heading('g-checkouts', 'Checkouts'),
+      row('t2', {lead: glyph('t2i', 'git-branch'), title: 'herdr-ide / fix/hcoord-sandbox-letters', detail: '~/projects/herdr-ide.worktrees/sandbox', mono: true}),
+      frame(id('t-gh'), 'GitHub row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: ROW, padding: ['$--spacing-xs', '$--spacing-sm']}, [
+        glyph('t-ghi', 'search'),
+        text(id('t-ght'), 'GitHub에서 "sand" 검색', {weight: '500'}),
+      ]),
+    ], detail: detailLines('typed-d', 'Agent · Claude', 'hcoord 쓰기 명령 sandbox 오류 해결', [pill('typed-p1', 'Done', '$--secondary', '$--success'), pill('typed-p2', 'This Mac')], [['checkout', 'herdr-ide › fix/hcoord-sandbox-letters']], null)});
+
+    const number = wide('number', {query: '#275', list: [
+      heading('g-prs', 'Pull requests'),
+      row('n0', {lead: glyph('n0i', 'git-pull-request'), title: '#275 Surface hcoord sandbox refusals', detail: 'PR · Open · fix/hcoord-sandbox-letters', selected: true}),
+    ], detail: detailLines('number-d', 'Pull request', 'Surface hcoord sandbox refusals', [pill('number-p1', 'Open', '$--secondary', '$--success'), pill('number-p2', 'CI 진행 중', '$--secondary', '$--warning'), pill('number-p3', '#275')], [['Review', '리뷰 필요'], ['브랜치', 'fix/hcoord-sandbox-letters'], ['닫는 이슈', '#273']], null)});
+
+    const collapsed = wide('collapsed', {placeholder: '이름이나 #번호를 입력하세요', list: null});
+
+    const ghRow = (key, label, lead) => frame(id(key), 'GitHub row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: ROW, padding: ['$--spacing-xs', '$--spacing-sm'], fill: '$--accent', cornerRadius: '$--radius-xs'}, [
+      lead,
+      text(id(`${key}-t`), label, {weight: '500', fill: '$--foreground'}),
+    ]);
+    const ghDetail = (key) => [
+      text(`${id(key)}-k`, 'GitHub', {size: '$--text-caption', weight: '600', fill: '$--muted-foreground'}),
+      text(`${id(key)}-t`, '"quota wall"', {weight: '600'}),
+      text(`${id(key)}-d`, '이 Mac의 GitHub 프로젝트 저장소에서 PR과 이슈를 한 번 검색합니다. 입력하는 동안에는 GitHub를 부르지 않습니다.', {size: '$--text-caption', fill: '$--muted-foreground', width: DETAIL - 2 * num(tokens, '--spacing-md')}),
+    ];
+    const ghWorking = wide('gh-working', {query: 'quota wall', list: [
+      empty('gh-working-e', '일치하는 항목 없음'),
+      ghRow('gh-working-r', 'GitHub에서 "quota wall" 검색', icon(`${id('gh-working-ri')}`, 'loader-circle', {size: num(tokens, '--size-icon-sm'), fill: '$--muted-foreground'})),
+    ], detail: ghDetail('gh-working-d')});
+    const ghResults = wide('gh-results', {query: 'quota wall', list: [
+      heading('g-github', 'GitHub'),
+      row('gr0', {lead: glyph('gr0i', 'git-pull-request'), title: '#118 Close stale sandbox watches', detail: 'PR · acme/herdr-ide · Merged', selected: true}),
+      row('gr1', {lead: glyph('gr1i', 'circle-dot'), title: '#96 hcoord sandbox 거부 로그가 비어 있음', detail: 'Issue · acme/herdr-ide · Closed'}),
+    ], detail: detailLines('gh-results-d', 'Pull request · GitHub', 'Close stale sandbox watches', [pill('gh-results-p1', 'Merged'), pill('gh-results-p2', '#118'), pill('gh-results-p3', 'acme/herdr-ide')], [], null)});
+    const ghFailed = wide('gh-failed', {query: 'quota wall', list: [
+      empty('gh-failed-e', '일치하는 항목 없음'),
+      ghRow('gh-failed-r', 'GitHub 검색 실패 · 다시 시도', icon(`${id('gh-failed-ri')}`, 'triangle-alert', {size: num(tokens, '--size-icon'), fill: '$--warning'})),
+    ], detail: ghDetail('gh-failed-d')});
+
+    const noMatch = surface('nomatch', {query: 'zzz', list: [empty('nomatch-e', '일치하는 항목 없음')]});
     const files = surface('files', {placeholder: 'Search files by name', list: [
       row('f0', {lead: glyph('f0i', 'file-text'), title: 'docs/한글 노트.md', selected: true}),
       row('f1', {lead: glyph('f1i', 'file-code'), title: 'scripts/pen-screens.mjs'}),
     ]});
+    const filesCell = frame(id('files-wrap'), 'Files', {layout: 'vertical', gap: '$--spacing-xs'}, [
+      files,
+      text(id('files-hint'), '⌘↵ 옆에 열기', {size: '$--text-caption', fill: '$--muted-foreground'}),
+    ]);
 
     return [
       labelled('side-cell', 'Sidebar · the Search icon opens ⌘K', sidebar),
-      labelled('default-cell', '⌘K · default', results),
+      frame(id('wide-states'), 'Wide states', {layout: 'vertical', gap: '$--spacing-lg'}, [
+        labelled('related-cell', '⌘K · empty, in front of an agent: relations', relations),
+        labelled('typed-cell', '⌘K · typed', typed),
+        labelled('number-cell', '⌘K · #number', number),
+        labelled('collapsed-cell', '⌘K · nothing in front: the input alone', collapsed),
+        labelled('ghw-cell', '⌘K · GitHub searching', ghWorking),
+        labelled('ghr-cell', '⌘K · GitHub results', ghResults),
+        labelled('ghf-cell', '⌘K · GitHub failed', ghFailed),
+      ]),
       frame(id('states'), 'States', {layout: 'vertical', gap: '$--spacing-lg'}, [
-        labelled('commands-cell', '⌘K · a Workspace on screen, typed', commands),
-        labelled('nomatch-cell', '⌘K · no match', noMatch),
-        labelled('nothing-cell', '⌘K · nothing to search', nothing),
-        labelled('files-cell', '⌘P · same shell', files),
+        labelled('nomatch-cell', '⌘K · narrow window or no detail: no match', noMatch),
+        labelled('files-cell', '⌘P · same shell, ⌘↵ opens beside', filesCell),
       ]),
     ];
   }
-  return screenSheet('screen-palette', 'Screen / Palette', 'web/src/Palette.tsx over Command/CommandDialog (issue #154): the sidebar’s Search icon with its ⌘K hint, the query row with its Esc keycap, results grouped under <project> > AGENTS, WORKSPACE > COMMANDS, WORKSPACES > PROJECTS and WORKSPACES > CHECKOUTS in the order of each group’s best match, two-line rows with the agent’s own mark and its state sentence, ↵ on the selected row, the no-match and nothing-to-search states, and ⌘P on the same shell.', build, build);
+  return screenSheet('screen-palette', 'Screen / Palette', 'web/src/SearchPalette.tsx and web/src/Palette.tsx over Command/CommandDialog (PRD cmdk-navigation): the sidebar’s Search icon with its ⌘K hint, ⌘K’s wide list-and-detail layout (empty in front of an agent drawn as the Overview groups it, typed results by group, #number, the input alone, GitHub searching, results and failed) and the ⌘P file palette whose ⌘↵ opens beside.', build, build);
 }
 
 // -- Screen / Dialogs and Sheets -------------------------------------------------

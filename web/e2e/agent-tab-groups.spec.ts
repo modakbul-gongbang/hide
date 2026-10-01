@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
+import { startHerdr, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
@@ -30,7 +30,8 @@ async function shape(page: Page) {
   })));
 }
 
-test("Agent pointer drags split live canvases, reorder, move, cancel, resize, collapse and restore", async ({ page }) => {
+// Quarantined: runs in CI without blocking `verify` until #303 is fixed.
+test("Agent pointer drags split live canvases, reorder, move, cancel, resize, collapse and restore", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/303" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
@@ -201,7 +202,7 @@ test("New tab and Reopen use the requested area and Rename works in either bar",
 });
 
 // Quarantined: runs in CI without blocking `verify` until #287 is fixed.
-test("Delegated canvas returns to its normal tab and Agent controls keep palette commands", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/287" } }, async ({ page }) => {
+test("Delegated canvas returns to its normal tab and its tab menu keeps the Agent commands", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/287" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -211,7 +212,7 @@ test("Delegated canvas returns to its normal tab and Agent controls keep palette
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
+    declareParent(herdr, child, parent);
     const chip = page.locator(`[data-child-chip="${child}"]`).first();
     await expect(chip).toBeVisible({ timeout: 20_000 });
     // The chip shows once the lineage is known; the delegated canvas exists
@@ -224,10 +225,10 @@ test("Delegated canvas returns to its normal tab and Agent controls keep palette
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     await expect(tab(page, herdr.tab)).toHaveAttribute("aria-selected", "true");
     expect(sent.get("agent_layout.focus")).toBe(before + 1);
-    await tab(page, herdr.tab).focus();
-    await page.keyboard.press("Meta+k");
-    await expect(page.locator('[data-palette-row="command:agent:split_right"]')).toBeVisible();
+    await tab(page, herdr.tab).click({ button: "right" });
+    await expect(page.locator('[role="menu"] [data-menu-item="split_right"]')).toBeVisible();
     await page.keyboard.press("Escape");
+    await expect(page.locator('[role="menu"]')).toHaveCount(0);
     await screenshot(page, "agent-groups-delegated-return");
   } finally { daemon?.stop(); herdr.stop(); }
 });

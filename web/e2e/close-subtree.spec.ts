@@ -344,7 +344,8 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
 }
 
-test("Delete worktree closes the agents its checkout spawned outside it before the folder goes", async ({ page }) => {
+// @platform: Process ownership: which processes belong to a checkout, read through libproc on macOS and /proc on Linux.
+test("Delete worktree closes the agents its checkout spawned outside it before the folder goes", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;

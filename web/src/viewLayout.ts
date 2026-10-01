@@ -56,7 +56,7 @@ export function displaysOfDocument(root: ViewNode, tabId: string): ViewDisplaySn
 }
 
 import {
-  areasOf, locateDisplay, activeDisplay, neighbourArea,
+  areasOf, locateDisplay, neighbourArea,
   splitEligibility as areaSplitEligibility, dropTarget as areaDropTarget,
   resizeTarget as areaResizeTarget, roomToSplit, type AreaWords,
   type LocatedItem, type Edge, type LayoutSizes,
@@ -224,42 +224,24 @@ export function displayIdentity(display: ViewDisplaySnapshot): string {
   return `${kind}: ${display.path}${state}`;
 }
 
-// --- palette commands --------------------------------------------------------
-
-export type ViewCommandId = ViewMenuId | "focus_next" | "focus_previous" | "grow" | "shrink";
-
-export type ViewCommand = { id: ViewCommandId; title: string; unavailable: string | null };
+// --- area commands -------------------------------------------------------------
 
 /**
- * The View commands the palette offers (B20, D-13, docs/UI_BEHAVIOR.md "The View tab
- * menu"): every item of the active view's menu, a Move toward each
- * direction and Keep open included, then focus to the next or previous area
- * and resizing the active area; each with the reason it cannot run now.
- * `drawn` is what the page last drew of the areas; without it a split's
- * room cannot be judged, so every split is offered disabled with that reason.
+ * The area commands the registry carries (PRD cmdk-navigation D-05, B24):
+ * focus to the next or previous View area and growing or shrinking the one
+ * in use.
  */
-export function viewCommands(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry; sizes: LayoutSizes } | null): ViewCommand[] {
-  const active = activeDisplay(layout);
-  const alone = areasOf(layout.root).length < 2 ? "There is only one view area." : null;
-  const resize = (grow: boolean): string | null => {
-    const target = resizeTarget(layout, drawn?.geometry ?? null, grow);
-    return "reason" in target ? target.reason : null;
-  };
-  const display: ViewCommand[] = active
-    ? displayCommands(layout, drawn, active).map(({ id, label, unavailable }) => ({ id, title: label, unavailable }))
-    : MENU_ITEMS.map(({ id, label }) => ({ id, title: label, unavailable: "No view is open in the active view area." }));
-  return [
-    ...display,
-    { id: "focus_next", title: "Focus next view area", unavailable: alone },
-    { id: "focus_previous", title: "Focus previous view area", unavailable: alone },
-    { id: "grow", title: "Grow view area", unavailable: resize(true) },
-    { id: "shrink", title: "Shrink view area", unavailable: resize(false) },
-  ];
-}
+export type ViewAreaStep = "focus_next" | "focus_previous" | "grow" | "shrink";
 
-/** Whether a palette command is one of a display's menu commands, run on the active view. */
-export function isMenuCommand(id: ViewCommandId): id is ViewMenuId {
-  return MENU_ITEMS.some((item) => item.id === id);
+/**
+ * Why a View area step cannot run now, or null. `drawn` is what the page last
+ * drew of the areas; a resize judges its room on it, and without it only the
+ * core's own range limits it.
+ */
+export function viewAreaStepUnavailable(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry } | null, step: ViewAreaStep): string | null {
+  if (step === "focus_next" || step === "focus_previous") return areasOf(layout.root).length < 2 ? "There is only one view area." : null;
+  const target = resizeTarget(layout, drawn?.geometry ?? null, step === "grow");
+  return "reason" in target ? target.reason : null;
 }
 
 // --- where the keyboard goes -------------------------------------------------

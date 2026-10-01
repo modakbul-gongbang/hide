@@ -1248,6 +1248,9 @@ pub struct Runtime {
     /// Ids for the `issue_work` slots, so a late answer for a replaced
     /// request is recognised and dropped.
     next_issue_work_id: u64,
+    /// The one running GitHub search and the one waiting behind it
+    /// (`issues::GithubSearchWork`).
+    github_search: issues::GithubSearchWork,
     /// The checkout whose Hide link a Local `pr_link_issue` waits on: its
     /// answer in `ingest_issue_operation_result` settles `pr_work.link`.
     pr_link_checkout: Option<String>,
@@ -1639,6 +1642,7 @@ impl Runtime {
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
             next_issue_work_id: 0,
+            github_search: issues::GithubSearchWork::default(),
             pr_link_checkout: None,
             task_agent_launch: None,
             home_links: HashMap::new(),

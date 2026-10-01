@@ -16,7 +16,8 @@ import {
   shownTool,
   splitEligibility,
   steppedRatio,
-  viewCommands,
+  viewAreaStepUnavailable,
+  type ViewAreaStep,
   viewGeometry,
   viewLayoutPayload,
   viewRefusal,
@@ -295,43 +296,23 @@ describe("a dragged tab's target", () => {
   });
 });
 
-describe("palette commands", () => {
-  const reasons = (root: ViewNode, drawn = true, activeArea = "a1") => {
+describe("area commands", () => {
+  const reason = (root: ViewNode, step: ViewAreaStep, drawn = true) => {
     const views = layout(root);
-    views.active_area = activeArea;
-    const commands = viewCommands(views, drawn ? { geometry: viewGeometry(root, body(2000), SIZES), sizes: SIZES } : null);
-    return Object.fromEntries(commands.map((command) => [command.id, command.unavailable]));
+    return viewAreaStepUnavailable(views, drawn ? { geometry: viewGeometry(root, body(2000), SIZES) } : null, step);
   };
 
-  it("offers every item of the active view's menu and the area commands, each with why it cannot run now", () => {
-    const only = "This is the only view in its area.";
-    const alone = "There is only one view area.";
-    expect(reasons(area("a1", ["d1"]))).toEqual({
-      keep_open: "This view is already kept open.",
-      split_right: only,
-      split_left: only,
-      split_up: only,
-      split_down: only,
-      move_right: "There is no view area to the right.",
-      move_left: "There is no view area to the left.",
-      move_up: "There is no view area above.",
-      move_down: "There is no view area below.",
-      copy_path: null,
-      reveal: null,
-      close_view: null,
-      focus_next: alone,
-      focus_previous: alone,
-      grow: alone,
-      shrink: alone,
-    });
-    const preview = reasons(split("s1", "row", 0.5, area("a1", [display("d1", { preview: true }), "d2"]), area("a2", ["d3"])));
-    expect(preview).toMatchObject({ keep_open: null, split_right: null, move_right: null, move_left: "There is no view area to the left.", focus_next: null, grow: null });
+  it("cannot move or resize with one area, and says so", () => {
+    for (const step of ["focus_next", "focus_previous", "grow", "shrink"] as const) {
+      expect(reason(area("a1", ["d1"]), step), step).toBe("There is only one view area.");
+    }
   });
 
-  it("judges no split before the areas are drawn, and acts on nothing without an active view", () => {
-    expect(reasons(area("a1", ["d1", "d2"]), false).split_right).toBe("The View areas are not on screen.");
-    const empty: ViewNode = { area: { id: "a1", active: null, displays: [] } };
-    expect(reasons(empty)).toMatchObject({ keep_open: "No view is open in the active view area.", move_up: "No view is open in the active view area.", close_view: "No view is open in the active view area." });
+  it("can move and resize once there are two areas", () => {
+    const two = split("s1", "row", 0.5, area("a1", ["d1"]), area("a2", ["d3"]));
+    for (const step of ["focus_next", "focus_previous", "grow", "shrink"] as const) {
+      expect(reason(two, step), step).toBeNull();
+    }
   });
 
   it("grows the active area toward its sibling by one step and stops at the core's range", () => {

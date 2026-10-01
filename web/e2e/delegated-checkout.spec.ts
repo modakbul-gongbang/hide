@@ -8,7 +8,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
+import { startHerdr, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
@@ -31,7 +31,7 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
     const child = beta.result.root_pane.pane_id;
     await expect.poll(() => execFileSync(herdr.bin, ["pane", "read", child, "--source", "recent", "--lines", "5"], { env: herdr.env, encoding: "utf8" }), { timeout: 20_000 }).toContain("fixture %");
     herdr.run(["agent", "start", "three", "--kind", "claude", "--pane", child]);
-    execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
+    declareParent(herdr, child, parent);
 
     daemon = await startHided(herdr, "delegated-checkout");
     const last = new Map<string, Record<string, unknown>>();

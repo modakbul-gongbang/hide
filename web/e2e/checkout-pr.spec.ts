@@ -201,7 +201,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
 
     // B2: ⌘-click opens the default browser and adds nothing in hide.
     const popupAgain = page.context().waitForEvent("page");
-    await glyph.click({ modifiers: ["Meta"] });
+    await glyph.click({ modifiers: ["ControlOrMeta"] });
     const openedAgain = await popupAgain;
     expect(openedAgain.url()).toBe(url);
     await openedAgain.close();

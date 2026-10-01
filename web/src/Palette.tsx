@@ -1,36 +1,29 @@
-import { areaFrame } from "./areaFrames";
-import { ChevronRightIcon, FolderIcon, GitBranchIcon, ServerIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
-import { DeviceChip } from "./components/device-chip";
-import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
+import { Command, CommandDialog, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
 import { changedFiles } from "./newTab";
 import { fileIcon } from "./fileIcons";
-import { filterEntries, groupEntries, searchEntries, type SearchEntry } from "./search";
+import { SearchPalette } from "./SearchPalette";
 import { explorerContext } from "./snapshot";
-import { overviewScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
-import { drawnViews, keyboardOwner } from "./viewFocus";
+import { drawnViews } from "./viewFocus";
+import { besideUnavailable } from "./viewLayout";
+import { workspaceViewOf } from "./workspace";
 
-// The two palettes (PRD B12, B13) on the System command palette: a query
-// field, a list cmdk's own arrow keys and Enter walk, and Escape closes
-// through the shell's one layer owner. ⌘P lists what hided's index ranked
-// for the typed query; ⌘K filters the snapshot's agents, projects and
-// checkouts in the web itself, because the data is already here. "Open file
-// to the side" is ⌘P's list whose pick opens beside (S7 B4). The screens
-// already rank and filter their own entries, so `shouldFilter` stays off and
-// cmdk is used only for the list's selection and keyboard behavior. ⌘K draws
-// its ranked entries under the search view's headers (issue 154).
+// The file and diff palettes (PRD B12, B13) on the System command palette: a
+// query field, a list cmdk's own arrow keys and Enter walk, and Escape closes
+// through the shell's one layer owner. ⌘P lists what hided's index ranked for
+// the typed query, and ⌘↵ on a row opens it beside the active View area (S7
+// B4, PRD cmdk-navigation B23). The screens already rank and filter their own
+// entries, so `shouldFilter` stays off and cmdk is used only for the list's
+// selection and keyboard behavior. ⌘K is its own surface (`SearchPalette`).
 
 export function Palette({ actions }: { actions: Actions }) {
   const overlay = useUiStore((s) => s.overlay);
-  if (overlay === "file_palette" || overlay === "file_palette_beside") {
-    return <FilePalette key={overlay} beside={overlay === "file_palette_beside"} actions={actions} />;
-  }
+  if (overlay === "file_palette") return <FilePalette actions={actions} />;
   if (overlay === "diff_palette") return <DiffPalette actions={actions} />;
   if (overlay === "search") return <SearchPalette actions={actions} />;
   return null;
@@ -43,18 +36,25 @@ function PaletteShell({
   onQuery,
   footer,
   children,
+  value,
+  onValue,
+  onKeyDown,
 }: {
   label: string;
   placeholder: string;
   query: string;
   onQuery: (query: string) => void;
-  footer: string;
+  footer: ReactNode;
   children: ReactNode;
+  /** The highlighted row, when the palette needs to know it. */
+  value?: string;
+  onValue?: (value: string) => void;
+  onKeyDown?: (event: React.KeyboardEvent) => void;
 }) {
   const close = useUiStore((s) => s.closeOverlay);
   return (
     <CommandDialog open title={label} description={placeholder} onOpenChange={(open) => { if (!open) close(); }}>
-      <Command shouldFilter={false} loop label={label} data-palette={label}>
+      <Command shouldFilter={false} loop label={label} data-palette={label} value={value} onValueChange={onValue} onKeyDown={onKeyDown}>
         <CommandInput value={query} placeholder={placeholder} data-palette-input="true" onValueChange={onQuery} trailing={<Kbd data-palette-esc="true">Esc</Kbd>} />
         <CommandList data-palette-list="true">{children}</CommandList>
         {footer ? (
@@ -67,42 +67,13 @@ function PaletteShell({
   );
 }
 
-/**
- * One palette row: its mark or icon, the title with an optional line under
- * it, and ↵ while it is the row Enter would choose. A command that cannot run
- * now keeps its whole reason under the title, and picking it does nothing
- * (B9); any other second line is one truncated line.
- */
-function PaletteRow({
-  icon,
-  title,
-  detail,
-  mono = false,
-  unavailable = false,
-  chip,
-}: {
-  icon?: ReactNode;
-  title: string;
-  detail?: string;
-  /** The device a result is on, while it is not the one in front. */
-  chip?: { label: string; local: boolean };
-  /** Machine text such as a path. */
-  mono?: boolean;
-  unavailable?: boolean;
-}) {
+/** One palette row: its icon or mark, the title, and ↵ while it is the row Enter would choose. */
+function PaletteRow({ icon, title }: { icon?: ReactNode; title: string }) {
   return (
     <>
       {icon}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex min-w-0 items-center gap-xs">
-          <span className="min-w-0 truncate font-medium">{title}</span>
-          {chip ? <DeviceChip label={chip.label} local={chip.local} className="max-w-2/5" /> : null}
-        </span>
-        {detail ? (
-          <span data-palette-detail="true" className={`text-caption text-muted-foreground ${unavailable ? "" : "truncate"} ${mono ? "font-mono" : ""}`}>
-            {detail}
-          </span>
-        ) : null}
+        <span className="min-w-0 truncate font-medium">{title}</span>
       </span>
       <span aria-hidden="true" data-palette-enter="true" className="invisible shrink-0 text-caption text-muted-foreground group-data-[selected=true]/palette-row:visible">
         ↵
@@ -111,7 +82,7 @@ function PaletteRow({
   );
 }
 
-function FilePalette({ beside, actions }: { beside: boolean; actions: Actions }) {
+function FilePalette({ actions }: { actions: Actions }) {
   // The checkout in front on the device in front, as the Explorer shows it.
   const device = useShellStore((s) => explorerContext(s.rest).device);
   const root = useShellStore((s) => explorerContext(s.rest).checkout?.path ?? null);
@@ -120,6 +91,9 @@ function FilePalette({ beside, actions }: { beside: boolean; actions: Actions })
     s.fileIndex && s.fileIndex.device_id === device && s.fileIndex.root_path === root ? s.fileIndex : null,
   );
   const [query, setQuery] = useState("");
+  const [highlighted, setHighlighted] = useState("");
+  // Why ⌘↵ opened nothing, said in the footer where its hint stands.
+  const [besideReason, setBesideReason] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -140,15 +114,35 @@ function FilePalette({ beside, actions }: { beside: boolean; actions: Actions })
   }, [root, query, device, fileIndex, actions]);
 
   const entries = fileIndex?.files ?? [];
-  const open = (path: string) => (beside ? actions.openIndexEntryBeside(path) : actions.openIndexEntry(path));
+  // The row Enter would choose: the one the pointer or arrows moved to, else the first.
+  const current = entries.find((entry) => entry.path === highlighted) ?? entries[0];
 
   return (
     <PaletteShell
-      label={beside ? "Open file to the side" : "Open file"}
-      placeholder={beside ? "Search files to open beside the active view" : "Search files by name"}
+      label="Open file"
+      placeholder="Search files by name"
       query={query}
-      onQuery={setQuery}
-      footer={fileIndex?.truncated ? "The index is truncated at 50,000 files" : ""}
+      onQuery={(next) => {
+        setBesideReason(null);
+        setQuery(next);
+      }}
+      value={current?.path ?? ""}
+      onValue={setHighlighted}
+      onKeyDown={(event) => {
+        // ⌘↵ opens the highlighted file beside the active View area (S7 B4).
+        if (event.key !== "Enter" || !event.metaKey || event.nativeEvent.isComposing || !current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const reason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());
+        if (reason) return setBesideReason(reason);
+        actions.openIndexEntryBeside(current.path);
+      }}
+      footer={
+        <span className="flex items-center gap-md">
+          <span data-palette-hint="beside">{besideReason ?? "⌘↵ 옆에 열기"}</span>
+          {fileIndex?.truncated ? <span>The index is truncated at 50,000 files</span> : null}
+        </span>
+      }
     >
       {fileIndex?.unavailable ? (
         <div className="px-md py-sm text-caption text-muted-foreground" role="alert" data-palette-state="unavailable">
@@ -164,7 +158,7 @@ function FilePalette({ beside, actions }: { beside: boolean; actions: Actions })
         </div>
       ) : (
         entries.map((entry) => (
-          <CommandItem key={entry.path} asChild value={entry.path} onSelect={() => open(entry.path)}>
+          <CommandItem key={entry.path} asChild value={entry.path} onSelect={() => actions.openIndexEntry(entry.path)}>
             <button type="button" data-palette-row={entry.path} className="group/palette-row w-full text-left">
               <PaletteRow
                 icon={
@@ -200,85 +194,5 @@ function DiffPalette({ actions }: { actions: Actions }) {
         </CommandItem>
       )) : <div className="px-md py-sm text-caption text-muted-foreground">No matching changed files</div>}
     </PaletteShell>
-  );
-}
-
-function SearchPalette({ actions }: { actions: Actions }) {
-  const rest = useShellStore((s) => s.rest);
-  const [query, setQuery] = useState("");
-  const [fromAgent] = useState(() => ["pane", "agent"].includes(keyboardOwner().kind));
-  const workspaceOnScreen = useUiStore((s) => s.screen?.kind === "workspace");
-  const placement = useUiStore((s) => s.toolsPlacement);
-  const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement, agent: fromAgent ? areaFrame("agent") : null } : null), query);
-
-  const activate = (entry: SearchEntry | undefined) => {
-    // A command that cannot run now stays in the list with its reason.
-    if (!entry || entry.unavailable) return;
-    useUiStore.getState().closeOverlay();
-    if (entry.command) {
-      if ("panel" in entry.command) actions.setPanel(entry.command.panel);
-      else if ("pinned" in entry.command) actions.setPanelPinned(entry.command.pinned);
-      else if ("tool" in entry.command) actions.setTool(entry.command.tool, entry.command.visible);
-      else if ("agent" in entry.command) actions.runAgentCommand(entry.command.agent);
-      else if ("view" in entry.command) actions.runViewCommand(entry.command.view);
-      else if ("navigation" in entry.command) useUiStore.getState().setCommandRequest({ id: entry.command.navigation });
-      else if ("startAgent" in entry.command) actions.openStartPanel();
-      else actions.openFilePaletteBeside();
-    } else if (entry.kind === "device" && entry.deviceId) {
-      actions.focusDevice(entry.deviceId);
-    } else if (entry.kind === "agent" && entry.paneId) {
-      actions.openAgent(entry.paneId);
-    } else if (entry.kind === "project" && entry.workspaceId) {
-      // The rail and sidebar follow the project's device; the Overview shows at once.
-      if (entry.deviceId) actions.focusDevice(entry.deviceId);
-      useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, entry.workspaceId));
-    } else if (entry.workspaceId && entry.checkoutId) {
-      // A checkout on another device comes forward with its device, as one event, and the screen follows once it is in front.
-      if (entry.chip && entry.deviceId) return actions.openWorkspace(entry.deviceId, entry.workspaceId, entry.checkoutId);
-      useUiStore.getState().setScreen({ kind: "workspace" });
-      actions.focusCheckout(entry.workspaceId, entry.checkoutId);
-    }
-  };
-
-  const sections = groupEntries(entries);
-
-  return (
-    <PaletteShell label="Search" placeholder="Search agents and workspaces" query={query} onQuery={setQuery} footer="">
-      {sections.length === 0 ? (
-        <div className="px-md py-sm text-caption text-muted-foreground" data-palette-state={query.trim() ? "no-match" : "empty"}>
-          {query.trim() ? "No matching agents or workspaces" : "No agents or workspaces yet"}
-        </div>
-      ) : (
-        sections.map((section) => (
-          <CommandGroup key={section.group.id} heading={section.group.label} data-palette-group={section.group.id}>
-            {section.entries.map((entry) => (
-              <CommandItem key={entry.id} asChild value={entry.id} disabled={Boolean(entry.unavailable)} onSelect={() => activate(entry)}>
-                <button type="button" data-palette-row={entry.id} className="group/palette-row w-full text-left">
-                  <PaletteRow
-                    icon={<EntryIcon entry={entry} />}
-                    title={entry.title}
-                    detail={entry.kind === "command" ? (entry.unavailable ?? undefined) : entry.subtitle}
-                    mono={entry.kind === "project" || entry.kind === "checkout"}
-                    unavailable={Boolean(entry.unavailable)}
-                    chip={entry.chip}
-                  />
-                </button>
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        ))
-      )}
-    </PaletteShell>
-  );
-}
-
-/** An agent's own mark (the sidebar's), else a line icon for the entry's kind, in the mark's width so titles align. */
-function EntryIcon({ entry }: { entry: SearchEntry }) {
-  if (entry.kind === "agent") return <AgentMark kind={entry.agentKind} />;
-  const Icon = entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : entry.kind === "device" ? ServerIcon : ChevronRightIcon;
-  return (
-    <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center" aria-hidden="true">
-      <Icon />
-    </span>
   );
 }
