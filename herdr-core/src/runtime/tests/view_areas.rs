@@ -1155,12 +1155,11 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let mut runtime = shared.lock().unwrap();
     let emptied = tree(&mut runtime);
     assert_eq!(emptied.display_count, 0);
-    // B10: the Views empty out without the panel changing, and the last
-    // area stays, empty (issue 170: the panel narrows to its tools or says
-    // nothing is open).
+    // B10: the last area stays, empty; with the tool column hidden, as a
+    // new Workspace's is, the panel closes with its last view (issue 170).
     assert!(matches!(emptied.root, ViewNodeSnapshot::Area(_)));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(view.panel, crate::workspace_views::PanelState::Open);
+    assert_eq!(view.panel, crate::workspace_views::PanelState::Closed);
 }
 
 /// B5: a draft in one display keeps every display of that document open.
@@ -1905,8 +1904,11 @@ impl HistoryPump {
 #[test]
 fn a_late_history_answer_does_not_bring_back_the_row_the_operator_left() {
     let (mut runtime, checkout_id, directory) = views_runtime("view-history-late");
-    // History reads while the side panel shows it.
-    layout(&mut runtime, serde_json::json!({"panel": "open"}));
+    // History reads while the side panel shows the tool column.
+    layout(
+        &mut runtime,
+        serde_json::json!({"panel": "open", "tools": true}),
+    );
     files(&directory, &["a.ts", "e.rs", "f.go"]);
     for arguments in [
         &["add", "."][..],
