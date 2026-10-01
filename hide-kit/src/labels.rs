@@ -246,7 +246,8 @@ fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<i32>, String> {
     // Stopped means the lock is free, whatever the signals answered: a pid
     // that survived, or a holder lsof did not name, keeps it.
     let started = Instant::now();
-    while lock_is_held(lock)? {
+    // A lock file that went with its watcher is as free as an unheld one.
+    while lock.exists() && lock_is_held(lock)? {
         if started.elapsed() >= WATCHER_EXIT_DEADLINE {
             return Err(format!(
                 "the labels watcher still holds its lock after {} signalled process(es)",

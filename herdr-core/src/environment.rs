@@ -52,13 +52,15 @@ pub struct EnvironmentReport {
 
 impl EnvironmentReport {
     /// The report for an embedder that named its own home: everything the
-    /// process `HOME` would have decided follows `home` instead, including
-    /// a Codex home that came from it rather than from `CODEX_HOME`.
+    /// process `HOME` would have decided follows `home` instead, and the
+    /// Codex home is the one under it, never the process's `CODEX_HOME`.
     pub fn with_home(mut self, home: PathBuf) -> Self {
-        let derived_codex = self.home_path.as_ref().map(|old| old.join(".codex"));
-        if self.codex_home.is_none() || self.codex_home == derived_codex {
-            self.codex_home = Some(home.join(".codex"));
+        // The process's own home keeps every decision the environment made,
+        // `CODEX_HOME` included; another home takes nothing from it.
+        if self.home_path.as_ref() == Some(&home) {
+            return self;
         }
+        self.codex_home = Some(home.join(".codex"));
         self.home_path = Some(home);
         self
     }
@@ -191,6 +193,29 @@ mod tests {
         assert!(contracts.values().all(|(format, behavior)| {
             !format.trim().is_empty() && !behavior.trim().is_empty()
         }));
+    }
+
+    #[test]
+    fn another_home_takes_nothing_of_the_process_codex_home() {
+        let report = validate_with(|key| match key {
+            HOME_KEY => Some(OsString::from("/Users/operator")),
+            CODEX_HOME_KEY => Some(OsString::from("/Users/operator/custom-codex")),
+            _ => None,
+        });
+        let same = report.clone().with_home(PathBuf::from("/Users/operator"));
+        assert_eq!(
+            same.codex_home.as_deref(),
+            Some(Path::new("/Users/operator/custom-codex"))
+        );
+        let private = report.with_home(PathBuf::from("/private/tmp/test-home"));
+        assert_eq!(
+            private.home_path.as_deref(),
+            Some(Path::new("/private/tmp/test-home"))
+        );
+        assert_eq!(
+            private.codex_home.as_deref(),
+            Some(Path::new("/private/tmp/test-home/.codex"))
+        );
     }
 
     #[test]

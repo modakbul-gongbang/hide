@@ -822,9 +822,9 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
     )
     .unwrap();
     let state = tempfile::tempdir().unwrap();
-    let core = crate::Core::create(crate::CoreOptions {
+    let options = |home: String| crate::CoreOptions {
         schema_version: crate::SCHEMA_VERSION,
-        home: Some(home.path().display().to_string()),
+        home: Some(home),
         machine_id: None,
         herdr_socket_path: None,
         herdr_bin_path: None,
@@ -836,8 +836,13 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         shortcut_import_path: None,
         local_issues_path: None,
         kit_dir: None,
-    })
-    .expect("a core starts");
+    };
+    assert!(
+        crate::Core::create(options("relative/home".to_owned())).is_none(),
+        "a relative home names no account folder"
+    );
+    let core =
+        crate::Core::create(options(home.path().display().to_string())).expect("a core starts");
     drop(core);
     let imported = LabelStore::open(Some(state.path()), None).target(LOCAL_TARGET);
     assert_eq!(

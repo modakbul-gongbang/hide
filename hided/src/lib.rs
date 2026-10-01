@@ -240,7 +240,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     }
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
-        home: Some(env.home.display().to_string()),
+        // A relative HOME names no account folder; the core then reports
+        // HOME invalid and turns off what needs it, as it always has.
+        home: env
+            .home
+            .is_absolute()
+            .then(|| env.home.display().to_string()),
         machine_id: machine_id(),
         herdr_socket_path: env.herdr_socket_path.clone(),
         herdr_bin_path: env

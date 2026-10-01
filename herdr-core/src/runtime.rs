@@ -2118,6 +2118,13 @@ pub fn validate_options(options: &CoreOptions) -> Result<(), &'static str> {
     {
         return Err("herdr_bin_path must be null or non-empty");
     }
+    if options
+        .home
+        .as_ref()
+        .is_some_and(|home| !std::path::Path::new(home).is_absolute())
+    {
+        return Err("home must be null or an absolute path");
+    }
     Ok(())
 }
 
