@@ -386,8 +386,10 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     // families (Select tab 1-9, Select agent 1-9) fold into one row each,
     // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
     // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st,
-    // and Toggle device rail (no default chord, bindable) the 32nd.
-    await expect(page.locator("[data-shortcut]")).toHaveCount(32);
+    // Toggle device rail (no default chord, bindable) the 32nd, and the
+    // focused-area cycle pair the 33rd and 34th: they carry ⌥` and its Chrome
+    // move, while the global Recent Panels pair has no default chord.
+    await expect(page.locator("[data-shortcut]")).toHaveCount(34);
     await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(7);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
