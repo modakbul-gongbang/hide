@@ -131,6 +131,8 @@ export type FlowOptions = {
   /** How many steps make one period. */
   steps: number;
   reduced: () => boolean;
+  /** Told whether the timer runs, after every change to the paths or the setting; the owner shows it where a check can read it. */
+  running?: (running: boolean) => void;
 };
 
 /**
@@ -158,6 +160,7 @@ export class Flow {
     }
     this.paint();
     if (this.timer === null) this.timer = setInterval(() => this.advance(), this.options.stepMs);
+    this.options.running?.(true);
   }
 
   /** The system's motion setting changed: start again if the dashes may move now. */
@@ -182,6 +185,7 @@ export class Flow {
   private stop(): void {
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
+    this.options.running?.(false);
   }
 
   /** Ends the timer; the owner calls it when the graph leaves the screen. */

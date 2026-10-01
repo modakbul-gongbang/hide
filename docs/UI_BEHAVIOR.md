@@ -516,7 +516,7 @@ Heads, rows, chips, `정리` and fold lines take focus; the arrow keys move betw
 On a narrow window only the graph scrolls, sideways, inside its own area, and the page does not; a long branch or a Korean title is cut to one line with its whole text in the tooltip or the popover.
 Every icon button and chip has an accessible name, the same words as its tooltip.
 Hover, focus, the popover and every filter change are local: they publish no snapshot, dispatch no core event, and start no Git or disk work.
-The graph's elements carry `data-graph-box`, `data-graph-row`, `data-graph-edge` and `data-graph-fold`, each canvas `data-graph-canvas` with a `data-graph-revision` that counts the pictures applied, and the filter `data-graph-chip`, `data-graph-search` and `data-graph-device`, which is what the browser tests read.
+The graph's elements carry `data-graph-box`, `data-graph-row`, `data-graph-edge` and `data-graph-fold`, each canvas `data-graph-canvas` with a `data-graph-revision` that counts the pictures applied and a `data-graph-flowing` that is present only while its dashes are stepping, and the filter `data-graph-chip`, `data-graph-search` and `data-graph-device`, which is what the browser tests read.
 
 ### Issues
 
