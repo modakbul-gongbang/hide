@@ -96,7 +96,6 @@ async function agentsMode(page: Page): Promise<void> {
   await page.locator('[data-sidebar-mode="agents"]').click();
 }
 
-/** Sets and clears the status tokens one pane reports, the way the label plugin does. */
 /** The tops of `buttons`, rounded: one value means they share one row. */
 async function rowTops(buttons: Locator[]): Promise<number[]> {
   const tops = new Set<number>();

@@ -1,6 +1,6 @@
 // Packages the release hide.app: the Electron host with the release daemon,
 // the hide CLI, the hook and device helpers, the pinned Herdr binary, the
-// labels plugin and hcoord in its Contents/Resources, ad-hoc signed, zipped beside a SHA-256 checksum
+// hcoord in its Contents/Resources, ad-hoc signed, zipped beside a SHA-256 checksum
 // (the Electron release app PRD, D-03 and D-08).
 //
 // The CLI finds `hided` beside its own file and the daemon offers the device

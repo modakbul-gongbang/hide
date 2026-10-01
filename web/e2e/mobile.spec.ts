@@ -186,7 +186,6 @@ async function phoneContext(browser: Browser, push?: { endpoint: string; p256dh:
   return context;
 }
 
-/** Sets and clears one pane's status tokens, the way the label plugin reports them. */
 const SESSION = "0f0e0d0c-0b0a-4000-8000-000000000001";
 
 /** One Claude transcript record: an operator's prompt or the agent's text. */

@@ -324,7 +324,7 @@ pub fn agent_group_for(
     }
 }
 
-/// The mark a row draws, matching the label plugin's own symbol table. It is
+/// The mark a row draws, matching the retired label plugin's symbol table. It is
 /// one decision for the row's own symbol and for every count of marks, so a
 /// badge that stands for folded rows says what opening them would show.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1166,8 +1166,7 @@ pub fn prune_lineage_expansion(
 /// It runs after the read axis, never inside `project_agents`: a row's group
 /// depends on whether the operator has read it, and a projection that has not
 /// met the read record ledger treats every completion as unread. Ordinary idle
-/// rows still stay Seen. The label plugin's `sort_rank` token is not read at
-/// all, so the order Hide shows is Hide's own.
+/// rows still stay Seen. The order Hide shows is Hide's own.
 fn sort_agents(agents: &mut [SidebarAgentSnapshot]) {
     agents.sort_by(|left, right| {
         group_of(left)

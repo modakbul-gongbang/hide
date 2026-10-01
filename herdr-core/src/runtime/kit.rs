@@ -117,12 +117,7 @@ impl KitDeclined {
 }
 
 /// What a removal leaves on a device whose helper is not connected (B24).
-const LEFT_ON_DEVICE: [&str; 4] = [
-    "Hide's hook entries",
-    "the labels plugin link",
-    "Hide's hide link",
-    "the helper root",
-];
+const LEFT_ON_DEVICE: [&str; 3] = ["Hide's hook entries", "Hide's hide link", "the helper root"];
 
 impl Runtime {
     /// This Mac cannot run the kit at all, and its row says why (B11).

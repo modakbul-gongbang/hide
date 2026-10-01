@@ -305,8 +305,8 @@ record_conversions!(ev);
 ///
 /// hcoord is the sole writer, including for a child created by Hide's Fork.
 /// It declares the token after both executions exist with
-/// `pane.report_metadata`, the same display-only channel the label plugin and
-/// the hook helper already use. The value is the parent's pane id, it dies
+/// `pane.report_metadata`, the same display-only channel the hook helper
+/// already uses. The value is the parent's pane id, it dies
 /// with the pane, and Hide reads it here and nowhere else.
 pub(crate) const PARENT_PANE_TOKEN: &str = "parent_pane";
 

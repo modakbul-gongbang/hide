@@ -31,7 +31,7 @@ fn checkout_activity(
     };
     for pane in checkout.tabs.iter().flat_map(|tab| &tab.panes) {
         if let Some(agent) = by_pane.get(pane.id.as_str()) {
-            // The label plugin's wall timestamp has 13 digits. Its padded
+            // The label worker's wall timestamp has 13 digits. Its padded
             // sequence is deliberately not interpreted as a date.
             let timestamp = (agent.last_activity.len() == 13)
                 .then(|| agent.last_activity.parse::<u64>().ok())

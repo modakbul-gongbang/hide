@@ -29,8 +29,8 @@ impl Record {
     }
 }
 
-/// The folders under HOME that hold the kit's state and its copies of the
-/// labels plugin and hcoord.
+/// The folders under HOME that hold the kit's state and its copy of
+/// hcoord.
 pub(crate) const STATE_PARTS: [&str; 2] = [".hide", "kit"];
 
 pub fn kit_state_dir(home: &Path) -> PathBuf {

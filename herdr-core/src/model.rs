@@ -718,7 +718,7 @@ pub struct SidebarAgentSnapshot {
     /// Herdr's `done` and `idle` are the same activity. Completion and Hide's
     /// pane-level read state remain separate axes.
     pub activity: String,
-    /// Whether Herdr or the label plugin reported a completed turn. A newly
+    /// Whether Herdr reported a completed turn. A newly
     /// opened agent can be stopped while it waits for its first instruction;
     /// that ready state is not a completion and must not appear as Done.
     #[serde(skip_serializing)]

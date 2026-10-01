@@ -12,8 +12,8 @@ use crate::{
     ProcessMeasurement, ProviderId,
 };
 
-/// Retry and selection policy. The defaults carry the label plugin's proven
-/// constants forward: exponential backoff capped at four attempts for a
+/// Retry and selection policy. The defaults carry the retired label plugin's
+/// proven constants forward: exponential backoff capped at four attempts for a
 /// refusal that may clear on its own, two for one settled by the input.
 /// A request whose completion is unknown is never attempted again.
 #[derive(Clone, Debug)]

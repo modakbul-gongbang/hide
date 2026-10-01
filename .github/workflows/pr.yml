@@ -48,8 +48,7 @@ jobs:
           # cache limit and evicted main's; main's is the one every run reads.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # The macos-15 image ships rustfmt and Clippy with its Rust toolchain.
-      # The workspace is the core, the hide-ai provider boundary and the
-      # context-label plugin; every lane covers all three.
+      # Every lane covers the whole Rust workspace.
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Lint the workspace
