@@ -112,7 +112,8 @@ async function typedTextEchoes(page: Page, marker: string): Promise<void> {
     .toContain(marker);
 }
 
-test("a sidebar row click switches the pane and typed text echoes there", async ({ page }) => {
+// @platform: Real PTY input and echo through the platform's Herdr and its shell.
+test("a sidebar row click switches the pane and typed text echoes there", { tag: "@platform" }, async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {

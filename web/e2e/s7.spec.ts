@@ -222,7 +222,7 @@ test("a click previews in the last used area, a pin keeps a view, and a shown fi
     // so the next click adds a preview beside it instead of replacing it (B2).
     const opensBefore = stack.sent.get("file_open") ?? 0;
     await editor(page, 0).click();
-    await page.keyboard.press("Meta+ArrowUp");
+    await page.keyboard.press("ControlOrMeta+Home");
     await page.keyboard.press("End");
     await page.keyboard.type(" edited");
     await expect.poll(() => shape(page)).toBe("@(b.txt d.txt >e.txt) | (c.txt >a.txt*)");
@@ -273,7 +273,8 @@ async function composeKorean(page: Page, steps: string[][]): Promise<void> {
   }
 }
 
-test("Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text", async ({ page }) => {
+// @platform: Korean composed through the browser's input-method path, and a save refused by file mode.
+test("Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-beside", { "shared.txt": LONG, "other.txt": "other\n", "keep.txt": "keep on disk\n" });
   const shared = path.join(stack.root, "shared.txt");
@@ -295,7 +296,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     // An edit in one view shows in the other, and the first edit pins every
     // view of the document (B2, B4).
     await right.click();
-    await page.keyboard.press("Meta+ArrowUp");
+    await page.keyboard.press("ControlOrMeta+Home");
     await page.keyboard.press("End");
     await page.keyboard.type("-B");
     await expect(left).toContainText("line 001-B");
@@ -304,7 +305,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     // Korean text inserted in one view and composed in the other reads the
     // same in both, once, and reaches the file once (B20, D-13).
     await left.click();
-    await page.keyboard.press("Meta+ArrowUp");
+    await page.keyboard.press("ControlOrMeta+Home");
     await page.keyboard.press("End");
     await page.keyboard.insertText(" 한글");
     await expect(right).toContainText("line 001-B 한글");
@@ -389,7 +390,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     await expect.poll(() => shape(page)).toBe("@(>keep.txt)");
     fs.chmodSync(keep, 0o444);
     await editor(page, 0).click();
-    await page.keyboard.press("Meta+ArrowUp");
+    await page.keyboard.press("ControlOrMeta+Home");
     await page.keyboard.type("never saved ");
     await expect(area(page, 0).locator("[data-editor-save-state]")).toBeVisible({ timeout: 10_000 });
     await row("other.txt").dblclick();
@@ -449,8 +450,12 @@ test("Open to the side from the only area is refused with its reason until that 
     await expect(besideDiff).toBeDisabled();
     await expect(besideDiff).toContainText(BESIDE_TOO_NARROW);
     const menuBox = await boxOf(page.locator('[role="menu"][data-history-menu="a.txt"]'));
-    expect(Math.abs(menuBox.x - pointer.x)).toBeLessThanOrEqual(2);
-    expect(Math.abs(menuBox.y - pointer.y)).toBeLessThanOrEqual(2);
+    // The menu opens at the pointer; near the window's edge it moves left (or
+    // up) only as far as it takes to stay whole, so how far depends on the
+    // menu's width, which depends on the system's fonts.
+    const viewport = page.viewportSize()!;
+    expect(Math.abs(menuBox.x - Math.min(pointer.x, viewport.width - menuBox.width))).toBeLessThanOrEqual(2);
+    expect(Math.abs(menuBox.y - Math.min(pointer.y, viewport.height - menuBox.height))).toBeLessThanOrEqual(2);
     const itemBox = await boxOf(besideDiff);
     // A disabled item takes no pointer, so the point hits the menu drawn under it.
     const drawn = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="menu"]')?.getAttribute("data-history-menu") ?? null, {

@@ -53,6 +53,9 @@ test("⌘K 에이전트 시작… starts an agent in the checkout in front with 
     await model.click();
     await page.locator('[data-agent-model-option="opus"]').click();
     await expect(model).toHaveAttribute("data-agent-model", "opus");
+    // The closed menu hands the keyboard back to its trigger a moment later;
+    // typing before that lands puts the next ⏎ on the trigger, which reopens it.
+    await expect(model).toBeFocused();
 
     await page.locator("[data-start-text]").fill("첫 지시 확인용 문장");
     const known = new Set<string>(herdr.panes);

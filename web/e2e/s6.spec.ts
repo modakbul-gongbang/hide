@@ -10,7 +10,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { herdrHasFocus, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { choosePanel, countSent, screenshot } from "./wire";
 
@@ -228,7 +228,14 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await agentTab.click();
     await expect(agentTab).toHaveAttribute("aria-selected", "true");
     await expect(workspace).toHaveAttribute("data-panel", "open");
+    // A click on the agent pane reaches its PTY as a mouse report, a moment
+    // after the click returns; counting from before it is what keeps that
+    // report out of what ⌘F is expected to send.
+    const mouseReports = () => fs.readFileSync(herdr.inputLogs[1], "latin1").split("\x1b[<0;").length - 1;
+    const reportsBefore = mouseReports();
     await childHost.click({ position: { x: 40, y: 60 } });
+    // Press and release.
+    await expect.poll(mouseReports, { timeout: 10_000 }).toBe(reportsBefore + 2);
     expect(resizes()).toBe(resizesBefore);
     // The pane is an agent with its own find and no history in Herdr, so ⌘F
     // opens the agent's search in that pane, never the document's; any
@@ -329,8 +336,13 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect(page.locator('[data-panel-toggle="off"]')).toBeVisible();
     expect(await agentArea.boundingBox()).toEqual(agentBox);
+    // Two focus requests in flight can be applied by Herdr in either order, and
+    // the later one then reads as Herdr's own move (issue #299, a product race);
+    // the second goes out once Herdr holds the first.
+    await expect.poll(() => herdrHasFocus(herdr, child), { timeout: 15_000 }).toBe(true);
     await page.locator(`[data-agent-open="${parent}"]`).first().click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
+    await expect.poll(() => herdrHasFocus(herdr, parent), { timeout: 15_000 }).toBe(true);
 
     // A declared child shows as a chip under its parent's header; the core
     // moves the delegated pane to its own tab, so the chip crosses tabs with
