@@ -10,14 +10,14 @@ Use [docs/README.md](docs/README.md) to find current guides and distinguish hist
 
 Run the same required lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
-CI runs the Rust suite, the unit suites, the invariant checks and the whole web end-to-end (eight shards) on Linux, where the Herdr schema comparison and the web end-to-end use the pinned release's Linux asset, and keeps two jobs on macOS, the platform hide ships on: the Electron end-to-end and the web end-to-end's `@platform` tests.
+CI runs the Rust suite, the unit suites, the invariant checks and the whole web end-to-end (six shards) on Linux, where the Herdr schema comparison and the web end-to-end use the pinned release's Linux asset, and keeps two jobs on macOS, the platform hide ships on: the Electron end-to-end and the web end-to-end's `@platform` tests.
 `.github/workflows/pr.yml` says why, and `nightly.yml` runs the whole web end-to-end on macOS every night.
 
 ```sh
 bash scripts/verify-cargo.sh lint                # cargo fmt --check, then clippy over every target
 bash scripts/verify-cargo.sh test                # herdr-core, hided, hide-ai, hide-agent-hooks and the context-label plugin
 bash scripts/verify-web.sh                       # hcoord typecheck/build/unit/e2e, then web and desktop typecheck, lint, test and build
-cargo build -p hided && pnpm --dir web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the S2 flows and the S3 Explorer, editor, viewers, attach, watch and reconnect flows (one worker, because each spec starts its own Herdr, hided and browser; CI deals the same tests out to eight Linux shards)
+cargo build -p hided && pnpm --dir web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the S2 flows and the S3 Explorer, editor, viewers, attach, watch and reconnect flows (one worker, because each spec starts its own Herdr, hided and browser; CI deals the same tests out to six Linux shards)
 pnpm --dir desktop e2e                           # Playwright `_electron` against a private hided and the pinned Herdr; windows never activate the app except in `@needs-focus` specs, which `--grep-invert @needs-focus` skips
 MEASURE_SCENARIO=multi HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh   # echo and frame gates with four splits and five attached tabs; review-required evidence, not a CI check
 bash scripts/check-harness-ignore-anchor.sh

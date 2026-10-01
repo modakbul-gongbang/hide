@@ -12,7 +12,7 @@
 # what differs by operating system (Trash, process ownership, file watching and
 # saving, worktree paths, terminal input, ⌘ chords and Korean input).
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
-# checks and the whole web end-to-end, dealt out to eight shards by
+# checks and the whole web end-to-end, dealt out to six shards by
 # `web-e2e.yml`. `nightly.yml` runs the whole web end-to-end on macOS, so the
 # move costs no macOS coverage, only its delay.
 #
@@ -205,7 +205,17 @@ jobs:
       lane: linux
       runner: ubuntu-latest
       herdr-platform: linux-x86_64
-      shards: 8
+      # Six shards: the suite is about 20 job-minutes of tests (a shard's
+      # End-to-end step took 213-240 s at six and 131-182 s at eight,
+      # 2026-10-01 runs 36896943318 and 36889286322) and every shard repeats
+      # about a minute of setup. Six cost 29 shard job-minutes, 31 with the
+      # build and zsh jobs, and the lane took 7.7 minutes from the build job's
+      # start to the last shard, queueing aside; eight cost about 34 and no
+      # less wall time, and four would cost about 25 and, estimated from the
+      # same numbers, run about 10 minutes, past the 8-minute lane this
+      # replaced. The organization runs 20 jobs at once, so fewer jobs per run
+      # also queue less.
+      shards: 6
       quarantine: true
 
   web-e2e-platform:
