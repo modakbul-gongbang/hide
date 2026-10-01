@@ -17,7 +17,8 @@ export type PhoneAgent = {
   title: string;
   place: string | null;
   device_label: string | null;
-  elapsed: string;
+  /** When the Mac's core last saw this agent change state (epoch ms); the phone counts the elapsed time from it. */
+  changed_at_unix_ms: number | null;
   line: { text: string; tone: "error" | "warning" | "news" } | null;
   status_label: string;
   demand: string;

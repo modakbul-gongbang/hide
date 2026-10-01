@@ -1,7 +1,7 @@
 // Structural sharing for snapshot sections.
 //
 // The core resends the whole `rest` section whenever any part of it changes,
-// and an agent's elapsed tick changes it every second. Rows the operator sees
+// and any one agent's state change changes it. Rows the operator sees
 // are React-memoized on identity, so a delta that leaves a workspace, tab or
 // pane untouched has to leave its object reference untouched too. `share`
 // rebuilds `next` from the bottom up, returning the `prev` subtree wherever

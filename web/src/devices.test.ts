@@ -3,7 +3,7 @@ import { badgeText, deviceConnected, deviceStateCounts, frontTitle, homeOf, home
 import type { AgentRow, SnapshotRest } from "./snapshot";
 
 function agent(paneId: string, group: string): AgentRow {
-  return { id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_label: group, elapsed: "1m", emphasized: false, unread: false, demand: "none", activity: "idle" } as AgentRow;
+  return { id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_label: group, changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" } as AgentRow;
 }
 
 const LOCAL_AGENTS = [agent("l1", "needs_you"), agent("l2", "needs_you"), agent("l3", "working")];

@@ -4,6 +4,7 @@ import { AgentMark } from "./AgentMark";
 import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint } from "./components/pr-card";
+import { Elapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
 import { Badge } from "./components/ui/badge";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
@@ -353,7 +354,7 @@ function AgentNode({ value, chips, handlers, now }: { value: LensAgent; chips: b
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
         <AgentMark kind={agent.agent_kind} />
         <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", turn && "font-semibold")}>{agent.identity_label}</span>
-        <span className="shrink-0 font-mono text-caption text-muted-foreground">{agent.elapsed}</span>
+        <Elapsed since={agent.changed_at_unix_ms} className="shrink-0 font-mono text-caption text-muted-foreground" />
       </span>
       {line ? <AgentMessageHint agent={agent} place={checkout.branch ?? checkout.label} line={line} tone={tone} onOpen={open} /> : null}
       {chips ? (
@@ -402,7 +403,7 @@ export function AgentMessagePopover({ agent, place, fallback, tone, onOpen, chil
             <StatusMark symbol={agent.symbol} className={markTone(agent)} />
             <AgentMark kind={agent.agent_kind} />
             <span className="min-w-0 flex-1 truncate">{agent.identity_label}</span>
-            <span className="font-mono text-caption text-muted-foreground">{agent.elapsed}</span>
+            <Elapsed since={agent.changed_at_unix_ms} className="font-mono text-caption text-muted-foreground" />
           </span>
           <p className={cn("whitespace-pre-wrap break-words text-caption", tone)}>{message}</p>
           <span className="flex items-center gap-sm text-caption text-muted-foreground">

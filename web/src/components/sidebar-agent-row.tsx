@@ -9,6 +9,7 @@ import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
 import type { FoldedLineage } from "../lineageSummary";
 import { DescendantBadge } from "./agent-row";
+import { Elapsed } from "./elapsed";
 import { EntryContextMenu, type MenuEntry } from "./entry-menu";
 import { DeviceChip } from "./device-chip";
 import { StatusMark } from "./status-mark";
@@ -177,12 +178,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
               returnFocus={() => main.current?.focus()}
             />
           ) : null}
-          {/* An empty elapsed is a time nobody measured, and nothing stands in for it. */}
-          {agent.elapsed ? (
-            <span aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true">
-              {agent.elapsed}
-            </span>
-          ) : null}
+          {/* A time the core never measured draws nothing, and nothing stands in for it. */}
+          <Elapsed since={agent.changed_at_unix_ms} aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true" />
           {foldable ? (
             <button
               type="button"

@@ -6,6 +6,7 @@ import { Command, CommandGroup, CommandItem, CommandList, CommandSeparator } fro
 import { Kbd } from "./ui/kbd";
 import { StatusMark } from "./status-mark";
 import { DeviceChip } from "./device-chip";
+import { Elapsed } from "./elapsed";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 /**
@@ -102,7 +103,7 @@ function ChildItem({ parent, child, onOpen }: { parent: AgentRow; child: AgentRo
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-baseline gap-xs">
           <span className="min-w-0 flex-1 truncate font-medium text-foreground">{child.identity_label}</span>
-          <span className="shrink-0 text-micro text-muted-foreground">{child.elapsed}</span>
+          <Elapsed since={child.changed_at_unix_ms} className="shrink-0 text-micro text-muted-foreground" />
         </span>
         <span className="flex min-w-0 items-center gap-xs text-caption">
           <span className={`shrink-0 ${tone}`}>{child.status_label}</span>

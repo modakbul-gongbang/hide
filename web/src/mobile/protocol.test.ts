@@ -45,7 +45,7 @@ function agent(group: AgentGroup["group"], pane: string, root = pane, demand = "
     title: pane,
     place: null,
     device_label: null,
-    elapsed: "1m",
+    changed_at_unix_ms: null,
     line: null,
     status_label: "",
     demand,

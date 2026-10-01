@@ -67,9 +67,13 @@ const TITLES: Record<SceneContent, Record<string, string>> = {
   },
 };
 
-type AgentSpec = Partial<AgentRow> & Pick<AgentRow, "pane_id" | "group" | "symbol" | "status_label" | "elapsed">;
+/** A scene names how long ago each agent changed (`42s`, `3m`, `2h`); the row counts on from there. */
+type AgentSpec = Partial<AgentRow> & Pick<AgentRow, "pane_id" | "group" | "symbol" | "status_label"> & { elapsed: string };
 
-function agent(spec: AgentSpec): AgentRow {
+const UNIT_MS: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+
+function agent({ elapsed, ...spec }: AgentSpec): AgentRow {
+  const unit = UNIT_MS[elapsed.slice(-1)] ?? 0;
   return {
     id: spec.pane_id,
     identity_label: spec.pane_id,
@@ -78,6 +82,7 @@ function agent(spec: AgentSpec): AgentRow {
     unread: false,
     demand: "none",
     activity: "idle",
+    changed_at_unix_ms: Date.now() - Number(elapsed.slice(0, -1)) * unit,
     ...spec,
   };
 }

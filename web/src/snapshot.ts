@@ -22,8 +22,9 @@ export type AgentRow = {
   detail?: string | null;
   /** Everything the agent last said through its hooks, uncut: the request, then the progress, one per line; absent when it said nothing. */
   message?: string | null;
-  elapsed: string;
-  /** The core's ordering key: the label plugin's activity clock, else Herdr's state sequence, zero-padded so it sorts as text. */
+  /** When the core last saw this agent change state (epoch ms); the shell counts the elapsed time from it. `null` before the core observed it. */
+  changed_at_unix_ms: number | null;
+  /** The core's ordering key: `changed_at_unix_ms` as thirteen digits, else Herdr's state sequence zero-padded, so it sorts as text. */
   last_activity?: string;
   emphasized: boolean;
   unread: boolean;

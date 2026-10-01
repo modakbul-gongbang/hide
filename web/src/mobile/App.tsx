@@ -4,6 +4,7 @@
 
 import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useElapsed } from "../components/elapsed";
 import { Button } from "../components/ui/button";
 import { closeDetail, openDetail, openStartSheet, pairNow } from "./connection";
 import { Detail } from "./Detail";
@@ -169,7 +170,8 @@ function ListScreen() {
 const LINE_TONE = { error: "text-destructive", warning: "text-warning", news: "text-foreground" } as const;
 
 function AgentRow({ agent }: { agent: PhoneAgent }) {
-  const label = [agent.status_label, agent.title, agent.place, agent.device_label, agent.elapsed].filter(Boolean).join(", ");
+  const elapsed = useElapsed(agent.changed_at_unix_ms);
+  const label = [agent.status_label, agent.title, agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
   return (
     <li>
       <button
@@ -183,7 +185,7 @@ function AgentRow({ agent }: { agent: PhoneAgent }) {
           <span className="min-w-0 flex-1">
             <AgentHead agent={agent} large={false} />
           </span>
-          <span className="shrink-0 font-mono text-body text-muted-foreground">{agent.elapsed}</span>
+          <span className="shrink-0 font-mono text-body text-muted-foreground">{elapsed}</span>
           <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground" />
         </span>
         <Place agent={agent} />
