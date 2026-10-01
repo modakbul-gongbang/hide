@@ -9,21 +9,15 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflow } from "./wire";
 
 test.describe.configure({ timeout: 150_000 });
 
-const LONG_TITLE = "사이드바 가독성 개선과 행 높이 고정을 확인하는 아주 긴 한글 작업 제목 with a long English tail for truncation";
-
-/** Sets and clears the status tokens one pane reports, the way the label plugin does. */
-function report(herdr: HerdrFixture, pane: string, set: Record<string, string>, clear: string[] = []): void {
-  const args = ["pane", "report-metadata", pane, "--source", "e2e-status"];
-  for (const [name, value] of Object.entries(set)) args.push("--token", `${name}=${value}`);
-  for (const name of clear) args.push("--clear-token", name);
-  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
-}
+// The longest title the core keeps (30 characters), still wider than a row.
+const LONG_TITLE = "사이드바 가독성과 행 높이 고정 확인용 긴 작업 제목";
+const QUESTION = "PR 병합 전 검증을 다시 돌려도 될까요?";
 
 function declareChild(herdr: HerdrFixture, child: string, parent: string): void {
   execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
@@ -48,8 +42,10 @@ test("a root waiting on its child, the badge's child list, and the progress line
     await expect(page.locator('[data-sidebar="agents"]')).toBeVisible();
 
     // B1: the parent finished its own turn and its child is working.
-    report(herdr, parent, { status_done: "✓", progress: "하위 작업 위임 후 대기", elapsed: "12m" });
-    report(herdr, child, { status_working: "●", progress: "계보 투영 구현 중", elapsed: "3m" });
+    labelAgent(herdr, parent, { task: "Agent one", progress: "하위 작업 위임 후 대기" });
+    await finishFixtureTurn(herdr, parent, elsewhereTab(herdr));
+    labelAgent(herdr, child, { task: "Agent two", progress: "계보 투영 구현 중" });
+    await setFixtureLifecycle(herdr, child, "working");
     declareChild(herdr, child, parent);
     const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
@@ -69,7 +65,8 @@ test("a root waiting on its child, the badge's child list, and the progress line
 
     // B2: the child asks. The parent keeps waiting in Working, the badge
     // carries the question, and the row turns unread - never Needs You.
-    report(herdr, child, { status_question_new: "?", expected_reply: "PR 병합 전 검증을 다시 돌려도 될까요?" }, ["status_working"]);
+    await setFixtureLifecycle(herdr, child, "idle");
+    labelAgent(herdr, child, { task: "Agent two", reply: QUESTION, question: true });
     await expect(parentRow.locator('[data-badge-part="question"]')).toHaveText("?1", { timeout: 20_000 });
     await expect(parentRow).toHaveAttribute("data-waiting", "true");
     await expect(page.locator(`[data-agent-group="working"] [data-pane="${parent}"]`)).toBeVisible();
@@ -113,7 +110,7 @@ test("a root waiting on its child, the badge's child list, and the progress line
     await expect.poll(() => last.get("agent_tree_toggle")?.pane_id).toBe(parent);
     const childRow = page.locator(`[data-agent-list] [data-pane="${child}"]`);
     await expect(childRow).toHaveAttribute("data-depth", "1", { timeout: 15_000 });
-    await expect(childRow.locator('[data-agent-line="request"]')).toHaveText("PR 병합 전 검증을 다시 돌려도 될까요?");
+    await expect(childRow.locator('[data-agent-line="request"]')).toHaveText(QUESTION);
     await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0);
     await screenshot(page, "sidebar-status-unfolded");
 
@@ -121,7 +118,7 @@ test("a root waiting on its child, the badge's child list, and the progress line
     // cut on one line; the pointer and the keyboard move neither row, the
     // child's request keeps its one line, and the unfolded chevron waits in
     // a slot kept at rest until the pointer or the keyboard reaches the row.
-    report(herdr, child, { task: LONG_TITLE });
+    labelAgent(herdr, child, { task: LONG_TITLE, reply: QUESTION, question: true });
     const childTitle = childRow.locator("[data-agent-title]");
     await expect(childTitle).toHaveText(LONG_TITLE, { timeout: 20_000 });
     const parts = [parentRow.locator("[data-agent-title]"), parentRow.locator("[data-agent-elapsed]"), childTitle, childRow.locator("[data-agent-elapsed]")];
@@ -154,7 +151,8 @@ test("a root waiting on its child, the badge's child list, and the progress line
 
     // B3: the child answers and finishes; with both quiet the root is Done
     // and the ring is gone.
-    report(herdr, child, { status_done: "✓" }, ["status_question_new", "expected_reply"]);
+    await setFixtureLifecycle(herdr, child, "working");
+    await setFixtureLifecycle(herdr, child, "idle");
     await expect(page.locator(`[data-agent-group="done"] [data-pane="${parent}"]`)).toBeVisible({ timeout: 20_000 });
     await expect(parentRow).toHaveAttribute("data-waiting", "false");
     await screenshot(page, "sidebar-status-done");

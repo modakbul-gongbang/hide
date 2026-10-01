@@ -12,7 +12,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
 
@@ -33,7 +33,7 @@ async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
 }
 
 /** A Herdr workspace at `cwd`, with a fake `claude` agent titled `task` unless it is null. */
-async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null, elapsed?: string): Promise<string> {
+async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null): Promise<string> {
   const created = herdr.run(["workspace", "create", "--cwd", cwd, "--label", path.basename(cwd), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as {
     result: { root_pane: { pane_id: string } };
   };
@@ -41,8 +41,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
   await prompt(herdr, pane);
   if (task) {
     herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
-    const tokens = ["--token", `task=${task}`, ...(elapsed ? ["--token", `elapsed=${elapsed}`] : [])];
-    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", ...tokens], { env: herdr.env, timeout: 30_000 });
+    labelAgent(herdr, pane, { task });
   }
   return pane;
 }
@@ -116,8 +115,8 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     const notes = path.join(herdr.root, "notes");
     fs.mkdirSync(notes);
 
-    const mainPane = await workspaceAt(herdr, repo, "메인 체크아웃 정리", "12m");
-    const rowsPane = await workspaceAt(herdr, worktree, "사이드바 행 구현", "4m");
+    const mainPane = await workspaceAt(herdr, repo, "메인 체크아웃 정리");
+    const rowsPane = await workspaceAt(herdr, worktree, "사이드바 행 구현");
     const notesPane = await workspaceAt(herdr, notes, "회의록 요약 정리");
 
     daemon = await startHided(herdr, "projects-sidebar");
@@ -316,9 +315,9 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await expect(folder.locator(`[data-checkout-agents-open] [data-pane="${notesPane}"]`)).toBeVisible();
     await expect(folder.locator("[data-project-status]")).toBeVisible();
-    // B7: an agent that reported no elapsed time draws none rather than a made-up 0s.
-    await expect(folder.locator(`[data-pane="${notesPane}"] [data-agent-elapsed]`)).toHaveCount(0);
-    await expect(feature.locator(`[data-pane="${rowsPane}"] [data-agent-elapsed]`)).toHaveText("4m");
+    // B7: an agent's elapsed time counts from the state change the core saw.
+    await expect(folder.locator(`[data-pane="${notesPane}"] [data-agent-elapsed]`)).toHaveText(/^\d+[sm]$/);
+    await expect(feature.locator(`[data-pane="${rowsPane}"] [data-agent-elapsed]`)).toHaveText(/^\d+[sm]$/);
     await folderToggle.click();
     await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
 
@@ -509,14 +508,6 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
   }
 });
 
-/** Sets and clears the status tokens one pane reports, the way the label plugin does. */
-function reportStatus(herdr: HerdrFixture, pane: string, set: Record<string, string>, clear: string[] = []): void {
-  const args = ["pane", "report-metadata", pane, "--source", "e2e-status"];
-  for (const [name, value] of Object.entries(set)) args.push("--token", `${name}=${value}`);
-  for (const name of clear) args.push("--clear-token", name);
-  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
-}
-
 test("Needs You is raised above Pinned and stays in its tree, whatever is folded; Done is the Agents tab's", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
@@ -540,8 +531,9 @@ test("Needs You is raised above Pinned and stays in its tree, whatever is folded
     // Nothing needs the operator yet: no raised section is drawn.
     await expect(page.locator("[data-raised-group]")).toHaveCount(0);
 
-    reportStatus(herdr, asking, { status_question_new: "?", expected_reply: "배포해도 될까요?" });
-    reportStatus(herdr, finished, { status_done: "✓", progress: "정리 끝" });
+    labelAgent(herdr, asking, { task: "배포 전 확인 요청", reply: "배포해도 될까요?", question: true });
+    labelAgent(herdr, finished, { task: "Agent one", progress: "정리 끝" });
+    await finishFixtureTurn(herdr, finished, elsewhereTab(herdr));
     const needsYou = page.locator('[data-raised-group="needs_you"]');
     const done = page.locator('[data-raised-group="done"]');
     await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
@@ -576,7 +568,8 @@ test("Needs You is raised above Pinned and stays in its tree, whatever is folded
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
 
     // Answered, the agent leaves Needs You and its empty section goes.
-    reportStatus(herdr, asking, {}, ["status_question_new", "expected_reply"]);
+    await setFixtureLifecycle(herdr, asking, "working");
+    await setFixtureLifecycle(herdr, asking, "idle");
     await expect(needsYou).toHaveCount(0, { timeout: 20_000 });
   } finally {
     await daemon?.stop();

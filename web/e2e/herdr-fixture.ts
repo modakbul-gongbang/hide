@@ -321,6 +321,15 @@ export async function setFixtureLifecycle(fixture: HerdrFixture, pane: string, s
   return observed.agent_status;
 }
 
+/** A new tab in the fixture's workspace, which no agent runs in: Herdr's
+ * clients look at it while a turn ends elsewhere, so that turn ends unseen. */
+export function elsewhereTab(fixture: HerdrFixture): string {
+  const created = fixture.run(["tab", "create", "--workspace", fixture.workspace, "--label", "elsewhere", "--env", `PATH=${fixture.fixturePath}`, "--no-focus"]) as {
+    result: { tab: { tab_id: string } };
+  };
+  return created.result.tab.tab_id;
+}
+
 /**
  * A finished turn the operator has not seen: the pane works, then stops
  * while its tab is not the one Herdr's clients show, which Herdr reports as
