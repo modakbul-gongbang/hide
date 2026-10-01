@@ -109,6 +109,10 @@ impl GitWatch {
         let callback_pending = Arc::clone(&pending);
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
             match event {
+                // inotify reports a read as an Access event, and the `git`
+                // commands this reader runs read `HEAD` and `index`; counting
+                // those as changes made every read schedule the next one.
+                Ok(event) if matches!(event.kind, notify::EventKind::Access(_)) => {}
                 Ok(event) => {
                     let roots = callback_roots
                         .lock()
