@@ -26,11 +26,13 @@ let server: http.Server;
 let origin: string;
 let cliSequence = 0;
 let extraWorkspace: string | null = null;
+let nativeModifiers = new Set<string>();
 
 const PAGES: Record<string, string> = {
   "/a.html": '<!doctype html><meta charset="utf-8"><title>Page A</title><body style="background:lavender"><h1>Page A</h1><input id="q" aria-label="query">',
-  "/b.html": '<!doctype html><meta charset="utf-8"><title>Page B</title><body style="background:honeydew"><h1>Page B</h1>',
+  "/b.html": '<!doctype html><meta charset="utf-8"><title>Page B</title><body style="background:honeydew"><h1>Page B</h1><input id="q" aria-label="Page B input" autofocus>',
   "/c.html": '<!doctype html><meta charset="utf-8"><title>Page C</title><body style="background:mistyrose"><h1>Page C</h1>',
+  "/korean.html": '<!doctype html><meta charset="utf-8"><title>한글 브라우저</title><body style="font:16px system-ui"><h1>작업 공간 검증</h1><p>다른 영역의 내용과 선택은 읽을 수 있어야 합니다.</p><input aria-label="한글 입력" value="한글 확인"><script>window.tabKeys=0;addEventListener("keydown",e=>{if(e.code==="Tab")window.tabKeys++})</script>',
   "/signin.html": '<!doctype html><meta charset="utf-8"><title>Sign in</title><body style="background:aliceblue"><h1>Sign in</h1>',
   // A sign-in popup reports to the page that opened it and closes itself.
   "/popup.html": '<!doctype html><meta charset="utf-8"><title>Popup</title><script>window.opener.postMessage("signed-in", "*"); window.close();</script>',
@@ -65,6 +67,11 @@ test.beforeEach(() => {
 });
 
 test.afterEach(async () => {
+  let releaseFailure: string | null = null;
+  if (nativeModifiers.size) {
+    const released = releaseNativeModifiers();
+    if (released.status !== 0) releaseFailure = String(released.stderr) || "native modifier release failed";
+  }
   const info = test.info();
   if (info.status !== info.expectedStatus) console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
   await app?.close().catch(() => undefined);
@@ -72,6 +79,7 @@ test.afterEach(async () => {
   if (extraWorkspace) herdr.run(["workspace", "close", extraWorkspace]);
   extraWorkspace = null;
   run.cleanup();
+  expect(releaseFailure).toBeNull();
 });
 
 type View = { url: string; title: string; visible: boolean; bounds: { x: number; y: number; width: number; height: number }; pid: number };
@@ -297,9 +305,19 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(2);
   await expect(page.locator("[data-browser-still]")).toHaveCount(0);
 
-  // So does Recent Panels while ⌃ is held; Escape keeps the current surface.
+  // Explicitly bind the separate global command: these pages occupy two
+  // single-tab areas, so focused-area cycling deliberately does nothing.
+  await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="shortcuts"]').click();
+  await page.locator('[data-shortcut-record="recent_panel"]').click();
+  await page.keyboard.press("Control+KeyG");
+  await page.locator('[data-shortcut-apply="recent_panel"]').click();
+  await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText("⌃G");
+  await page.keyboard.press("Escape");
+
+  // Global Recent Panels freezes native pages while its modifier is held.
   await page.keyboard.down("Control");
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("KeyG");
   const cycle = page.locator("[data-cycle=panels]");
   await expect(cycle).toBeVisible();
   await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBeLessThan(2);
@@ -576,6 +594,210 @@ function zoomOf(url: string): Promise<Zoomed> {
 function menuClick(id: string): Promise<void> {
   return app!.evaluate(({ Menu }, id) => Menu.getApplicationMenu()!.getMenuItemById(id)!.click(), id);
 }
+
+/** macOS virtual key codes, and each modifier's flag bit, for the keys these cases press. */
+const MODIFIER_KEYS: Record<string, [code: number, flag: number]> = { control: [59, 0x40000], option: [58, 0x80000], shift: [56, 0x20000] };
+const KEY_CODES: Record<string, number> = { tab: 48, escape: 53, "1": 18, "2": 19, "3": 20 };
+
+/** Posts key events at the HID tap; with a pid, each one is refused unless that process is frontmost. */
+function postEvents(pid: number | null, events: [code: number, down: boolean, modifier: boolean, flags: number][]): ReturnType<typeof spawnSync> {
+  const script = `ObjC.import("CoreGraphics"); ObjC.import("AppKit");
+for (const [code, down, modifier, flags] of ${JSON.stringify(events)}) {
+  if (${pid !== null} && $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier !== ${pid ?? 0}) throw new Error("candidate lost foreground");
+  const event = $.CGEventCreateKeyboardEvent(null, code, down);
+  if (modifier) $.CGEventSetType(event, 12);
+  $.CGEventSetFlags(event, flags);
+  $.CGEventPost(0, event);
+  delay(0.025);
+}`;
+  return spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", timeout: 10_000 });
+}
+
+/**
+ * Real macOS input to the candidate `pid`, which must be the foreground
+ * process. A modifier is its own flags-changed event carrying its key code,
+ * as a physical key sends it; System Events' `key down control` sends none,
+ * so a page never sees Control go down or come up and a release proves nothing.
+ */
+function nativeKeys(pid: number, keys: string[]): void {
+  expect(Number.isInteger(pid) && pid > 0, `candidate pid ${pid}`).toBe(true);
+  const held = new Set(nativeModifiers);
+  const flagsOf = () => [...held].reduce((sum, name) => sum | MODIFIER_KEYS[name]![1], 0);
+  const events: [code: number, down: boolean, modifier: boolean, flags: number][] = [];
+  for (const key of keys) {
+    const [name, direction] = key.split(" ");
+    const modifier = MODIFIER_KEYS[name!];
+    if (modifier) {
+      if (direction === "down") held.add(name!);
+      else held.delete(name!);
+      events.push([modifier[0], direction === "down", true, flagsOf()]);
+      continue;
+    }
+    const code = KEY_CODES[key];
+    if (code === undefined) throw new Error(`no key code for ${key}`);
+    events.push([code, true, false, flagsOf()], [code, false, false, flagsOf()]);
+  }
+  // A modifier counts as down once its event may have been posted, so the
+  // test's cleanup releases it even when the script stopped partway.
+  for (const key of keys) if (key.endsWith(" down")) nativeModifiers.add(key.split(" ")[0]!);
+  const result = postEvents(pid, events);
+  if (result.status === 0) nativeModifiers = held;
+  expect(result.status, String(result.stderr)).toBe(0);
+}
+
+/** Lets go of every modifier a case left down, wherever the keyboard now is: an up event and nothing else. */
+function releaseNativeModifiers(): ReturnType<typeof spawnSync> {
+  const events = [...nativeModifiers].map((name) => [MODIFIER_KEYS[name]![0], false, true, 0] as [number, boolean, boolean, number]);
+  nativeModifiers = new Set();
+  return postEvents(null, events);
+}
+
+test("area cycle native: page input previews one exact area, releases once and cancels", { tag: NEEDS_FOCUS }, async () => {
+  ({ app } = await launch(run.env));
+  const page = await app.firstWindow();
+  const sent = countSent(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  await enterWorkspace(page, "fixture");
+  const outside = `${origin}/a.html`;
+  const previous = `${origin}/b.html`;
+  const current = `${origin}/korean.html`;
+  for (const url of [outside, previous]) expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  await page.keyboard.press("Meta+KeyK");
+  await page.keyboard.type("Expand side panel");
+  await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  if (await page.locator('[data-tools-toggle="on"]').count()) await page.locator('[data-tools-toggle="on"]').click();
+  await tab(page, "Page B").click({ button: "right" });
+  await page.locator('[role=menu] [data-menu-item=split_right]').click();
+  await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
+  expect(await openFromCli(current, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  const originalId = await displayIdOf(page, "한글 브라우저");
+  const previousId = await displayIdOf(page, "Page B");
+  const outsideId = await displayIdOf(page, "Page A");
+  const pid = app.process().pid!;
+  const focus = async (url: string) => {
+    await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      electron.focus({ steal: true }); window.focus();
+      const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+      child.webContents.focus();
+    }, url);
+    // macOS activates the window asynchronously, and an activation still in
+    // flight can hand the keyboard back to the shell a moment after the page
+    // took it; keys posted then reach no page. Accept the page only once it
+    // has kept the keyboard in the key window for a while, refocusing it otherwise.
+    const holds = () => app!.evaluate(({ BrowserWindow }, url) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+      return window.isFocused() && child.webContents.isFocused();
+    }, url);
+    await expect.poll(async () => {
+      await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
+        const window = BrowserWindow.getAllWindows()[0]!;
+        electron.focus({ steal: true }); window.focus();
+        const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+        child.webContents.focus();
+      }, url);
+      if (!(await holds())) return false;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return holds();
+    }).toBe(true);
+  };
+  const capture = async (name: string) => {
+    const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (!dir) return;
+    const source = await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getMediaSourceId());
+    const result = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.split(":")[1]!, path.join(dir, `${name}.png`)], { encoding: "utf8" });
+    expect(result.status, "exact native window capture failed: " + result.stderr).toBe(0);
+    fs.writeFileSync(path.join(dir, "area-native-identity.json"), JSON.stringify({ pid, window: source, daemonPid: run.daemonPid(), socket: herdr.socket, state: run.env.HIDE_STATE_DIR, userData: run.env.HIDE_DESKTOP_USER_DATA_DIR, pages: await views() }, null, 2));
+  };
+  await focus(current);
+  await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
+  const selections = () => page.locator('[data-view-tab-bar] [aria-selected=true]').evaluateAll(tabs => tabs.map(tab => tab.getAttribute("data-display")));
+  const before = await selections();
+  const commits = sent.get("view_layout") ?? 0;
+  nativeKeys(pid, ["control down", "tab"]);
+  await expect(page.locator('[data-cycle=area] [aria-selected=true]')).toHaveAttribute("data-cycle-row", previousId);
+  await expect(page.locator(`[data-cycle-row="${outsideId}"]`)).toHaveCount(0);
+  expect(await selections()).toEqual(before);
+  expect(sent.get("view_layout") ?? 0).toBe(commits);
+  await capture("area-native-preview");
+  nativeKeys(pid, ["control up"]);
+  await expect(page.locator("[data-cycle]")).toHaveCount(0);
+  await expect(tab(page, "Page B")).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => sent.get("view_layout") ?? 0).toBe(commits + 1);
+  await page.waitForTimeout(300);
+  expect(sent.get("view_layout") ?? 0).toBe(commits + 1);
+  expect(await inPage(current, "window.tabKeys")).toBe(0);
+  await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);
+  // A key code passes through the operator's input source, so the typing
+  // uses digits: a letter is ㅋ under Korean 2-set and leaves a composition
+  // open that turns the next chord into IME input.
+  nativeKeys(pid, ["1"]);
+  expect(await inPage(previous, "document.getElementById('q').value")).toBe("1");
+  expect(await inPage(current, "document.querySelector('input').value")).toBe("한글 확인");
+
+  // Escape from the actual native page preserves both the selection and owner.
+  await tab(page, "한글 브라우저").click();
+  await inPage(current, "document.querySelector('input').focus()");
+  await focus(current);
+  const canceled = sent.get("view_layout") ?? 0;
+  nativeKeys(pid, ["control down", "tab"]);
+  await expect(page.locator("[data-cycle=area]")).toBeVisible();
+  nativeKeys(pid, ["escape", "control up"]);
+  await expect(page.locator("[data-cycle]")).toHaveCount(0);
+  await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
+  expect(sent.get("view_layout") ?? 0).toBe(canceled);
+  await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
+  await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
+  nativeKeys(pid, ["2"]);
+  // The caret sits wherever the script's focus put it, so only the landing is checked.
+  expect(await inPage(current, "document.querySelector('input').value")).toContain("2");
+  await capture("area-native-readable");
+
+  // A native-window blur cancels a fresh hold; a later release cannot commit it.
+  nativeKeys(pid, ["control down", "tab"]);
+  await expect(page.locator("[data-cycle=area]")).toBeVisible();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
+  await expect(page.locator("[data-cycle]")).toHaveCount(0);
+  // The window coming back gives the keyboard to the page that started the hold.
+  await app.evaluate(({ app: electron, BrowserWindow }) => { electron.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
+  await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
+  nativeKeys(pid, ["control up"]);
+  await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
+  expect(sent.get("view_layout") ?? 0).toBe(canceled);
+  expect(originalId).not.toBe(previousId);
+
+  // A rebound two-modifier chord keeps the release contract: letting go of
+  // Control while Option is still down commits once, and the next typing
+  // reaches the chosen page rather than the page that started the hold.
+  await page.locator("[data-open-settings]").click();
+  await page.locator('[data-settings-tab="shortcuts"]').click();
+  await page.locator('[data-shortcut-record="recent_area_tab"]').click();
+  await page.keyboard.press("Control+Alt+Tab");
+  await page.locator('[data-shortcut-apply="recent_area_tab"]').click();
+  await expect(page.locator('[data-shortcut-effective="recent_area_tab"]')).toHaveText("⌃⌥⇥");
+  await page.keyboard.press("Escape");
+  await inPage(previous, "document.getElementById('q').value = ''");
+  await inPage(current, "document.querySelector('input').focus()");
+  await focus(current);
+  const rebound = sent.get("view_layout") ?? 0;
+  const originText = await inPage(current, "document.querySelector('input').value");
+  nativeKeys(pid, ["option down", "control down", "tab"]);
+  await expect(page.locator('[data-cycle=area] [aria-selected=true]')).toHaveAttribute("data-cycle-row", previousId);
+  expect(sent.get("view_layout") ?? 0).toBe(rebound);
+  await capture("area-native-rebound-preview");
+  nativeKeys(pid, ["control up"]);
+  await expect(page.locator("[data-cycle]")).toHaveCount(0);
+  await expect(tab(page, "Page B")).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => sent.get("view_layout") ?? 0).toBe(rebound + 1);
+  nativeKeys(pid, ["option up"]);
+  await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);
+  nativeKeys(pid, ["3"]);
+  expect(await inPage(previous, "document.getElementById('q').value")).toBe("3");
+  expect(await inPage(current, "document.querySelector('input').value")).toBe(originText);
+  expect(sent.get("view_layout") ?? 0).toBe(rebound + 1);
+  await capture("area-native-rebound-released");
+});
 
 /** A two-finger pinch at the middle of the page showing `url`, then the page's visual zoom. */
 function pinch(url: string): Promise<number> {

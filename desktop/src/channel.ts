@@ -29,3 +29,4 @@ export const BROWSER_SYNC_CHANNEL = "hide:browser-sync";
 export const BROWSER_CAPTURE_CHANNEL = "hide:browser-capture";
 export const BROWSER_COMMAND_CHANNEL = "hide:browser-command";
 export const BROWSER_EVENT_CHANNEL = "hide:browser-event";
+export const BROWSER_CYCLE_END_CHANNEL = "hide:browser-cycle-end";

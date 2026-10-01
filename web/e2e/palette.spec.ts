@@ -73,7 +73,8 @@ test("⌘K groups agents, projects and checkouts, and the sidebar Search icon op
     await expect(firstRow.locator("[data-palette-enter]")).toBeVisible();
     await screenshot(page, "palette-dark-default");
     const project = page.locator('[data-palette-group="projects"] [data-palette-row]').first();
-    for (let step = 0; step < 6 && (await project.getAttribute("aria-selected")) !== "true"; step += 1) await page.keyboard.press("ArrowDown");
+    const rows = await page.locator('[data-palette="Search"] [data-palette-row]').count();
+    for (let step = 0; step < rows && (await project.getAttribute("aria-selected")) !== "true"; step += 1) await page.keyboard.press("ArrowDown");
     await expect(project).toHaveAttribute("aria-selected", "true");
     await expect(project.locator("[data-palette-enter]")).toBeVisible();
     await expect(firstRow.locator("[data-palette-enter]")).toBeHidden();

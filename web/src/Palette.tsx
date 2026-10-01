@@ -221,6 +221,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
       else if ("tool" in entry.command) actions.setTool(entry.command.tool, entry.command.visible);
       else if ("agent" in entry.command) actions.runAgentCommand(entry.command.agent);
       else if ("view" in entry.command) actions.runViewCommand(entry.command.view);
+      else if ("navigation" in entry.command) useUiStore.getState().setCommandRequest({ id: entry.command.navigation });
       else if ("startAgent" in entry.command) actions.openStartPanel();
       else actions.openFilePaletteBeside();
     } else if (entry.kind === "device" && entry.deviceId) {

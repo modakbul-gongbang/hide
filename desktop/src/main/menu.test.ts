@@ -12,7 +12,7 @@ describe("the app menu (B9)", () => {
     expect(() => accelerator({ code: "IntlRo", meta: true })).toThrow();
   });
 
-  it("places every clickable command exactly once, and the cycles nowhere", () => {
+  it("places every clickable command exactly once, including the immediate navigation commands", () => {
     const placed = Object.values(MENU_LAYOUT).flat().filter((id) => id !== null);
     expect(new Set(placed).size).toBe(placed.length);
     const expected = REGISTRY.map((command) => command.id).filter((id) => !KEYBOARD_ONLY.includes(id));
@@ -27,6 +27,11 @@ describe("the app menu (B9)", () => {
     expect(newTab?.accelerator).toBe("Command+T");
     const closeTab = items.find((item) => item.id === "close_tab");
     expect(closeTab?.accelerator).toBe("Command+W");
+    const cycle = items.find((item) => item.id === "recent_area_tab");
+    expect(cycle?.accelerator).toBeUndefined();
+    (cycle?.click as () => void)();
+    expect(sent).toEqual(["recent_area_tab"]);
+    sent.length = 0;
     (newTab?.click as () => void)();
     expect(sent).toEqual(["new_tab"]);
     // No standard item claims a chord the registry owns.
