@@ -34281,6 +34281,2352 @@
       "padding": "$--spacing-md",
       "x": 8000,
       "y": 7264
+    },
+    {
+      "type": "frame",
+      "id": "cmp-agent-graph-box",
+      "name": "Component / Agent graph box",
+      "children": [
+        {
+          "type": "text",
+          "id": "cmp-agent-graph-box-title",
+          "name": "Agent graph box",
+          "content": "Agent graph box",
+          "fill": "$--foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "cmp-agent-graph-box-spec",
+          "name": "A checkout in the Agents gra",
+          "content": "A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph in its pull request’s colour and the mono branch, the purpose, then the issue chip, PR chip with its CI mark and 변경 요청, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.",
+          "fill": "$--subtle-foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "400",
+          "textGrowth": "fixed-width",
+          "width": 820
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-graph-box-master-card",
+          "name": "Master",
+          "children": [
+            {
+              "type": "text",
+              "id": "cmp-agent-graph-box-master-card-cap",
+              "name": "Master",
+              "content": "Master",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "agb-m",
+              "name": "Agent graph box",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "agb-head",
+                  "name": "Head",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "agb-l1",
+                      "name": "Branch",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "agb-glyph",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "git-branch",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-branch",
+                          "name": "branch-name",
+                          "content": "branch-name",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 18
+                    },
+                    {
+                      "type": "frame",
+                      "id": "agb-l2",
+                      "name": "Purpose",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "agb-purpose",
+                          "name": "purpose",
+                          "content": "purpose",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 18
+                    },
+                    {
+                      "type": "frame",
+                      "id": "agb-l3",
+                      "name": "Chips",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "agb-issue",
+                          "name": "Issue chip",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "agb-issue-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "circle-dot",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-issue-t",
+                              "name": "#192",
+                              "content": "#192",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-pr",
+                          "name": "PR chip",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "agb-pr-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-pull-request",
+                              "library": "lucide",
+                              "fill": "$--pr-open"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-pr-n",
+                              "name": "#221",
+                              "content": "#221",
+                              "fill": "$--pr-open",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "agb-pr-ci",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "check",
+                              "library": "lucide",
+                              "fill": "$--success"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-pr-rv",
+                              "name": "변경 요청",
+                              "content": "변경 요청",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "enabled": false
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-xs"
+                          ],
+                          "height": 18,
+                          "cornerRadius": "$--radius-sm",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-dist",
+                          "name": "↑3",
+                          "content": "↑3",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-files",
+                          "name": "4 files",
+                          "content": "4 files",
+                          "fill": "$--warning",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-agents",
+                          "name": "에이전트 1",
+                          "content": "에이전트 1",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "enabled": false
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-sp",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-clean",
+                          "name": "정리",
+                          "content": "정리",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "enabled": false
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 18
+                    }
+                  ],
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "width": "fill_container",
+                  "height": 74,
+                  "padding": [
+                    0,
+                    "$--spacing-sm"
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "agb-row1",
+                  "name": "Row 1",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "agb-row1-l1",
+                      "name": "Line",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "agb-row1-ind",
+                          "name": "Indent",
+                          "children": [],
+                          "width": 18,
+                          "height": 1,
+                          "enabled": false
+                        },
+                        {
+                          "type": "icon",
+                          "id": "agb-row1-arrow",
+                          "name": "Glyph",
+                          "enabled": false,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "corner-down-right",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row1-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "agb-row1-dot",
+                              "name": "Dot",
+                              "enabled": false,
+                              "width": 7,
+                              "height": 7,
+                              "fill": "$--agent-working"
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "agb-row1-ring",
+                              "name": "Ring",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--muted-foreground",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row1-glyph",
+                              "name": "?",
+                              "content": "?",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "enabled": false
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row1-provider",
+                          "name": "Provider artwork",
+                          "children": [],
+                          "width": 14,
+                          "height": 14,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-row1-title",
+                          "name": "agent title",
+                          "content": "agent title",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row1-sp",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row1-tucked",
+                          "name": "Tucked badge",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "agb-row1-tk-g",
+                              "name": "✓",
+                              "content": "✓",
+                              "fill": "$--success",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row1-tk-n",
+                              "name": "2",
+                              "content": "2",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-xs"
+                          ],
+                          "height": 16,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-row1-age",
+                          "name": "3m",
+                          "content": "3m",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 32,
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "agb-row1-q",
+                      "name": "Question",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "agb-row1-q-t",
+                          "name": "question",
+                          "content": "question",
+                          "fill": "$--warning",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 16,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ],
+                      "enabled": false
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "width": "fill_container"
+                },
+                {
+                  "type": "frame",
+                  "id": "agb-row2",
+                  "name": "Row 2",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "agb-row2-l1",
+                      "name": "Line",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "agb-row2-ind",
+                          "name": "Indent",
+                          "children": [],
+                          "width": 18,
+                          "height": 1,
+                          "enabled": false
+                        },
+                        {
+                          "type": "icon",
+                          "id": "agb-row2-arrow",
+                          "name": "Glyph",
+                          "enabled": false,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "corner-down-right",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row2-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "agb-row2-dot",
+                              "name": "Dot",
+                              "enabled": false,
+                              "width": 7,
+                              "height": 7,
+                              "fill": "$--agent-working"
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "agb-row2-ring",
+                              "name": "Ring",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--muted-foreground",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row2-glyph",
+                              "name": "?",
+                              "content": "?",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "enabled": false
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row2-provider",
+                          "name": "Provider artwork",
+                          "children": [],
+                          "width": 14,
+                          "height": 14,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-row2-title",
+                          "name": "agent title",
+                          "content": "agent title",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row2-sp",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row2-tucked",
+                          "name": "Tucked badge",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "agb-row2-tk-g",
+                              "name": "✓",
+                              "content": "✓",
+                              "fill": "$--success",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row2-tk-n",
+                              "name": "2",
+                              "content": "2",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-xs"
+                          ],
+                          "height": 16,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-row2-age",
+                          "name": "3m",
+                          "content": "3m",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 32,
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "agb-row2-q",
+                      "name": "Question",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "agb-row2-q-t",
+                          "name": "question",
+                          "content": "question",
+                          "fill": "$--warning",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 16,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ],
+                      "enabled": false
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "width": "fill_container",
+                  "enabled": false
+                },
+                {
+                  "type": "frame",
+                  "id": "agb-row3",
+                  "name": "Row 3",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "agb-row3-l1",
+                      "name": "Line",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "agb-row3-ind",
+                          "name": "Indent",
+                          "children": [],
+                          "width": 18,
+                          "height": 1,
+                          "enabled": false
+                        },
+                        {
+                          "type": "icon",
+                          "id": "agb-row3-arrow",
+                          "name": "Glyph",
+                          "enabled": false,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "corner-down-right",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row3-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "agb-row3-dot",
+                              "name": "Dot",
+                              "enabled": false,
+                              "width": 7,
+                              "height": 7,
+                              "fill": "$--agent-working"
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "agb-row3-ring",
+                              "name": "Ring",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--muted-foreground",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row3-glyph",
+                              "name": "?",
+                              "content": "?",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "enabled": false
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row3-provider",
+                          "name": "Provider artwork",
+                          "children": [],
+                          "width": 14,
+                          "height": 14,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-row3-title",
+                          "name": "agent title",
+                          "content": "agent title",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row3-sp",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row3-tucked",
+                          "name": "Tucked badge",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "agb-row3-tk-g",
+                              "name": "✓",
+                              "content": "✓",
+                              "fill": "$--success",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row3-tk-n",
+                              "name": "2",
+                              "content": "2",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-xs"
+                          ],
+                          "height": 16,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        {
+                          "type": "text",
+                          "id": "agb-row3-age",
+                          "name": "3m",
+                          "content": "3m",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 32,
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "agb-row3-q",
+                      "name": "Question",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "agb-row3-q-t",
+                          "name": "question",
+                          "content": "question",
+                          "fill": "$--warning",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 16,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ],
+                      "enabled": false
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "width": "fill_container",
+                  "enabled": false
+                }
+              ],
+              "reusable": true,
+              "layout": "vertical",
+              "gap": 0,
+              "width": 272,
+              "cornerRadius": "$--radius-md",
+              "fill": "$--card",
+              "stroke": "$--border",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner",
+              "padding": [
+                0,
+                0,
+                6,
+                0
+              ]
+            }
+          ],
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "alignItems": "start",
+          "width": "fit_content"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-graph-box-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "agb-primary-l-cell",
+              "name": "Primary",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-primary-l-cap",
+                  "name": "Primary",
+                  "content": "Primary",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-primary-l",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Primary",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "house",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "main"
+                    },
+                    "agb-purpose": {
+                      "content": "Observer · 계획과 위임"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": true,
+                      "content": "에이전트 2"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": true,
+                      "stroke": "$--muted-foreground"
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "SIGTERM 정리 오케스트레이션"
+                    },
+                    "agb-row1-age": {
+                      "content": "20m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "agb-row2-ring": {
+                      "enabled": false
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "Overview 진입 흐름"
+                    },
+                    "agb-row2-age": {
+                      "content": "1m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": false
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-q": {
+                      "enabled": false
+                    },
+                    "agb-row2-q-t": {
+                      "content": ""
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-asking-l-cell",
+              "name": "Worktree with asking row",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-asking-l-cap",
+                  "name": "Worktree with asking row",
+                  "content": "Worktree with asking row",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-asking-l",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Worktree with asking row",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-draft"
+                    },
+                    "agb-branch": {
+                      "content": "192-hided-sigterm-handler"
+                    },
+                    "agb-purpose": {
+                      "content": "#192 SIGTERM 정리"
+                    },
+                    "agb-issue": {
+                      "enabled": true
+                    },
+                    "agb-issue-t": {
+                      "content": "#192"
+                    },
+                    "agb-pr": {
+                      "enabled": true
+                    },
+                    "agb-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-draft"
+                    },
+                    "agb-pr-n": {
+                      "content": "#221",
+                      "fill": "$--pr-draft"
+                    },
+                    "agb-pr-ci": {
+                      "enabled": true,
+                      "icon": "x",
+                      "fill": "$--destructive"
+                    },
+                    "agb-pr-rv": {
+                      "enabled": true
+                    },
+                    "agb-dist": {
+                      "enabled": true,
+                      "content": "↑3"
+                    },
+                    "agb-files": {
+                      "enabled": true,
+                      "content": "4 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": true,
+                      "content": "?",
+                      "fill": "$--warning"
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "SIGTERM 처리와 자식 정리",
+                      "fontWeight": "600"
+                    },
+                    "agb-row1-age": {
+                      "content": "4m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row1-q-t": {
+                      "content": "기존 stdin 종료 경로도 남길까요?"
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "agb-row2-ring": {
+                      "enabled": false
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "리뷰: 종료 경로 회귀"
+                    },
+                    "agb-row2-age": {
+                      "content": "2m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": true
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": true
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-q": {
+                      "enabled": false
+                    },
+                    "agb-row2-q-t": {
+                      "content": ""
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-resting-l-cell",
+              "name": "Resting (merged, dimmed)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-resting-l-cap",
+                  "name": "Resting (merged, dimmed)",
+                  "content": "Resting (merged, dimmed)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-resting-l",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Resting (merged, dimmed)",
+                  "opacity": 0.72,
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-merge",
+                      "fill": "$--pr-merged"
+                    },
+                    "agb-branch": {
+                      "content": "fix/checkout-capability-follow-up"
+                    },
+                    "agb-purpose": {
+                      "content": "체크아웃 권한 후속"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": true
+                    },
+                    "agb-pr-g": {
+                      "icon": "git-merge",
+                      "fill": "$--pr-merged"
+                    },
+                    "agb-pr-n": {
+                      "content": "#216",
+                      "fill": "$--pr-merged"
+                    },
+                    "agb-pr-ci": {
+                      "enabled": false
+                    },
+                    "agb-pr-rv": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": true
+                    },
+                    "agb-head": {
+                      "opacity": 0.72
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": true,
+                      "stroke": "$--muted-foreground"
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "체크아웃 기능 구현 및 정리"
+                    },
+                    "agb-row1-age": {
+                      "content": "2h"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": false
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-tucked-l-cell",
+              "name": "Row with tucked badge",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-tucked-l-cap",
+                  "name": "Row with tucked badge",
+                  "content": "Row with tucked badge",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-tucked-l",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Row with tucked badge",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "house",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "main"
+                    },
+                    "agb-purpose": {
+                      "content": "Observer · 계획과 위임"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": true,
+                      "content": "에이전트 1"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "agent-tab-groups"
+                    },
+                    "agb-row1-age": {
+                      "content": "8m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": true
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "2"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": false
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-selected-l-cell",
+              "name": "Selected",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-selected-l-cap",
+                  "name": "Selected",
+                  "content": "Selected",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-selected-l",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Selected",
+                  "stroke": "$--primary",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-branch",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "prd/agent-tab-groups"
+                    },
+                    "agb-purpose": {
+                      "content": "Agent tab groups"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": true,
+                      "content": "↑39 ↓17"
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": true,
+                      "stroke": "$--muted-foreground"
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "Agent tab groups 구현"
+                    },
+                    "agb-row1-age": {
+                      "content": "8m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": false
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-graph-box-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "agb-primary-d-cell",
+              "name": "Primary",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-primary-d-cap",
+                  "name": "Primary",
+                  "content": "Primary",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-primary-d",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Primary",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "house",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "main"
+                    },
+                    "agb-purpose": {
+                      "content": "Observer · 계획과 위임"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": true,
+                      "content": "에이전트 2"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": true,
+                      "stroke": "$--muted-foreground"
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "SIGTERM 정리 오케스트레이션"
+                    },
+                    "agb-row1-age": {
+                      "content": "20m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "agb-row2-ring": {
+                      "enabled": false
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "Overview 진입 흐름"
+                    },
+                    "agb-row2-age": {
+                      "content": "1m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": false
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-q": {
+                      "enabled": false
+                    },
+                    "agb-row2-q-t": {
+                      "content": ""
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-asking-d-cell",
+              "name": "Worktree with asking row",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-asking-d-cap",
+                  "name": "Worktree with asking row",
+                  "content": "Worktree with asking row",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-asking-d",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Worktree with asking row",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-draft"
+                    },
+                    "agb-branch": {
+                      "content": "192-hided-sigterm-handler"
+                    },
+                    "agb-purpose": {
+                      "content": "#192 SIGTERM 정리"
+                    },
+                    "agb-issue": {
+                      "enabled": true
+                    },
+                    "agb-issue-t": {
+                      "content": "#192"
+                    },
+                    "agb-pr": {
+                      "enabled": true
+                    },
+                    "agb-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-draft"
+                    },
+                    "agb-pr-n": {
+                      "content": "#221",
+                      "fill": "$--pr-draft"
+                    },
+                    "agb-pr-ci": {
+                      "enabled": true,
+                      "icon": "x",
+                      "fill": "$--destructive"
+                    },
+                    "agb-pr-rv": {
+                      "enabled": true
+                    },
+                    "agb-dist": {
+                      "enabled": true,
+                      "content": "↑3"
+                    },
+                    "agb-files": {
+                      "enabled": true,
+                      "content": "4 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": true,
+                      "content": "?",
+                      "fill": "$--warning"
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "SIGTERM 처리와 자식 정리",
+                      "fontWeight": "600"
+                    },
+                    "agb-row1-age": {
+                      "content": "4m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row1-q-t": {
+                      "content": "기존 stdin 종료 경로도 남길까요?"
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "agb-row2-ring": {
+                      "enabled": false
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "리뷰: 종료 경로 회귀"
+                    },
+                    "agb-row2-age": {
+                      "content": "2m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": true
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": true
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-q": {
+                      "enabled": false
+                    },
+                    "agb-row2-q-t": {
+                      "content": ""
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-resting-d-cell",
+              "name": "Resting (merged, dimmed)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-resting-d-cap",
+                  "name": "Resting (merged, dimmed)",
+                  "content": "Resting (merged, dimmed)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-resting-d",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Resting (merged, dimmed)",
+                  "opacity": 0.72,
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-merge",
+                      "fill": "$--pr-merged"
+                    },
+                    "agb-branch": {
+                      "content": "fix/checkout-capability-follow-up"
+                    },
+                    "agb-purpose": {
+                      "content": "체크아웃 권한 후속"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": true
+                    },
+                    "agb-pr-g": {
+                      "icon": "git-merge",
+                      "fill": "$--pr-merged"
+                    },
+                    "agb-pr-n": {
+                      "content": "#216",
+                      "fill": "$--pr-merged"
+                    },
+                    "agb-pr-ci": {
+                      "enabled": false
+                    },
+                    "agb-pr-rv": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": true
+                    },
+                    "agb-head": {
+                      "opacity": 0.72
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": true,
+                      "stroke": "$--muted-foreground"
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "체크아웃 기능 구현 및 정리"
+                    },
+                    "agb-row1-age": {
+                      "content": "2h"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": false
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-tucked-d-cell",
+              "name": "Row with tucked badge",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-tucked-d-cap",
+                  "name": "Row with tucked badge",
+                  "content": "Row with tucked badge",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-tucked-d",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Row with tucked badge",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "house",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "main"
+                    },
+                    "agb-purpose": {
+                      "content": "Observer · 계획과 위임"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": true,
+                      "content": "에이전트 1"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "agent-tab-groups"
+                    },
+                    "agb-row1-age": {
+                      "content": "8m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": true
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "2"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": false
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-selected-d-cell",
+              "name": "Selected",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-selected-d-cap",
+                  "name": "Selected",
+                  "content": "Selected",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-selected-d",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Selected",
+                  "stroke": "$--primary",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-branch",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "prd/agent-tab-groups"
+                    },
+                    "agb-purpose": {
+                      "content": "Agent tab groups"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": true,
+                      "content": "↑39 ↓17"
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": true,
+                      "stroke": "$--muted-foreground"
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "Agent tab groups 구현"
+                    },
+                    "agb-row1-age": {
+                      "content": "8m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": false
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "$--card",
+      "cornerRadius": "$--radius-lg",
+      "width": "fit_content",
+      "x": 1200,
+      "y": 8281
     }
   ],
   "variables": {
@@ -35805,14 +38151,6 @@
     "--lens-bar-height": {
       "type": "number",
       "value": 4
-    },
-    "--lens-lane-head": {
-      "type": "number",
-      "value": 296
-    },
-    "--lens-node-width": {
-      "type": "number",
-      "value": 232
     },
     "--lens-tile-min": {
       "type": "number",
