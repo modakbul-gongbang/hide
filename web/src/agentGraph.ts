@@ -67,12 +67,12 @@ export function chipOfBucket(bucket: AgentBucket): StatusChip {
   return bucket === "turn" ? "turn" : bucket === "resting" ? "resting" : "working";
 }
 
-/** `#272` and `272` name one number, so a search is read without its leading `#`. */
+/** A number with its hash sign and without it name one number, so a search is read without the sign. */
 function searchTerm(query: string): string {
   return query.trim().toLowerCase().replace(/^#/, "");
 }
 
-/** The digits an issue or pull request is found by: `#271`, `L-1`, `271` all carry theirs. */
+/** The digits an issue or pull request is found by: a hashed id, a local `L-1` and a bare number all carry theirs. */
 function numberOf(id: string | null | undefined): string | null {
   const digits = id?.match(/\d+/)?.[0];
   return digits ?? null;
