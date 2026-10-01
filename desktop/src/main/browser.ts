@@ -11,14 +11,18 @@
 //                 which ends its renderer process
 //
 // A hidden page past `MAX_LIVE_VIEWS` is closed and loads again when shown.
+//
+// A sized popup a page on screen opens (a sign-in window) is a real child
+// window that keeps its opener, belongs to that page and closes with it; a
+// link to another app leaves only after the operator agrees.
 
-import { BrowserWindow, ipcMain, Menu, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, WebContentsView, type BrowserWindowConstructorOptions, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session, type WebContents, type WindowOpenHandlerResponse } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
 import type { CommandId } from "../../../web/src/shortcuts";
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
-import { browserPartition, loadable, MAX_LIVE_VIEWS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds, viewKey, type PageZoom } from "./browserSync";
+import { appScheme, browserPartition, isPopup, loadable, MAX_LIVE_VIEWS, MAX_POPUPS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, popupBounds, remoteRequest, toBounds, viewKey, type PageZoom } from "./browserSync";
 import type { HostLog } from "./log";
 import { accelerator } from "./menu";
 
@@ -51,10 +55,19 @@ type Page = {
 
 export type ResolvedPage = { url: string; source_url: string; load: number };
 
+/** A popup window a page opened, under the page that owns it (for a popup's own popup, the same page). */
+type Popup = { window: BrowserWindow; owner: Page };
+
 export class BrowserViews {
   private readonly pages = new Map<string, Page>();
+  /** Popup windows by their contents' id. */
+  private readonly popups = new Map<number, Popup>();
   private readonly configuredSessions = new Set<string>();
   private window: BrowserWindow | null = null;
+  /** The question open about a link to another app; one at a time. */
+  private asking: symbol | null = null;
+  /** Contents whose app link the operator declined; they ask again only after their next navigation. */
+  private readonly declined = new Set<number>();
 
   constructor(
     private readonly log: HostLog,
@@ -62,6 +75,8 @@ export class BrowserViews {
     private readonly trusted: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean,
     private readonly resolve: (workspace: string, id: string, load: number) => Promise<ResolvedPage>,
     private readonly release: (workspace: string, id: string, load: number) => void,
+    /** Shows a popup window the way the host shows its own, so a test run never activates the app. */
+    private readonly present: (window: BrowserWindow, focus: boolean) => void,
   ) {
     ipcMain.on(BROWSER_SYNC_CHANNEL, (event, value: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "sync" });
@@ -138,8 +153,22 @@ export class BrowserViews {
   }
 
   private zoom(page: Page, zoom: PageZoom): void {
-    const contents = page.view.webContents;
-    contents.setZoomFactor(nextZoomFactor(contents.getZoomFactor(), zoom));
+    zoomContents(page.view.webContents, zoom);
+  }
+
+  /**
+   * An app-menu command while a popup window holds the keyboard: Close closes
+   * the popup, text size zooms it, and nothing else reaches the shell behind
+   * it, so ⌘W in a sign-in window never closes one of the operator's views.
+   */
+  popupCommand(command: CommandId): boolean {
+    const focused = BrowserWindow.getFocusedWindow();
+    const popup = focused ? [...this.popups.values()].find((row) => row.window === focused) : undefined;
+    if (!popup) return false;
+    const zoom = PAGE_ZOOM_COMMANDS[command];
+    if (command === "close_tab" || command === "close_pane") popup.window.close();
+    else if (zoom) zoomContents(popup.window.webContents, zoom);
+    return true;
   }
 
   private sync(workspace: string | null, displays: BrowserPlacement[], retained: { workspace: string; id: string }[]): void {
@@ -208,11 +237,21 @@ export class BrowserViews {
     const pageSession = session.fromPartition(partition);
     if (this.configuredSessions.has(partition)) return pageSession;
     this.configuredSessions.add(partition);
-    pageSession.setPermissionRequestHandler((_contents, permission, callback) => callback(PAGE_PERMISSIONS.has(permission)));
+    pageSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+      // A link to another app that no navigation guard saw (a frame's, say)
+      // reaches Chromium's external protocol handler, which asks here. The
+      // question is hide's own, so Chromium's opener never runs.
+      if (permission !== "openExternal") return callback(PAGE_PERMISSIONS.has(permission));
+      callback(false);
+      const page = this.ownerOf(contents.id);
+      const url = "externalURL" in details ? details.externalURL : undefined;
+      if (page && url) this.openInApp(page, contents, url, details.requestingUrl);
+      else this.log.event("browser.app_link_refused", { reason: "no_page" });
+    });
     pageSession.setPermissionCheckHandler((_contents, permission) => PAGE_PERMISSIONS.has(permission));
     pageSession.on("will-download", (_event, item) => this.log.event("browser.download", { mime: item.getMimeType() }));
     pageSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
-      const page = [...this.pages.values()].find((candidate) => candidate.view.webContents.id === details.webContentsId);
+      const page = this.ownerOf(details.webContentsId);
       const outcome = !page
         ? partition === "persist:hide-browser-web" ? remoteRequest({ source_url: details.url, url: details.url }, details.url) : { cancel: true }
         : !page.route ? { cancel: true }
@@ -279,17 +318,16 @@ export class BrowserViews {
       this.update(page, { loading: false, failure: `The page stopped (${details.reason})` });
     });
     contents.on("focus", () => this.emit({ kind: "focus", workspace: page.workspace, id: page.id }));
-    contents.setWindowOpenHandler(({ url }) => {
-      // A new window is another browser display, which the core opens.
-      if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
-        this.log.event("browser.window_open_refused", { reason: "remote_file_boundary" });
-        return { action: "deny" };
-      }
-      if (loadable(url) && url !== "about:blank") this.emit({ kind: "open", workspace: page.workspace, id: page.id, url: this.sourceAddress(page, url) });
-      else this.log.event("browser.window_open_refused", { protocol: protocolOf(url) });
-      return { action: "deny" };
-    });
-    const guard = (event: { preventDefault(): void }, url: string) => {
+    this.guard(page, contents);
+  }
+
+  /** Where the contents of `page`, or of a popup it owns, may go and what may open from them. */
+  private guard(page: Page, contents: WebContents): void {
+    contents.setWindowOpenHandler(({ url, disposition, features, referrer }) => this.openWindow(page, contents, url, isPopup(disposition, features), referrer.url));
+    const forget = () => this.declined.delete(contents.id);
+    contents.on("did-navigate", forget);
+    contents.once("destroyed", forget);
+    const navigation = (event: { preventDefault(): void }, url: string) => {
       if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
         event.preventDefault();
         this.log.event("browser.navigation_refused", { reason: "remote_file_boundary" });
@@ -297,12 +335,162 @@ export class BrowserViews {
       }
       if (loadable(url)) return;
       event.preventDefault();
-      const protocol = protocolOf(url);
-      if (protocol === "mailto:") shell.openExternal(url).catch(() => undefined);
-      this.log.event("browser.navigation_refused", { protocol });
+      if (appScheme(url)) this.openInApp(page, contents, url);
+      else this.log.event("browser.navigation_refused", { protocol: protocolOf(url) });
     };
-    contents.on("will-navigate", guard);
-    contents.on("will-redirect", guard);
+    contents.on("will-navigate", navigation);
+    contents.on("will-redirect", navigation);
+  }
+
+  /**
+   * A page asking for a new window. A sized popup (`window.open` with window
+   * features, the way a sign-in button opens one) is a real window that keeps
+   * its opener, so the sign-in can post its result back and close itself;
+   * a tab (a `target=_blank` link, a shift-click, `window.open` without
+   * features) is another browser display, which the core opens.
+   */
+  private openWindow(page: Page, contents: WebContents, url: string, popup: boolean, referrer: string): WindowOpenHandlerResponse {
+    if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
+      this.log.event("browser.window_open_refused", { reason: "remote_file_boundary" });
+      return { action: "deny" };
+    }
+    if (!loadable(url)) {
+      // A frame's window.open names its frame only through the referrer, when its policy leaves one.
+      if (appScheme(url)) this.openInApp(page, contents, url, referrer || undefined);
+      else this.log.event("browser.window_open_refused", { protocol: protocolOf(url) });
+      return { action: "deny" };
+    }
+    if (popup) return this.popup(page, contents);
+    if (url !== "about:blank") this.emit({ kind: "open", workspace: page.workspace, id: page.id, url: this.sourceAddress(page, url) });
+    else this.log.event("browser.window_open_refused", { protocol: "about:" });
+    return { action: "deny" };
+  }
+
+  /**
+   * A popup from a page on screen, at most `MAX_POPUPS` at once. Its window is
+   * built here from hide's own options, so of the window's geometry and chrome
+   * only a size the page asked for, held to the work area, reaches it: never a
+   * frameless, always-on-top, unclosable, modal or off-screen window. It shares its opener's
+   * session and, with `outlivesOpener` left false, Electron closes it with its
+   * opener, so it ends with its page.
+   */
+  private popup(page: Page, contents: WebContents): WindowOpenHandlerResponse {
+    const parent = this.window;
+    if (!parent || parent.isDestroyed()) return { action: "deny" };
+    if (!this.shown(page, contents)) {
+      this.log.event("browser.popup_refused", { reason: "hidden" });
+      return { action: "deny" };
+    }
+    if (this.popups.size >= MAX_POPUPS) {
+      this.log.event("browser.popup_refused", { reason: "cap", live: this.popups.size });
+      return { action: "deny" };
+    }
+    return {
+      action: "allow",
+      createWindow: (options) => {
+        const bounds = parent.getBounds();
+        const window = new BrowserWindow({
+          ...popupBounds({ width: options.width, height: options.height }, bounds, screen.getDisplayMatching(bounds).workArea),
+          parent,
+          show: false,
+          minimizable: false,
+          fullscreenable: false,
+          // Electron's preferences for the popup, the opener's with Node, the
+          // sandbox and isolation forced, and the contents Chromium made for
+          // it: the window must carry them, or the opener is lost.
+          webPreferences: options.webPreferences,
+          webContents: (options as { webContents?: WebContents }).webContents,
+        } as BrowserWindowConstructorOptions);
+        this.adopt(page, window, contents.isFocused());
+        return window.webContents;
+      },
+    };
+  }
+
+  /** A popup takes the keyboard only from a page that held it, so a page cannot pull focus from the operator's typing. */
+  private adopt(owner: Page, window: BrowserWindow, focus: boolean): void {
+    const id = window.webContents.id;
+    this.popups.set(id, { window, owner });
+    window.once("closed", () => {
+      this.popups.delete(id);
+      this.log.event("browser.popup_closed", { live: this.popups.size });
+    });
+    this.guard(owner, window.webContents);
+    this.present(window, focus);
+    this.log.event("browser.popup_opened", { live: this.popups.size });
+  }
+
+  /** Whether the contents asking are on screen: a page shown in the front Workspace, or a popup's visible window. */
+  private shown(page: Page, contents: WebContents): boolean {
+    if (contents.id === page.view.webContents.id) return page.visible;
+    return this.popups.get(contents.id)?.window.isVisible() ?? false;
+  }
+
+  /** The page a request or a question comes from: a page's own contents, or a popup it owns. */
+  private ownerOf(contentsId: number | undefined): Page | undefined {
+    if (contentsId === undefined) return undefined;
+    for (const page of this.pages.values()) if (page.view.webContents.id === contentsId) return page;
+    return this.popups.get(contentsId)?.owner;
+  }
+
+  /**
+   * A link a page on screen hands to another app on this Mac (`slack:`,
+   * `zoommtg:`). It opens there once the operator agrees, the way Chrome asks
+   * first, with the asking origin and the link on the question, and Cancel is
+   * the default so a stray Return opens nothing; a mail link opens without
+   * asking, as it always has. A scheme no app claims, a link from a hidden page
+   * or an HTML file preview, one from contents whose last link was declined
+   * before they navigated again, and one that arrives while a question is open
+   * go no further than the log.
+   */
+  private openInApp(page: Page, contents: WebContents, url: string, requestingUrl?: string): void {
+    const scheme = appScheme(url);
+    const refuse = (reason: string) => this.log.event("browser.app_link_refused", { protocol: scheme ?? protocolOf(url), reason });
+    if (!scheme) return refuse("not_app_scheme");
+    if (page.route && isFileAddress(page.route.source_url)) return refuse("file_page");
+    if (!this.shown(page, contents)) return refuse("hidden");
+    if (scheme === "mailto:") return void this.handOff(url, scheme);
+    const name = app.getApplicationNameForProtocol(url);
+    if (!name) return refuse("no_app");
+    if (this.declined.has(contents.id)) return refuse("declined");
+    if (this.asking) return refuse("asking");
+    const sheet = BrowserWindow.fromWebContents(contents) ?? this.window;
+    if (!sheet || sheet.isDestroyed()) return refuse("no_window");
+    const question = Symbol("app link");
+    this.asking = question;
+    // A popup that closes under its question never answers it; its window closing does.
+    const release = () => { if (this.asking === question) this.asking = null; };
+    sheet.once("closed", release);
+    const options = {
+      type: "question" as const,
+      message: `Open ${name}?`,
+      detail: `${requester(requestingUrl ?? this.sourceAddress(page, contents.getURL()))} wants to open this link in ${name}.\n\n${shorten(url)}`,
+      buttons: [`Open ${name}`, "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    };
+    dialog.showMessageBox(sheet, options)
+      .then(({ response }) => {
+        if (response === 0) return this.handOff(url, scheme);
+        if (!contents.isDestroyed()) this.declined.add(contents.id);
+        this.log.event("browser.app_link_declined", { protocol: scheme });
+      })
+      .catch((error: unknown) => this.log.event("browser.app_link_failed", { protocol: scheme, detail: String(error) }))
+      .finally(() => {
+        if (!sheet.isDestroyed()) sheet.removeListener("closed", release);
+        release();
+      });
+  }
+
+  /** The link itself never reaches the log: an app link often carries a sign-in code. */
+  private async handOff(url: string, scheme: string): Promise<void> {
+    try {
+      await shell.openExternal(url);
+      this.log.event("browser.app_link_opened", { protocol: scheme });
+    } catch {
+      this.log.event("browser.app_link_failed", { protocol: scheme });
+    }
   }
 
   private update(page: Page, change: Partial<BrowserPageState>): void {
@@ -363,6 +551,24 @@ export class BrowserViews {
     if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
     this.log.event("browser.view_closed", { reason, live: this.pages.size });
   }
+}
+
+function zoomContents(contents: WebContents, zoom: PageZoom): void {
+  contents.setZoomFactor(nextZoomFactor(contents.getZoomFactor(), zoom));
+}
+
+/** A link as the question shows it, cut to a length a sheet holds. */
+function shorten(url: string): string {
+  return url.length > 160 ? `${url.slice(0, 159)}…` : url;
+}
+
+/** Who is asking, as the origin the operator would recognize, or a page with none. */
+function requester(url: string): string {
+  try {
+    const origin = new URL(url).origin;
+    if (origin !== "null") return origin;
+  } catch { /* falls through */ }
+  return "This page";
 }
 
 function protocolOf(url: string): string {
