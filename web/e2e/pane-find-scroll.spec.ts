@@ -22,7 +22,8 @@ async function paneText(page: Page, pane: string): Promise<string> {
   return page.evaluate((id) => window.__hideProbe?.paneText(id) ?? "", pane);
 }
 
-test("Cmd+F scrolls the focused pane to a match above the screen", async ({ page }) => {
+// @platform: Keys reach an agent pane's PTY through the platform's Herdr.
+test("Cmd+F scrolls the focused pane to a match above the screen", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1680, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
