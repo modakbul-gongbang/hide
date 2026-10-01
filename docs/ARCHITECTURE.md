@@ -979,7 +979,9 @@ The core asks Herdr off the lock whether it holds the pane's history: with none 
 Herdr's history is the only witness, because the pinned API does not say whether a pane is on the alternate screen: an inline agent whose output has not yet passed one screen has no history either and gets its own keys, which for Claude Code's default renderer opens its transcript without a search while the whole conversation is still on screen.
 Claude Code's transcript toggles on the key that opens it, so a screen that already shows its transcript footer gets only the search key; the footer is the one witness the agent offers, and a footer that changed sends the full keys as before.
 The answer names the request that asked (`find.opened`), so the shell acts on it once.
-Settings > Shortcuts rebinds the pane commands, Toggle sidebar view, focused-area next/previous tabs, and global next/previous Recent Panels in the running host's own set.
+Settings > Shortcuts rebinds the editable commands (`EDITABLE_PANE_COMMANDS`: split right and down, zoom, close pane, larger, smaller and reset text, the sidebar view and device rail toggles, the focused-area next/previous tab and global next/previous Recent Panels cycles, and the eight chordless area focus and resize commands `AREA_COMMANDS`) in the running host's own set.
+The core and the desktop menu refuse a stored or reported set past `BINDINGS_CAP` (32, in `herdr-core/src/runtime/events.rs` and `desktop/src/main/menu.ts`, changed together); `menu.test.ts` fails when the editable list outgrows it.
+The area commands have no default chord on any host, so they appear in Settings and the desktop Pane menu without an accelerator until the operator binds one.
 Each host keeps its set in the core apart from the other's, because the hosts reserve different keys: a browser's in `ui_state.browser_shortcut_bindings`, and the desktop app's in `ui_state.shortcut_bindings`, the macOS chord set, in the removed native app's text form (`command+shift+return`) and command names (`increase_text_size`), with `toggle_conversation` kept but never run here; a save that omits `browser_shortcut_bindings` keeps it.
 The desktop app honours the operator's existing macOS chord set (user decision 2026-09-26): hided passes the state file the removed native app wrote (`~/Library/Application Support/hide/state.json`) as `shortcut_import_path`, and the core reads only its `shortcut_bindings` field, once, while its own set is empty, then records `shortcut_bindings_imported` so a later reset to defaults stays a reset; a missing file imports nothing and a later launch may still import, and an unreadable one is a diagnostic.
 The core owns that import rather than any shell (S10), which is why the mechanism survived the removal of the native app that used to write the file.
@@ -1013,9 +1015,9 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Close focused View or pane | ⌘W | ⌥W (moved) | ⌘W |
 | Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | ⌘⇧T |
 | Add project | ⌘⇧N | none (a browser tab has no folder picker, so it offers no Add project) | ⌘⇧N |
-| Start agent (the start panel) | - | none (Chrome keeps ⌘N); ⌘K `에이전트 시작…` opens it | ⌘N, also File › Start agent |
+| Start agent (the start panel) | - | none (Chrome keeps ⌘N); ⌘K `에이전트 시작…`, found by typing, opens it | ⌘N, also File › Start agent |
 | Next / previous recent tab in focused area | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
-| Next / previous global recent panel | none by default | none by default; bindable in Settings | none by default; menu and palette select immediately |
+| Next / previous global recent panel | none by default | none by default; bindable in Settings | none by default; the menu selects immediately |
 | Next / previous recent project (Recent Projects) | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
 | Search, Open file, Toggle side panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
 | Project home | ⌘⇧H | same chord; opens the front checkout's Project Overview | same chord |

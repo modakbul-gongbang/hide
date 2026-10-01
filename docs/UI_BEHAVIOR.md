@@ -18,7 +18,7 @@ Discovery never starts or stops a server, and an opened page retains the Browser
 The side panel toggle sits at the Workspace's top right in both states: at the toolbar's right end while the panel is closed, and at the right end of the panel's first row while it shows.
 It is drawn pressed while the panel shows, and ⌘⇧B toggles the panel too, restoring its views and the tool column as they were before hiding; while the panel is closed with views open, the toggle carries a badge with their count, also given as its accessible description.
 The toggle, the tool column's toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
-A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, Copy Workspace path, and Open Project Overview; the palette offers the other two states, Pin or Unpin, and Show or Hide Explorer and History as commands.
+A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, Copy Workspace path, and Open Project Overview; the other two states, Pin or Unpin, and Show or Hide Explorer and History are on the toolbar, ⌘E and the panel's own controls.
 An empty Agent area offers New tab.
 The area is empty only when the checkout has no tab: a checkout whose only tab holds delegated children keeps that tab off the strip and still draws it on the canvas, so the agent chosen from the sidebar there opens on its pane.
 
@@ -118,7 +118,7 @@ Each area scrolls its selected tab into view; when the column is too narrow, an 
 
 New tab, Split right/left/up/down, available directional Move commands, Rename…, Copy name and Close tab… form each tab menu.
 A disabled split explains its reason, and opening the menu changes no selection.
-The palette opened from an Agent pane adds these area commands and next/previous area focus and grow/shrink commands, including unavailable reasons.
+Next and previous Agent area focus and Agent area grow and shrink are chordless commands of the shortcut registry (Settings › Shortcuts › Area commands, and the desktop Pane menu); they have no key until the operator binds one, and one that cannot run now does nothing.
 An area's New tab adds at its end.
 The new tab chord, ⌘T in the desktop app and ⌥T in a browser, opens where the keyboard is: with a panel View area focused it is that area's New tab, with an Agent pane focused it adds an agent tab at the end of the area showing that pane, and anywhere else (the sidebar, the Overview, the tools, the Agent controls) it adds one to the Agent active area.
 The View and Agent columns keep separate active areas, so the chord follows the recorded keyboard owner, never whichever column's active area changed last.
@@ -186,7 +186,7 @@ Opening a file that is already shown moves to its view instead of adding a tab, 
 Opening a file while the side panel is closed opens the panel first.
 Diffs are placed by the same rules.
 
-Open to the side (from the Explorer's file menu, a History row's menu, or the palette) is the only way to show one file twice.
+Open to the side (from the Explorer's file menu, a History row's menu, or ⌘↵ on a ⌘P result) is the only way to show one file twice.
 It puts a pinned second view in the area beside the active one, trying right, then left, then below, then above, or in a new area on the right when there is only one area; when that area already shows the file, its view is focused instead, and with no view open at all it opens in the empty area.
 From the only area, Open to the side is a split, so it is offered only where Split right would be, and otherwise stays listed, disabled, with its reason.
 Both views show one document: an edit in either appears in the other at once, and each keeps its own scroll position, cursor, and selection.
@@ -213,8 +213,7 @@ A Split item the Workspace cannot make stays listed, disabled, with its reason u
 The labels say where the view goes, never "Move to Group".
 Close view closes the view and never the file on disk; the menu has no file deletion and never closes a pane or a tab.
 Opening the menu moves no focus and changes nothing, and Escape closes it.
-Every item is also a palette command for the active view, and the palette adds Open to the side, focus to the next or previous area, and resizing the active area, so every split, move, close, and resize can be done from the keyboard.
-A palette command that cannot run now is drawn muted with its whole reason under its title, and picking it does nothing.
+Next and previous View area focus and View area grow and shrink are chordless registry commands like the Agent area ones, and ⌘↵ on a ⌘P result opens that file to the side, so splits, moves, closes and resizes can all be done from the keyboard once the operator binds the area commands.
 
 ### View states
 
@@ -350,7 +349,7 @@ The core closes the deepest descendants first, each pane only after every descen
 A descendant whose close is refused, times out, or loses its device keeps itself and its ancestors, the target included, open while the other branches finish; the close failure notice shows and the detail goes to the diagnostic log.
 Closing the same target again lists only what is left.
 Each local pane or tab closed this way gets its own Reopen closed tab entry; a device's close leaves none, as before.
-Every entry to a pane or tab close uses this: ⌘W or ⌥W, ⌘⇧W or ⌥⇧W, the desktop menu's commands, a tab's ×, the tab menu's and the palette's `Close tab…`, the pane header's ×, the pane menu's `Close pane`, and the agent row menu's `Close tab…`; closing a View, the phone app and the Overview are unchanged.
+Every entry to a pane or tab close uses this: ⌘W or ⌥W, ⌘⇧W or ⌥⇧W, the desktop menu's commands, a tab's ×, the tab menu's `Close tab…`, the pane header's ×, the pane menu's `Close pane`, and the agent row menu's `Close tab…`; closing a View, the phone app and the Overview are unchanged.
 Web owner: `web/src/close.ts` (which sheet, which panes and descendants, and their states), `web/src/Overlays.tsx` (both sheets), `web/src/components/subtree-list.tsx` (the list both the sheet and the removal dialogs draw); core owner: `herdr-core/src/runtime/tree_close.rs`.
 
 ### Terminal links
@@ -449,7 +448,7 @@ Resting on a bar shows its legend, each part's name and count, and resting on a 
 A value not yet read leaves the number and the bar out, and zero is drawn as zero; when a source read fails, a ⚠ stands by the tile's name and resting on it says what failed and how old the value is, with the reason in the diagnostic log and no banner.
 The Agents tile's agents are the device's live rows, so it has no last value to age: while the device cannot answer, its ⚠ says why and the number stays empty.
 
-Every way into a project's Overview, the project row, its Overview row, the palette and ⌘⇧H, opens Agents in its checkout mode with the lane of the checkout in front selected (outlined and scrolled into view), or main's lane when the checkout in front is elsewhere.
+Every way into a project's Overview, the project row, its Overview row, ⌘K and ⌘⇧H, opens Agents in its checkout mode with the lane of the checkout in front selected (outlined and scrolled into view), or main's lane when the checkout in front is elsewhere.
 Only Global Recent Panels (a separate command, unbound by default) brings an Overview back as it was left, its tile, modes, selected lane and opened folds; the view lives on the screen, not in stored settings.
 The PRs view opens only from its tile, a PR chip, `이슈 없는 PR N`, the sidebar's PR card and Recent Panels.
 The facts line's right end carries the chosen view's mode control: `체크아웃 · 계보` for Agents, the filter and `Board · List · Dependencies` for Issues, and nothing for PRs.
@@ -583,7 +582,7 @@ Started, the agent works in that checkout and the screen goes to its pane; while
 On the web, the sidebar picks the scope; a project's tiles and the Home Overview's tabs pick the view.
 A device's Home Overview is that device's projects, a project is its Overview, and a checkout is its Workspace, which has no views of its own; the sidebar's Home row opens the first and a project's Overview row the second.
 The Home Overview is of the device its screen names, else the device in front, and a device removed since then leaves it for the device in front; its title reads `Home` and the device's name.
-The board is the Project Overview: the sidebar's project name or its Overview child (a plain folder's one row opens its checkout instead), the Overview's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
+The board is the Project Overview: the sidebar's project name or its Overview child (a plain folder's one row opens its checkout instead), the Overview's project row, ⌘K and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
 Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to the Home Overview when there is none.
 The title row carries the path back (`Home / Project`, where Home is the project's device's), New agent and 새 이슈; directly under it is one line of facts, then the tiles, which show even while the project has no agent.
 The facts line holds only facts about storage: for a Local Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, a warning cell only while the volume is short of room, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tiles, not here.
@@ -776,7 +775,7 @@ An expanded Git project starts with an Overview row using the checkout row’s c
 Click, Enter or Space opens the same Overview as the project name without changing the fold; only the Overview child carries its selection fill, and folding the project hides the child too.
 A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
 Its first line is the project's folder glyph, name and status badge, set in the checkout row's columns, and the badge stays while its agent rows are open, as a project's does; its second line and trailing chevron are the checkout's, and a plain folder has no commit age.
-It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's own `Open`, `Open pull request #n` and `Set purpose…` (the folder is the checkout, so its new tab, path and Finder items are the project's), and its Overview is reached from the Overview, the palette or the Workspace toolbar.
+It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's own `Open`, `Open pull request #n` and `Set purpose…` (the folder is the checkout, so its new tab, path and Finder items are the project's), and its Overview is reached from the Overview, ⌘K or the Workspace toolbar.
 While a checkout's agent rows are closed, its status badge ends line one; opening them takes the badge away, since their own marks now speak, and changes nothing else on the row.
 A checkout's second line is its purpose, after the parent checkout it was raised from when there is one, with the last-commit age ending it on the time column; it is drawn only while the checkout has a purpose or a raising parent, so a checkout with agents and neither is one line.
 A checkout with neither, or one whose Git facts have not been read yet, is one line, with its age on that line.
@@ -984,8 +983,8 @@ A device's Workspace in front wears the device color, `--device-remote`: a band 
 Web owner: `web/src/StartPanel.tsx`, `web/src/startTargets.ts`, `web/src/startDraft.ts`, `web/src/startAnswer.ts`, `web/src/agentPicker.ts`, `web/src/components/agent-picker.tsx`.
 
 The start panel starts a Claude or Codex agent with a first instruction anywhere hide can reach (PRD home-device-rail D-17..D-22).
-⌘N opens it in the desktop app, where it is also File › Start agent; in a browser tab ⌘N stays the browser's and `에이전트 시작…` in ⌘K opens it, on every screen.
-It floats at the ⌘K palette's place and width with no backdrop, and the keyboard lands in its one-line text box, `무엇을 시킬까요?`.
+⌘N opens it in the desktop app, where it is also File › Start agent; in a browser tab ⌘N stays the browser's and `에이전트 시작…` in ⌘K, found by typing, opens it, on every screen.
+It floats at the ⌘P palette's place and width with no backdrop, and the keyboard lands in its one-line text box, `무엇을 시킬까요?`.
 Opened while Settings is up, it takes Settings' place: Settings closes and the target is the front device's Home.
 Under the text are the target, the agent kind and the model menus, a `⏎` keycap and `시작`; Enter or `시작` sends one `agent_start_in_checkout` with a fresh request id, the text as the agent's first instruction, handed to the CLI as its own argument (ARCHITECTURE.md, the first prompt).
 The target defaults to what is in front: the checkout of the Workspace in front (a worktree when that is it), a project's main checkout while its Overview is in front, and the front device's Home while a Home Overview or Settings is; a device's surface in front makes that device the target's.
@@ -1019,23 +1018,53 @@ The core keeps one value of each, so with several pages open the last page to re
 
 ## Search keyboard navigation
 
-Web owner: `web/src/search.ts`, `web/src/Palette.tsx`, `web/src/components/sidebar-header.tsx`.
+Web owner: `web/src/SearchPalette.tsx` (⌘K), `web/src/search.ts`, `web/src/relations.ts`, `web/src/searchDetail.ts`, `web/src/searchGithub.ts`, `web/src/Palette.tsx` (⌘P and the diff palette), `web/src/components/sidebar-header.tsx`; core owner for the GitHub search: `herdr-core/src/runtime/issues.rs`.
 
-Agent/workspace search and file search share the same focused query field and first-result selection behavior.
-An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling back to the status word when the state chose no sentence; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
+⌘K goes to things; it runs no command except `에이전트 시작…`.
 On the web, the Search icon at the end of the sidebar's tab strip or its top line, hinted `Search ⌘K`, opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
-Results sit under headers in the form `<project> > AGENTS` (an agent under the first project whose checkouts hold its pane, `Home > AGENTS` for its device's Home, `AGENTS` when none does), `WORKSPACE > COMMANDS`, `COMMANDS`, `WORKSPACES > PROJECTS`, `WORKSPACES > CHECKOUTS`, and `DEVICES` while another device is registered (This Mac alone has no device row).
-Search covers the agents, projects and checkouts of every connected device and the registered devices themselves; a result not on the device in front carries that device's chip after its title, and choosing it brings that device forward with it, a device result selecting its tile.
-`에이전트 시작…` under `COMMANDS` is on every screen and opens the start panel.
-A group stands where its best result ranked and keeps its results in rank order, so grouping never moves the best match off the first row.
-An agent row is the agent's own mark, its title, and the state line under it; a project or checkout row carries its path under the title; the selected row shows `↵`.
-With nothing to search the list says `No agents or workspaces yet`, and a query with no match says `No matching agents or workspaces`.
+Its own wide layout is a list on the left and the highlighted row's detail on the right, one and a half times the width ⌘P, the shortcut sheet and the start panel share; a window too narrow for both draws the list alone.
+
+### What a query finds
+
+A query finds an agent, project, checkout, device, issue or pull request by name, and an issue or pull request by `#number` (`#273`, or `273`); an exact number match lists first, as its own row, issue and pull request separately.
+Only digits in the query match a number by substring on other rows; the pane id no longer matches.
+The rows are `Issues`, `Pull requests`, `Agents`, `Projects`, `Checkouts` and `Devices` (while another device is registered), then `Commands` holding `에이전트 시작…` and `GitHub`; a group stands where its best result ranked and keeps its results in rank order, so grouping never moves the best match off the first row.
+Search covers every connected device; a result not on the device in front carries that device's chip after its title, and choosing it brings that device forward with it.
+An agent row is the agent's own mark, its title, and its place and state under it; an issue or pull request row carries its number, state and, for a pull request, its CI.
+
+### What an empty query shows
+
+Nothing typed lists what is connected to the thing in front, drawn as a Project's Overview draws it: the issues the thing works on or closes on top, then one group per checkout with a head, the checkout's pull request, and the agent lineage under it.
+The agent the keyboard was in is tagged `여기` and choosing it does nothing; a parent that works in another checkout is one `↑ 부모` line under the agent, and a child delegated to another checkout stands in that checkout's own group.
+In front of an agent pane the thing is that agent; in the Workspace elsewhere it is the checkout in front; a connection the snapshot does not name has no row.
+On a screen with nothing in front, such as Settings, the palette is the input alone with the placeholder `이름이나 #번호를 입력하세요`.
+
+### The detail
+
+The highlighted row says what it is with the facts the snapshot carries and no others (a missing value has no line): a pull request's review, branch and the issues it closes, an issue's owner checkout and closing pull request, an agent's checkout and last words, and `N분 전 읽음` for the GitHub-backed ones.
+Under `관계` it draws the same groups the empty list draws for the row, when it has more than itself; the footer line says what ↵ does.
+
+### GitHub
+
+Typing never calls GitHub.
+Opening ⌘K asks once per app run for the local project in front when nothing has read it, and a checkout row shows a spinner while that read has no answer and a warning mark with the last value's age when it failed; the reason is in the log.
+A query with a GitHub project on this Mac ends with `GitHub에서 "…" 검색`; choosing it sends one `github_search`, and the row shows a spinner, then the pull requests and issues GitHub holds under `GitHub` (an exact match to one already held is not listed twice), `GitHub에도 없음`, or `GitHub 검색 실패 · 다시 시도`.
+The same query already searching is not started again, and an answer for an older query is dropped.
+Choosing a GitHub result opens it in the browser.
+
+### Keys and results
+
 Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
-Return executes the highlighted result through the existing agent, checkout, or file-opening action; Escape closes the sheet.
+Return opens the highlighted result through the existing agent, checkout, Overview or Pull requests actions (an issue or pull request opens its Project's Overview on that issue or pull request, on the device that holds it); Escape closes the sheet.
 The selected row scrolls into view.
 Filtering preserves a surviving selection by identity; a retired selection moves to the first remaining result.
 Empty results have no selection, and arrows or Return require no modal acknowledgement.
-A stale result is checked against the live result set before execution, and file search never executes results from a previous query or checkout while its asynchronous index is updating.
+A stale result is checked against the live result set before execution.
+
+### File search
+
+⌘P lists what hided's index ranked for the typed query, with the same focused query field and first-result selection, and never executes results from a previous query or checkout while its asynchronous index is updating.
+↵ opens the highlighted file; ⌘↵ opens it beside the active View area, and the footer hint says so.
 
 ## Pane header lineage and ownership
 
