@@ -41,6 +41,8 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
 - Set each fixture's `HCOORD_HOME` to its private `HOME/.hcoord`; a private `HOME` alone leaves hcoord on the account's shared launchd label.
   The desktop fixture refuses a mismatched coordinator before launching a candidate.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
+- Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so it ends with the Playwright worker even when the worker dies before a test's `finally` runs.
+  A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
 - Herdr starts a pane's shell from the server's `SHELL`, so a fixture sets `SHELL=/bin/zsh` beside its private `HOME`.
   The CI runner's login shell is bash, where a prompt planted in the fixture's `.zshrc` never appears; reproduce that with `SHELL=/bin/bash pnpm --dir web e2e`.
 - A private `HOME` has no Claude or Codex login, because each CLI keys its credential to `HOME`.
