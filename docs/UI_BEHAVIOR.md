@@ -624,6 +624,7 @@ The field draws on an elevated surface so it reads as an input among labels; not
 The filesystem change is the core's: one event carries the request, the core refuses paths outside the focused checkout and any overwrite, runs the exclusive call off the runtime mutex, and settles one operation slot.
 The tree reads a finished slot to re-read only the folders it touched, keeping every loaded folder and its expansion, and a failed slot to place the reason under the row the change started from.
 A folder being re-read, after a settled change, a change the watcher saw, or the refresh button, keeps its rows drawn until the new listing lands; it never empties for the round trip.
+A re-read that is refused leaves those rows under the folder's could-not-be-listed reason until Retry or the next change reads it again.
 The selection moves to the new or moved item because the core sets it explicitly; expanded folders and open file tabs inside a renamed folder follow it.
 
 A drag moves one item inside the tree.

@@ -195,7 +195,7 @@ type Store = {
   noteSaving: (tabId: string, saving: boolean) => void;
   noteBufferWarning: (tabId: string, warned: boolean) => void;
   noteDraftExported: (tabId: string, contents: string) => void;
-  /** Drops cached listings so the Explorer re-reads those folders. */
+  /** Drops cached listings outright: a folder past the watch cap, or one no longer shown; nothing is re-read for them. */
   invalidateListings: (paths: string[]) => void;
   /** Marks cached listings stale: the Explorer re-reads those folders and keeps drawing them meanwhile. */
   refreshListings: (paths: string[]) => void;
