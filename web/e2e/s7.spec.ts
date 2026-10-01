@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { bindAreaCommand, choosePanel, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
+import { bindChordlessCommand, choosePanel, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
 const RAIL = 64;
@@ -745,9 +745,9 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     const count = (key: string) => stack.sent.get(key) ?? 0;
     // The area commands have no default chord (PRD cmdk-navigation D-05): the
     // three this flow runs are bound in Settings first.
-    await bindAreaCommand(page, "focus_previous_view_area", "Alt+Shift+KeyJ");
-    await bindAreaCommand(page, "focus_next_view_area", "Alt+Shift+KeyK");
-    await bindAreaCommand(page, "grow_view_area", "Alt+Shift+KeyL");
+    await bindChordlessCommand(page, "focus_previous_view_area", "Alt+Shift+KeyJ");
+    await bindChordlessCommand(page, "focus_next_view_area", "Alt+Shift+KeyK");
+    await bindChordlessCommand(page, "grow_view_area", "Alt+Shift+KeyL");
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
 
     // Split right from the active tab's menu: one event, delivered twice, one new area;

@@ -234,8 +234,6 @@ type UiStore = {
   settingsTab: SettingsTab;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
-  commandRequest: { id: import("./shortcuts").CommandId } | null;
-  setCommandRequest: (commandRequest: { id: import("./shortcuts").CommandId } | null) => void;
   /** A notice the operator can act on. */
   notice: Notice | null;
   /** The management dialog a sidebar menu opened, or null. */
@@ -340,8 +338,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   settingsTab: "general",
   pendingClose: null,
   cycle: null,
-  commandRequest: null,
-  setCommandRequest: (commandRequest) => set({ commandRequest }),
   notice: null,
   workspaceDialog: null,
   watchedTask: null,

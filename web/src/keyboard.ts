@@ -440,12 +440,6 @@ export function installKeyboard(actions: Actions): () => void {
   // A menu item names a command id; one this registry does not know is a
   // host/shell version mismatch, recorded rather than guessed at.
   const bridge = hostBridge();
-  const unsubscribeCommand = useUiStore.subscribe((state, previous) => {
-    if (state.commandRequest && state.commandRequest !== previous.commandRequest) {
-      run(state.commandRequest.id, null);
-      ui().setCommandRequest(null);
-    }
-  });
   const unsubscribeBrowser = browserBridge()?.onEvent((input) => {
     if (input.kind === "cycle-cancel") {
       if (nativeCycle?.cycleId === input.cycleId) onBlur();
@@ -505,7 +499,6 @@ export function installKeyboard(actions: Actions): () => void {
     onBlur();
     endNativeCycle();
     removeKeyboardOwner();
-    unsubscribeCommand();
     unsubscribeBrowser?.();
     unsubscribeOwner();
     unsubscribeMenu?.();
