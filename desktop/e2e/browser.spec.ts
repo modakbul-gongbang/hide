@@ -234,14 +234,13 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
   // Two View areas side by side need the Workspace's width: the side panel
-  // is expanded over it (issue 170). The open panel beside the agents leaves
-  // the View area too narrow to split, and the core stores the expansion, so
-  // the menu below offers Split right only once the expanded panel is drawn:
-  // it reads the geometry drawn when it opens.
-  await page.keyboard.press("Meta+KeyK");
-  await page.keyboard.type("Expand side panel");
-  await page.locator('[data-palette-row="command:panel:expanded"]').click();
-  await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+  // is expanded over it (issue 170), from the toolbar's location menu. The open
+  // panel beside the agents leaves the View area too narrow to split, and the
+  // core stores the expansion, so the menu below offers Split right only once
+  // the expanded panel is drawn: it reads the geometry drawn when it opens.
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
   await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
   const toolsShown = page.locator('[data-tools-toggle="on"]');
   if (await toolsShown.count()) await toolsShown.click();
@@ -549,10 +548,9 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
   // Two View areas side by side need the Workspace's width: in this run's
   // window the side panel is expanded over it, as the first test does.
-  await page.keyboard.press("Meta+KeyK");
-  await page.keyboard.type("Expand side panel");
-  await page.locator('[data-palette-row="command:panel:expanded"]').click();
-  await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
   await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
   await expect.poll(async () => (await views()).filter((view) => view.visible).map((view) => view.url).sort()).toEqual([`${origin}/c.html`, signin].sort());
   expect(await windows()).toBe(1);
@@ -680,9 +678,10 @@ test("area cycle native: page input previews one exact area, releases once and c
   const previous = `${origin}/b.html`;
   const current = `${origin}/korean.html`;
   for (const url of [outside, previous]) expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ ok: true });
-  await page.keyboard.press("Meta+KeyK");
-  await page.keyboard.type("Expand side panel");
-  await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  // Two View areas side by side need the Workspace's width: expand the side panel from the toolbar's location menu.
+  await page.locator("[data-workspace-location]").click({ button: "right" });
+  await page.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
   await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
   if (await page.locator('[data-tools-toggle="on"]').count()) await page.locator('[data-tools-toggle="on"]').click();
   await tab(page, "Page B").click({ button: "right" });

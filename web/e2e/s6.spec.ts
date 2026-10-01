@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { herdrHasFocus, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { choosePanel, countSent, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -69,7 +69,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator("[data-side-panel]")).toHaveCount(0);
     await expect(page.locator("[data-workspace-toolbar] :is([data-tool-toggle], [data-tools-toggle], [data-tool-tab])")).toHaveCount(0);
 
-    // The toolbar toggle and the palette choose the panel's state; each is
+    // The toolbar toggle and the toolbar's menu choose the panel's state; each is
     // one workspace_view. With no view open the panel is only as wide as the
     // Explorer column.
     const panel = page.locator("[data-side-panel]");
@@ -82,9 +82,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     const toolColumn = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-panel-ideal")));
     // The card is the column, its hairlines inside the token (issue 170).
     expect((await panel.locator("[data-panel-card]").boundingBox())!.width).toBeCloseTo(toolColumn, 0);
-    await page.keyboard.press("Meta+KeyK");
-    await page.keyboard.type("Close side panel");
-    await page.keyboard.press("Enter");
+    await choosePanel(page, "closed");
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     expect(sent.get("workspace_view")).toBe(before + 2);
     expect(last.get("workspace_view")).toEqual({ panel: "closed" });
@@ -101,9 +99,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(panel.locator('[data-tool-tab="changes"]')).toHaveAttribute("aria-selected", "true");
     // Hiding the only content closes the panel. Reopening keeps History.
-    await page.keyboard.press("Meta+KeyK");
-    await page.keyboard.type("Hide History");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Meta+KeyE");
     await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
     await expect(panel).toHaveCount(0);
     await page.keyboard.press("Meta+KeyE");
@@ -389,9 +385,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
 
     // A restart brings the Workspace back with its side panel and View
     // tabs; the file that went away stays as an unavailable tab (B19, B20).
-    await page.keyboard.press("Meta+KeyK");
-    await page.keyboard.type("Expand side panel");
-    await page.keyboard.press("Enter");
+    await choosePanel(page, "expanded");
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     fs.rmSync(path.join(herdr.root, "fixture", "gone.txt"));
     daemon = await daemon.restart();

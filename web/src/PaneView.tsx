@@ -199,7 +199,13 @@ export const PaneView = memo(function PaneView({
   }, [paneId, scale]);
 
   useEffect(() => {
-    if (focused) focusTerminal(paneId);
+    if (!focused) return;
+    // A palette that holds the keyboard keeps it: a focus that lands late (the
+    // core's answer to a choice made in ⌘K) must not take the keys the
+    // operator is typing into a palette opened since. The palette hands the
+    // keyboard back to the focused pane when it closes (`restoreFocus`).
+    if (document.activeElement?.closest("[data-palette]")) return;
+    focusTerminal(paneId);
   }, [paneId, focused]);
 
   // ⌘V of an image is the shell's; text paste stays xterm's own. The listener

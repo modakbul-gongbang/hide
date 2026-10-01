@@ -1,10 +1,11 @@
-// The ⌘K palette in the search view's form (GitHub issue 154) on an
+// The ⌘K palette as a navigation palette (PRD cmdk-navigation) on an
 // isolated pinned Herdr and hided: the sidebar's Search icon and ⌘K open the
-// same overlay; results sit under `<project> > AGENTS`, `WORKSPACES >
-// PROJECTS` and `WORKSPACES > CHECKOUTS`; an agent row is its mark, its title
-// and its state line under it; ↵ follows the selection across groups; Enter
-// opens the agent; Escape closes and hands focus back; a query with no match
-// says so. Captured in Dark and Light.
+// same overlay; on a screen with nothing in front it is the input alone, and a
+// query lists its results under one group per kind with the highlighted row's
+// detail beside them; an agent row is its mark, its title and its state line
+// under it; ↵ follows the selection across groups; Enter opens the agent;
+// Escape closes and hands focus back; a query with no match says so and, with
+// no GitHub project here, offers no GitHub search. Captured in Dark and Light.
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -25,7 +26,7 @@ function headings(page: Page) {
   return page.locator('[data-palette="Search"] [cmdk-group-heading]');
 }
 
-test("⌘K groups agents, projects and checkouts, and the sidebar Search icon opens the same palette", async ({ page }) => {
+test("⌘K lists results by kind with a detail beside them, and the sidebar Search icon opens the same palette", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -41,25 +42,33 @@ test("⌘K groups agents, projects and checkouts, and the sidebar Search icon op
     report(herdr, one, { status_working: "●", progress: "팔레트 그룹 검증 중" });
     await expect(page.locator(`[data-agent-list] [data-pane="${one}"]`)).toContainText("팔레트 그룹 검증 중", { timeout: 20_000 });
 
-    // The sidebar's Search icon opens the palette with the query focused.
+    // The sidebar's Search icon opens the palette with the query focused. The
+    // page shows Main, which has nothing to relate to, so the palette is the
+    // input alone (B7).
     const field = page.locator("[data-sidebar-search]");
     await expect(field).toHaveAccessibleName("Search");
     await field.click();
     const input = page.locator('[data-palette="Search"] [data-palette-input]');
     await expect(input).toBeFocused();
-    await expect(input).toHaveAttribute("placeholder", "Search agents and workspaces");
+    await expect(input).toHaveAttribute("placeholder", "이름이나 #번호를 입력하세요");
     await expect(page.locator("[data-palette-esc]")).toHaveText("Esc");
+    await expect(page.locator("[data-cmdk]")).toHaveAttribute("data-cmdk", "collapsed");
+    await expect(page.locator("[data-palette-row]")).toHaveCount(0);
+    await expect(page.locator("[data-palette-footer]")).toHaveCount(0);
+    await screenshot(page, "palette-dark-collapsed");
 
-    // Agents under their project, then projects, then checkouts.
-    await expect(headings(page)).toHaveText(["COMMANDS", "fixture > AGENTS", "WORKSPACES > PROJECTS", "WORKSPACES > CHECKOUTS"]);
-    const agents = page.locator('[data-palette-group^="agents:"]');
+    // Typing opens the results: agents first for an agent's name, and the one command ⌘K keeps is not among them.
+    await page.keyboard.type("Agent");
+    await expect(page.locator("[data-cmdk]")).toHaveAttribute("data-cmdk", "open");
+    await expect(headings(page).first()).toHaveText("Agents");
+    const agents = page.locator('[data-palette-group="agents"]');
     await expect(agents.locator("[data-palette-row]")).toHaveCount(2);
 
     // An agent row: the provider mark, the title, the state line under it.
     const rowOne = page.locator(`[data-palette-row="agent:${one}"]`);
     await expect(rowOne.locator('[data-agent-mark="claude"]')).toBeVisible();
     await expect(rowOne).toContainText("Agent one");
-    await expect(rowOne.locator("[data-palette-detail]")).toHaveText("팔레트 그룹 검증 중");
+    await expect(rowOne.locator("[data-palette-detail]")).toContainText("팔레트 그룹 검증 중");
     const rowTwo = page.locator(`[data-palette-row="agent:${two}"]`);
     await expect(rowTwo).toContainText("Agent two");
     await expect(rowTwo.locator("[data-palette-detail]")).not.toBeEmpty();
@@ -67,48 +76,55 @@ test("⌘K groups agents, projects and checkouts, and the sidebar Search icon op
     const detailBox = await rowOne.locator("[data-palette-detail]").boundingBox();
     expect(titleBox && detailBox && detailBox.y >= titleBox.y + titleBox.height - 1).toBe(true);
 
-    // ↵ marks the selected row and follows the arrows across a group boundary.
-    const firstRow = page.locator('[data-palette="Search"] [data-palette-row]').first();
+    // ↵ marks the selected row, the detail beside the list says what it is,
+    // and the arrows move both across a group boundary (B15, B25).
+    const rows = page.locator('[data-palette="Search"] [data-palette-row]');
+    const firstRow = rows.first();
     await expect(firstRow).toHaveAttribute("aria-selected", "true");
     await expect(firstRow.locator("[data-palette-enter]")).toBeVisible();
+    await expect(page.locator('[data-palette-detail-pane="agent"]')).toBeVisible();
+    await expect(page.locator('[data-palette-detail-pane="agent"]')).toContainText(/Agent (one|two)/);
     await screenshot(page, "palette-dark-default");
-    const project = page.locator('[data-palette-group="projects"] [data-palette-row]').first();
-    const rows = await page.locator('[data-palette="Search"] [data-palette-row]').count();
-    for (let step = 0; step < rows && (await project.getAttribute("aria-selected")) !== "true"; step += 1) await page.keyboard.press("ArrowDown");
-    await expect(project).toHaveAttribute("aria-selected", "true");
-    await expect(project.locator("[data-palette-enter]")).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+    const second = rows.nth(1);
+    await expect(second).toHaveAttribute("aria-selected", "true");
+    await expect(second.locator("[data-palette-enter]")).toBeVisible();
     await expect(firstRow.locator("[data-palette-enter]")).toBeHidden();
+    await expect(page.locator("[data-palette-detail-pane]")).toContainText((await second.locator("span.truncate").first().innerText()).trim());
 
     // Escape closes and hands focus back to the field that opened it.
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     await expect(field).toBeFocused();
 
-    // ⌘K is the same overlay; a query keeps its group, and Enter opens the agent.
+    // ⌘K is the same overlay; Enter opens the agent the query names.
     await page.keyboard.press("Meta+KeyK");
     await expect(input).toBeFocused();
     await page.keyboard.type("Agent two");
-    await expect(headings(page).first()).toHaveText("fixture > AGENTS");
-    await expect(page.locator('[data-palette="Search"] [data-palette-row]').first()).toHaveAttribute("data-palette-row", `agent:${two}`);
+    await expect(headings(page).first()).toHaveText("Agents");
+    await expect(rows.first()).toHaveAttribute("data-palette-row", `agent:${two}`);
     const focuses = sent.get("focus_pane") ?? 0;
     await page.keyboard.press("Enter");
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     await expect.poll(() => sent.get("focus_pane") ?? 0).toBeGreaterThan(focuses);
     expect(last.get("focus_pane")?.pane_id).toBe(two);
 
-    // No match is one line, with no group and no selection.
+    // No match is one line, with no group; this Mac has no GitHub project, so
+    // there is no GitHub search to offer either, and nothing is sent to GitHub.
     // Opening the agent moved the page to its Workspace, and the palette can
     // open after that screen does; typing before it holds focus loses keys.
     await page.keyboard.press("Meta+KeyK");
     await expect(input).toBeFocused();
     await page.keyboard.type("zzzz-no-such-agent");
-    await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("No matching agents or workspaces");
+    await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("일치하는 항목 없음");
     await expect(headings(page)).toHaveCount(0);
+    await expect(page.locator('[data-palette-row="github-search"]')).toHaveCount(0);
     await screenshot(page, "palette-dark-no-match");
     await page.keyboard.press("Escape");
+    expect(sent.get("github_search") ?? 0).toBe(0);
 
     // Light: the same palette on the Light tokens. Opening the agent put its
-    // Workspace on screen, so the Workspace commands lead as their own group.
+    // Workspace on screen, so an empty ⌘K lists what is connected to it.
     await page.keyboard.press("Alt+Comma");
     await page.locator('[data-settings-tab="appearance"]').click();
     await page.locator('[data-theme-option="light"]').click();
@@ -116,12 +132,12 @@ test("⌘K groups agents, projects and checkouts, and the sidebar Search icon op
     await page.keyboard.press("Escape");
     await field.click();
     await expect(input).toBeFocused();
-    await expect(headings(page)).toHaveText(["WORKSPACE > COMMANDS", "COMMANDS", "fixture > AGENTS", "WORKSPACES > PROJECTS", "WORKSPACES > CHECKOUTS"]);
+    await expect(headings(page)).toHaveText(["Related"]);
     await screenshot(page, "palette-light-default");
-    // A query the agents match best brings their group above the commands'.
+    // A query the agents match best brings their group first.
     await page.keyboard.type("Agent");
-    await expect(headings(page).first()).toHaveText("fixture > AGENTS");
-    await expect(page.locator('[data-palette="Search"] [data-palette-row]').first()).toHaveAttribute("aria-selected", "true");
+    await expect(headings(page).first()).toHaveText("Agents");
+    await expect(rows.first()).toHaveAttribute("aria-selected", "true");
     await screenshot(page, "palette-light-query");
     await page.keyboard.press("Escape");
   } finally {

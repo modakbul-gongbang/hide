@@ -24,7 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { bindChordlessCommand, countSent, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -476,9 +476,9 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(workspace).toBeVisible();
     // Recent Panels brings back the Overview as it was left: lineage mode,
     // 정리할 것 open (B11). ⌥` now cycles the focused area, so the global
-    // command runs from ⌘K (focused-area-tab-cycle D-05).
-    await page.keyboard.press("Meta+KeyK");
-    await page.locator('[data-palette-row="command:navigation:recent_panel"]').click();
+    // command has no chord until one is bound in Settings (focused-area-tab-cycle D-05).
+    await bindChordlessCommand(page, "recent_panel", "Alt+Shift+KeyP");
+    await page.keyboard.press("Alt+Shift+KeyP");
     await expect(overview).toBeVisible();
     await expect(overview).toHaveAttribute("data-agents-mode", "lineage");
     await expect(overview.locator('[data-lens-mode=lineage] [data-lens-fold="cleanup"]')).toHaveAttribute("aria-expanded", "true");

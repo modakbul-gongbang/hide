@@ -265,6 +265,22 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.textScale("out");
       case "text_reset":
         return actions.textScale("reset");
+      case "focus_next_agent_area":
+        return actions.runAgentCommand("focus_next");
+      case "focus_previous_agent_area":
+        return actions.runAgentCommand("focus_previous");
+      case "grow_agent_area":
+        return actions.runAgentCommand("grow");
+      case "shrink_agent_area":
+        return actions.runAgentCommand("shrink");
+      case "focus_next_view_area":
+        return actions.runViewArea("focus_next");
+      case "focus_previous_view_area":
+        return actions.runViewArea("focus_previous");
+      case "grow_view_area":
+        return actions.runViewArea("grow");
+      case "shrink_view_area":
+        return actions.runViewArea("shrink");
       case "shortcuts":
         return actions.openShortcuts();
       case "settings":
@@ -424,12 +440,6 @@ export function installKeyboard(actions: Actions): () => void {
   // A menu item names a command id; one this registry does not know is a
   // host/shell version mismatch, recorded rather than guessed at.
   const bridge = hostBridge();
-  const unsubscribeCommand = useUiStore.subscribe((state, previous) => {
-    if (state.commandRequest && state.commandRequest !== previous.commandRequest) {
-      run(state.commandRequest.id, null);
-      ui().setCommandRequest(null);
-    }
-  });
   const unsubscribeBrowser = browserBridge()?.onEvent((input) => {
     if (input.kind === "cycle-cancel") {
       if (nativeCycle?.cycleId === input.cycleId) onBlur();
@@ -489,7 +499,6 @@ export function installKeyboard(actions: Actions): () => void {
     onBlur();
     endNativeCycle();
     removeKeyboardOwner();
-    unsubscribeCommand();
     unsubscribeBrowser?.();
     unsubscribeOwner();
     unsubscribeMenu?.();
