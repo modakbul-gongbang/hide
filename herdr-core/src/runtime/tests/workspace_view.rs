@@ -231,6 +231,10 @@ fn the_side_panel_closes_and_opens_without_closing_a_view() {
     with_tabs(&mut runtime, &directory);
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
     assert_eq!(panel(&runtime), (PanelState::Open, false));
+    assert!(
+        !runtime.snapshot.workspace_view.as_ref().unwrap().tools,
+        "a new Workspace's first file shows without the Explorer"
+    );
 
     // A session update is not a request: the panel stays up.
     let tabs = ["w-order:t1", "w-order:t2"];
@@ -327,7 +331,10 @@ fn the_side_panel_closes_and_opens_without_closing_a_view() {
     );
 
     // Closing the last view with tools on leaves the Explorer alone.
-    layout(&mut runtime, serde_json::json!({"pinned": false}));
+    layout(
+        &mut runtime,
+        serde_json::json!({"pinned": false, "tools": true}),
+    );
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     let workspace = serde_json::json!({"device_id": view.device_id, "path": view.path});
     let display = match &view.layout.root {
@@ -358,9 +365,9 @@ fn a_tool_chosen_while_the_panel_is_closed_opens_the_panel_on_it() {
         let view = runtime.snapshot.workspace_view.as_ref().unwrap();
         (view.tool, view.tools)
     };
-    // A new Workspace starts closed, on the Explorer with the column shown.
+    // A new Workspace starts closed, on the Explorer with the column hidden.
     assert_eq!(panel(&runtime).0, PanelState::Closed);
-    assert_eq!(tools(&runtime), (Tool::Explorer, true));
+    assert_eq!(tools(&runtime), (Tool::Explorer, false));
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
     layout(&mut runtime, serde_json::json!({"tool": "changes"}));

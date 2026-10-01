@@ -574,7 +574,7 @@ A `tool` chosen shows the column unless the payload names `tools` too, and a `re
 An entry stored with the two independent `explorer` and `changes` flags that came before restarts on the Explorer when it showed, else on History when that showed, with the column hidden when neither did.
 The global `ui_state.right_panel_visible` and `right_panel_section` are projected from the front Workspace's tool while its panel shows the tool column, so a closed panel or a hidden column reads no Changes, and so the Changes reader and the device Explorer watch keep the one gate they had.
 That projection is never saved: `core-state.json` keeps the right panel it held when the process started (`ui_state_to_save`), so an older build started on the same state directory opens with its own panel.
-A new Workspace starts with its panel closed on the Explorer with the column shown, so the panel toggle, ⌘⇧B or a file open shows it.
+A new Workspace starts with its panel closed on the Explorer with the column hidden, so a file or page it opens shows alone; the panel toggle, ⌘⇧B or ⌘E with no view open shows the column, since a panel holds views or tools and is never empty.
 The panel sits over the Agent area's right side (issue 170), `views_over_share` of the body's width (0.2..0.8): unpinned, the Agent area keeps its size underneath, so opening, closing, resizing or expanding the panel moves no PTY; `pinned` docks it, and the agents' terminals resize once to end at its left edge.
 Pinned is not a fourth state: it is stored beside `panel` and the width, and a pinned panel still closes, opens and expands.
 The last view leaving keeps the tool column alone when tools are enabled; otherwise the core closes and persists the panel in the same transition.

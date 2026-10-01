@@ -25,7 +25,7 @@ The area is empty only when the checkout has no tab: a checkout whose only tab h
 ### The side panel
 
 The Workspace holds the agent column (the toolbar, then the Agent area), always the Workspace's full width, and the side panel on its right edge at the Workspace's full height, up to the toolbar's row, over the agents.
-The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed.
+The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed with the tool column hidden, so the first file or page it opens shows alone and ⌘E brings the Explorer.
 Open, the panel floats over the right part of the agent column and the Agent area keeps its full size underneath, so opening, closing, resizing and expanding the panel never resizes a terminal.
 The panel is a `--card` surface with a `--border` hairline and a `--radius-lg` top-left corner, and no shadow; a `--spacing-sm` gap in `--background` on its left separates it from the agents.
 Everything inside it sits on `--card`: the tabs, the document header, the editor, the diff, a page and a loading view, so a shown View tab is marked by its indicator and title alone, never by a surface of its own.
