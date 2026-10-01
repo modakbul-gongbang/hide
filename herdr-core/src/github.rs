@@ -1741,6 +1741,9 @@ esac"#,
     #[test]
     #[cfg(unix)]
     fn gh_boundary_is_read_only_noninteractive_and_preserves_failure_categories() {
+        // The fixture answers at once; a one-second deadline read a loaded
+        // machine's slow shell start as a timeout, the network category.
+        const FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
         let fixture = GhFixture::new(
             r#"
 [ "$GH_PROMPT_DISABLED" = 1 ] && [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 90
@@ -1755,7 +1758,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 &["pr", "list"],
-                Duration::from_secs(1)
+                FIXTURE_DEADLINE
             )
             .unwrap(),
             "[]"
@@ -1765,7 +1768,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 &["issue", "list"],
-                Duration::from_secs(1)
+                FIXTURE_DEADLINE
             )
             .unwrap(),
             "[]"
@@ -1781,7 +1784,7 @@ esac"#,
                     &fixture.binary,
                     Some(&fixture.root),
                     &write,
-                    Duration::from_secs(1)
+                    FIXTURE_DEADLINE
                 )
                 .is_err()
             );
@@ -1790,7 +1793,7 @@ esac"#,
             &fixture.binary,
             Some(&fixture.root),
             &["auth", "status"],
-            Duration::from_secs(1),
+            FIXTURE_DEADLINE,
         )
         .unwrap_err();
         assert_eq!(failure.category, "not logged in");
@@ -1800,7 +1803,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 &["auth", "login"],
-                Duration::from_secs(1)
+                FIXTURE_DEADLINE
             )
             .is_err()
         );
@@ -1815,7 +1818,7 @@ esac"#,
                 &fixture.root.join("missing"),
                 None,
                 &["pr", "list"],
-                Duration::from_secs(1)
+                FIXTURE_DEADLINE
             )
             .unwrap_err()
             .category,
@@ -1829,13 +1832,8 @@ esac"#,
             ("HTTP 429 rate limit exceeded", "network or rate limit"),
         ] {
             let fixture = GhFixture::new(&format!("printf '%s' '{stderr}' >&2; exit 1"));
-            let failure = run_gh(
-                &fixture.binary,
-                None,
-                &["pr", "list"],
-                Duration::from_secs(1),
-            )
-            .unwrap_err();
+            let failure =
+                run_gh(&fixture.binary, None, &["pr", "list"], FIXTURE_DEADLINE).unwrap_err();
             assert_eq!(failure.category, expected);
             assert_eq!(failure.reason, stderr);
         }
