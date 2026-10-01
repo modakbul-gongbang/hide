@@ -286,6 +286,7 @@ The refresh action discards the rolling task for the focused pane and asks again
 
 The plugin publishes no session `name` and never renames a Herdr agent or tab.
 Hide titles an agent by the current session’s rolling `task`, then by its provider (`Claude`, `Codex`, or `Agent`).
+A new session shows only its provider title and no progress until its own first analysis publishes.
 The workspace label and orchestrator name never supply an agent display title.
 Names assigned by Sasu or another orchestrator remain available for CLI targeting but never become display titles.
 Claude's `ai-title` and Codex's first human turn have no separate title role.
@@ -418,8 +419,8 @@ The important files are:
 
 | File | Contents |
 | --- | --- |
-| `display-state.json` | Current task, progress, task-input cursor, semantic attention, per-phase analyzed turns, and lifecycle timestamps. |
-| `hook-state.json` | Pending native-hook interaction state. |
+| `display-state.json` | The proven session owner, current task, progress, task-input cursor, semantic attention, per-phase analyzed turns, and lifecycle timestamps. |
+| `hook-state.json` | Pending native-hook interaction state and the session owner it was proven for. |
 | `settings.json` | Automatic task-analysis preference. |
 | `events.jsonl` | Structured operational events and failure classes. |
 

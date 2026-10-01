@@ -197,6 +197,31 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
     );
 }
 
+/// #268: a sleep record written before labels carried an owner proves no
+/// session, so its row falls back to the provider title with no progress.
+#[test]
+fn a_legacy_sleep_record_without_a_label_owner_shows_no_stale_label() {
+    let (mut runtime, _) = asleep();
+    let record = runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .records
+        .get_mut(SLEEPER)
+        .expect("the sleep record");
+    assert!(
+        record.label_owner.is_some(),
+        "a current row stamps its owner"
+    );
+    record.label_owner = None;
+    record.progress = Some("Split the lexer".to_owned());
+    runtime.ingest_session(Ok(session(None)));
+    let slept = row(&runtime);
+    assert_eq!(slept["sleep"]["state"], "sleeping");
+    assert_eq!(slept["identity_label"], "Claude");
+    assert!(slept.get("progress").is_none_or(serde_json::Value::is_null));
+}
+
 /// B12: typed input to a sleeping pane reaches no terminal.
 #[test]
 fn input_to_a_sleeping_pane_goes_nowhere() {
