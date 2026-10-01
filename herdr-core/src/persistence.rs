@@ -584,7 +584,10 @@ mod tests {
         assert_eq!(state.expanded_paths, ["/repo/src"]);
         assert_eq!(state.selected_pane_id.as_deref(), Some("p1"));
         assert!(state.left_sidebar_visible);
-        assert!(state.device_rail_visible, "a pre-rail-toggle store still shows the rail");
+        assert!(
+            state.device_rail_visible,
+            "a pre-rail-toggle store still shows the rail"
+        );
         assert!(state.right_panel_visible);
         assert!(state.shortcut_bindings.is_empty());
         assert!(state.pet_visible, "a pre-pet store still shows the pet");
