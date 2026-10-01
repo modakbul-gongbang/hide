@@ -71,6 +71,7 @@ describe("the explicit GitHub search (B16-B19)", () => {
     expect(githubRow("sandbox", answer({ phase: "working" })).state).toBe("working");
     expect(githubRow("sandbox", answer({ phase: "failed" }))).toEqual({ state: "failed", label: "GitHub 검색 실패 · 다시 시도" });
     expect(githubRow("sandbox", answer({}))).toEqual({ state: "none", label: "GitHub에도 없음" });
+    expect(githubRow("sandbox", answer({ message: "저장소 25개 중 20개만 검색했습니다." })).label).toBe("찾은 결과 없음 · 일부 저장소만 검색");
   });
 
   it("does not start the same query again while it runs, and does after a failure (B19)", () => {

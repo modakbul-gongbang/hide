@@ -6,9 +6,9 @@ pub(super) struct UnconfirmedIssueToken {
     pub observed: bool,
 }
 
-/// Most repositories one GitHub search covers: each costs a `gh search prs`
-/// and a `gh search issues` call, and GitHub rate-limits search per minute.
-const SEARCH_REPOSITORY_LIMIT: usize = 20;
+/// Most repositories one GitHub search covers: each is one more `--repo` on
+/// the two `gh search` calls, and the cap bounds the projects resolved too.
+const SEARCH_REPOSITORY_LIMIT: usize = crate::github::SEARCH_REPOSITORY_LIMIT;
 
 /// Longest request id a search echoes back.
 const SEARCH_REQUEST_ID_LIMIT: usize = 128;
@@ -893,12 +893,15 @@ impl Runtime {
         true
     }
 
-    /// The repositories a search covers: this Mac's registered projects whose
-    /// source is GitHub and whose repository the GitHub reader resolved,
-    /// once each by `owner/name` (GitHub names ignore case), in the catalog's
-    /// order, and the note to say when the cap left some out.
-    pub(super) fn github_search_repositories(&self) -> (Vec<String>, Option<String>) {
-        let mut repositories: Vec<String> = Vec::new();
+    /// The projects a search covers: this Mac's registered projects whose
+    /// source is GitHub, in the catalog's order, once each by `owner/name`
+    /// when the reader has resolved it (GitHub names ignore case); a project
+    /// it has not read yet is resolved by the search's own worker. The cap
+    /// leaves some out with the note to say so.
+    pub(super) fn github_search_targets(
+        &self,
+    ) -> (Vec<crate::github::SearchTarget>, Option<String>) {
+        let mut targets: Vec<crate::github::SearchTarget> = Vec::new();
         for workspace in &self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some()
                 || !workspace.is_git
@@ -906,28 +909,34 @@ impl Runtime {
             {
                 continue;
             }
-            let Some(repository) = workspace
+            let repository = workspace
                 .home_issues
                 .repository
                 .as_deref()
                 .filter(|repository| crate::issues::is_repository(repository))
-            else {
-                continue;
-            };
-            if !repositories
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(repository))
+                .map(str::to_owned);
+            if let Some(repository) = &repository
+                && targets.iter().any(|known| {
+                    known
+                        .repository
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(repository))
+                })
             {
-                repositories.push(repository.to_owned());
+                continue;
             }
+            targets.push(crate::github::SearchTarget {
+                root: std::path::PathBuf::from(&workspace.path),
+                repository,
+            });
         }
-        let total = repositories.len();
+        let total = targets.len();
         if total <= SEARCH_REPOSITORY_LIMIT {
-            return (repositories, None);
+            return (targets, None);
         }
-        repositories.truncate(SEARCH_REPOSITORY_LIMIT);
+        targets.truncate(SEARCH_REPOSITORY_LIMIT);
         let note = format!("저장소 {total}개 중 {SEARCH_REPOSITORY_LIMIT}개만 검색했습니다.");
-        (repositories, Some(note))
+        (targets, Some(note))
     }
 
     /// `github_search`: pull requests and issues of this Mac's GitHub
@@ -1007,8 +1016,14 @@ impl Runtime {
     /// Starts one search worker for `request`, or answers it at once when
     /// there is nothing to search or no worker to search with.
     fn start_github_search(&mut self, request: SearchRequest) {
-        let (repositories, note) = self.github_search_repositories();
-        if repositories.is_empty() {
+        let (targets, note) = self.github_search_targets();
+        if note.is_some() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "issues", "kind": "github_search.capped",
+                "request_id": request.request_id, "limit": SEARCH_REPOSITORY_LIMIT,
+            }));
+        }
+        if targets.is_empty() {
             self.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot {
                 phase: "ready".into(),
                 ..crate::model::GithubSearchSnapshot::working(request.request_id, request.query)
@@ -1029,7 +1044,7 @@ impl Runtime {
                 // A worker that unwound would leave the one search slot taken
                 // for good, so a panic is a failed search like any other.
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    crate::github::search(&repositories, &query)
+                    crate::github::search(&targets, &query)
                 }))
                 .unwrap_or_else(|_| Err("the search worker panicked".to_owned()))
             },

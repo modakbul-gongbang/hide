@@ -1022,7 +1022,7 @@ Web owner: `web/src/SearchPalette.tsx` (⌘K), `web/src/search.ts`, `web/src/rel
 
 ⌘K goes to things; it runs no command except `에이전트 시작…`.
 On the web, the Search icon at the end of the sidebar's tab strip or its top line, hinted `Search ⌘K`, opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
-Its own wide layout is a list on the left and the highlighted row's detail on the right, one and a half times the width ⌘P, the shortcut sheet and the start panel share; a window too narrow for both draws the list alone.
+Its own wide layout is a list on the left and the highlighted row's detail on the right, one and a half times the width ⌘P, the shortcut sheet and the start panel share; a dialog under 800 px, too narrow for both, draws the list alone.
 
 ### What a query finds
 
@@ -1048,7 +1048,8 @@ Under `관계` it draws the same groups the empty list draws for the row, when i
 
 Typing never calls GitHub.
 Opening ⌘K asks once per app run for the local project in front when nothing has read it, and a checkout row shows a spinner while that read has no answer and a warning mark with the last value's age when it failed; the reason is in the log.
-A query with a GitHub project on this Mac ends with `GitHub에서 "…" 검색`; choosing it sends one `github_search`, and the row shows a spinner, then the pull requests and issues GitHub holds under `GitHub` (an exact match to one already held is not listed twice), `GitHub에도 없음`, or `GitHub 검색 실패 · 다시 시도`.
+A query with a GitHub project on this Mac ends with `GitHub에서 "…" 검색`; choosing it sends one `github_search`, and the row shows a spinner, then the pull requests and issues GitHub holds under `GitHub` (an exact match to one already held is not listed twice), `GitHub에도 없음` (or `찾은 결과 없음 · 일부 저장소만 검색` when the core covered only some of the projects), or `GitHub 검색 실패 · 다시 시도`.
+The query's words match like a search box, and a query is capped at 200 characters.
 The same query already searching is not started again, and an answer for an older query is dropped.
 Choosing a GitHub result opens it in the browser.
 

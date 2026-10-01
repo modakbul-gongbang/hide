@@ -25,7 +25,7 @@ import { keyboardOwner } from "./viewFocus";
 // `GitHub에서 "…" 검색` row; typing never calls it.
 
 /** The window is too narrow for a list and a detail below this width; the detail is not drawn then (B26). */
-const DETAIL_MIN_WIDTH = 640;
+const DETAIL_MIN_WIDTH = 800;
 
 /** Whether a dialog of `width` px has room for the detail beside its list; unmeasured is yes. */
 function showsDetail(width: number | null): boolean {
@@ -36,6 +36,9 @@ function showsDetail(width: number | null): boolean {
 const askedProjects = new Set<string>();
 
 const GITHUB_ROW_ID = "github-search";
+
+/** The longest query the core searches GitHub for (`SEARCH_QUERY_LIMIT` in herdr-core/src/github.rs). */
+const SEARCH_QUERY_LIMIT = 200;
 
 const TONE_CLASS: Record<Tone, string> = {
   working: "text-agent-working",
@@ -170,6 +173,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
           <CommandInput
             value={query}
             placeholder="이름이나 #번호를 입력하세요"
+            maxLength={SEARCH_QUERY_LIMIT}
             data-palette-input="true"
             onValueChange={(value) => setQuery(value)}
             wrapperClassName={collapsed ? "border-b-0" : undefined}
@@ -293,7 +297,7 @@ function RelationBlock({ relations, on }: { relations: Relations; on: string }) 
   const line = (entry: SearchEntry, depth: number) => (
     <div key={entry.id} data-relation-row={entry.id} data-relation-on={entry.id === on ? "true" : undefined} className={`flex items-center gap-xs py-xxs text-caption ${entry.id === on ? "font-semibold text-foreground" : "text-subtle-foreground"}`} style={depth > 0 ? { paddingLeft: `calc(${depth} * var(--spacing-md))` } : undefined}>
       <span className="flex w-(--size-icon-sm) shrink-0 justify-center [&_svg]:size-(--size-icon-sm)"><EntryIcon entry={entry} /></span>
-      <span className="min-w-0 truncate">{entry.tag === "parent" ? "↑ 부모 " : ""}{entry.title}</span>
+      <span className="min-w-0 break-words">{entry.tag === "parent" ? "↑ 부모 " : ""}{entry.title}</span>
     </div>
   );
   return (

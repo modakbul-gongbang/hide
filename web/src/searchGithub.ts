@@ -77,14 +77,17 @@ export type GithubRow = { state: "idle" | "working" | "failed" | "none"; label: 
 /**
  * The row's words for the answer to this query: the search itself while none
  * ran or one is running, `GitHub 검색 실패 · 다시 시도` when it failed (B18),
- * `GitHub에도 없음` once it answered with nothing.
+ * `GitHub에도 없음` once it answered with nothing, and says so when the core
+ * searched only some of the repositories (its `message`).
  */
 export function githubRow(query: string, answer: GithubSearch | null): GithubRow {
   const label = `GitHub에서 "${query}" 검색`;
   if (!answer) return { state: "idle", label };
   if (answer.phase === "working") return { state: "working", label };
   if (answer.phase === "failed") return { state: "failed", label: "GitHub 검색 실패 · 다시 시도" };
-  return answer.results.length === 0 ? { state: "none", label: "GitHub에도 없음" } : { state: "idle", label };
+  // A search the core cut short does not claim GitHub has nothing.
+  if (answer.results.length > 0) return { state: "idle", label };
+  return { state: "none", label: answer.message ? "찾은 결과 없음 · 일부 저장소만 검색" : "GitHub에도 없음" };
 }
 
 /** The core's answer for what this palette asked: only the request it sent, and only while the query is still the one it searched (B19). */

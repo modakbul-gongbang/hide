@@ -130,7 +130,7 @@ function FilePalette({ actions }: { actions: Actions }) {
       onValue={setHighlighted}
       onKeyDown={(event) => {
         // ⌘↵ opens the highlighted file beside the active View area (S7 B4).
-        if (event.key !== "Enter" || !event.metaKey || !current) return;
+        if (event.key !== "Enter" || !event.metaKey || event.nativeEvent.isComposing || !current) return;
         event.preventDefault();
         event.stopPropagation();
         const reason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());

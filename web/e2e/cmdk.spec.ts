@@ -162,10 +162,10 @@ case "$1 $2" in
     esac
     exit 0 ;;
   "search prs"|"search issues")
-    for last; do :; done
-    case "$last" in
-      *fail*) echo "boom" >&2; exit 1 ;;
-      *nothing*) echo '[]'; exit 0 ;;
+    # The query is the words after the double dash.
+    case " $* " in
+      *" fail "*) echo "boom" >&2; exit 1 ;;
+      *" nothing "*) echo '[]'; exit 0 ;;
     esac
     if [ "$2" = "prs" ]; then echo '${JSON.stringify(searchPrs)}'; else echo '${JSON.stringify(searchIssues)}'; fi
     exit 0 ;;

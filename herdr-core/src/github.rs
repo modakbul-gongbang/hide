@@ -707,9 +707,45 @@ pub(crate) const SEARCH_LIMIT: usize = 20;
 /// Longest query, in characters, a search takes.
 pub(crate) const SEARCH_QUERY_LIMIT: usize = 200;
 
+/// Most repositories one search names (`runtime/issues.rs` caps the projects at the same number).
+pub(crate) const SEARCH_REPOSITORY_LIMIT: usize = 20;
+
 /// A query as `run_gh` lets it reach `gh`: some text, within the cap.
 fn is_search_query(query: &str) -> bool {
     !query.trim().is_empty() && query.chars().count() <= SEARCH_QUERY_LIMIT
+}
+
+/// The one shape of `gh search prs|issues` Hide runs: `search <kind>`, one
+/// `--repo owner/name` per repository, the cap, that kind's fixed fields, then
+/// `--` and the query's words, each of which is just text to `gh`.
+fn is_search_call(arguments: &[&str]) -> bool {
+    let [first, kind, rest @ ..] = arguments else {
+        return false;
+    };
+    let fields = match (*first, *kind) {
+        ("search", "prs") => SEARCH_PR_FIELDS,
+        ("search", "issues") => SEARCH_ISSUE_FIELDS,
+        _ => return false,
+    };
+    let mut rest = rest;
+    let mut repositories = 0;
+    while let ["--repo", repository, tail @ ..] = rest {
+        if !crate::issues::is_repository(repository) {
+            return false;
+        }
+        repositories += 1;
+        rest = tail;
+    }
+    let limit = SEARCH_LIMIT.to_string();
+    let ["--limit", count, "--json", requested, "--", words @ ..] = rest else {
+        return false;
+    };
+    (1..=SEARCH_REPOSITORY_LIMIT).contains(&repositories)
+        && *count == limit
+        && *requested == fields
+        && !words.is_empty()
+        && words.iter().map(|word| word.chars().count()).sum::<usize>() <= SEARCH_QUERY_LIMIT
+        && words.iter().all(|word| is_search_query(word))
 }
 
 #[derive(Clone, Copy)]
@@ -741,70 +777,120 @@ impl SearchKind {
     }
 }
 
-/// Searches pull requests and issues for `query` in each repository, in
-/// order: one `gh search prs` and one `gh search issues` per repository, on
-/// the caller's worker. At most `SEARCH_LIMIT` of each come back, pull
-/// requests first; once a kind has that many, later repositories are not
-/// asked for it, because their hits would be cut anyway. Any failed call
-/// fails the whole search, naming the call.
-pub(crate) fn search(
-    repositories: &[String],
-    query: &str,
-) -> Result<Vec<crate::model::GithubSearchResult>, String> {
-    search_with(|arguments| gh(None, arguments), repositories, query)
+/// A project a search may cover: where it lives, and its `owner/name` when
+/// the GitHub reader has already resolved it.
+#[derive(Clone, Debug)]
+pub(crate) struct SearchTarget {
+    pub(crate) root: std::path::PathBuf,
+    pub(crate) repository: Option<String>,
 }
 
+/// Searches pull requests and issues for `query` in each target's
+/// repository, on the caller's worker. A project the reader has not read yet
+/// is resolved here with the same `gh repo view` the reader runs, so the
+/// search never depends on what was read earlier. See `search_with`.
+pub(crate) fn search(
+    targets: &[SearchTarget],
+    query: &str,
+) -> Result<Vec<crate::model::GithubSearchResult>, String> {
+    let repositories = resolve_repositories(gh, targets)?;
+    search_with(|arguments| gh(None, arguments), &repositories, query)
+}
+
+/// The targets' repositories, once each by `owner/name` (GitHub names ignore
+/// case), in order. A project whose repository cannot be resolved is left
+/// out and logged; when none could be, the search has nothing to ask and says
+/// so rather than answering as if it had looked.
+fn resolve_repositories(
+    run: impl Fn(Option<&Path>, &[&str]) -> Result<String, GhFailure>,
+    targets: &[SearchTarget],
+) -> Result<Vec<String>, String> {
+    let mut repositories: Vec<String> = Vec::new();
+    let mut unresolved: Option<String> = None;
+    for target in targets {
+        let repository = match &target.repository {
+            Some(repository) => repository.clone(),
+            None => match run(
+                Some(&target.root),
+                &["repo", "view", "--json", "nameWithOwner"],
+            )
+            .and_then(|output| {
+                serde_json::from_str::<serde_json::Value>(&output)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("nameWithOwner")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .filter(|name| crate::issues::is_repository(name))
+                    .ok_or_else(|| GhFailure::network("repository identity is missing".into()))
+            }) {
+                Ok(repository) => repository,
+                Err(failure) => {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "github", "kind": "search_repository.unresolved",
+                        "reason": failure.reason,
+                    }));
+                    unresolved.get_or_insert(failure.reason);
+                    continue;
+                }
+            },
+        };
+        if !repositories
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(&repository))
+        {
+            repositories.push(repository);
+        }
+    }
+    match (repositories.is_empty(), unresolved) {
+        (true, Some(reason)) => Err(format!(
+            "no project's repository could be resolved: {reason}"
+        )),
+        _ => Ok(repositories),
+    }
+}
+
+/// Searches pull requests and issues for `query` in all the repositories at
+/// once: one `gh search prs` and one `gh search issues`, however many
+/// repositories there are (GitHub's search allows about 30 calls a minute).
+/// The query goes as separate words, so it matches the way a search box does,
+/// not as one quoted phrase. At most `SEARCH_LIMIT` of each come back, pull
+/// requests first. A failed call fails the whole search, naming the call.
 fn search_with(
     run: impl Fn(&[&str]) -> Result<String, GhFailure>,
     repositories: &[String],
     query: &str,
 ) -> Result<Vec<crate::model::GithubSearchResult>, String> {
-    let limit = SEARCH_LIMIT.to_string();
-    let mut pull_requests = Vec::new();
-    let mut issues = Vec::new();
-    for repository in repositories {
-        for (kind, found) in [
-            (SearchKind::Pr, &mut pull_requests),
-            (SearchKind::Issue, &mut issues),
-        ] {
-            if found.len() >= SEARCH_LIMIT {
-                continue;
-            }
-            let output = run(&[
-                "search",
-                kind.subcommand(),
-                "--repo",
-                repository,
-                "--limit",
-                &limit,
-                "--json",
-                kind.fields(),
-                "--",
-                query,
-            ])
-            .map_err(|error| {
-                format!(
-                    "gh search {} in {repository}: {}",
-                    kind.subcommand(),
-                    error.reason
-                )
-            })?;
-            found.extend(parse_search(&output, kind, repository)?);
-        }
+    if repositories.is_empty() {
+        return Ok(Vec::new());
     }
-    pull_requests.truncate(SEARCH_LIMIT);
-    issues.truncate(SEARCH_LIMIT);
-    pull_requests.append(&mut issues);
-    Ok(pull_requests)
+    let limit = SEARCH_LIMIT.to_string();
+    let mut found: Vec<Vec<crate::model::GithubSearchResult>> = Vec::new();
+    for kind in [SearchKind::Pr, SearchKind::Issue] {
+        let mut arguments = vec!["search", kind.subcommand()];
+        for repository in repositories {
+            arguments.extend(["--repo", repository]);
+        }
+        arguments.extend(["--limit", &limit, "--json", kind.fields(), "--"]);
+        arguments.extend(query.split_whitespace());
+        let output = run(&arguments)
+            .map_err(|error| format!("gh search {}: {}", kind.subcommand(), error.reason))?;
+        let mut hits = parse_search(&output, kind, repositories)?;
+        hits.truncate(SEARCH_LIMIT);
+        found.push(hits);
+    }
+    Ok(found.into_iter().flatten().collect())
 }
 
-/// One `gh search` answer. A hit outside `repository` is dropped: a
+/// One `gh search` answer. A hit outside `repositories` is dropped: a
 /// `repo:` qualifier in the query widens GitHub's search to that repository
 /// too, and a search only covers the projects registered here.
 fn parse_search(
     output: &str,
     kind: SearchKind,
-    repository: &str,
+    repositories: &[String],
 ) -> Result<Vec<crate::model::GithubSearchResult>, String> {
     #[derive(Deserialize)]
     struct Found {
@@ -829,10 +915,10 @@ fn parse_search(
     })?;
     let mut results = Vec::new();
     for hit in found {
-        if !hit
-            .repository
-            .name_with_owner
-            .eq_ignore_ascii_case(repository)
+        let repository = hit.repository.name_with_owner;
+        if !repositories
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(&repository))
         {
             continue;
         }
@@ -844,16 +930,16 @@ fn parse_search(
                 hit.state
             ));
         }
-        // The link is drawn from data, so only an https address passes.
-        if !hit.url.starts_with("https://") {
+        // The link is drawn from data, so only a github.com address passes.
+        if !hit.url.starts_with("https://github.com/") {
             return Err(format!(
-                "gh search {} returned a link that is not https",
+                "gh search {} returned a link that is not on github.com",
                 kind.subcommand()
             ));
         }
         results.push(crate::model::GithubSearchResult {
             kind: kind.wire().into(),
-            repository: repository.to_owned(),
+            repository,
             number: hit.number,
             title: hit.title,
             state,
@@ -1537,19 +1623,9 @@ fn run_gh(
             && arguments[..2] == ["issue", "view"]
             && arguments[3] == "--repo"
             && arguments[5..] == ["--json", ISSUE_DETAIL_FIELDS])
-        // The search (`search`): one repository, the cap, fixed fields, and a
-        // query after `--` that can never be read as a flag.
-        || (arguments.len() == 10
-            && arguments[0] == "search"
-            && ((arguments[1] == "prs" && arguments[7] == SEARCH_PR_FIELDS)
-                || (arguments[1] == "issues" && arguments[7] == SEARCH_ISSUE_FIELDS))
-            && arguments[2] == "--repo"
-            && crate::issues::is_repository(arguments[3])
-            && arguments[4] == "--limit"
-            && arguments[5] == SEARCH_LIMIT.to_string()
-            && arguments[6] == "--json"
-            && arguments[8] == "--"
-            && is_search_query(arguments[9]))
+        // The search (`search`): the registered repositories, the cap, fixed
+        // fields, and the query's words after `--` so none can be read as a flag.
+        || is_search_call(arguments)
         || (arguments.len() == 4
             && arguments[..3] == ["api", "graphql", "-f"]
             && (arguments[3].starts_with("query=query HideLinkedIssues {")
@@ -2301,7 +2377,7 @@ esac"#,
 
     #[test]
     fn search_hits_read_as_gh_prints_them_and_stay_inside_the_repository_asked() {
-        let prs = parse_search(SEARCH_PRS_OUTPUT, SearchKind::Pr, "cli/cli").unwrap();
+        let prs = parse_search(SEARCH_PRS_OUTPUT, SearchKind::Pr, &["cli/cli".to_owned()]).unwrap();
         assert_eq!(
             prs.iter()
                 .map(|hit| (
@@ -2320,7 +2396,12 @@ esac"#,
         );
         assert_eq!(prs[0].repository, "cli/cli");
         assert_eq!(prs[0].url, "https://github.com/cli/cli/pull/10253");
-        let issues = parse_search(SEARCH_ISSUES_OUTPUT, SearchKind::Issue, "CLI/cli").unwrap();
+        let issues = parse_search(
+            SEARCH_ISSUES_OUTPUT,
+            SearchKind::Issue,
+            &["CLI/cli".to_owned()],
+        )
+        .unwrap();
         assert_eq!(issues.len(), 1, "GitHub names ignore case");
         assert_eq!(
             (
@@ -2331,7 +2412,7 @@ esac"#,
             ("issue", false, 14046)
         );
         assert_eq!(
-            parse_search("[]", SearchKind::Pr, "cli/cli").unwrap(),
+            parse_search("[]", SearchKind::Pr, &["cli/cli".to_owned()]).unwrap(),
             vec![]
         );
     }
@@ -2347,7 +2428,7 @@ esac"#,
             r#"[{"number":1,"repository":{"nameWithOwner":"a/b"},"state":"open","title":"t","url":"javascript:alert(1)"}]"#,
         ] {
             assert!(
-                parse_search(output, SearchKind::Pr, "a/b").is_err(),
+                parse_search(output, SearchKind::Pr, &["a/b".to_owned()]).is_err(),
                 "{output:?}"
             );
         }
@@ -2361,62 +2442,42 @@ esac"#,
     }
 
     #[test]
-    fn a_search_asks_each_repository_for_both_kinds_and_keeps_twenty_of_each_in_order() {
+    fn a_search_makes_one_call_per_kind_naming_every_repository_with_the_query_as_words() {
         let calls = std::cell::RefCell::new(Vec::new());
         let run = |arguments: &[&str]| {
             calls.borrow_mut().push(arguments.join(" "));
             let kind = if arguments[1] == "prs" { "pr" } else { "issue" };
-            let repository = arguments[3];
-            let base = if repository == "acme/a" { 100 } else { 200 };
-            // Twelve hits per call, so the second repository crosses the cap.
+            // Thirty hits a call: more than the cap, across both repositories.
             Ok(format!(
                 "[{}]",
-                (0..12)
-                    .map(|n| hit_json(repository, kind, base + n))
+                (0..30)
+                    .map(|n| hit_json(if n % 2 == 0 { "acme/a" } else { "acme/b" }, kind, 100 + n))
                     .collect::<Vec<_>>()
                     .join(",")
             ))
         };
-        let repositories = vec![
-            "acme/a".to_owned(),
-            "acme/b".to_owned(),
-            "acme/c".to_owned(),
-        ];
-        let found = search_with(run, &repositories, "reader --limit").unwrap();
+        let repositories = vec!["acme/a".to_owned(), "acme/b".to_owned()];
+        let found = search_with(run, &repositories, "reader  --limit").unwrap();
         assert_eq!(found.len(), 40);
         let kinds: Vec<_> = found.iter().map(|hit| hit.kind.as_str()).collect();
         assert_eq!(kinds[..20], ["pr"; 20][..], "pull requests first");
         assert_eq!(kinds[20..], ["issue"; 20][..]);
-        let repositories_of_prs: Vec<_> = found[..20]
-            .iter()
-            .map(|hit| hit.repository.as_str())
-            .collect();
-        assert_eq!(
-            repositories_of_prs[..12],
-            ["acme/a"; 12][..],
-            "repository order"
-        );
-        assert_eq!(
-            repositories_of_prs[12..],
-            ["acme/b"; 8][..],
-            "then cut at twenty"
-        );
         let calls = calls.into_inner();
         assert_eq!(
-            calls[0],
-            "search prs --repo acme/a --limit 20 --json isDraft,number,repository,state,title,url -- reader --limit",
+            calls,
+            vec![
+                "search prs --repo acme/a --repo acme/b --limit 20 --json isDraft,number,repository,state,title,url -- reader --limit",
+                "search issues --repo acme/a --repo acme/b --limit 20 --json number,repository,state,title,url -- reader --limit",
+            ],
+            "two calls however many repositories, the query as separate words"
         );
-        assert_eq!(
-            calls[1],
-            "search issues --repo acme/a --limit 20 --json number,repository,state,title,url -- reader --limit",
-        );
-        assert_eq!(calls.len(), 4, "acme/c is not asked: both kinds are full");
+        assert_eq!(search_with(|_| Ok("[]".into()), &[], "q").unwrap(), vec![]);
     }
 
     #[test]
     fn one_failed_search_call_fails_the_whole_search_and_names_the_call() {
         let run = |arguments: &[&str]| {
-            if arguments[1] == "issues" && arguments[3] == "acme/b" {
+            if arguments[1] == "issues" {
                 Err(GhFailure::network(
                     "HTTP 403: API rate limit exceeded".into(),
                 ))
@@ -2426,33 +2487,67 @@ esac"#,
         };
         let repositories = vec!["acme/a".to_owned(), "acme/b".to_owned()];
         let error = search_with(run, &repositories, "q").unwrap_err();
-        assert!(error.contains("search issues in acme/b"), "{error}");
+        assert!(error.contains("gh search issues"), "{error}");
         assert!(error.contains("rate limit"), "{error}");
-        assert_eq!(search_with(|_| Ok("[]".into()), &[], "q").unwrap(), vec![]);
+    }
+
+    #[test]
+    fn an_unread_project_is_resolved_by_the_search_and_an_unresolvable_one_is_said() {
+        let target = |root: &str, repository: Option<&str>| SearchTarget {
+            root: root.into(),
+            repository: repository.map(str::to_owned),
+        };
+        let run = |cwd: Option<&Path>, arguments: &[&str]| {
+            assert_eq!(arguments, ["repo", "view", "--json", "nameWithOwner"]);
+            match cwd.and_then(Path::to_str) {
+                Some("/unread") => Ok(r#"{"nameWithOwner":"ACME/Known"}"#.to_owned()),
+                Some("/new") => Ok(r#"{"nameWithOwner":"acme/new"}"#.to_owned()),
+                _ => Err(GhFailure::network("no GitHub remote".into())),
+            }
+        };
+        // Resolved ones join the known ones once, ignoring case; a failed one is left out.
+        let found = resolve_repositories(
+            run,
+            &[
+                target("/known", Some("acme/known")),
+                target("/unread", None),
+                target("/new", None),
+                target("/broken", None),
+            ],
+        )
+        .unwrap();
+        assert_eq!(found, vec!["acme/known", "acme/new"]);
+        // Nothing resolvable is a failed search, never an empty answer.
+        let error = resolve_repositories(run, &[target("/broken", None)]).unwrap_err();
+        assert!(error.contains("no GitHub remote"), "{error}");
     }
 
     #[test]
     #[cfg(unix)]
-    fn a_search_takes_one_repository_the_cap_fixed_fields_and_a_query_after_the_dashes() {
+    fn a_search_takes_its_repositories_the_cap_fixed_fields_and_the_query_words_after_the_dashes() {
         let fixture = GhFixture::new(r#"printf '[]'"#);
         let allowed = |arguments: &[&str]| {
             run_gh(&fixture.binary, None, arguments, Duration::from_secs(5)).is_ok()
         };
-        fn prs<'a>(repository: &'a str, query: &'a str) -> [&'a str; 10] {
-            [
-                "search",
-                "prs",
-                "--repo",
-                repository,
-                "--limit",
-                "20",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "--",
-                query,
-            ]
-        }
-        let issues = [
+        let prs = |repositories: &[&'static str], words: &[&'static str]| {
+            let mut arguments = vec!["search", "prs"];
+            for repository in repositories {
+                arguments.extend(["--repo", repository]);
+            }
+            arguments.extend(["--limit", "20", "--json", SEARCH_PR_FIELDS, "--"]);
+            arguments.extend(words);
+            arguments
+        };
+        assert!(allowed(&prs(&["acme/app"], &["reader"])));
+        assert!(allowed(&prs(
+            &["acme/app", "acme/other"],
+            &["two", "words"]
+        )));
+        assert!(
+            allowed(&prs(&["acme/app"], &["--web"])),
+            "a word is never a flag"
+        );
+        assert!(allowed(&[
             "search",
             "issues",
             "--repo",
@@ -2463,26 +2558,24 @@ esac"#,
             SEARCH_ISSUE_FIELDS,
             "--",
             "-w",
-        ];
-        assert!(allowed(&prs("acme/app", "reader")));
-        assert!(
-            allowed(&prs("acme/app", "--web")),
-            "a query is never a flag"
-        );
-        assert!(allowed(&issues));
-        assert!(allowed(&prs(
-            "acme/app",
-            &"가".repeat(SEARCH_QUERY_LIMIT)[..]
-        )));
+        ]));
+        let twenty = ["acme/app"; SEARCH_REPOSITORY_LIMIT];
+        assert!(allowed(&prs(&twenty, &["q"])));
         let long = "x".repeat(SEARCH_QUERY_LIMIT + 1);
+        let long: &'static str = Box::leak(long.into_boxed_str());
+        let twenty_one = ["acme/app"; SEARCH_REPOSITORY_LIMIT + 1];
         let refused: Vec<Vec<&str>> = vec![
-            prs("acme/app", "").to_vec(),
-            prs("acme/app", "  ").to_vec(),
-            prs("acme/app", &long).to_vec(),
-            prs("acme/app/extra", "q").to_vec(),
-            prs("acme", "q").to_vec(),
-            prs("--repo", "q").to_vec(),
-            prs("acme/../app", "q").to_vec(),
+            prs(&["acme/app"], &[""]),
+            prs(&["acme/app"], &["  "]),
+            prs(&["acme/app"], &[]),
+            prs(&["acme/app"], &[long]),
+            prs(&["acme/app"], &[&long[..150], &long[..100]]),
+            prs(&twenty_one, &["q"]),
+            prs(&[], &["q"]),
+            prs(&["acme/app/extra"], &["q"]),
+            prs(&["acme"], &["q"]),
+            prs(&["--repo"], &["q"]),
+            prs(&["acme/../app"], &["q"]),
             // A different limit, field list, flag position or subcommand.
             vec![
                 "search",
@@ -2556,33 +2649,6 @@ esac"#,
                 "20",
                 "--json",
                 SEARCH_PR_FIELDS,
-                "--",
-                "q",
-                "--web",
-            ],
-            vec![
-                "search",
-                "prs",
-                "--repo",
-                "acme/app",
-                "--limit",
-                "20",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "q",
-            ],
-            vec![
-                "search",
-                "prs",
-                "--repo",
-                "acme/app",
-                "--repo",
-                "acme/other",
-                "--limit",
-                "20",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "--",
                 "q",
             ],
             vec![

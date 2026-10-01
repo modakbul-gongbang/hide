@@ -788,8 +788,9 @@ fn a_search_with_no_github_project_answers_ready_with_no_results() {
     assert_eq!(search_slot(&local).2, "ready");
 }
 
-/// The repositories are this Mac's GitHub projects once each by `owner/name`,
-/// in catalog order: not a device's, not a Local project's, and the cap says so.
+/// The targets are this Mac's GitHub projects once each by `owner/name` when
+/// it is known, in catalog order: not a device's, not a Local project's, and
+/// the cap says so.
 #[test]
 fn a_search_covers_each_local_github_repository_once() {
     let mut runtime = issue_runtime();
@@ -814,16 +815,34 @@ fn a_search_covers_each_local_github_repository_once() {
         device,
         plain,
     ];
-    let (repositories, note) = runtime.github_search_repositories();
-    assert_eq!(repositories, vec!["acme/project", "acme/other"]);
+    let (targets, note) = runtime.github_search_targets();
+    let described: Vec<_> = targets
+        .iter()
+        .map(|target| {
+            (
+                target.root.to_str().unwrap().to_owned(),
+                target.repository.clone(),
+            )
+        })
+        .collect();
+    // The unread and the malformed one are searched too: the worker resolves them.
+    assert_eq!(
+        described,
+        vec![
+            ("/repo".to_owned(), base.home_issues.repository.clone()),
+            ("/other".to_owned(), Some("acme/other".to_owned())),
+            ("/unread".to_owned(), None),
+            ("/odd".to_owned(), None),
+        ]
+    );
     assert_eq!(note, None);
 
     runtime.snapshot.navigator.workspaces = (0..25)
         .map(|n| with(&format!("w{n}"), Some(&format!("acme/r{n}"))))
         .collect();
-    let (repositories, note) = runtime.github_search_repositories();
-    assert_eq!(repositories.len(), 20);
-    assert_eq!(repositories[19], "acme/r19");
+    let (targets, note) = runtime.github_search_targets();
+    assert_eq!(targets.len(), 20);
+    assert_eq!(targets[19].repository.as_deref(), Some("acme/r19"));
     assert_eq!(note.as_deref(), Some("저장소 25개 중 20개만 검색했습니다."));
 }
 
