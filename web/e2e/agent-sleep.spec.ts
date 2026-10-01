@@ -17,7 +17,7 @@ test.describe.configure({ timeout: 150_000 });
 const SESSION = "11111111-2222-3333-4444-555555555555";
 
 type ProcessInfo = {
-  result: { process_info: { shell_pid: number; foreground_process_group_id: number; foreground_processes: { argv: string[] }[] } };
+  result: { process_info: { shell_pid: number; foreground_process_group_id: number; foreground_processes: { argv?: string[] | null }[] } };
 };
 
 test("an agent slept from the pane menu keeps its row and wakes in the same pane on a visit", async ({ page }) => {
@@ -89,7 +89,9 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     await page.locator(`[data-tab="${other.result.tab.tab_id}"]`).click();
     await expect(page.locator(`[data-pane-view="${sleeper}"]`)).toHaveCount(0);
     await page.locator(`[data-tab="${herdr.tab}"]`).click();
-    await expect.poll(() => processInfo().foreground_processes.map((process) => process.argv.join(" ")), { timeout: 30_000 }).toContain(
+    // Herdr's schema makes argv optional and nullable; a process reported without
+    // it must not end the poll before the resumed agent is reported.
+    await expect.poll(() => processInfo().foreground_processes.map((process) => process.argv?.join(" ")), { timeout: 30_000 }).toContain(
       `claude --resume ${SESSION}`,
     );
     await expect(pane.locator("[data-pane-sleep]")).toHaveCount(0, { timeout: 30_000 });
