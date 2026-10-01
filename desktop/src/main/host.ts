@@ -124,6 +124,9 @@ export class DesktopHost {
       (event) => this.fromShell(event),
       (workspace, id, load) => this.resolveBrowserRoute(workspace, id, load),
       (workspace, id, load) => this.releaseBrowserRoute(workspace, id, load),
+      // A popup that may not take the keyboard is ordered in without
+      // activating the app, behind the operator's windows under the test switch.
+      (window, focus) => (focus || this.showInactive ? this.present(window, focus) : window.showInactive()),
     );
     this.listenReveal();
     this.listenPickFolder();
@@ -263,6 +266,9 @@ export class DesktopHost {
 
   /** An app-menu click, delivered to the shell only while it is loaded. */
   sendCommand(id: CommandId): void {
+    // A page's popup window holding the keyboard answers the command itself,
+    // whatever the shell's state.
+    if (this.browsers?.popupCommand(id)) return;
     if (!this.window || (this.state.kind !== "attached" && this.state.kind !== "lost")) return;
     // Text size in a page is the page's zoom, and the page keeps the keyboard.
     if (this.browsers?.zoomFocused(id)) return;

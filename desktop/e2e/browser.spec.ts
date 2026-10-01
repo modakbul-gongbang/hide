@@ -31,11 +31,22 @@ const PAGES: Record<string, string> = {
   "/a.html": '<!doctype html><meta charset="utf-8"><title>Page A</title><body style="background:lavender"><h1>Page A</h1><input id="q" aria-label="query">',
   "/b.html": '<!doctype html><meta charset="utf-8"><title>Page B</title><body style="background:honeydew"><h1>Page B</h1>',
   "/c.html": '<!doctype html><meta charset="utf-8"><title>Page C</title><body style="background:mistyrose"><h1>Page C</h1>',
+  "/signin.html": '<!doctype html><meta charset="utf-8"><title>Sign in</title><body style="background:aliceblue"><h1>Sign in</h1>',
+  // A sign-in popup reports to the page that opened it and closes itself.
+  "/popup.html": '<!doctype html><meta charset="utf-8"><title>Popup</title><script>window.opener.postMessage("signed-in", "*"); window.close();</script>',
+  "/stay.html": '<!doctype html><meta charset="utf-8"><title>Stay</title><h1>Stay</h1>',
 };
+/** Answers with a server-side redirect to another app's link, the way a sign-in hands back to a native app. */
+const APP_REDIRECT = "/to-app";
 
 test.beforeAll(async () => {
   herdr = await startHerdr({ agents: false });
   server = http.createServer((request, response) => {
+    if (request.url === APP_REDIRECT) {
+      response.writeHead(302, { location: "hide-e2e-app://redirected" });
+      response.end();
+      return;
+    }
     const body = PAGES[request.url ?? ""];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
     response.end(body ?? "not found");
@@ -65,10 +76,10 @@ test.afterEach(async () => {
 
 type View = { url: string; title: string; visible: boolean; bounds: { x: number; y: number; width: number; height: number }; pid: number };
 
-/** Every page view the window holds, as the main process sees it. */
+/** Every page view the window holds, as the main process sees it; a page's popup is a child window, not this one. */
 function views(): Promise<View[]> {
   return app!.evaluate(({ BrowserWindow }) =>
-    (BrowserWindow.getAllWindows()[0]?.contentView.children ?? []).flatMap((child) => {
+    (BrowserWindow.getAllWindows().find((window) => window.getParentWindow() === null)?.contentView.children ?? []).flatMap((child) => {
       const contents = (child as { webContents?: Electron.WebContents }).webContents;
       if (!contents) return [];
       return [{ url: contents.getURL(), title: contents.getTitle(), visible: child.getVisible(), bounds: child.getBounds(), pid: contents.getOSProcessId() }];
@@ -86,7 +97,7 @@ async function viewOf(url: string): Promise<View> {
 function inPage<T>(url: string, script: string): Promise<T> {
   return app!.evaluate(
     ({ BrowserWindow }, { url, script }) => {
-      const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find(
+      const child = BrowserWindow.getAllWindows().find((window) => window.getParentWindow() === null)!.contentView.children.find(
         (view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url,
       ) as unknown as { webContents: Electron.WebContents } | undefined;
       if (!child) throw new Error(`no view shows ${url}`);
@@ -422,6 +433,104 @@ test("browser: a login in one Workspace is available in another", async () => {
   expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
   await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toBe(firstScreen);
   expect(await inPage(`${origin}/b.html`, "document.cookie")).toContain("shared=ready");
+});
+
+test("browser: a sign-in popup keeps its opener, belongs to its page, and a link to another app asks first", async () => {
+  ({ app } = await launch(run.env));
+  const page = await app.firstWindow();
+  await enterWorkspace(page, "fixture");
+  const signin = `${origin}/signin.html`;
+  const opened = await openFromCli(signin, ["--reveal", "--wait"]);
+  expect(opened).toMatchObject({ status: 0, ok: true });
+  await viewOf(signin);
+  const windows = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  const events = (name: string, reason?: string) => hostLog(run.env).filter((line) => line.event === name && (reason === undefined || line.reason === reason));
+
+  // A sized popup is a window that keeps its opener: the sign-in posts its
+  // result back and closes itself, and no browser display is added for it.
+  await inPage(signin, `window.addEventListener("message", (event) => { document.title = "got " + event.data; }); void window.open(${JSON.stringify(`${origin}/popup.html`)}, "signin", "width=420,height=520")`);
+  await expect.poll(() => inPage<string>(signin, "document.title"), { timeout: 20_000 }).toBe("got signed-in");
+  await expect.poll(windows).toBe(1);
+  expect(events("browser.popup_opened")).toHaveLength(1);
+
+  // Only a size reaches the window, held to the work area: no window feature
+  // makes it frameless, always on top, unclosable or off screen. At most four
+  // stay open, and the page closing takes its popups with it.
+  await inPage(signin, `void window.open(${JSON.stringify(`${origin}/stay.html`)}, "stay0", "left=-4000,top=-4000,width=9000,height=9000,frame=false,alwaysOnTop=yes,closable=no,modal=yes")`);
+  await expect.poll(windows).toBe(2);
+  const hostile = await app.evaluate(({ BrowserWindow, screen }) => {
+    const popup = BrowserWindow.getAllWindows().find((window) => window.getParentWindow() !== null)!;
+    const area = screen.getDisplayMatching(popup.getBounds()).workArea;
+    const bounds = popup.getBounds();
+    const inside = bounds.x >= area.x && bounds.y >= area.y && bounds.x + bounds.width <= area.x + area.width && bounds.y + bounds.height <= area.y + area.height;
+    return { inside, framed: popup.getContentBounds().height < bounds.height, onTop: popup.isAlwaysOnTop(), closable: popup.isClosable(), modal: popup.isModal() };
+  });
+  expect(hostile).toEqual({ inside: true, framed: true, onTop: false, closable: true, modal: false });
+  for (let i = 1; i < 5; i++) await inPage(signin, `void window.open(${JSON.stringify(`${origin}/stay.html`)}, "stay${i}", "width=300,height=300")`);
+  await expect.poll(windows).toBe(5);
+  await expect.poll(() => events("browser.popup_refused", "cap").length).toBe(1);
+  // Many round trips after the first popup posted back, no popup became a display.
+  await expect(tab(page, "Popup")).toHaveCount(0);
+  await expect(tab(page, "Stay")).toHaveCount(0);
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((window) => window.getParentWindow() !== null).length)).toBe(4);
+  expect(await cliFromPane(["view", "close", (opened.result as { view_id: string }).view_id])).toMatchObject({ status: 0, ok: true });
+  await expect.poll(windows).toBe(1);
+
+  // A link to another app asks first, naming the origin and the link, and
+  // opens only on Open; macOS is stood in for so no app starts and no sheet
+  // waits for a click.
+  await app.evaluate(({ app: electronApp, dialog, shell }) => {
+    const probe = { asked: [] as string[], opened: [] as string[], answer: 0 };
+    (globalThis as { appLinkProbe?: typeof probe }).appLinkProbe = probe;
+    electronApp.getApplicationNameForProtocol = (url: string) => (url.startsWith("hide-e2e-app:") ? "Fixture App" : "");
+    dialog.showMessageBox = (async (_window: unknown, options: Electron.MessageBoxOptions) => {
+      probe.asked.push(`${options.message} | ${options.detail} | default ${options.defaultId}`);
+      return { response: probe.answer, checkboxChecked: false };
+    }) as typeof dialog.showMessageBox;
+    shell.openExternal = async (url: string) => { probe.opened.push(url); };
+  });
+  const probe = () => app!.evaluate(() => (globalThis as unknown as { appLinkProbe: { asked: string[]; opened: string[] } }).appLinkProbe);
+  expect(await openFromCli(signin, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true });
+  await viewOf(signin);
+  await inPage(signin, `location.href = "hide-e2e-app://open?room=1"`);
+  await expect.poll(async () => (await probe()).opened).toEqual(["hide-e2e-app://open?room=1"]);
+  expect((await probe()).asked).toEqual([`Open Fixture App? | ${origin} wants to open this link in Fixture App.\n\nhide-e2e-app://open?room=1 | default 1`]);
+
+  // Cancel leaves the page where it was, and the page asks nothing more
+  // until it navigates; a redirect and a frame ask the same way.
+  await app.evaluate(() => { (globalThis as unknown as { appLinkProbe: { answer: number } }).appLinkProbe.answer = 1; });
+  await inPage(signin, `location.href = ${JSON.stringify(`${origin}${APP_REDIRECT}`)}`);
+  await expect.poll(async () => (await probe()).asked.length).toBe(2);
+  await inPage(signin, `document.body.insertAdjacentHTML("beforeend", '<iframe src="hide-e2e-app://frame"></iframe>')`);
+  await expect.poll(() => events("browser.app_link_refused", "declined").length).toBe(1);
+  expect(await inPage<string>(signin, "location.href")).toBe(signin);
+  await inPage(signin, `location.reload()`);
+  await expect.poll(() => inPage<string>(signin, "document.readyState")).toBe("complete");
+  await inPage(signin, `document.body.insertAdjacentHTML("beforeend", '<iframe src="hide-e2e-app://frame"></iframe>')`);
+  await expect.poll(async () => (await probe()).asked.length).toBe(3);
+  expect((await probe()).opened).toEqual(["hide-e2e-app://open?room=1"]);
+
+  // A scheme no app claims never asks.
+  await inPage(signin, `location.href = "hide-e2e-none://x"`);
+  await expect.poll(() => events("browser.app_link_refused", "no_app").length).toBe(1);
+
+  // A shift-click on a link is Chromium's new-window too, but with no window
+  // features it is a tab: another browser display, not a popup.
+  await inPage(signin, `document.body.insertAdjacentHTML("afterbegin", '<a href="${origin}/c.html" style="position:fixed;left:0;top:0;width:160px;height:60px;display:block">Page C</a>')`);
+  await app.evaluate(({ BrowserWindow }, target) => {
+    const main = BrowserWindow.getAllWindows().find((window) => window.getParentWindow() === null)!;
+    const child = main.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === target) as unknown as { webContents: Electron.WebContents };
+    for (const type of ["mouseDown", "mouseUp"] as const) child.webContents.sendInputEvent({ type, x: 20, y: 20, button: "left", clickCount: 1, modifiers: ["shift"] });
+  }, signin);
+  await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
+  expect(await windows()).toBe(1);
+
+  // The sign-in page is behind Page C now: a hidden page opens no popup and asks nothing.
+  await inPage(signin, `void window.open(${JSON.stringify(`${origin}/stay.html`)}, "hidden", "width=300,height=300"); location.href = "hide-e2e-app://hidden"`);
+  await expect.poll(() => events("browser.popup_refused", "hidden").length).toBe(1);
+  await expect.poll(() => events("browser.app_link_refused", "hidden").length).toBe(1);
+  expect(await windows()).toBe(1);
+  expect((await probe()).asked).toHaveLength(3);
 });
 
 test("new-tab: empty page creates no native renderer and address loads in the same display", async () => {
