@@ -370,6 +370,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
     Arc::new(Mutex::new(Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,
+            home: None,
             machine_id: None,
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
@@ -731,6 +732,7 @@ fn official_remote_session_coordinator_probe() {
     let runtime = Arc::new(Mutex::new(Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,
+            home: None,
             machine_id: None,
             herdr_socket_path: None,
             herdr_bin_path: None,

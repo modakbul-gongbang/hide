@@ -50,6 +50,20 @@ pub struct EnvironmentReport {
     pub codex_home: Option<PathBuf>,
 }
 
+impl EnvironmentReport {
+    /// The report for an embedder that named its own home: everything the
+    /// process `HOME` would have decided follows `home` instead, including
+    /// a Codex home that came from it rather than from `CODEX_HOME`.
+    pub fn with_home(mut self, home: PathBuf) -> Self {
+        let derived_codex = self.home_path.as_ref().map(|old| old.join(".codex"));
+        if self.codex_home.is_none() || self.codex_home == derived_codex {
+            self.codex_home = Some(home.join(".codex"));
+        }
+        self.home_path = Some(home);
+        self
+    }
+}
+
 pub fn read_and_validate() -> EnvironmentReport {
     validate_with(|key| std::env::var_os(key))
 }

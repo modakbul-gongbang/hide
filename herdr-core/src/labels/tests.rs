@@ -805,3 +805,44 @@ fn saves_from_two_workers_at_once_leave_a_whole_file() {
         assert_eq!(reopened.target(&format!("device:{index}")).len(), 1);
     }
 }
+
+/// A core told its home reads labels from that home, not the process
+/// `HOME`: a test daemon with a private home must never import the
+/// operator's label state (2026-10-02 security review).
+#[test]
+fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
+    let home = tempfile::tempdir().unwrap();
+    let plugin = home.path().join(".local/state/hide.agent-context-labels");
+    std::fs::create_dir_all(&plugin).unwrap();
+    std::fs::write(
+        plugin.join("display-state.json"),
+        json!({"panes": {"w9:p1": {"session_owner": "v1:owned", "state_change_seq": 1,
+            "changed_unix_ms": 1_u64, "task": "개인 홈의 라벨"}}})
+        .to_string(),
+    )
+    .unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let core = crate::Core::create(crate::CoreOptions {
+        schema_version: crate::SCHEMA_VERSION,
+        home: Some(home.path().display().to_string()),
+        machine_id: None,
+        herdr_socket_path: None,
+        herdr_bin_path: None,
+        app_state_path: state.path().join("core-state.json").display().to_string(),
+        host_helper_dir: None,
+        host_helper_root: None,
+        host_cli_dir: None,
+        workspace_views_path: None,
+        shortcut_import_path: None,
+        local_issues_path: None,
+        kit_dir: None,
+    })
+    .expect("a core starts");
+    drop(core);
+    let imported = LabelStore::open(Some(state.path()), None).target(LOCAL_TARGET);
+    assert_eq!(
+        imported.keys().cloned().collect::<Vec<_>>(),
+        ["w9:p1"],
+        "only the named home's label state is imported"
+    );
+}

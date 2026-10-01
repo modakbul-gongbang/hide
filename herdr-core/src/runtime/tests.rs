@@ -310,6 +310,7 @@ pub(super) fn runtime() -> Runtime {
     let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
+        home: None,
         machine_id: None,
         herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
         herdr_bin_path: None,

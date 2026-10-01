@@ -3539,6 +3539,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
         Runtime::new(
             CoreOptions {
                 schema_version: SCHEMA_VERSION,
+                home: None,
                 app_state_path: state_path.to_string_lossy().into_owned(),
                 machine_id: None,
                 herdr_socket_path: None,

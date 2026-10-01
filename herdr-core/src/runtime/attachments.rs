@@ -678,6 +678,7 @@ mod tests {
         let mut runtime = Runtime::new(
             CoreOptions {
                 schema_version: SCHEMA_VERSION,
+                home: None,
                 machine_id: None,
                 herdr_socket_path: None,
                 herdr_bin_path: None,

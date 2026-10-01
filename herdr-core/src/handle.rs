@@ -160,7 +160,10 @@ impl Core {
         if validate_options(&options).is_err() {
             return None;
         }
-        let environment = environment::read_and_validate();
+        let environment = match options.home.as_deref() {
+            Some(home) => environment::read_and_validate().with_home(home.into()),
+            None => environment::read_and_validate(),
+        };
         let environment_home = environment.home_path.clone();
         let usage_paths = crate::usage::UsagePaths {
             home: environment.home_path.clone(),

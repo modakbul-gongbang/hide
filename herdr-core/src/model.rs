@@ -9,6 +9,12 @@ pub const SCHEMA_VERSION: u32 = 2;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CoreOptions {
     pub schema_version: u32,
+    /// The account home the core reads and writes for: agent conversations,
+    /// label state, saved AI settings, usage and the install kit. Absent
+    /// means the process `HOME`; an embedder running with a private home
+    /// (a test daemon) names it so nothing reaches the operator's.
+    #[serde(default)]
+    pub home: Option<String>,
     /// The stable operating-system machine identity, read by the host before
     /// the core is placed behind its runtime mutex.
     #[serde(default)]

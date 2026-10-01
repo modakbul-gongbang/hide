@@ -273,6 +273,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
     assert_eq!(restored.expanded_agent_pane_ids, ["parent"]);
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
+        home: None,
         machine_id: None,
         herdr_socket_path: None,
         herdr_bin_path: None,
