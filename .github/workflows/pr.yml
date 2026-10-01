@@ -7,14 +7,14 @@
 # Runner placement is a capacity decision. This organization's plan runs five
 # macOS jobs at a time across every repository, and on 2026-09-28 one run held
 # all five for 26 minutes, so a second pull request waited up to 70 minutes
-# before its lanes started. The unit suites and the invariant checks run on
-# Linux. The Rust suite, the web end-to-end and the Electron end-to-end stay on
-# macOS, the platform hide ships on: a Linux web e2e was tried on 2026-09-29
-# and 22 of 87 tests failed on Linux-only behaviour (the daemon's terminal
-# control socket broke its pipe, headless Chromium read an empty clipboard,
-# and a visible scrollbar moved a menu by 20 px). The web end-to-end is split
-# into three shards, so no macOS job holds a slot for more than about ten
-# minutes.
+# before its lanes started. A run therefore uses two macOS jobs: the Electron
+# end-to-end and the web end-to-end's `@platform` tests, the ones that touch
+# what differs by operating system (Trash, process ownership, file watching and
+# saving, worktree paths, terminal input, ⌘ chords and Korean input).
+# Everything else runs on Linux: the Rust suite, the unit suites, the invariant
+# checks and the whole web end-to-end, dealt out to eight shards by
+# `web-e2e.yml`. `nightly.yml` runs the whole web end-to-end on macOS, so the
+# move costs no macOS coverage, only its delay.
 #
 # Every job and every long step has a timeout a few times its usual length
 # (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that
@@ -37,7 +37,7 @@ concurrency:
 jobs:
   rust:
     name: rust workspace
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -47,7 +47,7 @@ jobs:
           # A cache per pull request ref pushed the repository past the 10 GB
           # cache limit and evicted main's; main's is the one every run reads.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The macos-15 image ships rustfmt and Clippy with its Rust toolchain.
+      # The ubuntu image ships rustfmt and Clippy with its Rust toolchain.
       # The workspace is the core, the hide-ai provider boundary and the
       # context-label plugin; every lane covers all three.
       - name: Check formatting
@@ -116,16 +116,60 @@ jobs:
           pnpm --dir desktop lint
           pnpm --dir desktop test
 
-  web-e2e:
-    name: web e2e ${{ matrix.shard }}/3
-    runs-on: macos-15
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
+  # The Windows port's progress report (issue #293), not a gate: it is absent
+  # from `verify`'s `needs`, so nothing here holds a pull request. The compile
+  # check and the desktop unit suite fail today and are `continue-on-error`:
+  # `cargo check` skips every crate that depends on a failed one, so its log
+  # lists the Unix-only code at the bottom of the dependency graph (the
+  # summary step groups it by crate), and it shrinks as the port lands. The
+  # web suite and the desktop typecheck pass today, so a failure of either
+  # turns this job red: that is a Windows regression. Promote the job into
+  # `needs` only once the compile check is green.
+  windows-check:
+    name: windows check
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Keep line endings as committed
+        # The runner converts to CRLF by default, which would make the unit
+        # suites report line endings instead of code.
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Compile the workspace for Windows
+        id: cargo-check
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo check --locked --workspace --all-targets --keep-going --message-format short 2>&1 | tee "$RUNNER_TEMP/cargo-check.log"
+      - name: Summarize the compile errors
+        run: |
+          log="$RUNNER_TEMP/cargo-check.log"
+          {
+            echo '### Windows cargo check'
+            echo
+            echo "outcome: ${{ steps.cargo-check.outcome }}"
+            echo
+            echo 'Crates that failed to compile:'
+            echo '```'
+            grep -oE 'could not compile `[^`]+`' "$log" | sort | uniq -c || true
+            echo '```'
+            echo 'Errors by crate (first path component) and code:'
+            echo '```'
+            grep -E ': error(\[E[0-9]+\])?:' "$log" | sed -E 's#^(.*[\\/]registry[\\/]src[\\/][^\\/]+[\\/])?([^\\/:]+).*: (error(\[E[0-9]+\])?: .*)$#\2 \3#' | sort | uniq -c | sort -rn || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep the compile log
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-cargo-check-log
+          path: ${{ runner.temp }}/cargo-check.log
       - uses: pnpm/action-setup@v6
         with:
           version: 10
@@ -134,69 +178,45 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          shared-key: web-e2e
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build hided for Playwright
-        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
-      - name: Install web dependencies
-        run: pnpm --dir web install --frozen-lockfile
-      - name: Build the web shell
-        run: pnpm --dir web build
-      - name: Install Playwright Chromium
-        run: pnpm --dir web exec playwright install chromium
-      - name: Fetch the pinned Herdr runtime
-        id: herdr
-        # The click-flow e2e attaches hided to an isolated real Herdr; the
-        # fixture refuses any binary whose version is not the pin.
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
-      - name: End-to-end
-        # Each spec starts its own Herdr, hided and Chromium, so one worker per
-        # runner keeps timing assertions honest; the shards are the parallelism.
-        timeout-minutes: 20
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-          HIDE_E2E_TRACE: "1"
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir web exec playwright test --shard=${{ matrix.shard }}/3 --grep-invert @flaky
-      - name: Quarantined end-to-end (does not block verify)
-        # A test tagged @flaky carries the issue that tracks its cause. It still
-        # runs here, once, so a fix shows up as a pass and a regression of the
-        # product it covers still shows up in the log; it cannot turn verify red.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Web shell typecheck and unit suite, desktop app typecheck
         timeout-minutes: 10
-        id: quarantine
-        # Only after the setup it needs succeeded, and into its own output
-        # directory: Playwright empties its output directory when a run starts,
-        # which would delete the required step's failure snapshots.
-        if: ${{ matrix.shard == 1 && !cancelled() && steps.herdr.outcome == 'success' }}
-        continue-on-error: true
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-          HIDE_E2E_TRACE: "1"
         run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir web exec playwright test --grep @flaky --output=test-results-quarantine
-      - name: Keep the e2e run's logs
-        # The daemon, Herdr server and PTY input logs behind a failed flow
-        # (with the screenshots the specs take, under the same directory),
-        # and Playwright's own test-results: with no screenshot or trace
-        # option set that is the error-context page snapshot. The wire trace
-        # is on the step's stdout. A screen assertion alone cannot say which
-        # side moved.
-        if: failure() || steps.quarantine.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: hide-web-e2e-logs-${{ matrix.shard }}
-          path: |
-            ${{ runner.temp }}/hide-e2e
-            web/test-results
-            web/test-results-quarantine
-          if-no-files-found: ignore
+          pnpm --dir web typecheck
+          pnpm --dir web test
+          pnpm --dir desktop typecheck
+      - name: Desktop app unit suite
+        # 20 tests in 6 files fail on Windows today: path separators baked
+        # into expectations, `/bin/sh` and `/bin/sleep` as test programs, and
+        # 8.3 short temp paths. Drop `continue-on-error` when they are fixed.
+        continue-on-error: true
+        timeout-minutes: 10
+        run: pnpm --dir desktop test
+
+  # The web shell is the same code on every operating system, so the whole
+  # suite runs once, on Linux, where runners are plentiful. What differs by
+  # system is the daemon and Herdr under it, and the `@platform` tests cover
+  # that on macOS.
+  web-e2e:
+    name: web e2e
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: linux
+      runner: ubuntu-latest
+      herdr-platform: linux-x86_64
+      shards: 8
+      quarantine: true
+
+  web-e2e-platform:
+    name: web e2e (macOS)
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: macos
+      runner: macos-15
+      herdr-platform: macos-aarch64
+      shards: 1
+      grep: "@platform"
 
   desktop-e2e:
     name: desktop e2e
@@ -253,7 +273,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [rust, checks, web-e2e, desktop-e2e]
+    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

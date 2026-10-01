@@ -56542,7 +56542,7 @@
                                 {
                                   "type": "frame",
                                   "id": "ws-agtab1-lo",
-                                  "name": "탭 이름과 구성 개선",
+                                  "name": "검증 결과 확인",
                                   "children": [
                                     {
                                       "type": "text",
@@ -56571,12 +56571,12 @@
                                     {
                                       "type": "text",
                                       "id": "ws-agtab1-lo-t",
-                                      "name": "탭 이름과 구성 개선",
-                                      "content": "탭 이름과 구성 개선",
-                                      "fill": "$--foreground",
+                                      "name": "검증 결과 확인",
+                                      "content": "검증 결과 확인",
+                                      "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-subhead",
-                                      "fontWeight": "600"
+                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "horizontal",
@@ -56587,12 +56587,7 @@
                                     "$--spacing-xs",
                                     "$--spacing-xxs",
                                     "$--spacing-xs"
-                                  ],
-                                  "stroke": "$--foreground",
-                                  "strokeWidth": {
-                                    "bottom": 2
-                                  },
-                                  "strokeAlignment": "inner"
+                                  ]
                                 },
                                 {
                                   "id": "ws-agtabclose-lo",
@@ -56627,7 +56622,8 @@
                               "height": 32,
                               "layout": "horizontal",
                               "gap": "$--spacing-xxs",
-                              "alignItems": "center"
+                              "alignItems": "center",
+                              "fill": "$--card"
                             },
                             {
                               "type": "frame",
@@ -56773,6 +56769,9 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -57224,7 +57223,10 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "layout": "vertical",
-                                  "gap": 0
+                                  "gap": 0,
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
                                 },
                                 {
                                   "type": "frame",
@@ -58264,7 +58266,8 @@
                               "height": 32,
                               "layout": "horizontal",
                               "gap": "$--spacing-xxs",
-                              "alignItems": "center"
+                              "alignItems": "center",
+                              "fill": "$--background"
                             },
                             {
                               "type": "frame",
@@ -58410,6 +58413,9 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -59222,7 +59228,8 @@
                                   "height": 32,
                                   "layout": "horizontal",
                                   "gap": "$--spacing-xxs",
-                                  "alignItems": "center"
+                                  "alignItems": "center",
+                                  "fill": "$--background"
                                 },
                                 {
                                   "type": "frame",
@@ -59368,6 +59375,9 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "fill": "$--background",
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
                                   "padding": "$--spacing-sm",
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs"
@@ -59481,7 +59491,8 @@
                                   "height": 32,
                                   "layout": "horizontal",
                                   "gap": "$--spacing-xxs",
-                                  "alignItems": "center"
+                                  "alignItems": "center",
+                                  "fill": "$--card"
                                 },
                                 {
                                   "type": "frame",
@@ -59627,6 +59638,9 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "fill": "$--background",
+                                  "stroke": "$--border",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
                                   "padding": "$--spacing-sm",
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs"
@@ -59982,7 +59996,8 @@
                               "height": 32,
                               "layout": "horizontal",
                               "gap": "$--spacing-xxs",
-                              "alignItems": "center"
+                              "alignItems": "center",
+                              "fill": "$--background"
                             },
                             {
                               "type": "frame",
@@ -60128,6 +60143,9 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -60661,6 +60679,217 @@
               "gap": 0,
               "fill": "$--card",
               "clip": true
+            },
+            {
+              "type": "frame",
+              "id": "ws-focus-l",
+              "name": "One keyboard area, other selections readable",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ws-focus-l-1",
+                  "name": "Keyboard owner",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ws-focus-l-1-bar",
+                      "name": "Tab bar",
+                      "children": [
+                        {
+                          "id": "ws-focus-l-1-tab1",
+                          "type": "ref",
+                          "ref": "hideui:view-tab",
+                          "name": "Selected Korean tab",
+                          "fill": "$--background",
+                          "stroke": "$--primary",
+                          "strokeWidth": {
+                            "bottom": "$--size-tab-indicator"
+                          },
+                          "strokeAlignment": "inner",
+                          "descendants": {
+                            "hideui:view-tab-mark": {
+                              "fill": "$--file-document"
+                            },
+                            "hideui:view-tab-title": {
+                              "fill": "$--foreground",
+                              "content": "한글 노트.md"
+                            },
+                            "hideui:view-tab-strike": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:view-tab-dirty": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:view-tab-close": {
+                              "enabled": true
+                            }
+                          }
+                        },
+                        {
+                          "id": "ws-focus-l-1-tab2",
+                          "type": "ref",
+                          "ref": "hideui:view-tab",
+                          "name": "검증 결과.md",
+                          "fill": "$--card",
+                          "descendants": {
+                            "hideui:view-tab-mark": {
+                              "fill": "$--file-document"
+                            },
+                            "hideui:view-tab-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "검증 결과.md"
+                            },
+                            "hideui:view-tab-strike": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:view-tab-dirty": {
+                              "fill": "$--warning"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "fill": "$--background"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-focus-l-1-body",
+                      "name": "Readable Korean content",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-focus-l-1-text",
+                          "name": "# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다",
+                          "content": "# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "padding": "$--spacing-sm",
+                      "fill": "$--background",
+                      "stroke": "$--primary",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-focus-divider-l",
+                  "name": "Area divider",
+                  "width": "$--size-resize-handle",
+                  "height": "fill_container",
+                  "fill": "$--border"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-focus-l-2",
+                  "name": "Other area, retained selection",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ws-focus-l-2-bar",
+                      "name": "Tab bar",
+                      "children": [
+                        {
+                          "id": "ws-focus-l-2-tab1",
+                          "type": "ref",
+                          "ref": "hideui:view-tab",
+                          "name": "Selected Korean tab",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:view-tab-mark": {
+                              "fill": "$--file-document"
+                            },
+                            "hideui:view-tab-title": {
+                              "fill": "$--foreground",
+                              "content": "한글 노트.md"
+                            },
+                            "hideui:view-tab-strike": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:view-tab-dirty": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:view-tab-close": {
+                              "enabled": true
+                            }
+                          }
+                        },
+                        {
+                          "id": "ws-focus-l-2-tab2",
+                          "type": "ref",
+                          "ref": "hideui:view-tab",
+                          "name": "검증 결과.md",
+                          "fill": "$--card",
+                          "descendants": {
+                            "hideui:view-tab-mark": {
+                              "fill": "$--file-document"
+                            },
+                            "hideui:view-tab-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "검증 결과.md"
+                            },
+                            "hideui:view-tab-strike": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:view-tab-dirty": {
+                              "fill": "$--warning"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "fill": "$--card"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-focus-l-2-body",
+                      "name": "Readable Korean content",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-focus-l-2-text",
+                          "name": "# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다",
+                          "content": "# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "padding": "$--spacing-sm",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical"
+                }
+              ],
+              "width": 960,
+              "height": 440,
+              "layout": "horizontal",
+              "fill": "$--background"
             }
           ],
           "theme": {
@@ -61199,7 +61428,7 @@
                                 {
                                   "type": "frame",
                                   "id": "ws-agtab1-do",
-                                  "name": "탭 이름과 구성 개선",
+                                  "name": "검증 결과 확인",
                                   "children": [
                                     {
                                       "type": "text",
@@ -61228,12 +61457,12 @@
                                     {
                                       "type": "text",
                                       "id": "ws-agtab1-do-t",
-                                      "name": "탭 이름과 구성 개선",
-                                      "content": "탭 이름과 구성 개선",
-                                      "fill": "$--foreground",
+                                      "name": "검증 결과 확인",
+                                      "content": "검증 결과 확인",
+                                      "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-subhead",
-                                      "fontWeight": "600"
+                                      "fontWeight": "400"
                                     }
                                   ],
                                   "layout": "horizontal",
@@ -61244,12 +61473,7 @@
                                     "$--spacing-xs",
                                     "$--spacing-xxs",
                                     "$--spacing-xs"
-                                  ],
-                                  "stroke": "$--foreground",
-                                  "strokeWidth": {
-                                    "bottom": 2
-                                  },
-                                  "strokeAlignment": "inner"
+                                  ]
                                 },
                                 {
                                   "id": "ws-agtabclose-do",
@@ -61284,7 +61508,8 @@
                               "height": 32,
                               "layout": "horizontal",
                               "gap": "$--spacing-xxs",
-                              "alignItems": "center"
+                              "alignItems": "center",
+                              "fill": "$--card"
                             },
                             {
                               "type": "frame",
@@ -61430,6 +61655,9 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -61881,7 +62109,10 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "layout": "vertical",
-                                  "gap": 0
+                                  "gap": 0,
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
                                 },
                                 {
                                   "type": "frame",
@@ -62921,7 +63152,8 @@
                               "height": 32,
                               "layout": "horizontal",
                               "gap": "$--spacing-xxs",
-                              "alignItems": "center"
+                              "alignItems": "center",
+                              "fill": "$--background"
                             },
                             {
                               "type": "frame",
@@ -63067,6 +63299,9 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -63879,7 +64114,8 @@
                                   "height": 32,
                                   "layout": "horizontal",
                                   "gap": "$--spacing-xxs",
-                                  "alignItems": "center"
+                                  "alignItems": "center",
+                                  "fill": "$--background"
                                 },
                                 {
                                   "type": "frame",
@@ -64025,6 +64261,9 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "fill": "$--background",
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
                                   "padding": "$--spacing-sm",
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs"
@@ -64138,7 +64377,8 @@
                                   "height": 32,
                                   "layout": "horizontal",
                                   "gap": "$--spacing-xxs",
-                                  "alignItems": "center"
+                                  "alignItems": "center",
+                                  "fill": "$--card"
                                 },
                                 {
                                   "type": "frame",
@@ -64284,6 +64524,9 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "fill": "$--background",
+                                  "stroke": "$--border",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
                                   "padding": "$--spacing-sm",
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs"
@@ -64639,7 +64882,8 @@
                               "height": 32,
                               "layout": "horizontal",
                               "gap": "$--spacing-xxs",
-                              "alignItems": "center"
+                              "alignItems": "center",
+                              "fill": "$--background"
                             },
                             {
                               "type": "frame",
@@ -64785,6 +65029,9 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -65318,6 +65565,217 @@
               "gap": 0,
               "fill": "$--card",
               "clip": true
+            },
+            {
+              "type": "frame",
+              "id": "ws-focus-d",
+              "name": "One keyboard area, other selections readable",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ws-focus-d-1",
+                  "name": "Keyboard owner",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ws-focus-d-1-bar",
+                      "name": "Tab bar",
+                      "children": [
+                        {
+                          "id": "ws-focus-d-1-tab1",
+                          "type": "ref",
+                          "ref": "hideui:view-tab",
+                          "name": "Selected Korean tab",
+                          "fill": "$--background",
+                          "stroke": "$--primary",
+                          "strokeWidth": {
+                            "bottom": "$--size-tab-indicator"
+                          },
+                          "strokeAlignment": "inner",
+                          "descendants": {
+                            "hideui:view-tab-mark": {
+                              "fill": "$--file-document"
+                            },
+                            "hideui:view-tab-title": {
+                              "fill": "$--foreground",
+                              "content": "한글 노트.md"
+                            },
+                            "hideui:view-tab-strike": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:view-tab-dirty": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:view-tab-close": {
+                              "enabled": true
+                            }
+                          }
+                        },
+                        {
+                          "id": "ws-focus-d-1-tab2",
+                          "type": "ref",
+                          "ref": "hideui:view-tab",
+                          "name": "검증 결과.md",
+                          "fill": "$--card",
+                          "descendants": {
+                            "hideui:view-tab-mark": {
+                              "fill": "$--file-document"
+                            },
+                            "hideui:view-tab-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "검증 결과.md"
+                            },
+                            "hideui:view-tab-strike": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:view-tab-dirty": {
+                              "fill": "$--warning"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "fill": "$--background"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-focus-d-1-body",
+                      "name": "Readable Korean content",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-focus-d-1-text",
+                          "name": "# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다",
+                          "content": "# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "padding": "$--spacing-sm",
+                      "fill": "$--background",
+                      "stroke": "$--primary",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-focus-divider-d",
+                  "name": "Area divider",
+                  "width": "$--size-resize-handle",
+                  "height": "fill_container",
+                  "fill": "$--border"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-focus-d-2",
+                  "name": "Other area, retained selection",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ws-focus-d-2-bar",
+                      "name": "Tab bar",
+                      "children": [
+                        {
+                          "id": "ws-focus-d-2-tab1",
+                          "type": "ref",
+                          "ref": "hideui:view-tab",
+                          "name": "Selected Korean tab",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:view-tab-mark": {
+                              "fill": "$--file-document"
+                            },
+                            "hideui:view-tab-title": {
+                              "fill": "$--foreground",
+                              "content": "한글 노트.md"
+                            },
+                            "hideui:view-tab-strike": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:view-tab-dirty": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:view-tab-close": {
+                              "enabled": true
+                            }
+                          }
+                        },
+                        {
+                          "id": "ws-focus-d-2-tab2",
+                          "type": "ref",
+                          "ref": "hideui:view-tab",
+                          "name": "검증 결과.md",
+                          "fill": "$--card",
+                          "descendants": {
+                            "hideui:view-tab-mark": {
+                              "fill": "$--file-document"
+                            },
+                            "hideui:view-tab-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "검증 결과.md"
+                            },
+                            "hideui:view-tab-strike": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:view-tab-dirty": {
+                              "fill": "$--warning"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "fill": "$--card"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-focus-d-2-body",
+                      "name": "Readable Korean content",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-focus-d-2-text",
+                          "name": "# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다",
+                          "content": "# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "padding": "$--spacing-sm",
+                      "fill": "$--background"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical"
+                }
+              ],
+              "width": 960,
+              "height": 440,
+              "layout": "horizontal",
+              "fill": "$--background"
             }
           ],
           "theme": {

@@ -87,6 +87,23 @@ export function noSidewaysOverflow(overflow) {
 export function evaluate(rules, measured) {
   const results = [];
   const add = (rule, result) => results.push({ rule, ...result, pass: result.applicable ? result.problems.length === 0 : null });
+  if (rules.areaFocus) {
+    const states = measured.areaFocus;
+    const problems = [];
+    if (states) {
+      for (const [name, rows] of Object.entries(states)) {
+        if (rows.filter(row => row.keyboard).length !== 1) problems.push(`${name}: expected exactly one keyboard area`);
+        if (rows.some(row => row.selected !== 1)) problems.push(`${name}: each area must keep one selected tab`);
+        if (rows.some(row => row.filter !== 'none')) problems.push(`${name}: content is filtered`);
+      }
+      if (states.after.find(row => row.keyboard)?.id !== 'a2') problems.push('keyboard ownership did not follow input into a2');
+      for (const row of states.before) {
+        const after = states.after.find(candidate => candidate.id === row.id);
+        if (!after || ['x', 'y', 'width', 'height'].some(side => !near(row[side], after[side]))) problems.push(`${row.id}: focus moved or resized content`);
+      }
+    }
+    add('areaFocus', {expected: 'one keyboard area, stable geometry, readable content and retained selections', measured: states ? `${states.before.length} areas before and after focus` : 'no area measurement', problems, applicable: Boolean(states)});
+  }
   if (typeof rules.childIndentPx === 'number') add('childIndentPx', childIndent(measured.columns, rules.childIndentPx));
   if (rules.rootsAligned) add('rootsAligned', rootsAligned(measured.columns));
   if (rules.stableUnderHover) add('stableUnderHover', stable(measured.rest, measured.hover, 'hover'));
@@ -99,7 +116,7 @@ export function evaluate(rules, measured) {
   return results;
 }
 
-const KNOWN = new Set(['childIndentPx', 'rootsAligned', 'stableUnderHover', 'stableUnderFocus', 'noOverlap', 'sharedColumns', 'noSidewaysOverflow']);
+const KNOWN = new Set(['areaFocus', 'childIndentPx', 'rootsAligned', 'stableUnderHover', 'stableUnderFocus', 'noOverlap', 'sharedColumns', 'noSidewaysOverflow']);
 
 function round(value) {
   return Math.round(value * 10) / 10;

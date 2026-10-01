@@ -16,12 +16,15 @@ import { numberOf, numberedTabs } from "./numbering";
 import { useUiStore } from "./ui";
 import { AgentTab } from "./TabBar";
 import { agentEntries, workspaceViewOf } from "./workspace";
+import { areasOf } from "./areaLayout";
+import { useKeyboardOwner } from "./viewFocus";
 
 const SharedAgentTree = createAreaTree<AgentItem>("agent");
 export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }: { checkout: Checkout; actions: Actions; deviceId?: string; remoteBody?: React.ReactNode }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const saved = useShellStore((s) => workspaceViewOf(s.rest)?.agent_layout);
   const numbered = useUiStore((s) => s.hint === "tabs");
+  const owner = useKeyboardOwner();
   const entries = agentEntries(checkout);
   const remote = deviceId !== "local";
   const remoteLayout = useMemo<AgentLayout>(() => ({
@@ -35,6 +38,13 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
   const label = (id: string) => entries.find((entry) => entry.source_id === id)?.label ?? id;
   const adapter: AreaAdapter<AgentItem> = {
     words: AGENT_WORDS,
+    keyboardArea: owner.kind !== "none" && owner.workspace === checkout.id
+      ? owner.kind === "agent" ? owner.areaId ?? null
+        : owner.kind === "pane" ? areasOf(layout.root).find((area) => {
+          const shown = layout.canvases[area.id] ?? area.active;
+          return area.displays.some((tab) => tab.id === shown) && checkout.tabs.find((tab) => tab.id === shown)?.panes.some((pane) => pane.id === owner.paneId);
+        })?.id ?? null : null
+      : null,
     barAttributes: { "data-tab-bar": checkout.id, ...(remote ? { "data-remote-tab-bar": "true" } : {}) },
     splitUnavailable: remote ? REMOTE_GROUP_REASON : undefined,
     label: (item) => label(item.id),

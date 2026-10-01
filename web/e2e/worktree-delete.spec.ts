@@ -30,7 +30,8 @@ async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
   throw new Error(`no prompt in pane ${pane}`);
 }
 
-test("a dirty worktree with an unmerged branch and an agent is deleted once both boxes are ticked", async ({ page }) => {
+// @platform: Deleting a worktree stops an agent's processes and removes its folder.
+test("a dirty worktree with an unmerged branch and an agent is deleted once both boxes are ticked", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;

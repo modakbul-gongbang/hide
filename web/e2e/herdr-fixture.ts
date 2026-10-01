@@ -17,6 +17,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { ownUntilWorkerExit } from "./worker-owned";
 
 export type HerdrFixture = {
   bin: string;
@@ -97,6 +98,17 @@ export function agentsIn(fixture: HerdrFixture, dir: string): string[] {
   return kinds;
 }
 
+/**
+ * Whether Herdr itself has `pane` focused. The shell draws a focus the moment
+ * it asks for one and Herdr applies it a little later, and two requests in
+ * flight at once can be applied in either order, so a spec that asks for a
+ * second focus waits for Herdr to hold the first.
+ */
+export function herdrHasFocus(fixture: HerdrFixture, pane: string): boolean {
+  const listed = fixture.run(["pane", "list"]) as { result: { panes: { pane_id: string; focused: boolean }[] } };
+  return listed.result.panes.find((row) => row.pane_id === pane)?.focused === true;
+}
+
 function herdr(env: NodeJS.ProcessEnv, bin: string, args: string[]): unknown {
   const out = execFileSync(bin, args, { env, encoding: "utf8", timeout: 30_000 });
   return JSON.parse(out) as unknown;
@@ -116,14 +128,16 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   // HOME's .zshrc. A fixed prompt keeps the workstation's user and host
   // name out of screenshots and is what the fixture waits for.
   fs.writeFileSync(path.join(root, "home", ".zshrc"), "PS1='fixture %# '\n");
-  // Ubuntu's /etc/zsh/zshrc runs compinit before this HOME's .zshrc, and on a
-  // Linux runner compinit stops at "insecure directories, continue [y] or
-  // abort [n]?", so the prompt never comes. That file skips compinit when this
-  // variable is set, and .zshenv is read before it. macOS has no such file.
-  fs.writeFileSync(path.join(root, "home", ".zshenv"), "skip_global_compinit=1\n");
   return {
     ...env,
     SHELL: "/bin/zsh",
+    // Ubuntu's /etc/zsh/zshrc runs compinit before this HOME's .zshrc, and on
+    // a Linux runner compinit stops at "insecure directories, continue [y] or
+    // abort [n]?", so the prompt never comes. That file skips compinit when
+    // this parameter is set. It rides the environment, not a .zshenv, because
+    // specs write their own .zshenv to put the fake agent first on PATH and
+    // would drop it. macOS has no such file.
+    skip_global_compinit: "1",
     HOME: path.join(root, "home"),
     HCOORD_HOME: path.join(root, "home", ".hcoord"),
     HERDR_SESSION: `hide-e2e-${path.basename(root)}`,
@@ -240,7 +254,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
 
   const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
   const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });
-  const stop = () => {
+  const { stop } = ownUntilWorkerExit(() => {
     spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
     if (server.exitCode === null) server.kill("SIGKILL");
     for (const file of [socket, socket.replace(/\.sock$/, "-client.sock")]) {
@@ -265,7 +279,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       }
     }
     fs.rmSync(root, { recursive: true, force: true });
-  };
+  });
   try {
     await waitFor(() => fs.existsSync(socket), `herdr socket ${socket}`);
     const snapshot = herdr(env, bin, ["api", "snapshot"]) as {

@@ -231,7 +231,8 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
   }
 });
 
-test("editing a document marks it dirty, saves it, and a disk change asks how to resolve", async ({ page }) => {
+// @platform: A save and a change on disk, on the platform's filesystem.
+test("editing a document marks it dirty, saves it, and a disk change asks how to resolve", { tag: "@platform" }, async ({ page }) => {
   const fixture = await openCheckout(page);
   const { file, sent, lastSent } = fixture;
   try {
@@ -709,7 +710,8 @@ async function dragRow(page: Page, from: string, to: string): Promise<void> {
   );
 }
 
-test("the Explorer creates, renames, moves and trashes entries", async ({ page }) => {
+// @platform: Trash is a system call on macOS.
+test("the Explorer creates, renames, moves and trashes entries", { tag: "@platform" }, async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, sent, lastSent } = fixture;
   try {
@@ -891,7 +893,8 @@ test("a preview-only document closes without a save", async ({ page }) => {
   }
 });
 
-test("a change in an expanded folder refreshes the tree without a reload", async ({ page }) => {
+// @platform: File watching is FSEvents on macOS and inotify on Linux.
+test("a change in an expanded folder refreshes the tree without a reload", { tag: "@platform" }, async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo } = fixture;
   try {
@@ -915,7 +918,8 @@ test("a change in an expanded folder refreshes the tree without a reload", async
   }
 });
 
-test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) => {
+// @platform: ⌘ chords, the command key of the system hide ships on.
+test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" }, async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, sent } = fixture;
   try {

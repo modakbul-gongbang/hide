@@ -23,6 +23,7 @@ linux_sha256=$(jq -er '.linux_x86_64.sha256' "$manifest")
 
 derived_sources=(
   .github/workflows/pr.yml
+  .github/workflows/web-e2e.yml
   scripts/fetch-herdr-runtime.sh
   desktop/scripts/package.mjs
   desktop/src/main/cli.ts

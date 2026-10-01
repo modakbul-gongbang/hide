@@ -1,0 +1,67 @@
+# The whole web end-to-end on macOS, once a night. A pull request runs the suite
+# on Linux and only the `@platform` tests on macOS (see pr.yml), so this run is
+# what keeps the rest of the suite proving itself on the platform hide ships on.
+# It never blocks a pull request; a failure opens one issue, or adds a comment
+# to the one already open, so reruns converge on a single thread.
+#
+# Four shards on macOS, in the small hours in Seoul, when the organization's five
+# macOS slots are free. Run it by hand from the Actions tab (workflow_dispatch).
+#
+# This repository is public, so GitHub disables a scheduled workflow after 60
+# days with no repository activity. If this run stops appearing, re-enable it in
+# the Actions tab rather than looking for a bug here.
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  web-e2e-macos:
+    name: web e2e
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: nightly
+      runner: macos-15
+      herdr-platform: macos-aarch64
+      shards: 4
+      quarantine: true
+
+  report:
+    name: report a failure
+    needs: web-e2e-macos
+    if: ${{ always() && needs.web-e2e-macos.result == 'failure' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RESULT: ${{ needs.web-e2e-macos.result }}
+    steps:
+      - name: Open the issue, or comment on the one already open
+        run: |
+          set -euo pipefail
+          title="Nightly web e2e on macOS is failing"
+          failed=$(gh run view "${{ github.run_id }}" --json jobs \
+            --jq '[.jobs[] | select(.conclusion == "failure") | "- " + .name] | join("\n")')
+          body="The nightly web end-to-end on macOS ended ${RESULT}: ${RUN_URL}"$'\n\n'"Failed jobs:"$'\n'"${failed:-none reported}"$'\n\n'"Each failed job's logs are in the run's artifacts, hide-web-e2e-logs-nightly-<shard>."
+          open=$(gh issue list --state open --label bug --limit 100 --json number,title \
+            --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$title" --label bug --body "$body"
+          fi

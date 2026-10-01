@@ -12,7 +12,7 @@ test("Hide fork linking registers both executions and lets hcoord own lineage to
   t.after(() => fake.cleanup());
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
   fake.addAgent("local", "child-pane", { name: "child", session: "s-child", instance: "i-child" });
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
 
   const linked = spawnSync(process.execPath, [CLI, "agent", "link", "--parent-pane", "parent-pane", "--child-pane", "child-pane", "--json"], { env: coordinator.env, encoding: "utf8" });
@@ -27,7 +27,7 @@ test("Hide fork linking registers both executions and lets hcoord own lineage to
 test("--parent here refuses before creating a child without pane identity or a reported agent", async (t) => {
   const withoutPane = createFakeRemote(CLI);
   t.after(() => withoutPane.cleanup());
-  const noPaneCoordinator = hq(t, withoutPane);
+  const noPaneCoordinator = hq(withoutPane);
   await noPaneCoordinator.start();
   const noPane = noPaneCoordinator.json("agent", "spawn", "--parent", "here", "--name", "child", "--kind", "claude", "--intent", "here-no-pane");
   assert.equal(noPane.error.code, "parent_here_unavailable");
@@ -36,7 +36,7 @@ test("--parent here refuses before creating a child without pane identity or a r
 
   const withoutAgent = createFakeRemote(CLI);
   t.after(() => withoutAgent.cleanup());
-  const noAgentCoordinator = hq(t, withoutAgent, "local", { HERDR_PANE_ID: "missing-pane" });
+  const noAgentCoordinator = hq(withoutAgent, "local", { HERDR_PANE_ID: "missing-pane" });
   await noAgentCoordinator.start();
   const noAgent = noAgentCoordinator.json("agent", "spawn", "--parent", "here", "--name", "child", "--kind", "claude", "--intent", "here-no-agent");
   assert.equal(noAgent.error.code, "parent_here_unavailable");
@@ -48,7 +48,7 @@ test("--parent here registers the current execution before spawning its child", 
   const fake = createFakeRemote(CLI);
   t.after(() => fake.cleanup());
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
-  const coordinator = hq(t, fake, "local", { HERDR_PANE_ID: "parent-pane" });
+  const coordinator = hq(fake, "local", { HERDR_PANE_ID: "parent-pane" });
   await coordinator.start();
 
   const spawned = coordinator.ok("agent", "spawn", "--parent", "here", "--name", "child", "--kind", "claude", "--intent", "here-success");
@@ -65,7 +65,7 @@ test("lineage a Herdr restart dropped comes back while the daemon keeps running,
   t.after(() => fake.cleanup());
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
   fake.addAgent("local", "child-pane", { name: "child", session: "s-child", instance: "i-child" });
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   const linked = spawnSync(process.execPath, [CLI, "agent", "link", "--parent-pane", "parent-pane", "--child-pane", "child-pane", "--json"], { env: coordinator.env, encoding: "utf8" });
   assert.equal(linked.status, 0, linked.stderr || linked.stdout);

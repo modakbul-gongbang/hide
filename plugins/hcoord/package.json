@@ -12,7 +12,7 @@
     "install:remote": "node scripts/install.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test \"test/unit/*.test.mjs\"",
-    "test:e2e": "node --test \"test/e2e/*.test.mjs\""
+    "test:e2e": "node --test --test-timeout=120000 \"test/e2e/*.test.mjs\""
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

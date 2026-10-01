@@ -467,9 +467,11 @@ export function createActions(dispatch: DispatchFn) {
     ui().setViewFocusRequest({ workspace, displayId: target.displayId, from: located ? { areaId: located.area.id, index: located.index } : null });
   };
 
-  const focusView = (displayId: string) => {
+  const focusView = (displayId: string, moveKeyboard = false) => {
     const frame = frameFor("focus");
-    if (frame) viewLayout(frame, { action: "focus", display_id: displayId });
+    if (!frame) return;
+    if (moveKeyboard) ui().setViewFocusRequest({ workspace: workspaceKey(frame.workspace), displayId, from: null });
+    viewLayout(frame, { action: "focus", display_id: displayId });
   };
 
   const focusViewArea = (areaId: string) => {
@@ -1859,13 +1861,18 @@ export function createActions(dispatch: DispatchFn) {
 
     /**
      * A browser display of `url` in a Workspace (issue 155): the front one,
-     * or the one a page that asked for a new window belongs to. An address
-     * the Workspace already shows is focused and loaded again.
+     * or the one a page that opened a tab belongs to, beside that page
+     * (`besideDisplay`) so it stays in view. An address the Workspace
+     * already shows is focused and loaded again.
      */
-    openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string) {
+    openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string, besideDisplay?: string) {
       const target = workspace ?? frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
-      dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path }, ...(areaId ? { area_id: areaId } : {}) } });
+      dispatch({
+        schema_version: 2,
+        kind: "browser_open",
+        payload: { url, workspace: { device_id: target.device_id, path: target.path }, ...(areaId ? { area_id: areaId } : {}), ...(besideDisplay ? { beside_display: besideDisplay } : {}) },
+      });
     },
 
     /**
