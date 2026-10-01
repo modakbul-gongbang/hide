@@ -3934,16 +3934,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("create hcoord fixture directory");
         let binary = directory.path().join("hcoord");
         let pid_path = directory.path().join("pid");
-        std::fs::write(
+        crate::executable_fixture::write_executable(
             &binary,
-            format!(
+            &format!(
                 "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec /bin/sleep 300\n",
                 pid_path.display()
             ),
-        )
-        .expect("write hanging hcoord fixture");
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
-            .expect("make hcoord fixture executable");
+        );
         let herdr = FakeHerdr::start("fork-hcoord-timeout", |method, _| match method {
             "pane.split" => json!({"type": "pane_info", "pane": {
                 "pane_id": "child-pane", "terminal_id": "child-terminal",

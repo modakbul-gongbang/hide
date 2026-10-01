@@ -29,7 +29,7 @@ async function setup(t) {
   fake.installHcoord("mini");
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
   fake.addAgent("mini", "w1:p1", { name: "worker", session: "s-worker", instance: "i-worker" });
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   const parent = coordinator.ok("agent", "register", "--machine", "local", "--session", "s-parent", "--instance", "i-parent", "--pane", "parent-pane", "--name", "parent");
   return { fake, coordinator, parent };
