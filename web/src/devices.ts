@@ -1,7 +1,7 @@
 // The device rail's facts (PRD home-device-rail D-09, D-10, D-27, superseded
-// by quick device-rail-badges): which devices the rail lists, whether each is
-// connected, the Needs You, Done and Working counts each tile carries, and the
-// Home row's project count. Everything is read from the snapshot the core
+// by quick device-rail-badges and quick device-rail-slack): which devices the
+// rail lists, whether each is connected, the Needs You and unseen Done counts
+// each tile carries, and the Home row's project count. Everything is read from the snapshot the core
 // already publishes; nothing is counted that it does not carry, and a device
 // that is not connected has no count, since what it last reported is not current.
 
@@ -36,40 +36,51 @@ export function deviceAgents(rest: SnapshotRest | null, localAgents: AgentRow[],
   return status?.state === "connected" ? (status.session?.agents ?? []) : [];
 }
 
-/** The states a tile counts, in the order its circles stack from the top: Needs You, unseen Done, Working. */
+/** The states the Agents tab counts above its list, in its order: Needs You, unseen Done, Working. */
 export const BADGE_STATES = [
   { state: "needs_you", label: "Needs You" },
   { state: "done", label: "Done" },
   { state: "working", label: "Working" },
 ] as const;
 
-/** The text color of a state's count, the circle's color read as text: the tile and the Agents tab show one color per state. */
+/** The text color of a state's count in the Agents tab's header: one color per state, the fill the rail's marks wear. */
 export const BADGE_TEXT: Record<BadgeState, string> = { needs_you: "text-warning", done: "text-success", working: "text-agent-working" };
 
 export type BadgeState = (typeof BADGE_STATES)[number]["state"];
-export type TileBadge = { state: BadgeState; label: string; count: number };
 
-export type StateCounts = Record<BadgeState, number>;
+/**
+ * What a device's tile counts now (quick device-rail-slack): its Needs You and
+ * unseen Done agents, both zero while it is not connected. Working is not on
+ * the rail, since it is no reason to switch device; the Agents tab counts it.
+ */
+export type TileCounts = { needs_you: number; done: number };
 
-/** What a device's tile counts now: its agents in each of the three states, all zero while it is not connected. */
-export function deviceStateCounts(rest: SnapshotRest | null, localAgents: AgentRow[], deviceId: string): StateCounts {
+export function tileCounts(rest: SnapshotRest | null, localAgents: AgentRow[], deviceId: string): TileCounts {
   const counts = groupCounts(deviceAgents(rest, localAgents, deviceId));
-  return { needs_you: counts.needs_you, done: counts.done, working: counts.working };
+  return { needs_you: counts.needs_you, done: counts.done };
 }
 
-/** A tile's circles: one per state with agents, in the fixed order, none for a zero (B4). */
-export function tileBadges(counts: StateCounts): TileBadge[] {
-  return BADGE_STATES.filter(({ state }) => counts[state] > 0).map(({ state, label }) => ({ state, label, count: counts[state] }));
-}
-
-/** The number a circle draws: the count, or `9+` from ten. */
+/** The number the Needs You pill draws: the count, or `9+` from ten. */
 export function badgeText(count: number): string {
   return count >= 10 ? "9+" : String(count);
 }
 
-/** What a tile is called for assistive technology: the name, the connection state, then each non-zero count (B4). */
-export function tileName(label: string, connected: boolean, badges: readonly TileBadge[]): string {
-  return [label, connected ? null : "연결 안 됨", ...badges.map((badge) => `${badge.label} ${badge.count}`)].filter(Boolean).join(", ");
+/**
+ * The letters a remote device's tile draws in place of a name: the first
+ * letter of each of the first two words (`Mac mini` → `Mm`, `build-box` →
+ * `Bb`), or the first letter alone for a one-word name (`mini` → `M`), the
+ * first one capitalized. The name itself is the tile's hint.
+ */
+export function tileMonogram(label: string): string {
+  const [first = "", second = ""] = label.split(/[\s._-]+/).filter(Boolean);
+  const initial = (word: string) => Array.from(word)[0] ?? "";
+  return initial(first).toLocaleUpperCase() + initial(second);
+}
+
+/** What a tile is called for assistive technology: the name, the connection state, then each non-zero count it marks (B4). */
+export function tileName(label: string, connected: boolean, counts: TileCounts): string {
+  if (!connected) return `${label}, 연결 안 됨`;
+  return [label, counts.needs_you > 0 ? `Needs You ${counts.needs_you}` : null, counts.done > 0 ? `Done ${counts.done}` : null].filter(Boolean).join(", ");
 }
 
 /** How many projects a device has registered, without its Home (D-04, B16): a count from the registrations, not from any folder. */

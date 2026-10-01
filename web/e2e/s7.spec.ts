@@ -18,7 +18,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
-const RAIL = 64;
+const RAIL = 48;
 
 test.describe.configure({ timeout: 180_000 });
 // A click or a key that cannot happen fails the flow in seconds, not at the test's end.

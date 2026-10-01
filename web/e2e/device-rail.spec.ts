@@ -1,12 +1,13 @@
 // The device rail on an isolated pinned Herdr and hided (quick
-// device-rail-badges B1-B6, replacing PRD home-device-rail B1-B13): the rail
-// is shown with This Mac alone and has no Inbox or footer device button, its
+// device-rail-badges B1-B6 and quick device-rail-slack, replacing PRD
+// home-device-rail B1-B13): the rail is the sidebar's full-height left column,
+// shown with This Mac alone, and has no Inbox or footer device button, its
 // `+` opens Settings > Devices > Add device, and each device's sidebar is its
 // name over Projects | Agents with the Home row in Projects. A right-click
 // hides the rail, the name on the top line becomes the device menu, and the
 // choice survives a reload. Registering one device that cannot be reached (an
-// alias no SSH config knows) adds a dimmed tile with a cross and no badge,
-// and, selected, the sidebar reduced to its name, `연결 안 됨` and `다시 연결`.
+// alias no SSH config knows) adds a dimmed monogram tile with a cross and no
+// mark, named by its hint, and, selected, the sidebar reduced to its name, `연결 안 됨` and `다시 연결`.
 // Removing it leaves This Mac's rail. The Add project dialog's Host list entry
 // needs the desktop host's folder picker, so it is proved in desktop/e2e, not
 // in a browser tab.
@@ -100,11 +101,16 @@ test("the rail follows the registered devices; a device that cannot be reached i
     const ids = await rail.locator("[data-rail-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-rail-tile")));
     expect(ids).toEqual(["local", ALIAS]);
     // The rail is its own fixed column beside the content column: the stored width stays the content's, and the rail adds to it.
+    // It runs the sidebar's full height, so the header line and the tab strip sit right of it, not over it.
     const railBox = (await rail.boundingBox())!;
     const contentBox = (await page.locator("[data-sidebar-content]").boundingBox())!;
-    expect(Math.round(railBox.width)).toBe(64);
+    const sidebarBox = (await sidebar.boundingBox())!;
+    expect(Math.round(railBox.width)).toBe(48);
     expect(Math.round(contentBox.width)).toBe(292);
-    expect(Math.round((await sidebar.boundingBox())!.width)).toBe(64 + 292);
+    expect(Math.round(sidebarBox.width)).toBe(48 + 292);
+    expect(Math.round(railBox.y)).toBe(Math.round(sidebarBox.y));
+    expect(Math.round(railBox.height)).toBe(Math.round(sidebarBox.height));
+    expect(Math.round((await page.locator("[data-sidebar-title]").boundingBox())!.x)).toBe(Math.round(railBox.x + railBox.width));
     // This Mac is the selection, and the center is where it was.
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
     expect(await page.locator("[data-main-screen]").count()).toBe(centerBefore);
@@ -147,13 +153,16 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect.poll(() => (sent.get("retry_connect") ?? 0) - retried).toBe(1);
     await expect(disconnected).toBeVisible();
 
-    // The Korean name truncates inside the rail, the header line and the content column without pushing any sideways (B46).
+    // The Korean name pushes none of the rail, the header line and the content column sideways (B46).
     // The nav itself is not measured: its drag edge straddles its right side on purpose.
     for (const part of ["[data-device-rail]", "[data-sidebar-title]", "[data-sidebar-content]"]) {
       const overflow = await sidebar.locator(part).evaluate((element) => element.scrollWidth - element.clientWidth);
       expect(overflow, part).toBeLessThanOrEqual(0);
     }
-    expect(await tile.locator("[data-rail-label]").evaluate((label) => label.scrollWidth > label.clientWidth)).toBe(true);
+    // The tile draws the name's monogram and no name; the name is the tile's hint.
+    await expect(tile.locator("[data-rail-glyph]")).toHaveText("연빌");
+    await tile.hover();
+    await expect(page.getByRole("tooltip")).toContainText("연구실 빌드 서버 자동화 장비");
 
     // B13: the rail's + opens the same Add device form.
     await rail.locator("[data-rail-add]").click();

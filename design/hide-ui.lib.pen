@@ -35910,7 +35910,7 @@
     },
     "--size-rail": {
       "type": "number",
-      "value": 64
+      "value": 48
     },
     "--size-disk-sheet": {
       "type": "number",
@@ -35919,6 +35919,28 @@
     "--size-badge-wide": {
       "type": "number",
       "value": 20
+    },
+    "--size-rail-badge": {
+      "type": "number",
+      "value": 15
+    },
+    "--size-rail-mark": {
+      "type": "number",
+      "value": 9
+    },
+    "--status-foreground": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#FFFFFF"
+        },
+        {
+          "value": "#101112",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",
