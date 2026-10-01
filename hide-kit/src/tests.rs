@@ -522,6 +522,35 @@ fn a_watcher_holding_another_homes_lock_is_left_running() {
     assert!(plugin_state_dir(&other_home).exists());
 }
 
+/// A watcher the pass cannot stop keeps its state folder, because the lock
+/// inside it is the only way a later pass finds the watcher (D-12, B2).
+/// The holder here is this test process, which the pass never signals, as
+/// a watcher lsof cannot name or SIGKILL cannot end would be.
+#[test]
+fn a_watcher_that_cannot_be_stopped_keeps_its_state_folder() {
+    use std::os::fd::AsRawFd;
+    let fixture = Fixture::new();
+    fixture.legacy_plugin("local");
+    let lock = plugin_state_dir(fixture.home()).join("watcher.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&lock)
+        .unwrap();
+    // SAFETY: flock on a descriptor `held` owns until the end of the test.
+    assert_eq!(
+        unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    assert!(!report.labels_retirement.failures.is_empty(), "{report:?}");
+    assert!(lock.exists(), "the watcher's lock is gone: {report:?}");
+    drop(held);
+}
+
 #[test]
 fn without_a_runtime_for_hcoord_it_fails_and_an_existing_shim_is_left() {
     let mut fixture = Fixture::new();

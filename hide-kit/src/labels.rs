@@ -80,15 +80,24 @@ pub(crate) fn retire(target: &KitTarget) -> LabelsRetirement {
             false
         }
     };
-    match stop_watchers(target, &state.join("watcher.lock")) {
-        Ok(stopped) => outcome.removed.extend(
-            stopped
-                .into_iter()
-                .map(|pid| format!("watcher process {pid}")),
-        ),
-        Err(reason) => outcome.failures.push(reason),
-    }
-    if unlinked {
+    // The lock is the only handle on a running watcher: the folders stay
+    // until it is free, so a pass that could not stop the watcher leaves
+    // the next pass a way to find it.
+    let stopped = match stop_watchers(target, &state.join("watcher.lock")) {
+        Ok(stopped) => {
+            outcome.removed.extend(
+                stopped
+                    .into_iter()
+                    .map(|pid| format!("watcher process {pid}")),
+            );
+            true
+        }
+        Err(reason) => {
+            outcome.failures.push(reason);
+            false
+        }
+    };
+    if unlinked && stopped {
         for (folder, name) in [(&copy, "kit copy"), (&state, "state folder")] {
             match std::fs::remove_dir_all(folder) {
                 Ok(()) => outcome.removed.push(name.to_owned()),
@@ -233,6 +242,18 @@ fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<i32>, String> {
     for pid in pids.iter().filter(|pid| alive(**pid)) {
         // SAFETY: as above.
         unsafe { libc::kill(*pid, libc::SIGKILL) };
+    }
+    // Stopped means the lock is free, whatever the signals answered: a pid
+    // that survived, or a holder lsof did not name, keeps it.
+    let started = Instant::now();
+    while lock_is_held(lock)? {
+        if started.elapsed() >= WATCHER_EXIT_DEADLINE {
+            return Err(format!(
+                "the labels watcher still holds its lock after {} signalled process(es)",
+                pids.len()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
     Ok(pids)
 }
