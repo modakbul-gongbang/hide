@@ -95,6 +95,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   const operation = useShellStore((s) => s.rest?.explorer_operation ?? null);
   const folderChanges = useShellStore((s) => s.folderChanges);
   const invalidateListings = useShellStore((s) => s.invalidateListings);
+  const refreshListings = useShellStore((s) => s.refreshListings);
   const selection = useUiStore((s) => s.explorerSelection);
   const setSelection = useUiStore((s) => s.setExplorerSelection);
   const draft = useUiStore((s) => s.explorerDraft);
@@ -133,7 +134,8 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     const watched = watchedFolders(rootPath, expandedPaths);
     const watchedNow = new Set(watched);
     // A watch frame that landed while a listing was in flight must be re-read:
-    // its folder drops its pending marker and its (possibly older) listing.
+    // its folder drops its pending marker and its (possibly older) listing
+    // turns stale, still drawn until the new one lands.
     const bumped: string[] = [];
     for (const [path, count] of Object.entries(folderChanges)) {
       if ((seenChanges.current[path] ?? 0) === count) continue;
@@ -142,7 +144,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
       pending.current.delete(path);
       bumped.push(path);
     }
-    if (bumped.length > 0) invalidateListings(bumped);
+    if (bumped.length > 0) refreshListings(bumped);
     // Keep only the counts the store still holds, so a capped map does not
     // leave this ref growing for the session.
     for (const path of Object.keys(seenChanges.current)) {
@@ -151,15 +153,16 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     invalidateListings(
       expandedUnderRoot(rootPath, expandedPaths).filter((path) => path !== rootPath && !watchedNow.has(path)),
     );
+    const fresh = (folder: string) => listings[folder] !== undefined && !listings[folder].stale;
     for (const folder of watched) {
-      if (listings[folder] || pending.current.has(folder)) continue;
+      if (fresh(folder) || pending.current.has(folder)) continue;
       pending.current.add(folder);
       actions.listChildren(rootPath, folder);
     }
     for (const folder of [...pending.current]) {
-      if (listings[folder]) pending.current.delete(folder);
+      if (fresh(folder)) pending.current.delete(folder);
     }
-  }, [rootPath, expandedPaths, listings, refreshTick, folderChanges, actions, invalidateListings]);
+  }, [rootPath, expandedPaths, listings, refreshTick, folderChanges, actions, invalidateListings, refreshListings]);
 
   // A device folder refused while its helper was still starting is asked
   // again once the helper is ready, as the views read their files again then
@@ -221,11 +224,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     // A settled change moved a row: the folders it touched are re-read, and
     // the created item is selected so the operator sees it (B9).
     const folders = [parentPath(operation.path), parentPath(operation.destination)];
-    invalidateListings(folders);
+    refreshListings(folders);
     for (const folder of folders) pending.current.delete(folder);
     if (operation.phase === "finished") setSelection(operation.destination);
     setRefreshTick((tick) => tick + 1);
-  }, [operation, invalidateListings, setSelection]);
+  }, [operation, refreshListings, setSelection]);
 
   const virtualizer = useVirtualizer({
     count: shown.length,
@@ -346,10 +349,10 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
             className="text-muted-foreground hover:bg-transparent hover:text-foreground"
             aria-label="Refresh the file tree"
             onClick={() => {
-              // A cached listing is dropped too, so the button re-reads what it
+              // A cached listing turns stale too, so the button re-reads what it
               // is showing rather than only the folders it never listed.
               pending.current.clear();
-              invalidateListings(watchedFolders(rootPath, expandedPaths));
+              refreshListings(watchedFolders(rootPath, expandedPaths));
               setRefreshTick((tick) => tick + 1);
             }}
           >

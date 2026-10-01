@@ -242,6 +242,8 @@ fn default_explorer() -> bool {
 }
 
 impl WorkspaceView {
+    /// A Workspace seen for the first time hides the tool column, so the
+    /// first file or page it opens shows alone; ⌘E brings the Explorer.
     pub fn new(device_id: &str, path: &str) -> Self {
         Self {
             device_id: device_id.to_owned(),
@@ -249,7 +251,7 @@ impl WorkspaceView {
             panel: PanelState::default(),
             pinned: false,
             tool: Tool::default(),
-            tools: true,
+            tools: false,
             views_over_share: DEFAULT_VIEWS_OVER_SHARE,
             tools_share: None,
             last_used_unix_ms: 0,

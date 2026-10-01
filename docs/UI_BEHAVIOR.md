@@ -25,7 +25,7 @@ The area is empty only when the checkout has no tab: a checkout whose only tab h
 ### The side panel
 
 The Workspace holds the agent column (the toolbar, then the Agent area), always the Workspace's full width, and the side panel on its right edge at the Workspace's full height, up to the toolbar's row, over the agents.
-The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed.
+The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed with the tool column hidden, so the first file or page it opens shows alone and ⌘E brings the Explorer.
 Open, the panel floats over the right part of the agent column and the Agent area keeps its full size underneath, so opening, closing, resizing and expanding the panel never resizes a terminal.
 The panel is a `--card` surface with a `--border` hairline and a `--radius-lg` top-left corner, and no shadow; a `--spacing-sm` gap in `--background` on its left separates it from the agents.
 Everything inside it sits on `--card`: the tabs, the document header, the editor, the diff, a page and a loading view, with the keyboard area's selection accent and the other areas' readable selected-tab background described under View areas.
@@ -237,7 +237,9 @@ The new-tab page offers no tools or panes; ⌘P remains the file palette everywh
 
 A web page is a view like a file: it opens in the active area, has a tab, splits, moves, and closes like one, and comes back after a restart at the address it last showed.
 A page with an address carries a globe mark and the page's title, else its host, else a local file's name; its tooltip and accessible name carry `Page`, the title, and the full address.
-It opens from `hide browser open` in a connected Herdr pane or a shell inside a registered checkout, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side), from a page that asks for a new window, and from the address field.
+It opens from `hide browser open` in a connected Herdr pane or a shell inside a registered checkout, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side), from a page that opens a tab, and from the address field.
+A sign-in popup a page opens is a small window of its own above hide, so the sign-in can report back to the page and close; ⌘W closes it.
+A link that would open another app (Slack, Zoom) asks first with the app's name, and opens in that app only on Open.
 On a connected SSH device, the native page uses that device's localhost or consented checkout resources; a route failure appears in the page's existing failure state.
 Opening an address the Workspace already shows moves to that view and loads it again instead of adding a second one.
 The view's own toolbar holds Back, Forward, Reload (Stop while the page loads) and the address, which shows a web address without its scheme until it is focused; focusing it selects the whole address, Return loads what was typed, and Escape puts the page's address back.
@@ -627,6 +629,8 @@ The field draws on an elevated surface so it reads as an input among labels; not
 
 The filesystem change is the core's: one event carries the request, the core refuses paths outside the focused checkout and any overwrite, runs the exclusive call off the runtime mutex, and settles one operation slot.
 The tree reads a finished slot to re-read only the folders it touched, keeping every loaded folder and its expansion, and a failed slot to place the reason under the row the change started from.
+A folder being re-read, after a settled change, a change the watcher saw, or the refresh button, keeps its rows drawn until the new listing lands; it never empties for the round trip.
+A device folder whose re-read is refused keeps those rows under its could-not-be-listed reason until Retry, or until the helper is ready again; a local subfolder whose re-read is refused keeps them until the next change reads it again.
 The selection moves to the new or moved item because the core sets it explicitly; expanded folders and open file tabs inside a renamed folder follow it.
 
 A drag moves one item inside the tree.

@@ -63,8 +63,8 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     // A new Workspace starts with its agents alone: the side panel is
-    // closed, and its tool column is stored on the Explorer (issue 170). The
-    // toolbar holds only the path and the panel's toggle.
+    // closed, and its tool column is stored hidden on the Explorer (issue
+    // 170). The toolbar holds only the path and the panel's toggle.
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     await expect(page.locator("[data-side-panel]")).toHaveCount(0);
     await expect(page.locator("[data-workspace-toolbar] :is([data-tool-toggle], [data-tools-toggle], [data-tool-tab])")).toHaveCount(0);

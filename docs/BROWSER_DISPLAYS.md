@@ -33,7 +33,8 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
   The CLI returns one JSON line, exits nonzero on refusal, and never starts Hide.
 - Open in Browser in the Explorer's menu on an HTML file of a local or connected device checkout.
   The device host must have file access consent for a remote page to load.
-- A page that asks for a new window gets another browser display in the same Workspace.
+- A page that opens a tab, a `target=_blank` link, a shift-click or `window.open` without window features, gets another browser display in the same Workspace.
+  A sized popup, `window.open` with window features the way a sign-in button opens one, is not a display; see Popups below.
   A remote page's routed loopback address is translated back to its source device address before that request reaches the core.
 - The address field in the display's toolbar loads what was typed into that display.
 
@@ -86,7 +87,13 @@ This keeps localhost cookies of this Mac, each SSH device, and remote HTML previ
 Pages run in a sandboxed renderer with context isolation, no Node and no preload, so nothing in a page reaches the `hideHost` bridge or the daemon's token.
 Existing Workspace-specific web sessions are not copied into the shared session, so an upgrade may require one new login per site.
 A page gets no permission but writing the clipboard, because a prompt it would raise has nowhere to show; a download follows Chromium's default and is logged as `browser.download`.
-A page may navigate to `http`, `https`, `file` and `about:blank`; a `mailto:` link goes to the default mail app, and anything else is refused and logged with its scheme only.
+A page may navigate to `http`, `https`, `file` and `about:blank`.
+A link to another app's scheme (`slack:`, `zoommtg:`) from a page on screen leaves only after the operator agrees, the way Chrome asks first: whether it arrives as a navigation, a server redirect, a frame or a new window, a sheet on the window names the app macOS would open it with, the asking origin and the link, and Open hands the link to that app.
+Cancel is the default button, so a stray Return from a question the operator did not expect opens nothing, and after a Cancel the same page or popup asks nothing more until it navigates again.
+A frame's link reaches Chromium's external protocol handler rather than a navigation event, so the session's `openExternal` permission request asks the same question, and Chromium's own opener never runs.
+A `mailto:` link from a page on screen goes to the default mail app without asking.
+Refused and logged with their scheme only: a scheme no app claims; a scheme Chromium answers itself (`data:`, `blob:`, `javascript:`, every `chrome` one and the like); a scheme macOS hands to a file share, a shell, a script or a remote session (`smb:`, `afp:`, `ftp:`, `ssh:`, `telnet:`, `vnc:`, `news:`, `applescript:`, `shortcuts:`, every `x-apple` one and the like), so one click on an unexpected question never mounts a share or runs anything (`appScheme` in `browserSync.ts`); a link from a hidden page or an HTML file preview; and a link that arrives while a question is open.
+The link never reaches the log, since an app link often carries a sign-in code.
 
 The shell tells the host, in one sync, every browser display of the Workspace in front, the rectangle its slot occupies now, and the core's retained Browser View inventory across all Workspaces.
 A display the inventory no longer names is closed, which ends its renderer process even when its Workspace is in the background.
@@ -115,6 +122,18 @@ After the core confirms a selected display, the existing keyboard-follow request
 The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.
 The keyboard area has a strong tab accent and a content boundary outside the native slot; other selected tabs remain readable, with no page blur or recurring capture for focus styling.
+
+## Popups
+
+A sized popup a page on screen opens (`window.open` with window features: Chromium's `new-window` disposition with features, `isPopup` in `browserSync.ts`) is a real window above hide that keeps its opener, so a sign-in popup can post its result to the page and close itself; a display would have no opener, and the page would wait forever.
+A shift-click on a link is `new-window` too but has no features, so it is a tab like `target=_blank`.
+The host builds the window from its own options, and of its geometry and chrome takes only the size the page asked for, held between 320 x 240 and the work area and centred over hide's window (`popupBounds`); no window feature makes it frameless, always on top, unclosable, modal or off screen.
+Electron gives it the opener's web preferences with Node off and the sandbox and isolation forced, so a feature can at most change the popup's own page (turn its script off, say), never what it can reach.
+It takes the keyboard only when the page that opened it held the keyboard; otherwise it is ordered in without activating the app, so a page cannot pull focus from what the operator is typing.
+It shares its page's session and request rules, holds no bridge, follows the same navigation rules as its page, and its own popups belong to the same page.
+Electron closes it with its opener, so it ends when its page's display closes, is evicted, or the window closes.
+At most 4 are open at once (`MAX_POPUPS`); a hidden page asking for one, or any page asking for a fifth, is refused and logged.
+While a popup holds the keyboard, Close (⌘W) and Close pane close the popup and the text-size commands zoom it; no other app command reaches the shell behind it.
 
 ## Zoom
 
@@ -153,7 +172,7 @@ pnpm --dir desktop e2e
 ```
 
 `desktop/e2e/browser.spec.ts` drives a desktop app it launched itself against a private hided and an isolated Herdr, never the operator's.
-It opens a page with `hide browser open`, checks the native view sits on its slot, zooms a focused page with the text-size commands and ⌘+ without moving any text size, pinches a page before and after it moves to another renderer, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, the Recent Panels list and a divider drag, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
+It opens a page with `hide browser open`, checks the native view sits on its slot, posts a sign-in popup's result back to its opener, holds a hostile popup's window features to a framed, closable window on the work area, caps popups and closes them with their page, asks before a navigation, a redirect and a frame hand a link to another app (with macOS's app lookup, sheet and opener stood in for), opens it only on Open and asks nothing more after a Cancel until the page navigates, opens a shift-clicked link as a display, refuses a popup and an app link from a hidden page, zooms a focused page with the text-size commands and ⌘+ without moving any text size, pinches a page before and after it moves to another renderer, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, the Recent Panels list and a divider drag, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
 The test window never activates the app or takes the keyboard, because the e2e fixture launches every app with `--hide-show-inactive` and `--disable-backgrounding-occluded-windows` (see [BUILD.md](BUILD.md#the-desktop-app)); it is shown behind the operator's windows, keeps painting there, and captures of it are taken by window id.
 The zoom test needs the key window: it is tagged `@needs-focus` and brings its window to the front itself.
 Keep screenshots and logs under local-only `agents/runs/`.

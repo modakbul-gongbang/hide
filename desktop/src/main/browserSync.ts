@@ -11,10 +11,27 @@ export const MAX_SYNCED_DISPLAYS = 64;
 export const MAX_RETAINED_DISPLAYS = 16_384;
 /** Live pages at once; a hidden one past this is closed and loads again when shown. */
 export const MAX_LIVE_VIEWS = 12;
+/** Popup windows open at once across every page; a page asking for one more is refused. */
+export const MAX_POPUPS = 4;
 const MAX_TEXT = 8192;
 const MAX_EXTENT = 100_000;
 const COMMANDS: ReadonlySet<string> = new Set<BrowserCommand>(["back", "forward", "reload", "stop", "focus"]);
 const LOADABLE_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:", "file:"]);
+/** Schemes Chromium answers itself (with every `chrome` one): a page never reaches them, and they are never another app's. */
+const BROWSER_PROTOCOLS: ReadonlySet<string> = new Set([
+  "about:", "blob:", "data:", "devtools:", "filesystem:", "isolated-app:", "javascript:", "view-source:", "ws:", "wss:",
+]);
+/**
+ * Schemes macOS hands to a file share, a shell, a script or a remote session
+ * (with every `x-apple` one): one click on a question the operator did not
+ * expect must not mount a share or run anything, so a page never offers them.
+ */
+const SYSTEM_PROTOCOLS: ReadonlySet<string> = new Set([
+  "afp:", "applescript:", "cifs:", "disk:", "disks:", "ftp:", "ftps:", "gopher:", "hcp:", "ms-help:", "news:", "nfs:", "nntp:", "rdp:", "rlogin:", "screens:", "sftp:", "shell:", "shortcuts:", "smb:", "snews:", "ssh:", "telnet:", "vbscript:", "vnc:", "x-man-page:",
+]);
+/** A popup's smallest and default content size, in points. */
+const POPUP_MIN = { width: 320, height: 240 };
+const POPUP_DEFAULT = { width: 500, height: 600 };
 
 function text(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= MAX_TEXT;
@@ -83,6 +100,56 @@ export function loadable(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a page's new window is a sized popup that keeps its opener: Chromium's
+ * `new-window` disposition with window features, the way a sign-in button opens
+ * one. A shift-click on a link is `new-window` too, with no features; that is a
+ * tab, like `target=_blank`.
+ */
+export function isPopup(disposition: string, features: string): boolean {
+  return disposition === "new-window" && features.trim() !== "";
+}
+
+/**
+ * The scheme of a link a page may hand to another app (`slack:`, `zoommtg:`,
+ * `mailto:`), or null for one a view loads, one Chromium answers itself, one
+ * that reaches the file system, a shell or a remote session, or an address
+ * that does not parse.
+ */
+export function appScheme(url: string): string | null {
+  let protocol: string;
+  try {
+    protocol = new URL(url).protocol;
+  } catch {
+    return null;
+  }
+  if (LOADABLE_PROTOCOLS.has(protocol) || BROWSER_PROTOCOLS.has(protocol) || SYSTEM_PROTOCOLS.has(protocol)) return null;
+  return protocol.startsWith("chrome") || protocol.startsWith("x-apple") ? null : protocol;
+}
+
+type Bounds = { x: number; y: number; width: number; height: number };
+
+/**
+ * Where a popup sits: the content size the page asked for, held between a
+ * usable minimum and the work area, centred over hide's window and kept on
+ * the work area. Nothing else a page writes in its window features reaches
+ * the window.
+ */
+export function popupBounds(asked: { width?: number; height?: number }, parent: Bounds, workArea: Bounds): Bounds {
+  const size = (value: number | undefined, fallback: number, min: number, max: number) =>
+    Math.round(Math.min(Math.max(Number.isFinite(value) && value! > 0 ? value! : fallback, min), Math.max(min, max)));
+  const width = size(asked.width, POPUP_DEFAULT.width, POPUP_MIN.width, workArea.width);
+  const height = size(asked.height, POPUP_DEFAULT.height, POPUP_MIN.height, workArea.height);
+  const within = (start: number, length: number, areaStart: number, areaLength: number) =>
+    Math.round(Math.min(Math.max(start, areaStart), areaStart + Math.max(0, areaLength - length)));
+  return {
+    x: within(parent.x + (parent.width - width) / 2, width, workArea.x, workArea.width),
+    y: within(parent.y + (parent.height - height) / 2, height, workArea.y, workArea.height),
+    width,
+    height,
+  };
 }
 
 /** Web logins are shared across Workspaces; file previews and each remote device's loopback stay separate. */

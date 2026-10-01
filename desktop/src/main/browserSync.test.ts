@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserPartition, loadable, MAX_SYNCED_DISPLAYS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
+import { appScheme, browserPartition, isPopup, loadable, popupBounds, MAX_SYNCED_DISPLAYS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
 
 const rect = { x: 0, y: 40, width: 800, height: 600 };
 const display = { id: "d1", url: "https://a.test/", load: 3, rect, visible: true };
@@ -41,6 +41,37 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
   it("loads only the web, a local file, or a blank page", () => {
     for (const url of ["https://a.test/", "http://localhost:3000/", "file:///Users/example/a.html", "about:blank"]) expect(loadable(url), url).toBe(true);
     for (const url of ["javascript:alert(1)", "data:text/html,x", "chrome://settings", "about:config", "not a url"]) expect(loadable(url), url).toBe(false);
+  });
+
+  it("keeps an opener only for a sized popup, never for a tab or a shift-click", () => {
+    expect(isPopup("new-window", "width=420,height=520")).toBe(true);
+    expect(isPopup("new-window", "popup")).toBe(true);
+    expect(isPopup("new-window", "")).toBe(false);
+    for (const disposition of ["foreground-tab", "background-tab", "default", "other"]) expect(isPopup(disposition, "width=420"), disposition).toBe(false);
+  });
+
+  it("hands another app only its own links, never a scheme Chromium answers", () => {
+    expect(appScheme("slack://channel?team=T1")).toBe("slack:");
+    expect(appScheme("zoommtg://zoom.us/join?confno=1")).toBe("zoommtg:");
+    expect(appScheme("mailto:a@b.test")).toBe("mailto:");
+    for (const url of ["https://a.test/", "file:///a.html", "about:blank", "about:config", "javascript:alert(1)", "data:text/html,x", "blob:https://a.test/1", "chrome://settings", "chrome-error://chromewebdata/", "view-source:https://a.test/", "devtools://devtools/x", "wss://a.test/", "not a url"]) {
+      expect(appScheme(url), url).toBeNull();
+    }
+  });
+
+  it("never offers a link that mounts a share, runs a shell or a script, or opens a remote session", () => {
+    for (const url of ["smb://host/share", "afp://host/share", "nfs://host/x", "ftp://host/x", "sftp://host", "ssh://host", "telnet://host", "vnc://host", "news://host/group", "nntp://host/group", "gopher://host", "x-man-page://ls", "applescript://com.apple.scripteditor?action=new", "shortcuts://run-shortcut?name=x", "x-apple.systempreferences:com.apple.preference.security", "disk://x"]) {
+      expect(appScheme(url), url).toBeNull();
+    }
+  });
+
+  it("sizes a popup as asked within the work area, centred over the window", () => {
+    const area = { x: 0, y: 25, width: 1440, height: 875 };
+    const parent = { x: 100, y: 100, width: 1000, height: 700 };
+    expect(popupBounds({ width: 420, height: 520 }, parent, area)).toEqual({ x: 390, y: 190, width: 420, height: 520 });
+    expect(popupBounds({ width: 3000, height: 2000 }, parent, area)).toEqual({ x: 0, y: 25, width: 1440, height: 875 });
+    expect(popupBounds({ width: 1, height: -5 }, parent, area)).toMatchObject({ width: 320, height: 600 });
+    expect(popupBounds({}, { ...parent, x: 1300 }, area)).toEqual({ x: 940, y: 150, width: 500, height: 600 });
   });
 
   it("shares web login storage across Workspaces while keeping remote localhost and file previews separate", () => {

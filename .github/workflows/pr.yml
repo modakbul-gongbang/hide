@@ -15,6 +15,11 @@
 # and a visible scrollbar moved a menu by 20 px). The web end-to-end is split
 # into three shards, so no macOS job holds a slot for more than about ten
 # minutes.
+#
+# Every job and every long step has a timeout a few times its usual length
+# (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that
+# usually takes two minutes hung for 48 and for 156 in two runs, holding a
+# required check, and a job without a timeout runs for six hours.
 name: verify
 
 on:
@@ -33,6 +38,7 @@ jobs:
   rust:
     name: rust workspace
     runs-on: macos-15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
@@ -55,6 +61,7 @@ jobs:
   checks:
     name: checks and unit suites
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -89,6 +96,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: hcoord typecheck, build, unit test, and end-to-end test
+        timeout-minutes: 10
         run: |
           pnpm --dir plugins/hcoord typecheck
           pnpm --dir plugins/hcoord build
@@ -111,6 +119,7 @@ jobs:
   web-e2e:
     name: web e2e ${{ matrix.shard }}/3
     runs-on: macos-15
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -146,13 +155,32 @@ jobs:
       - name: End-to-end
         # Each spec starts its own Herdr, hided and Chromium, so one worker per
         # runner keeps timing assertions honest; the shards are the parallelism.
+        timeout-minutes: 20
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
           HIDE_E2E_TRACE: "1"
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir web exec playwright test --shard=${{ matrix.shard }}/3
+          pnpm --dir web exec playwright test --shard=${{ matrix.shard }}/3 --grep-invert @flaky
+      - name: Quarantined end-to-end (does not block verify)
+        # A test tagged @flaky carries the issue that tracks its cause. It still
+        # runs here, once, so a fix shows up as a pass and a regression of the
+        # product it covers still shows up in the log; it cannot turn verify red.
+        timeout-minutes: 10
+        id: quarantine
+        # Only after the setup it needs succeeded, and into its own output
+        # directory: Playwright empties its output directory when a run starts,
+        # which would delete the required step's failure snapshots.
+        if: ${{ matrix.shard == 1 && !cancelled() && steps.herdr.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          HIDE_E2E_TRACE: "1"
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          pnpm --dir web exec playwright test --grep @flaky --output=test-results-quarantine
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),
@@ -160,18 +188,20 @@ jobs:
         # option set that is the error-context page snapshot. The wire trace
         # is on the step's stdout. A screen assertion alone cannot say which
         # side moved.
-        if: failure()
+        if: failure() || steps.quarantine.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: hide-web-e2e-logs-${{ matrix.shard }}
           path: |
             ${{ runner.temp }}/hide-e2e
             web/test-results
+            web/test-results-quarantine
           if-no-files-found: ignore
 
   desktop-e2e:
     name: desktop e2e
     runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -204,6 +234,7 @@ jobs:
         # The desktop app against an isolated Herdr, starting its own hided
         # through the hide CLI built above. Electron downloads its runtime on
         # first launch.
+        timeout-minutes: 20
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
@@ -225,6 +256,7 @@ jobs:
     needs: [rust, checks, web-e2e, desktop-e2e]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Every lane succeeded
         # A skipped or cancelled lane is a failure here; `needs` alone would

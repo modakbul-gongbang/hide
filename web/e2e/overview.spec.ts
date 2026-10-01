@@ -18,7 +18,7 @@
 // (B18), List and Dependencies, Settings › Issues, and an issue started into a
 // worktree (B23). Light and Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -153,6 +153,21 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
   // Controls fade their colors into the new theme; a capture waits them out.
   await page.waitForTimeout(400);
+}
+
+/**
+ * Moves the pointer off a hover card the way a hand does, in a run of moves
+ * rather than two, until `gone` has left the page. Radix closes a hoverable
+ * card only on a move that arrives after its leave listener is in place; two
+ * bare moves on a busy runner can both land before it and leave the card
+ * open for good (overview.spec on CI, 2026-09-29..10-01).
+ */
+async function leaveHoverCard(page: Page, gone: Locator): Promise<void> {
+  await expect(async () => {
+    await page.mouse.move(2, 998);
+    await page.mouse.move(4, 996, { steps: 4 });
+    await expect(gone).toHaveCount(0, { timeout: 500 });
+  }).toPass({ timeout: 10_000 });
 }
 
 /** Clears hover and keyboard focus so a capture shows the page at rest. */
@@ -363,11 +378,10 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(card.locator("[data-checkout-card-workspace]")).toBeVisible();
     await screenshot(page, "overview-lane-card-light");
     // Resting on the asking node's line opens its whole message (B22). The
-    // pointer leaves the card first, in two moves: Radix clears its in-transit
-    // mark from a hoverable card on the move after the one that left it, and
-    // a trigger ignores moves while that mark is set.
-    await page.mouse.move(2, 998);
-    await page.mouse.move(4, 996);
+    // pointer leaves the card first: Radix clears its in-transit mark from a
+    // hoverable card on a move after the one that left it, and a trigger
+    // ignores moves while that mark is set.
+    await leaveHoverCard(page, card);
     await askingNode.locator(`[data-lens-node-line="${askingPane}"]`).hover();
     const message = page.locator(`[data-lens-message="${askingPane}"]`);
     await expect(message).toBeVisible();
@@ -602,8 +616,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(issueCard(3).locator("[data-card-start]")).toBeVisible();
     await issueCard(3).locator("[data-card-start]").hover();
     await expect(page.getByRole("tooltip")).toContainText("이 이슈로 워크트리와 에이전트를 만든다");
-    await page.mouse.move(2, 998);
-    await page.mouse.move(4, 996);
+    await leaveHoverCard(page, page.getByRole("tooltip"));
     const previewBefore = sent.get("issue_detail_request") ?? 0;
     await issueCard(2).locator("[data-task-id]").hover();
     const preview = page.locator('[data-issue-preview="github:acme/repo#2"]');
@@ -612,14 +625,10 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(preview).toContainText("hoyeon · 9월 20일 · 댓글 4");
     await expect(preview).toContainText("Open");
     await screenshot(page, "overview-issue-preview-light");
-    await page.mouse.move(2, 998);
-    await page.mouse.move(4, 996);
-    await expect(preview).toHaveCount(0);
+    await leaveHoverCard(page, preview);
     await issueCard(2).locator("[data-task-id]").hover();
     await expect(preview).toBeVisible();
-    await page.mouse.move(2, 998);
-    await page.mouse.move(4, 996);
-    await expect(preview).toHaveCount(0);
+    await leaveHoverCard(page, preview);
     expect((sent.get("issue_detail_request") ?? 0) - previewBefore).toBeLessThanOrEqual(1);
 
     // A line of work with no issue (B4): the worktree line's popover says

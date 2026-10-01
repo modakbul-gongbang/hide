@@ -16,7 +16,7 @@ function candidate() {
   const send = vi.fn();
   const shellFocus = vi.fn();
   let windowFocused = true;
-  const subject = new BrowserViews({ event: vi.fn() } as unknown as HostLog, () => true, vi.fn(), vi.fn());
+  const subject = new BrowserViews({ event: vi.fn() } as unknown as HostLog, () => true, vi.fn(), vi.fn(), vi.fn());
   const shellContents = Object.assign(new EventEmitter(), { isDestroyed: () => false, send, focus: shellFocus });
   const window = Object.assign(new EventEmitter(), { isFocused: () => windowFocused, webContents: shellContents });
   subject.attach(window as never);

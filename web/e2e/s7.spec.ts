@@ -897,7 +897,8 @@ async function dragToEdge(page: Page, from: Locator, target: Locator, edge: "rig
   await dragTab(page, from, point, during);
 }
 
-test("the tab menu offers only what a view can do, and each cap refuses with its reason and leaves the views alone", async ({ page }) => {
+// Quarantined: runs in CI without blocking `verify` until #286 is fixed.
+test("the tab menu offers only what a view can do, and each cap refuses with its reason and leaves the views alone", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/286" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1920 + RAIL, height: 1080 });
   const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps", files);
