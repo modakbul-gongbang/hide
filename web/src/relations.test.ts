@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHILD, OTHER, PARENT, RICH } from "./cmdkFixture";
+import { CHILD, OTHER, PARENT, RICH } from "./gallery/cmdkSceneData";
 import { frontTarget, relationRows, relationsOf } from "./relations";
 import type { SnapshotRest } from "./snapshot";
 

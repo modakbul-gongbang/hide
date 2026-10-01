@@ -3,7 +3,7 @@
 // request #275 and a child agent whose parent sits in `main`, and a second
 // agent in `main` outside that lineage.
 
-import type { AgentRow, SnapshotRest } from "./snapshot";
+import type { AgentRow, GithubSearchResult, SnapshotRest } from "../snapshot";
 
 const agent = (pane: string, label: string, extra: Partial<AgentRow> = {}): AgentRow =>
   ({ id: `a-${pane}`, pane_id: pane, identity_label: label, agent_kind: "claude", symbol: "●", group: "working", status_label: "Working", elapsed: "1m", emphasized: false, unread: false, activity: "working", ...extra }) as AgentRow;
@@ -47,3 +47,9 @@ export const RICH = {
     ],
   },
 } as unknown as SnapshotRest;
+
+/** What the explicit GitHub search finds for the scene: a pull request and an issue this Mac does not hold. */
+export const CMDK_RESULTS: GithubSearchResult[] = [
+  { kind: "pr", repository: "acme/herdr-ide", number: 118, title: "Close stale sandbox watches", state: "merged", url: "https://github.com/acme/herdr-ide/pull/118" },
+  { kind: "issue", repository: "acme/herdr-ide", number: 96, title: "hcoord sandbox 거부 로그가 비어 있음", state: "closed", url: "https://github.com/acme/herdr-ide/issues/96" },
+];

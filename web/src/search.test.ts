@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHILD, RICH } from "./cmdkFixture";
+import { CHILD, RICH } from "./gallery/cmdkSceneData";
 import { filterEntries, fuzzyScore, groupEntries, numberQuery, searchEntries, type SearchEntry } from "./search";
 import type { SnapshotRest } from "./snapshot";
 

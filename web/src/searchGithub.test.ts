@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RICH } from "./cmdkFixture";
+import { RICH } from "./gallery/cmdkSceneData";
 import { githubEntries } from "./search";
 import { githubRow, hasGithubProject, lastReadWords, ownAnswer, projectRead, projectToRead, startsSearch } from "./searchGithub";
 import type { Checkout, GithubSearch, SnapshotRest } from "./snapshot";
