@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { MAX_PROBE_PATHS, executableHeader, openRoute, probe, probeRequest } from "./localPath";
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hide-local-path-")));
@@ -32,7 +33,20 @@ describe("probeRequest", () => {
 });
 
 describe("probe", () => {
-  it("answers each path's physical spelling and kind, and null for anything else", async () => {
+  it("keeps confirmed non-directory absence separate from filesystem failures", async () => {
+    const note = file("probe-errors/note.md", "# note");
+    expect(await probe([note + "/child"])).toEqual([null]);
+    for (const method of ["realpath", "stat"] as const) {
+      for (const code of ["EIO", "EACCES"]) {
+        const mock = vi.spyOn(fsp, method).mockRejectedValueOnce(Object.assign(new Error("private path " + note), { code }));
+        try {
+          await expect(probe([note])).rejects.toMatchObject({ message: "native path probe failed: " + code });
+        } finally { mock.mockRestore(); }
+      }
+    }
+  });
+
+  it("answers each path's physical spelling and kind, and null for missing or unsupported paths", async () => {
     const note = file("docs/note.md", "# note");
     fs.symlinkSync(path.join(root, "docs"), path.join(root, "linked"));
     const answers = await probe([note, path.join(root, "linked/./note.md"), path.join(root, "docs"), path.join(root, "missing.md"), "~/note.md"], root);

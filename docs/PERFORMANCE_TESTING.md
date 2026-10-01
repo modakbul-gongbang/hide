@@ -367,3 +367,30 @@ The preview reads an issue at most once per page and never while a read is in fl
 Hover, focus and rest on a card send nothing else; `web/e2e/overview.spec.ts` counts the client events on a card's hover and on repeated previews.
 The PRs view (PRD overview-lenses-prs B24) is `buildPullRequests` in `web/src/projectBoard.ts`, one pass over the project's pull requests with a pane lookup per row, memoized on the project; the core sends only the pull requests the view shows (the open ones and the merged ones D-52 keeps), cut from the `gh pr list` answer it already holds, so the snapshot grows with that bounded list and the view adds no read.
 Its only reads are a pull request's body and feedback when 맡기기 or 새 이슈 만들기 opens (one `pr_feedback_read`, `gh pr view` on a worker), and its only writes follow a confirmation; hover, focus, unfolding and the half-second cards are screen state, and `web/e2e/overview-prs.spec.ts` counts the client events across them.
+
+
+### Terminal path links
+
+`web/src/terminalLinks.ts` reads at most three rows on either side of the hovered row and retains the existing maximum of sixteen joined spellings per token.
+Each spelling offers its original path and at most five context interpretations, so a token has at most 192 logical cwd/root lookups, at most 160 beyond the original spellings.
+The six stages preserve raw and symbol-only spelling, grammar-only removal from each with literal leading/closing punctuation, the cleaned literal location spelling, then the parsed location.
+Identical text/target stages deduplicate.
+These are finite punctuation, Korean grammar and location interpretations; arbitrary Hangul is never removed character by character.
+The selected range maps UTF-16 slice boundaries onto the buffer's glyph cells, retaining both halves of a wide glyph and refusing a cut inside a combining cell.
+
+`web/src/terminalLinkProvider.ts` spends one invocation's budget on originals before inferred spellings.
+Deduplication and fresh cache hits precede admission: at most 512 new unique logical paths reach the desktop host, in batches of at most 64.
+A budget overflow records `path_budget_exceeded` with unique lookup, cache-miss, limit and skipped counts, without output text or paths.
+A failed or skipped higher-precedence candidate leaves that group unresolved instead of selecting an unproven shorter spelling.
+The native host distinguishes confirmed `ENOENT`/`ENOTDIR` absence from other filesystem failures, which reject the batch and reach the existing count/reason diagnostic without paths.
+Answers retain the existing ten-second TTL and 512-entry cache cap.
+An invocation holds its own bounded answer set while the shared cache is pruned, so a cache eviction during resolution cannot change that invocation's result.
+There is no new input, render, snapshot, notification or remote-filesystem work; URL and OSC 8 routing and native path authority are unchanged.
+
+Regression owners are `web/src/terminalLinks.test.ts` (finite grammar, per-token bounds and cell ranges), `web/src/terminalLinkProvider.test.ts` (original precedence, missing/failed/over-budget checks, batching, cache and device boundaries), and `desktop/e2e/terminal-links.spec.ts` (real file opening and native path/link interaction).
+For a matched dense-line comparison, record grid columns, token count and fixture spellings, then measure cold and warm hover-to-pointer latency separately with the same window and input sequence.
+Count logical candidates, cache misses and IPC batches separately from actual native `realpath` and `stat` invocations; missing paths perform no successful stat, and cache hits perform neither.
+With the existing `probe=1` QA seam, the provider records count-only `path_probe` diagnostics in the bounded diagnostic log.
+Native IPC unique paths count admitted cache misses, not all logical candidates; a warm hover can have logical candidates while sending no host requests.
+The original baseline has no count diagnostic, so record that limitation and cross-check its logical candidates with its original parser on the identical fixture cells.
+Capture the exact candidate PID/window without activating it, and distinguish a renderer pointer/file-opening observation from an operating-system handler replaced by a recorder.

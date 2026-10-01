@@ -12,10 +12,13 @@
 
 import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
 import path from "node:path";
+import { linkCandidates } from "../../web/src/terminalLinks";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
@@ -61,7 +64,7 @@ test.afterEach(async () => {
   scratch = null;
 });
 
-type Probe = { paneId: () => string | null; paneText: (id: string) => string; paneGrid: (id: string) => { cols: number; rows: number } | null };
+type Probe = { paneId: () => string | null; paneText: (id: string) => string; paneGrid: (id: string) => { cols: number; rows: number } | null; diagnostics?: () => string[] };
 
 /** Reloads the shell with the terminal probe, the only way to read what xterm draws through WebGL. */
 async function withProbe(page: Page): Promise<void> {
@@ -77,6 +80,13 @@ async function withProbe(page: Page): Promise<void> {
 
 /** Prints `lines` in the fixture pane through `cat`, so the shell draws them as a program would. */
 async function print(page: Page, paneId: string, lines: string[], last: string): Promise<void> {
+  // Leave the old row before replacing its text so xterm requests fresh links
+  // when the next real hover enters it, including after an empty/error answer.
+  const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
+  // The first column is covered by the pane resize grab, so use the middle.
+  const away = await cellPoint(page, paneId, { row: grid.rows - 1, column: Math.floor(grid.cols / 2) });
+  expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest(".xterm") != null, away)).toBe(true);
+  await page.mouse.move(away.x, away.y);
   const file = path.join(herdr.root, `print-${Date.now()}.txt`);
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], `clear; cat '${file}'\n`], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
@@ -89,7 +99,9 @@ async function cellOf(page: Page, paneId: string, text: string, offset = 0): Pro
   const lines = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id).split("\n"), paneId);
   const row = lines.findIndex((line) => line.includes(text));
   expect(row, `${text} is not on the screen:\n${lines.join("\n")}`).toBeGreaterThanOrEqual(0);
-  return { row, column: lines[row]!.indexOf(text) + offset };
+  const prefix = lines[row]!.slice(0, lines[row]!.indexOf(text)) + text.slice(0, offset);
+  const column = [...prefix].reduce((width, char) => width + (/\p{Script=Hangul}/u.test(char) ? 2 : 1), 0);
+  return { row, column };
 }
 
 /** The window point at the middle of a cell of `paneId`'s screen. */
@@ -292,4 +304,290 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => sent.get("terminal_click") ?? 0).toBe(clicksBefore + 1);
   expect(hostLog(run.env).filter((line) => line.event.startsWith("probe_paths.refused"))).toEqual([]);
+});
+
+/** A current native frame of this exact candidate, without activating any app. */
+async function nativeCapture(name: string): Promise<void> {
+  const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (!dir) return;
+  fs.mkdirSync(dir, { recursive: true });
+  const pid = app!.process().pid!;
+  const script = 'ObjC.import("CoreGraphics"); JSON.stringify(ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0))).filter(w => w.kCGWindowLayer === 0 && w.kCGWindowOwnerPID === ' + pid + ').map(w => ({id:w.kCGWindowNumber,pid:w.kCGWindowOwnerPID})))';
+  const listed = spawnSync("osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8", timeout: 10_000 });
+  expect(listed.status, listed.stderr).toBe(0);
+  const windows = JSON.parse(listed.stdout) as { id: number; pid: number }[];
+  expect(windows).toHaveLength(1);
+  fs.writeFileSync(path.join(dir, name + ".json"), JSON.stringify({ candidate: "worktree desktop/dist/main.js", ...windows[0], daemonPid: run.daemonPid(), socket: herdr.socket }, null, 2));
+  const captured = spawnSync("screencapture", ["-x", "-o", "-l", String(windows[0]!.id), path.join(dir, name + ".png")], { encoding: "utf8", timeout: 10_000 });
+  expect(captured.status, captured.stderr).toBe(0);
+}
+
+test("Korean prose links only the real path and opens that file", async () => {
+  const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
+  fs.mkdirSync(path.join(checkout, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(checkout, "docs/README.md"), "# issue 271 exact file");
+  ({ app } = await launch(run.env));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 681));
+  const page = await shellPage(app);
+  await withProbe(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.7));
+  await enterWorkspace(page, "fixture");
+  const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await print(page, paneId, ["보드 보기 (docs/README.md)에 C안을 추가했습니다.", "KOREAN-END"], "KOREAN-END");
+  const lines = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id).split("\n"), paneId);
+  const row = lines.findIndex((line) => line.startsWith("보드 보기"));
+  expect(row).toBeGreaterThanOrEqual(0);
+  // The fixture prefix occupies ten cells, then the opening bracket one.
+  const point = await cellPoint(page, paneId, { row, column: 12 });
+  await page.mouse.move(point.x, point.y);
+  await nativeCapture("korean-prose-hover");
+  await hoverLink(page, paneId, point);
+  await nativeCapture("korean-prose-hover");
+  for (const column of [10, 25, 26, 27]) {
+    const outside = await cellPoint(page, paneId, { row, column });
+    await page.mouse.move(outside.x, outside.y);
+    await expect(page.locator('[data-terminal="' + paneId + '"] .xterm-screen')).not.toHaveClass(/xterm-cursor-pointer/);
+  }
+  await hoverLink(page, paneId, point);
+  await page.mouse.click(point.x, point.y);
+  await expect(viewTab(page, "README.md")).toBeVisible();
+  await expect(page.locator(".cm-content")).toContainText("issue 271 exact file");
+  await nativeCapture("korean-prose-open");
+
+  for (const [written, selected] of [
+    ["docs/원문.md)에", "docs/원문.md)에"],
+    ["docs/괄호.md)", "docs/괄호.md)"],
+    ["docs/위치.md:12:4", "docs/위치.md:12:4"],
+  ]) {
+    fs.writeFileSync(path.join(checkout, selected!), "# selected " + selected);
+    fs.writeFileSync(path.join(checkout, selected!.split(/[):]/u)[0]!), "# shorter alternative");
+    await print(page, paneId, ["확인 " + written, "COLLISION-" + selected], "COLLISION-" + selected);
+    const lastCell = await cellOf(page, paneId, written!, written!.length - 1);
+    const lastPoint = await cellPoint(page, paneId, lastCell);
+    await hoverLink(page, paneId, lastPoint);
+    await page.mouse.click(lastPoint.x, lastPoint.y);
+    await expect(page.locator(".cm-content")).toContainText("selected " + selected);
+  }
+  await nativeCapture("korean-original-file");
+
+  // Independent fixture names keep TTL hits from a prior collision from
+  // deciding this one. Every shorter stage really exists alongside the winner.
+  const collisions = [];
+  for (let caseIndex = 0; caseIndex < 12; caseIndex += 1) {
+    const stage = caseIndex % 6;
+    const punctuation = caseIndex < 6 ? "" : ".";
+    const base = "docs/composite-" + caseIndex + ".ts";
+    const written = "(" + base + ":12:5)에" + punctuation;
+    const spellings = [written, base + ":12:5)에", "(" + base + ":12:5)", base + ":12:5)", base + ":12:5", base];
+    const selected = spellings[stage]!;
+    for (const file of spellings.slice(stage)) {
+      fs.mkdirSync(path.join(checkout, path.dirname(file)), { recursive: true });
+      fs.writeFileSync(path.join(checkout, file), Array.from({ length: 20 }, (_, line) => "// selected " + file + " line " + (line + 1)).join("\n"));
+    }
+    await print(page, paneId, ["합성 " + written, "COMPOSITE-END-" + caseIndex], "COMPOSITE-END-" + caseIndex);
+    const first = await cellOf(page, paneId, written);
+    const text = stage === 5 ? spellings[4]! : selected;
+    const start = first.column + (text.startsWith("(") ? 0 : 1);
+    const end = start + [...text].reduce((cells, char) => cells + (/\p{Script=Hangul}/u.test(char) ? 2 : 1), 0);
+    for (const column of [start, end - 1]) {
+      const inside = await cellPoint(page, paneId, { row: first.row, column });
+      await hoverLink(page, paneId, inside);
+    }
+    for (const column of [start - 1, end]) {
+      const outside = await cellPoint(page, paneId, { row: first.row, column });
+      await page.mouse.move(outside.x, outside.y);
+      await expect(page.locator('[data-terminal="' + paneId + '"] .xterm-screen')).not.toHaveClass(/xterm-cursor-pointer/);
+    }
+    const inside = await cellPoint(page, paneId, { row: first.row, column: start });
+    await hoverLink(page, paneId, inside);
+    await nativeCapture("korean-composite-stage-" + caseIndex + "-hover");
+    await page.mouse.click(inside.x, inside.y);
+    await expect(page.locator(".cm-content")).toContainText("selected " + selected + " line ");
+    if (stage === 5) await expect(page.locator(".cm-activeLine").first()).toHaveText("// selected " + selected + " line 12");
+    collisions.push({ stage, punctuation, written, selected, range: { row: first.row, start, end }, line: stage === 5 ? 12 : null, column: stage === 5 ? 5 : null });
+    await nativeCapture("korean-composite-stage-" + caseIndex + "-open");
+  }
+  if (process.env.HIDE_E2E_SCREENSHOT_DIR) fs.writeFileSync(path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "composite-click-observations.json"), JSON.stringify(collisions, null, 2));
+
+  // A real IPC request still goes through the native host. Inject only an
+  // unexpected filesystem failure; it must not establish a shorter link.
+  fs.writeFileSync(path.join(checkout, "docs/fault.md"), "# native probe retry selected");
+  await app.evaluate((_electron, failingPath) => {
+    const fsp = process.getBuiltinModule("fs/promises") as typeof import("node:fs/promises");
+    const realpath = fsp.realpath;
+    (globalThis as { restoreLinkProbe?: () => void }).restoreLinkProbe = () => { fsp.realpath = realpath; };
+    fsp.realpath = (async (...args: unknown[]) => {
+      if (String(args[0]) === failingPath) throw Object.assign(new Error("private fixture " + failingPath), { code: "EIO" });
+      return Reflect.apply(realpath, fsp, args);
+    }) as typeof fsp.realpath;
+  }, path.join(checkout, "docs/fault.md)에"));
+  try {
+    await print(page, paneId, ["오류 docs/fault.md)에", "FAULT-END"], "FAULT-END");
+    const fault = await pointOf(page, paneId, "docs/fault.md", { offset: 2 });
+    await page.mouse.move(fault.x, fault.y);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.diagnostics?.().findLast((line) => line.includes("native path probe failed: EIO")) ?? null)).not.toBeNull();
+    await expect(page.locator('[data-terminal="' + paneId + '"] .xterm-screen')).not.toHaveClass(/xterm-cursor-pointer/);
+    const diagnostic = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.diagnostics?.().findLast((line) => line.includes("native path probe failed: EIO")));
+    expect(diagnostic).not.toContain(checkout);
+  } finally {
+    await app.evaluate(() => { (globalThis as { restoreLinkProbe?: () => void }).restoreLinkProbe!(); });
+  }
+  await print(page, paneId, ["재시도 docs/fault.md)에", "FAULT-RETRY-END"], "FAULT-RETRY-END");
+  const retry = await pointOf(page, paneId, "docs/fault.md", { offset: 2 });
+  await hoverLink(page, paneId, retry);
+  await page.mouse.click(retry.x, retry.y);
+  await expect(page.locator(".cm-content")).toContainText("native probe retry selected");
+  await nativeCapture("korean-probe-retry-open");
+
+  const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
+  const segments: string[] = [];
+  while (["docs", ...segments].join("/").length < grid.cols + 10) segments.push("segment" + segments.length);
+  const wrapped = ["docs", ...segments, "한글.md"].join("/");
+  fs.mkdirSync(path.join(checkout, path.dirname(wrapped)), { recursive: true });
+  fs.writeFileSync(path.join(checkout, wrapped), "# wrapped Korean selected");
+  await print(page, paneId, ["확인 (" + wrapped + ")에서도", "WRAPPED-KOREAN-END"], "WRAPPED-KOREAN-END");
+  const endCell = await cellOf(page, paneId, "한글.md");
+  // Probe both halves of each Hangul glyph and the file extension.
+  for (const extra of [0, 1, 2, 3, 4, 5, 6]) {
+    const inside = await cellPoint(page, paneId, { row: endCell.row, column: endCell.column + extra });
+    await hoverLink(page, paneId, inside);
+  }
+  const endPoint = await cellPoint(page, paneId, { row: endCell.row, column: endCell.column + 6 });
+  await hoverLink(page, paneId, endPoint);
+  await nativeCapture("korean-wrapped-hover");
+  for (const extra of [7, 8, 9, 10, 11, 12]) {
+    const outside = await cellPoint(page, paneId, { row: endCell.row, column: endCell.column + extra });
+    await page.mouse.move(outside.x, outside.y);
+    await expect(page.locator('[data-terminal="' + paneId + '"] .xterm-screen')).not.toHaveClass(/xterm-cursor-pointer/);
+  }
+  await hoverLink(page, paneId, endPoint);
+  await page.mouse.click(endPoint.x, endPoint.y);
+  await expect(page.locator(".cm-content")).toContainText("wrapped Korean selected");
+  await nativeCapture("korean-wrapped-open");
+});
+
+
+test("dense terminal path hover measures cold and warm native work", async () => {
+  const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
+  fs.mkdirSync(path.join(checkout, "dense"), { recursive: true });
+  // Half the row exercises the complete six-stage punctuation/location
+  // composition; the first plain path stays hoverable on the original baseline.
+  const tokens = Array.from({ length: 12 }, (_, index) => {
+    const base = "dense/f" + String(index).padStart(2, "0") + ".md";
+    return index % 2 ? "(" + base + ":12:5)에" : base;
+  });
+  for (let index = 0; index < tokens.length; index += 1) {
+    fs.writeFileSync(path.join(checkout, "dense/f" + String(index).padStart(2, "0") + ".md"), "# dense file " + index);
+  }
+  ({ app } = await launch(run.env));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1600, 681));
+  const page = await shellPage(app);
+  await withProbe(page);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.3));
+  await enterWorkspace(page, "fixture");
+  const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
+  expect(grid.cols).toBeGreaterThan(tokens.join(" ").length + 12);
+  await print(page, paneId, [tokens.join(" "), "DENSE-END"], "DENSE-END");
+  const sourceHashes = Object.fromEntries([
+    ["terminalLinks.ts", "../../web/src/terminalLinks.ts"],
+    ["terminalLinkProvider.ts", "../../web/src/terminalLinkProvider.ts"],
+    ["localPath.ts", "../src/main/localPath.ts"],
+  ].map(([name, relative]) => [name!, createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, relative!))).digest("hex")]));
+  const cells = [...tokens.join(" ")].flatMap((char) => /\p{Script=Hangul}/u.test(char) ? [char, null] : [char]);
+  while (cells.length < grid.cols) cells.push(" ");
+  // Logical candidates use the actual parser source on this same unwrapped
+  // fixture row. cwd and checkout root coincide, so physical lookup bases dedup.
+  const logicalUniqueLookups = new Set(linkCandidates([cells], 0).flat().flatMap((candidate) =>
+    candidate.target.kind === "path" ? [path.resolve(checkout, candidate.target.path)] : [],
+  )).size;
+  const pids = [app.process().pid!, run.daemonPid()!];
+  const hostLoad = () => {
+    const result = spawnSync("ps", ["-o", "pid=,%cpu=,rss=", "-p", pids.join(",")], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    const processes = result.stdout.trim().split("\n").map((line) => {
+      const [pid, cpuPercent, rssKiB] = line.trim().split(/\s+/u).map(Number);
+      return { pid, cpuPercent, rssKiB };
+    });
+    expect(processes).toHaveLength(2);
+    return { at: new Date().toISOString(), machineLoadAverage: os.loadavg(), freeMemoryBytes: os.freemem(), processes };
+  };
+
+  // Observe the real IPC handler and native filesystem calls, preserving
+  // every argument, answer and refusal. These taps live only in this app.
+  await app.evaluate(({ ipcMain }) => {
+    type Counts = { paths: string[]; batchSizes: number[]; realpath: number; stat: number };
+    const counts: Counts = { paths: [], batchSizes: [], realpath: 0, stat: 0 };
+    (globalThis as { linkCounts?: Counts }).linkCounts = counts;
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })._invokeHandlers;
+    const original = handlers.get("hide:probe-paths")!;
+    handlers.set("hide:probe-paths", (event, paths) => {
+      const request = paths as string[];
+      counts.paths.push(...request);
+      counts.batchSizes.push(request.length);
+      return original(event, paths);
+    });
+    const fsp = process.getBuiltinModule("fs/promises") as typeof import("node:fs/promises");
+    const realpath = fsp.realpath;
+    const stat = fsp.stat;
+    fsp.realpath = ((...args: unknown[]) => { counts.realpath += 1; return Reflect.apply(realpath, fsp, args); }) as typeof fsp.realpath;
+    fsp.stat = ((...args: unknown[]) => { counts.stat += 1; return Reflect.apply(stat, fsp, args); }) as typeof fsp.stat;
+  });
+  const samples = [];
+  for (let trial = 0; trial < 5; trial += 1) {
+    if (trial > 0) {
+      await page.mouse.move(0, 0);
+      await page.reload();
+      await expect.poll(() => page.evaluate(() => typeof (window as { __hideProbe?: unknown }).__hideProbe)).toBe("object");
+      await expect.poll(() => page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id).includes("DENSE-END"), paneId)).toBe(true);
+    }
+    const point = await pointOf(page, paneId, tokens[0]!, { offset: 2 });
+    const away = await pointOf(page, paneId, "DENSE-END", { offset: 2 });
+    for (const phase of ["cold", "warm"]) {
+      await page.mouse.move(away.x, away.y);
+      await expect(page.locator('[data-terminal="' + paneId + '"] .xterm-screen')).not.toHaveClass(/xterm-cursor-pointer/);
+      await page.waitForTimeout(400); // Deliberate idle sampling interval, outside the hover latency boundary.
+      const idleHostLoad = hostLoad();
+      await app.evaluate(() => {
+        const counts = (globalThis as { linkCounts?: { paths: string[]; batchSizes: number[]; realpath: number; stat: number } }).linkCounts!;
+        counts.paths = []; counts.batchSizes = []; counts.realpath = 0; counts.stat = 0;
+      });
+      const start = performance.now();
+      try { await hoverLink(page, paneId, point); }
+      catch (error) {
+        console.log("dense hover failed", { trial, phase, point, grid }, await app.evaluate(() => (globalThis as { linkCounts?: unknown }).linkCounts));
+        await nativeCapture("dense-failed");
+        throw error;
+      }
+      const latencyMs = performance.now() - start;
+      const counts = await app.evaluate(() => {
+        const counts = (globalThis as { linkCounts?: { paths: string[]; batchSizes: number[]; realpath: number; stat: number } }).linkCounts!;
+        return { hostUniqueLookups: new Set(counts.paths).size, batchSizes: counts.batchSizes, nativeRealpath: counts.realpath, nativeStat: counts.stat };
+      });
+      const drivenHostLoad = hostLoad();
+      const providerDiagnostic = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.diagnostics?.().filter((line) => line.startsWith("terminal link: path_probe ")).at(-1) ?? null);
+      const fields = providerDiagnostic ? Object.fromEntries([...providerDiagnostic.matchAll(/(\w+)=(\d+)/gu)].map((match) => [match[1]!, Number(match[2])])) : null;
+      if (fields) {
+        expect(fields.unique).toBe(logicalUniqueLookups);
+        expect(fields.cache_misses).toBe(counts.hostUniqueLookups);
+        if (phase === "warm") expect(fields.cache_hits).toBe(logicalUniqueLookups);
+      }
+      expect(counts.hostUniqueLookups).toBeLessThanOrEqual(512);
+      expect(counts.batchSizes.every((size) => size <= 64)).toBe(true);
+      if (phase === "warm") expect(counts.hostUniqueLookups + counts.nativeRealpath + counts.nativeStat).toBe(0);
+      samples.push({ trial, phase, cacheState: phase === "cold" ? "new renderer, empty provider cache" : "same renderer, preceding hover within 10s TTL", logicalUniqueLookups: fields?.unique ?? logicalUniqueLookups, cacheMisses: fields?.cache_misses ?? counts.hostUniqueLookups, providerDiagnostic, latencyMs, ...counts, idleHostLoad, drivenHostLoad });
+      // The baseline and candidate take the same extra pointer movement,
+      // outside the measured hover. Only the candidate links this suffix token.
+      const suffix = await pointOf(page, paneId, tokens[1]!, { offset: 2 });
+      await page.mouse.move(suffix.x, suffix.y);
+      const screen = page.locator('[data-terminal="' + paneId + '"] .xterm-screen');
+      if (fields) await expect(screen).toHaveClass(/xterm-cursor-pointer/);
+      else await expect(screen).not.toHaveClass(/xterm-cursor-pointer/);
+    }
+  }
+  await nativeCapture("dense-hover");
+  const evidence = JSON.stringify({ sourceHashes, workload: tokens, grid, logicalBoundary: "provider diagnostic when available, cross-checked against actual parser on identical unwrapped fixture cells with cwd=root; original baseline lacks count diagnostics and uses its parser plus real IPC misses", hostBoundary: "unique paths received by real native IPC handler, equal to admitted cache misses in this below-budget workload", loadBoundary: "idle after 400ms without input; driven immediately after one hover; ps CPU is the platform recent average, RSS in KiB; machine load is 1/5/15 minute average", latencyBoundary: "driver mouse movement to observed xterm pointer class, includes IPC and polling", samples }, null, 2);
+  await test.info().attach("dense-hover", { body: evidence, contentType: "application/json" });
+  const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (dir) fs.writeFileSync(path.join(dir, "dense-hover-metrics.json"), evidence);
 });

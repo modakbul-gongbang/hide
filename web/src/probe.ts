@@ -9,10 +9,13 @@
 // plain `term.write(data)`.
 
 import type { Terminal } from "@xterm/xterm";
+import { useShellStore } from "./store";
 
 export type EchoSample = { arrival_ms: number; write_ms: number };
 
 export type Probe = {
+  /** Bounded existing diagnostic log, including opt-in terminal path probe counts. */
+  diagnostics: () => string[];
   paneId: () => string | null;
   screenText: () => string;
   /** Arms one marker; `waitArmed` resolves at the first write completion whose screen contains it. */
@@ -90,6 +93,7 @@ export function installProbe(
   selectionOf: (paneId: string) => string | null = () => null,
 ): void {
   window.__hideProbe = {
+    diagnostics: () => useShellStore.getState().diagnostics,
     paneId,
     dropSocket,
     attachedPanes,
