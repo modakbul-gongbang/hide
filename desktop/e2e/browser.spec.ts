@@ -234,13 +234,15 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
   // Two View areas side by side need the Workspace's width: the side panel
-  // is expanded over it. In this window the panel already covers the body,
-  // so its Expand is not drawn and the palette stores the state; the tools
-  // fold into an overlay there, closed until asked for (issue 170).
+  // is expanded over it (issue 170). The open panel beside the agents leaves
+  // the View area too narrow to split, and the core stores the expansion, so
+  // the menu below offers Split right only once the expanded panel is drawn:
+  // it reads the geometry drawn when it opens.
   await page.keyboard.press("Meta+KeyK");
   await page.keyboard.type("Expand side panel");
   await page.locator('[data-palette-row="command:panel:expanded"]').click();
   await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
   const toolsShown = page.locator('[data-tools-toggle="on"]');
   if (await toolsShown.count()) await toolsShown.click();
   await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
@@ -665,6 +667,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   await page.keyboard.press("Meta+KeyK");
   await page.keyboard.type("Expand side panel");
   await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
   if (await page.locator('[data-tools-toggle="on"]').count()) await page.locator('[data-tools-toggle="on"]').click();
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role=menu] [data-menu-item=split_right]').click();
