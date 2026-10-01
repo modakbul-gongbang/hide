@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeText, deviceConnected, deviceStateCounts, frontTitle, homeOf, homeProjectCount, railShown, tileBadges, tileName } from "./devices";
+import { badgeText, deviceConnected, frontTitle, homeOf, homeProjectCount, railShown, tileCounts, tileHint, tileMonogram, tileName } from "./devices";
 import type { AgentRow, SnapshotRest } from "./snapshot";
 
 function agent(paneId: string, group: string): AgentRow {
@@ -44,34 +44,40 @@ describe("the device rail's facts (quick device-rail-badges)", () => {
     expect(railShown(hidden)).toBe(false);
   });
 
-  it("counts each device's own Needs You, Done and Working, and stacks a circle only for a non-zero one in that order (B4)", () => {
+  it("counts each device's own Needs You and unseen Done, and leaves Working to the Agents tab", () => {
     const local = [...LOCAL_AGENTS, agent("l4", "done"), agent("l5", "seen")];
-    expect(deviceStateCounts(rest(), local, "local")).toEqual({ needs_you: 2, done: 1, working: 1 });
-    expect(tileBadges(deviceStateCounts(rest(), local, "local")).map((badge) => [badge.state, badge.count])).toEqual([
-      ["needs_you", 2],
-      ["done", 1],
-      ["working", 1],
-    ]);
-    // A device with only Working agents has a single circle at the top; Seen is not counted.
-    expect(tileBadges(deviceStateCounts(rest(), [agent("x", "working"), agent("y", "seen")], "local")).map((badge) => badge.state)).toEqual(["working"]);
-    expect(tileBadges(deviceStateCounts(rest(), [agent("x", "seen")], "local"))).toEqual([]);
-    expect(deviceStateCounts(rest(), LOCAL_AGENTS, "mini")).toEqual({ needs_you: 1, done: 1, working: 0 });
+    expect(tileCounts(rest(), local, "local")).toEqual({ needs_you: 2, done: 1 });
+    // Working and Seen alone mark nothing.
+    expect(tileCounts(rest(), [agent("x", "working"), agent("y", "seen")], "local")).toEqual({ needs_you: 0, done: 0 });
+    expect(tileCounts(rest(), LOCAL_AGENTS, "mini")).toEqual({ needs_you: 1, done: 1 });
   });
 
   it("gives a device that is not connected no count, its stale session ignored (B4, B8)", () => {
     expect(deviceConnected(rest(), "build-box")).toBe(false);
-    expect(deviceStateCounts(rest(), LOCAL_AGENTS, "build-box")).toEqual({ needs_you: 0, done: 0, working: 0 });
+    expect(tileCounts(rest(), LOCAL_AGENTS, "build-box")).toEqual({ needs_you: 0, done: 0 });
   });
 
   it("draws `9+` from ten and the count below it (B4)", () => {
     expect([1, 9, 10, 250].map(badgeText)).toEqual(["1", "9", "9+", "9+"]);
   });
 
-  it("names a tile for assistive technology by device, connection and each non-zero count (B4)", () => {
-    expect(tileName("mini", true, tileBadges({ needs_you: 1, done: 0, working: 3 }))).toBe("mini, Needs You 1, Working 3");
-    expect(tileName("This Mac", true, tileBadges({ needs_you: 2, done: 1, working: 3 }))).toBe("This Mac, Needs You 2, Done 1, Working 3");
-    expect(tileName("build-box", false, [])).toBe("build-box, 연결 안 됨");
-    expect(tileName("This Mac", true, [])).toBe("This Mac");
+  it("draws a device's monogram from the first letters of its first two words", () => {
+    expect(["Mac mini", "Mac Studio", "mini", "build-box", "연구실 빌드 서버", "  spaced  out "].map(tileMonogram)).toEqual(["Mm", "MS", "M", "Bb", "연빌", "So"]);
+    // A name macOS hands over decomposed still yields whole syllables.
+    expect(tileMonogram("연구실 빌드".normalize("NFD"))).toBe("연빌");
+  });
+
+  it("names a tile for assistive technology by device, connection and each count it marks (B4)", () => {
+    expect(tileName("mini", true, { needs_you: 1, done: 0 })).toBe("mini, Needs You 1");
+    expect(tileName("This Mac", true, { needs_you: 2, done: 1 })).toBe("This Mac, Needs You 2, Done 1");
+    expect(tileName("build-box", false, { needs_you: 0, done: 0 })).toBe("build-box, 연결 안 됨");
+    expect(tileName("This Mac", true, { needs_you: 0, done: 0 })).toBe("This Mac");
+  });
+
+  it("writes the full counts in a tile's hint, where the pill stops at `9+`", () => {
+    expect(tileHint("mini", true, { needs_you: 12, done: 1 })).toBe("mini · Needs You 12 · Done 1");
+    expect(tileHint("build-box", false, { needs_you: 3, done: 0 })).toBe("build-box · 연결 안 됨");
+    expect(tileHint("This Mac", true, { needs_you: 0, done: 0 })).toBe("This Mac");
   });
 
   it("counts a device's Home row from its registrations, its Home excluded (B16, D-04)", () => {

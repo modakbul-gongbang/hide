@@ -2697,53 +2697,70 @@ function buildProjectsSidebar(tokens) {
     });
   }
 
-  // -- the device rail and the header line (PRD home-device-rail D-09..D-14) --
+  // -- the device rail and the header line (PRD home-device-rail D-09..D-14, quick device-rail-slack) --
   const railWidth = num(tokens, '--size-rail');
   const WIN_H = 720;
-  const TILE = 32, TILE_STEP = 76, RAIL_TOP = 12, BADGE = 16, BADGE_GAP = 2, BADGE_X = 39;
+  const TILE = 32, RING = 2, RAIL_TOP = 12;
+  const MARK = num(tokens, '--size-rail-mark'), BADGE = num(tokens, '--size-rail-badge'), BADGE_TEXT = num(tokens, '--size-rail-badge-text'), CUT = 2;
   const FG = '$--foreground', SUBTLE = '$--subtle-foreground', MUTED = '$--muted-foreground';
   const at = (node, x, y) => ({...node, x: Math.round(x), y: Math.round(y)});
   const spacer = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
   const DEVICES = {
     mac: {glyph: 'laptop', label: 'This Mac'},
-    mini: {glyph: 'server', label: 'mini'},
-    build: {glyph: 'server', label: 'build-box'},
+    mini: {monogram: 'M', label: 'mini'},
+    build: {monogram: 'Bb', label: 'build-box'},
     add: {glyph: 'plus', label: '기기 추가'},
   };
-  // A circle's fill by the state it counts; a count of ten or more reads 9+ in a wider pill.
+  // The state fills the Agents tab's counts wear as text.
   const BADGE_FILL = {needs_you: '$--warning', done: '$--success', working: '$--agent-working'};
 
-  // A tile is the device's glyph on a rounded square with its name under it; the
-  // selected one wears the pill at the rail's edge, up to three circles stack down
-  // from the frame's top right (Needs You, Done, Working; a zero takes no slot) and an
-  // unreachable device is dimmed with a x and no circle.
-  function railTile(id, key, {selected = false, off = false, badges = []} = {}) {
-    const d = DEVICES[key];
-    return frame(id, d.label, {layout: 'none', width: railWidth, height: TILE_STEP - 8}, [
-      ...(selected ? [at(frame(`${id}-pill`, 'Selected', {width: 4, height: 20, cornerRadius: 2, fill: FG}, []), 0, 6)] : []),
-      at(frame(`${id}-t`, 'Tile', {
-        width: TILE, height: TILE, cornerRadius: '$--radius-md', layout: 'horizontal', justifyContent: 'center', alignItems: 'center',
-        fill: selected ? '$--secondary' : '$--card', stroke: selected ? FG : '$--border', strokeWidth: 1, strokeAlignment: 'inner', ...(off ? {opacity: 0.45} : {}),
-      }, [icon(`${id}-g`, d.glyph, {size: 16, fill: selected ? FG : SUBTLE})]), 5, 0),
-      ...badges.map(([state, count], i) => at(frame(`${id}-b${i}`, state, {width: count >= 10 ? 20 : BADGE, height: BADGE, cornerRadius: 8, fill: BADGE_FILL[state], layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
-        text(`${id}-bt${i}`, count >= 10 ? '9+' : String(count), {size: '$--text-micro', weight: '600', fill: '$--primary-foreground'}),
-      ]), BADGE_X, i * (BADGE + BADGE_GAP))),
-      ...(off ? [at(frame(`${id}-x`, 'Not connected', {width: 14, height: 14, cornerRadius: 7, fill: '$--background', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
-        text(`${id}-xt`, '×', {size: '$--text-micro', fill: MUTED}),
-      ]), 29, 22)] : []),
-      at(text(`${id}-l`, d.label, {size: '$--text-micro', fill: selected ? FG : MUTED, width: railWidth, align: 'center'}), 0, 3 * BADGE + 2 * BADGE_GAP + 4),
+  // A mark notched into a tile's corner: the mark on a ring of the rail's own fill.
+  function notched(id, name, w, h, inner, children = []) {
+    return frame(id, name, {width: w + 2 * CUT, height: h + 2 * CUT, cornerRadius: (h + 2 * CUT) / 2, fill: '$--sidebar', layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
+      frame(`${id}-m`, name, {width: w, height: h, cornerRadius: h / 2, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', ...inner}, children),
     ]);
   }
 
-  // This Mac and the registered devices in order, and + directly under the last one;
-  // the sidebar beside it follows the selected tile. `tiles` overrides the three-device set.
+  // A tile is a 32 square with This Mac's laptop or a device's monogram and no
+  // name under it; the selected one is ringed 2 off its edge. One mark notched into
+  // the top-right shows the most urgent state: the Needs You count (9+ from ten),
+  // else a dot for unseen Done. Working has no mark, and an unreachable device dims
+  // its glyph and wears a x at the bottom-right. The add tile's edge is dashed in the app; Pen has no
+  // dash, so it is drawn solid.
+  function railTile(id, key, {selected = false, off = false, needs = 0, done = false} = {}) {
+    const d = DEVICES[key];
+    const box = TILE + 4 * RING, x0 = (railWidth - TILE) / 2, y0 = 2 * RING;
+    const glyphFill = key === 'add' ? MUTED : selected ? FG : SUBTLE;
+    const drawn = d.monogram ? text(`${id}-g`, d.monogram, {size: '$--text-body', weight: '600', fill: glyphFill}) : icon(`${id}-g`, d.glyph, {size: key === 'add' ? 14 : 20, fill: glyphFill});
+    const glyph = off ? {...drawn, opacity: num(tokens, '--opacity-dimmed')} : drawn;
+    const pill = needs >= 10 ? BADGE + 2 : BADGE;
+    return frame(id, d.label, {layout: 'none', width: railWidth, height: box}, [
+      ...(selected ? [at(frame(`${id}-ring`, 'Selected', {width: box, height: box, cornerRadius: 12, stroke: FG, strokeWidth: RING, strokeAlignment: 'inner'}, []), x0 - 2 * RING, y0 - 2 * RING)] : []),
+      at(frame(`${id}-t`, 'Tile', {
+        width: TILE, height: TILE, cornerRadius: '$--radius-md', layout: 'horizontal', justifyContent: 'center', alignItems: 'center',
+        ...(key === 'add' ? {stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner'} : {fill: '$--secondary'}),
+      }, [glyph]), x0, y0),
+      ...(done && needs === 0 && !off ? [at(notched(`${id}-done`, 'Done', MARK, MARK, {fill: BADGE_FILL.done}), x0 + TILE + 2 - MARK - CUT, y0 - 2 - CUT)] : []),
+      ...(needs > 0 && !off ? [at(notched(`${id}-needs`, 'Needs You', pill, BADGE, {fill: BADGE_FILL.needs_you}, [
+        text(`${id}-nt`, needs >= 10 ? '9+' : String(needs), {size: BADGE_TEXT, weight: '600', fill: '$--status-foreground'}),
+      ]), x0 + TILE + 4 - pill - CUT, y0 - 4 - CUT)] : []),
+      ...(off ? [at(notched(`${id}-x`, 'Not connected', BADGE, BADGE, {fill: '$--card'}, [
+        text(`${id}-xt`, '×', {size: BADGE_TEXT, fill: MUTED}),
+      ]), x0 + TILE + 4 - BADGE - CUT, y0 + TILE + 4 - BADGE - CUT)] : []),
+    ]);
+  }
+
+  // The sidebar's full-height left column: This Mac and the registered devices in
+  // order, and + directly under the last one, 44 apart as in the app (each frame
+  // carries the ring's 4 above and below the tile, so the gap is 4, not 12); the sidebar beside it follows the
+  // selected tile. `tiles` overrides the three-device set.
   function deviceRail(p, selected, {miniOff = false, tiles} = {}) {
     const set = tiles ?? [
-      ['mac', {selected: selected === 'mac', badges: [['needs_you', 2], ['done', 1], ['working', 3]]}],
-      ['mini', {selected: selected === 'mini', badges: miniOff ? [] : [['needs_you', 12], ['working', 1]], off: miniOff}],
+      ['mac', {selected: selected === 'mac', needs: 2, done: true}],
+      ['mini', {selected: selected === 'mini', needs: miniOff ? 0 : 12, off: miniOff}],
       ['build', {selected: selected === 'build', off: true}],
     ];
-    return frame(`${p}-rail`, 'Device rail', {width: railWidth, height: WIN_H, layout: 'vertical', gap: 8, padding: [RAIL_TOP, 0, 4, 0], fill: '$--background', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
+    return frame(`${p}-rail`, 'Device rail', {width: railWidth, height: WIN_H, layout: 'vertical', gap: '$--spacing-xs', padding: [RAIL_TOP - 2 * RING, 0, 4, 0], fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: 1}, strokeAlignment: 'inner'}, [
       ...set.map(([key, options], i) => railTile(`${p}-rt${i}`, key, options)),
       railTile(`${p}-radd`, 'add'),
     ]);
@@ -2917,7 +2934,7 @@ function buildProjectsSidebar(tokens) {
       headerLine(`psb-off-${s}`, {name: 'mini', tag: 'Remote', icons: ['search']}), ruleLine(`psb-off-r0-${s}`), offBody, footer(`psb-off-${s}`),
     ]);
 
-    // One device: the rail still shows with This Mac alone and its three counts, and the Home row heads Projects.
+    // One device: the rail still shows with This Mac alone and its unseen Done dot, and the Home row heads Projects.
     const one = deviceSidebar('one', s, {
       height: WIN_H, home: {count: '4 projects', agents: ['blog', 'research']},
       rows: [
@@ -2961,8 +2978,8 @@ function buildProjectsSidebar(tokens) {
       frame(id('row-states'), 'Rail states', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [
         labeled('agents', 'Agents tab · this device only, the three counts above, no chip', [paired('agents', 'mac', agentsTab)]),
         labeled('remote', 'mini in front · 9+ pill', [paired('remote', 'mini', remote)]),
-        labeled('off', 'mini not connected · dimmed tile, no circle', [paired('off', 'mini', off, {miniOff: true})]),
-        labeled('one', 'One device · the rail shows with This Mac alone', [frame(id('pair-one'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('one'), 'mac', {tiles: [['mac', {selected: true, badges: [['working', 3]]}]]}), one])]),
+        labeled('off', 'mini not connected · dimmed glyph and x, no mark', [paired('off', 'mini', off, {miniOff: true})]),
+        labeled('one', 'One device · the rail shows with This Mac alone', [frame(id('pair-one'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('one'), 'mac', {tiles: [['mac', {selected: true, done: true}]]}), one])]),
         labeled('hidden', 'Rail hidden · the name is the device menu', [frame(id('pair-hidden'), 'Sidebar and menu', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [hidden, hiddenMenu])]),
       ]),
     ])];
@@ -3061,7 +3078,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown. The rail stands left of it: This Mac and each registered device as a tile with its name, up to three 16px circles stacked down from the tile’s top right with a 2px gap in the order Needs You, unseen Done, Working (a zero takes no slot, ten or more reads 9+ in a 20px pill), the selected tile with the pill at the rail’s edge, an unreachable device dimmed with a x and no circle, and + directly under the last tile to add a device. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You group first, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the Overview child of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown (quick device-rail-slack). The rail is the sidebar’s full-height left column: This Mac and each registered device as a 32 tile with no name under it (the laptop glyph, or the monogram of the device’s name; the hint is the name with its counts in full), the selected tile ringed 2 off its edge, one mark notched into a tile’s top-right for its most urgent state (the Needs You count, ten or more reading 9+, else a dot for unseen Done), no mark for Working, an unreachable device with its glyph dimmed and a x at the bottom-right, and + directly under the last tile to add a device, dashed in the app and drawn solid here. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You group first, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the Overview child of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------

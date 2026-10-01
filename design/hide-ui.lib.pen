@@ -38248,15 +38248,37 @@
     },
     "--size-rail": {
       "type": "number",
-      "value": 64
+      "value": 48
     },
     "--size-disk-sheet": {
       "type": "number",
       "value": 1160
     },
-    "--size-badge-wide": {
+    "--size-rail-badge": {
       "type": "number",
-      "value": 20
+      "value": 13
+    },
+    "--size-rail-mark": {
+      "type": "number",
+      "value": 8
+    },
+    "--status-foreground": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#FFFFFF"
+        },
+        {
+          "value": "#101112",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--size-rail-badge-text": {
+      "type": "number",
+      "value": 9
     },
     "--graph-box-gap": {
       "type": "number",

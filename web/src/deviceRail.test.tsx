@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { RailTileView, type Tile } from "./components/device-rail";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { sidebarBody, type StateCounts } from "./devices";
+import { sidebarBody, type TileCounts } from "./devices";
 import type { SnapshotRest } from "./snapshot";
 
 const LOCAL = { id: "local", label: "This Mac", kind: "local", state: "local", message: null };
@@ -18,9 +18,9 @@ function world(devices: unknown[], front = "local", connected = ["mini"]): Snaps
 
 const tile = (html: string) => html.match(/<button[^>]*data-rail-tile[^>]*>/)?.[0] ?? "";
 
-const NONE: StateCounts = { needs_you: 0, done: 0, working: 0 };
+const NONE: TileCounts = { needs_you: 0, done: 0 };
 
-function view(props: { tile: Tile; selected?: boolean; counts?: StateCounts; connected?: boolean }) {
+function view(props: { tile: Tile; selected?: boolean; counts?: TileCounts; connected?: boolean }) {
   return renderToStaticMarkup(
     <TooltipProvider>
       <RailTileView selected={false} counts={NONE} connected onSelect={() => undefined} {...props} />
@@ -28,8 +28,8 @@ function view(props: { tile: Tile; selected?: boolean; counts?: StateCounts; con
   );
 }
 
-/** The state of each circle drawn, top to bottom, with its text. */
-const circles = (html: string) => [...html.matchAll(/data-rail-badge="(\w+)" data-rail-badge-count="(\d+)"[^>]*>([^<]*)</g)].map((match) => [match[1], match[3]]);
+/** Each mark drawn, in source order, with its text: the Done dot has none. */
+const marks = (html: string) => [...html.matchAll(/data-rail-badge="(\w+)"[^>]*>([^<]*)</g)].map((match) => [match[1], match[2]]);
 
 describe("which list fills the sidebar (quick device-rail-badges B3)", () => {
   it("is the chosen tab for the device in front, one device or many", () => {
@@ -45,58 +45,59 @@ describe("which list fills the sidebar (quick device-rail-badges B3)", () => {
   });
 });
 
-describe("a rail tile", () => {
-  const mini: Tile = { id: "mini", label: "mini", icon: "remote" };
+describe("a rail tile (quick device-rail-slack)", () => {
+  const local: Tile = { id: "local", label: "This Mac", icon: "local" };
+  const mini: Tile = { id: "mini", label: "Mac mini", icon: "remote" };
   const off: Tile = { id: "build-box", label: OFF.label, icon: "remote" };
 
-  it("is a focusable button whose name carries the device and each non-zero count (B4)", () => {
-    const html = view({ tile: mini, counts: { needs_you: 2, done: 0, working: 1 } });
-    expect(tile(html)).toContain('aria-label="mini, Needs You 2, Working 1"');
+  it("is a focusable button whose name carries the device and each count it marks (B4)", () => {
+    const html = view({ tile: mini, counts: { needs_you: 2, done: 1 } });
+    expect(tile(html)).toContain('aria-label="Mac mini, Needs You 2, Done 1"');
     expect(html.startsWith("<button")).toBe(true);
     expect(html).not.toContain("tabindex");
   });
 
-  it("stacks a circle per non-zero state in the order Needs You, Done, Working, and takes no slot for a zero (B4)", () => {
-    expect(circles(view({ tile: mini, counts: { needs_you: 2, done: 1, working: 3 } }))).toEqual([
-      ["needs_you", "2"],
-      ["done", "1"],
-      ["working", "3"],
-    ]);
-    // Only Working: one blue circle in the top slot.
-    const working = view({ tile: mini, counts: { needs_you: 0, done: 0, working: 3 } });
-    expect(circles(working)).toEqual([["working", "3"]]);
-    expect(working).toContain("bg-agent-working");
-    expect(working).not.toContain("bg-warning");
+  it("draws no name under the tile: This Mac is the laptop and a device its monogram", () => {
+    expect(view({ tile: local })).toContain("lucide-laptop");
+    const remote = view({ tile: mini });
+    expect(remote).toMatch(/data-rail-glyph="true"[^>]*>Mm</);
+    expect(remote).not.toContain("data-rail-label");
+    expect(remote).not.toContain(">Mac mini<");
   });
 
-  it("draws a count of ten or more as `9+` in the wide pill, and nothing at all when every count is zero (B4)", () => {
-    const busy = view({ tile: mini, counts: { needs_you: 12, done: 0, working: 0 } });
-    expect(circles(busy)).toEqual([["needs_you", "9+"]]);
-    expect(busy).toContain("w-(--size-badge-wide)");
+  it("shows one mark, the most urgent: the Needs You count over an unseen Done dot", () => {
+    const html = view({ tile: mini, counts: { needs_you: 2, done: 8 } });
+    expect(marks(html)).toEqual([["needs_you", "2"]]);
+    expect(html).toContain("bg-warning");
+    expect(html).not.toContain("bg-success");
+    expect(html).toContain("text-status-foreground");
+    // Done alone is a dot with no number; the hint still names both counts.
+    expect(marks(view({ tile: mini, counts: { needs_you: 0, done: 3 } }))).toEqual([["done", ""]]);
+    expect(tile(html)).toContain('aria-label="Mac mini, Needs You 2, Done 8"');
+  });
+
+  it("draws a count of ten or more as `9+`, and no mark at all when both counts are zero (B4)", () => {
+    const busy = view({ tile: mini, counts: { needs_you: 12, done: 0 } });
+    expect(marks(busy)).toEqual([["needs_you", "9+"]]);
     expect(tile(busy)).toContain("Needs You 12");
     expect(view({ tile: mini })).not.toContain("data-rail-badge");
   });
 
-  it("draws a bar only while selected (B2)", () => {
-    const quiet = view({ tile: mini });
-    expect(quiet).not.toContain("data-rail-bar");
-    expect(view({ tile: mini, selected: true })).toContain("data-rail-bar");
-    expect(tile(view({ tile: mini, selected: true }))).toContain('aria-pressed="true"');
+  it("rings the tile only while selected, with no bar beside it", () => {
+    const quiet = tile(view({ tile: mini }));
+    expect(quiet).not.toContain("ring-foreground");
+    const chosen = tile(view({ tile: mini, selected: true }));
+    expect(chosen).toContain("ring-foreground");
+    expect(chosen).toContain('aria-pressed="true"');
+    expect(view({ tile: mini, selected: true })).not.toContain("data-rail-bar");
   });
 
-  it("dims a disconnected device with a cross, no badge, and reads 연결 안 됨 (B8)", () => {
+  it("dims a disconnected device's glyph with a cross, no mark, and reads 연결 안 됨 (B8)", () => {
     // Counts a stale session still carries are not drawn.
-    const html = view({ tile: off, connected: false, counts: { needs_you: 1, done: 1, working: 1 } });
+    const html = view({ tile: off, connected: false, counts: { needs_you: 1, done: 1 } });
     expect(html).toContain("data-rail-off");
     expect(html).not.toContain("data-rail-badge");
-    expect(html).toContain("opacity-50");
-    expect(tile(html)).toContain("연결 안 됨");
-    expect(tile(html)).not.toContain("Needs You");
-  });
-
-  it("keeps a long Korean device name to one truncated line under the tile (B46)", () => {
-    const html = view({ tile: off, connected: false });
-    expect(html).toMatch(/data-rail-label="true">연구실 빌드 서버 자동화 장비</);
-    expect(html).toMatch(/class="[^"]*truncate[^"]*"[^>]*data-rail-label/);
+    expect(html).toMatch(/opacity-\(--opacity-dimmed\)[^>]*data-rail-glyph|data-rail-glyph[^>]*opacity-\(--opacity-dimmed\)/);
+    expect(tile(html)).toContain('aria-label="연구실 빌드 서버 자동화 장비, 연결 안 됨"');
   });
 });
