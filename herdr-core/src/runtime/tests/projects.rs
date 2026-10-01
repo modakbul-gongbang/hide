@@ -3553,7 +3553,6 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
             },
             environment::EnvironmentReport {
                 statuses: vec![],
-                herdr_socket_path_override: None,
                 home_path: None,
                 codex_home: None,
             },

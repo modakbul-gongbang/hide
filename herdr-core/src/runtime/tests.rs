@@ -333,7 +333,6 @@ pub(super) fn runtime() -> Runtime {
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            herdr_socket_path_override: None,
             home_path: None,
             codex_home: None,
         },

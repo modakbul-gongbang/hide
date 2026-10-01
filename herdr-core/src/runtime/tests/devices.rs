@@ -145,7 +145,6 @@ fn runtime_with_home() -> Runtime {
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            herdr_socket_path_override: None,
             home_path: Some(std::env::temp_dir().join(format!(
                 "herdr-core-devices-home-{}-{}",
                 std::process::id(),

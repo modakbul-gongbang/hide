@@ -778,9 +778,9 @@ fn stop(env: &Env) -> Result<(), String> {
 /// stop, which ends its AI requests and provider processes, then SIGKILL.
 /// An error only when it is still alive after that.
 fn stop_daemon(env: &Env, state: &DaemonState) -> Result<(), String> {
-    // A damaged state naming pid 0 or 1 would signal this process group or
-    // launchd; it names no daemon, so it is only cleared.
-    if state.pid <= 1 {
+    // A damaged state's pid names no daemon (`send_signal` refuses it), so
+    // the state is only cleared.
+    if send_signal(state.pid, 0).is_err_and(|error| error.kind() == io::ErrorKind::InvalidInput) {
         state_file::remove_state(&env.state_dir);
         return Ok(());
     }
@@ -899,7 +899,7 @@ fn healthy_state(env: &Env) -> Option<DaemonState> {
 /// `hide connect` must never signal.
 fn healthy_daemon(env: &Env) -> Option<(DaemonState, serde_json::Value)> {
     let state = state_file::read_state(&env.state_dir).ok().flatten()?;
-    if state.pid <= 1 || !pid_alive(state.pid) {
+    if !pid_alive(state.pid) {
         return None;
     }
     let health = health_json(state.port).ok()?;
@@ -935,8 +935,15 @@ fn pid_alive(pid: u32) -> bool {
     send_signal(pid, 0).is_ok()
 }
 
+/// Signals one process. A pid of 0 or 1, or one past `i32::MAX`, would
+/// reach this process group, launchd or every process this user owns, and
+/// names no daemon; a damaged state cannot make it one.
 fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
-    let result = unsafe { libc::kill(pid as i32, signal) };
+    let pid = i32::try_from(pid)
+        .ok()
+        .filter(|pid| *pid > 1)
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let result = unsafe { libc::kill(pid, signal) };
     if result == 0 {
         Ok(())
     } else {
@@ -947,6 +954,19 @@ fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_signal_reaches_a_pid_that_names_no_daemon() {
+        for pid in [0, 1, u32::MAX, i32::MAX as u32 + 1] {
+            assert_eq!(
+                send_signal(pid, 0).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput,
+                "pid {pid}"
+            );
+            assert!(!pid_alive(pid));
+        }
+        assert!(pid_alive(std::process::id()));
+    }
 
     #[test]
     fn parse_serve_keep_alive() {

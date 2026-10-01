@@ -21,7 +21,6 @@ fn runtime_at(state: &std::path::Path, native: &std::path::Path) -> Runtime {
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            herdr_socket_path_override: None,
             home_path: None,
             codex_home: None,
         },

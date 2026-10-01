@@ -289,7 +289,6 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         options,
         environment::EnvironmentReport {
             statuses: vec![],
-            herdr_socket_path_override: None,
             home_path: None,
             codex_home: None,
         },

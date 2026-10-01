@@ -160,7 +160,6 @@ impl Core {
         if validate_options(&options).is_err() {
             return None;
         }
-        let mut options = options;
         let environment = environment::read_and_validate();
         let environment_home = environment.home_path.clone();
         let usage_paths = crate::usage::UsagePaths {
@@ -171,11 +170,6 @@ impl Core {
                 .map(std::path::Path::to_path_buf),
             codex_home: environment.codex_home.clone(),
         };
-        if options.herdr_socket_path.is_some()
-            && let Some(path) = environment.herdr_socket_path_override.as_ref()
-        {
-            options.herdr_socket_path = Some(path.clone());
-        }
         #[cfg(not(test))]
         if let Err(error) =
             crate::diagnostics::install(std::path::Path::new(&options.app_state_path))

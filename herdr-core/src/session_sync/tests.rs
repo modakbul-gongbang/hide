@@ -385,7 +385,6 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
-            herdr_socket_path_override: None,
             codex_home: None,
         },
     )))
@@ -747,7 +746,6 @@ fn official_remote_session_coordinator_probe() {
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: Some(PathBuf::from(home)),
-            herdr_socket_path_override: None,
             codex_home: None,
         },
     )));

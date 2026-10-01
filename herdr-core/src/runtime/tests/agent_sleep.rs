@@ -140,7 +140,6 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            herdr_socket_path_override: None,
             home_path: None,
             codex_home: None,
         },

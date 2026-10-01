@@ -47,7 +47,6 @@ pub const REGISTRY: [EnvironmentVariableSpec; 4] = [
 pub struct EnvironmentReport {
     pub statuses: Vec<EnvironmentStatusSnapshot>,
     pub home_path: Option<PathBuf>,
-    pub herdr_socket_path_override: Option<String>,
     pub codex_home: Option<PathBuf>,
 }
 
@@ -58,7 +57,6 @@ pub fn read_and_validate() -> EnvironmentReport {
 fn validate_with(mut read: impl FnMut(&str) -> Option<OsString>) -> EnvironmentReport {
     let home = read(HOME_KEY);
     let mut statuses = Vec::with_capacity(REGISTRY.len());
-    let mut herdr_socket_path_override = None;
     let mut home_path = None;
     let mut codex_home = None;
 
@@ -102,10 +100,7 @@ fn validate_with(mut read: impl FnMut(&str) -> Option<OsString>) -> EnvironmentR
                     "invalid",
                     "Herdr socket override is invalid; the configured default remains in use",
                 ),
-                Some(value) => {
-                    herdr_socket_path_override = Some(value.to_string_lossy().into_owned());
-                    ("available", "Herdr socket override is available")
-                }
+                Some(_) => ("available", "Herdr socket override is available"),
             },
             CODEX_HOME_KEY => match value {
                 None => {
@@ -139,7 +134,6 @@ fn validate_with(mut read: impl FnMut(&str) -> Option<OsString>) -> EnvironmentR
     EnvironmentReport {
         statuses,
         home_path,
-        herdr_socket_path_override,
         codex_home,
     }
 }
@@ -170,7 +164,6 @@ mod tests {
         assert!(report.statuses[1].message.contains("IdentityFile"));
         assert_eq!(report.statuses[2].state, "default");
         assert!(report.home_path.is_none());
-        assert!(report.herdr_socket_path_override.is_none());
         assert!(report.codex_home.is_none());
     }
 
@@ -194,10 +187,6 @@ mod tests {
             _ => None,
         });
 
-        assert_eq!(
-            report.herdr_socket_path_override.as_deref(),
-            Some("/private/tmp/herdr.sock")
-        );
         assert_eq!(report.statuses[1].state, "available");
         assert_eq!(report.statuses[2].state, "available");
     }
