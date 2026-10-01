@@ -10,7 +10,7 @@ import { ageWords } from "./overviewLens";
 import type { Checkout, GithubSearch, SnapshotRest, Workspace } from "./snapshot";
 
 /** The decimal minutes-ago words the detail and the failure tooltip use. */
-export function readAge(at: number | null | undefined, now: number): string | null {
+function readAge(at: number | null | undefined, now: number): string | null {
   return at == null ? null : ageWords(now - at);
 }
 
@@ -72,11 +72,7 @@ export function hasGithubProject(rest: SnapshotRest | null): boolean {
 }
 
 /** The state of the `GitHub에서 "…" 검색` row. */
-export type GithubRow =
-  | { state: "idle"; label: string }
-  | { state: "working"; label: string }
-  | { state: "failed"; label: string }
-  | { state: "none"; label: string };
+export type GithubRow = { state: "idle" | "working" | "failed" | "none"; label: string };
 
 /**
  * The row's words for the answer to this query: the search itself while none

@@ -1,5 +1,5 @@
 import { areaFrame } from "./areaFrames";
-import { AGENT_WORDS, agentCommands, agentMenu, type AgentCommand } from "./agentLayout";
+import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
 import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
 // Every shell command in one place, so a shortcut, a button and a menu run
 // the same code against the same snapshot. Each action is one core event
@@ -799,8 +799,14 @@ export function createActions(dispatch: DispatchFn) {
     const frame = areaFrame("agent");
     if (!frame) return;
     const id = tabId ?? activeAgentDisplay(frame.layout)?.display.id;
-    const entry = (tabId ? agentMenu(frame, tabId) : agentCommands(frame)).find((row) => row.id === command);
-    if (!entry || entry.unavailable) return;
+    // The area steps are the keyboard's and name no tab; every other command is a tab menu's.
+    const step = command === "focus_next" || command === "focus_previous" || command === "grow" || command === "shrink" ? (command as AgentAreaStep) : null;
+    if (step) {
+      if (agentAreaStepUnavailable(frame, step)) return;
+    } else {
+      const entry = tabId ? agentMenu(frame, tabId).find((row) => row.id === command) : undefined;
+      if (!entry || entry.unavailable) return;
+    }
     if (command === "new_tab") return createTab(id ? locateAgentTab(frame.layout.root, id)?.area.id : undefined);
     if (command === "focus_next" || command === "focus_previous") {
       const area = adjacentAgentArea(frame.layout.root, frame.layout.active_area, command === "focus_next" ? 1 : -1);

@@ -1006,14 +1006,14 @@ impl Runtime {
 
     /// Starts one search worker for `request`, or answers it at once when
     /// there is nothing to search or no worker to search with.
-    fn start_github_search(&mut self, request: SearchRequest) -> bool {
+    fn start_github_search(&mut self, request: SearchRequest) {
         let (repositories, note) = self.github_search_repositories();
         if repositories.is_empty() {
             self.snapshot.issue_work.search = Some(crate::model::GithubSearchSnapshot {
                 phase: "ready".into(),
                 ..crate::model::GithubSearchSnapshot::working(request.request_id, request.query)
             });
-            return true;
+            return;
         }
         self.github_search.runs = self.github_search.runs.wrapping_add(1).max(1);
         let run = self.github_search.runs;
@@ -1048,7 +1048,6 @@ impl Runtime {
                 reason,
             ));
         }
-        true
     }
 
     /// A search worker's answer. It ends the running search; the slot takes
@@ -1101,7 +1100,8 @@ impl Runtime {
             changed = true;
         }
         if let Some(next) = self.github_search.pending.take() {
-            changed |= self.start_github_search(next);
+            self.start_github_search(next);
+            changed = true;
         }
         changed
     }

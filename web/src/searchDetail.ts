@@ -4,7 +4,6 @@
 // with no value has no line (design principle 10); nothing here is computed
 // that the core did not produce.
 
-import { checkoutPlaces } from "./navigation";
 import { relationRows, relationsOf, type RelationTarget, type Relations } from "./relations";
 import type { EntryStatus, SearchEntry } from "./search";
 import { lastReadWords } from "./searchGithub";
@@ -21,8 +20,8 @@ export type Detail = {
   facts: [string, string][];
   /** The relations of this row, when it has any beyond itself. */
   relations: Relations | null;
-  /** What ↵ does, or why it does nothing. */
-  action: { key: boolean; text: string };
+  /** What ↵ does. */
+  action: string;
 };
 
 const REVIEW: Record<NonNullable<PullRequest["review"]>, string> = {
@@ -37,7 +36,7 @@ function provider(kind: string | undefined): string {
 }
 
 /** The relations target a row stands for: its own kind of thing, or null for one with no relations to draw. */
-export function targetOf(entry: SearchEntry): RelationTarget | null {
+function targetOf(entry: SearchEntry): RelationTarget | null {
   if (entry.external) return null;
   if (entry.kind === "agent" && entry.paneId) return { kind: "agent", paneId: entry.paneId };
   if (entry.kind === "checkout" && entry.checkoutId) return { kind: "checkout", checkoutId: entry.checkoutId };
@@ -69,16 +68,14 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
   const base = { relations, tags: [] as string[], pills: [] as EntryStatus[] };
   switch (entry.kind) {
     case "agent": {
-      const places = rest ? searchDevices(rest).flatMap((scope) => [...checkoutPlaces(scope.allWorkspaces)]) : [];
-      const place = places.find(([paneId]) => paneId === entry.paneId)?.[1] ?? null;
       return {
         ...base,
         kind: provider(entry.agentKind),
         title: entry.title,
         pills: entry.status ? [entry.status] : [],
         tags: device ? [device] : [],
-        facts: present([["checkout", place], ["마지막 말", lastWords(entry)]]),
-        action: { key: true, text: "에이전트로 이동" },
+        facts: present([["checkout", entry.place], ["마지막 말", lastWords(entry)]]),
+        action: "에이전트로 이동",
       };
     }
     case "checkout": {
@@ -95,12 +92,12 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
           ["PR", checkout?.pull_request ? `#${checkout.pull_request.number}` : null],
           ["이슈", checkout?.task_key ? (entry.workspace?.tasks?.tasks.find((task) => task.key === checkout.task_key)?.id ?? null) : null],
         ]),
-        action: { key: true, text: "checkout 열기" },
+        action: "checkout 열기",
       };
     }
     case "pr": {
       if (entry.external) {
-        return { ...base, kind: "Pull request · GitHub", title: entry.title.replace(/^#\d+ /, ""), pills: entry.status ? [entry.status] : [], tags: [`#${entry.number}`, entry.repository ?? ""].filter(Boolean), facts: [], action: { key: true, text: "GitHub에서 열기" } };
+        return { ...base, kind: "Pull request · GitHub", title: entry.title.replace(/^#\d+ /, ""), pills: entry.status ? [entry.status] : [], tags: [`#${entry.number}`, entry.repository ?? ""].filter(Boolean), facts: [], action: "GitHub에서 열기" };
       }
       const pr = entry.pr;
       const closes = (pr?.closing_issues ?? []).map((issue) => `#${issue.number}`).join(", ");
@@ -116,12 +113,12 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
           ["닫는 이슈", closes],
           ["읽음", entry.workspace ? lastReadWords(entry.workspace, now) : null],
         ]),
-        action: { key: true, text: "PRs 보기에서 열기" },
+        action: "PRs 보기에서 열기",
       };
     }
     case "issue": {
       if (entry.external) {
-        return { ...base, kind: "Issue · GitHub", title: entry.title.replace(/^#\d+ /, ""), pills: entry.status ? [entry.status] : [], tags: [`#${entry.number}`, entry.repository ?? ""].filter(Boolean), facts: [], action: { key: true, text: "GitHub에서 열기" } };
+        return { ...base, kind: "Issue · GitHub", title: entry.title.replace(/^#\d+ /, ""), pills: entry.status ? [entry.status] : [], tags: [`#${entry.number}`, entry.repository ?? ""].filter(Boolean), facts: [], action: "GitHub에서 열기" };
       }
       const owners = (entry.workspace?.checkouts ?? []).filter((checkout) => checkout.task_key === entry.taskKey);
       const closing = (entry.workspace?.checkouts ?? []).filter((checkout) => checkout.pull_request && (checkout.closes_task_keys ?? []).includes(entry.taskKey ?? ""));
@@ -137,16 +134,14 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
           ["닫는 PR", closing.map((checkout) => `#${checkout.pull_request?.number}`).join(", ")],
           ["읽음", entry.workspace ? lastReadWords(entry.workspace, now) : null],
         ]),
-        action: { key: true, text: "이슈 열기" },
+        action: "이슈 열기",
       };
     }
     case "project":
-      return { ...base, kind: "Project", title: entry.title, tags: device ? [device] : [], facts: present([["경로", entry.workspace?.path]]), action: { key: true, text: "프로젝트 열기" } };
+      return { ...base, kind: "Project", title: entry.title, tags: device ? [device] : [], facts: present([["경로", entry.workspace?.path]]), action: "프로젝트 열기" };
     case "device":
-      return { ...base, kind: "Device", title: entry.title, facts: present([["종류", entry.subtitle]]), action: { key: true, text: "기기로 이동" } };
+      return { ...base, kind: "Device", title: entry.title, facts: present([["종류", entry.subtitle]]), action: "기기로 이동" };
     case "command":
-      return { ...base, kind: "Command", title: entry.title, facts: [], action: { key: true, text: "시작 패널 열기" } };
-    case "github":
-      return { ...base, kind: "GitHub", title: entry.title, facts: [], action: { key: true, text: "검색" } };
+      return { ...base, kind: "Command", title: entry.title, facts: [], action: "시작 패널 열기" };
   }
 }

@@ -25,10 +25,10 @@ import { keyboardOwner } from "./viewFocus";
 // `GitHub에서 "…" 검색` row; typing never calls it.
 
 /** The window is too narrow for a list and a detail below this width; the detail is not drawn then (B26). */
-export const DETAIL_MIN_WIDTH = 640;
+const DETAIL_MIN_WIDTH = 640;
 
 /** Whether a dialog of `width` px has room for the detail beside its list; unmeasured is yes. */
-export function showsDetail(width: number | null): boolean {
+function showsDetail(width: number | null): boolean {
   return width === null || width >= DETAIL_MIN_WIDTH;
 }
 
@@ -45,6 +45,8 @@ const TONE_CLASS: Record<Tone, string> = {
   pending: "text-warning",
   failed: "text-destructive",
   muted: "text-muted-foreground",
+  merged: "text-pr-merged",
+  closed: "text-pr-closed",
 };
 
 export function SearchPalette({ actions }: { actions: Actions }) {
@@ -131,8 +133,6 @@ export function SearchPalette({ actions }: { actions: Actions }) {
         if (!entry.deviceId || !entry.workspaceId) return undefined;
         if (entry.kind === "issue" && entry.taskKey) return actions.openOverview(entry.deviceId, entry.workspaceId, { issue: entry.taskKey });
         if (entry.kind === "pr" && entry.number !== undefined) return actions.openOverview(entry.deviceId, entry.workspaceId, { pullRequest: entry.number });
-        return undefined;
-      case "github":
         return undefined;
     }
   };
@@ -351,7 +351,7 @@ function DetailPane({ detail, entry, githubRow: row, query }: { detail: Detail |
         ) : null}
         {detail.relations ? <RelationBlock relations={detail.relations} on={entry.id} /> : null}
       </div>
-      <ActionLine text={here ? "지금 보고 있는 에이전트" : detail.action.text} key_={!here && detail.action.key} />
+      <ActionLine text={here ? "지금 보고 있는 에이전트" : detail.action} key_={!here} />
     </aside>
   );
 }

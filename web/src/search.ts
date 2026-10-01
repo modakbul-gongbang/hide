@@ -12,22 +12,22 @@ import type { AgentRow, Checkout, Device, GithubSearchResult, PullRequest, Snaps
 /** The header an entry is drawn under: one per kind of thing. */
 export type SearchGroup = { id: string; label: string };
 
-export const ISSUES_GROUP: SearchGroup = { id: "issues", label: "Issues" };
-export const PULL_REQUESTS_GROUP: SearchGroup = { id: "pull-requests", label: "Pull requests" };
-export const AGENTS_GROUP: SearchGroup = { id: "agents", label: "Agents" };
-export const PROJECTS_GROUP: SearchGroup = { id: "projects", label: "Projects" };
-export const CHECKOUTS_GROUP: SearchGroup = { id: "checkouts", label: "Checkouts" };
-export const DEVICES_GROUP: SearchGroup = { id: "devices", label: "Devices" };
+const ISSUES_GROUP: SearchGroup = { id: "issues", label: "Issues" };
+const PULL_REQUESTS_GROUP: SearchGroup = { id: "pull-requests", label: "Pull requests" };
+const AGENTS_GROUP: SearchGroup = { id: "agents", label: "Agents" };
+const PROJECTS_GROUP: SearchGroup = { id: "projects", label: "Projects" };
+const CHECKOUTS_GROUP: SearchGroup = { id: "checkouts", label: "Checkouts" };
+const DEVICES_GROUP: SearchGroup = { id: "devices", label: "Devices" };
 /** The one command ⌘K keeps. */
 const COMMANDS_GROUP: SearchGroup = { id: "commands", label: "Commands" };
 export const GITHUB_GROUP: SearchGroup = { id: "github", label: "GitHub" };
 /** The Related list's own header; an entry in it keeps its kind's group for search. */
 export const RELATED_GROUP: SearchGroup = { id: "related", label: "Related" };
 
-export type EntryKind = "agent" | "project" | "checkout" | "device" | "issue" | "pr" | "command" | "github";
+type EntryKind = "agent" | "project" | "checkout" | "device" | "issue" | "pr" | "command";
 
 /** A colour family for a state; the palette maps each to a token class. */
-export type Tone = "working" | "attention" | "done" | "open" | "pending" | "failed" | "muted";
+export type Tone = "working" | "attention" | "done" | "open" | "pending" | "failed" | "muted" | "merged" | "closed";
 
 export type EntryStatus = { tone: Tone; label: string };
 
@@ -35,6 +35,8 @@ export type SearchEntry = {
   id: string;
   title: string;
   subtitle: string;
+  /** An agent's checkout, as `project › checkout`, which its detail names. */
+  place?: string;
   kind: EntryKind;
   group: SearchGroup;
   /** The device the entry is on, which activating it brings forward; absent on a command. */
@@ -96,7 +98,7 @@ export function fuzzyScore(candidate: string, query: string): number | null {
 }
 
 /** `에이전트 시작…` opens the start panel on every screen, and is how a browser tab reaches it, where ⌘N is the browser's (PRD home-device-rail D-21). */
-export const START_AGENT_ENTRY: SearchEntry = {
+const START_AGENT_ENTRY: SearchEntry = {
   id: "command:start-agent",
   title: "에이전트 시작…",
   subtitle: "Start an agent",
@@ -128,12 +130,12 @@ export function searchDevices(rest: SnapshotRest): SearchDevice[] {
   return rows;
 }
 
-export function deviceChip(device: Device, front: string): SearchEntry["chip"] {
+function deviceChip(device: Device, front: string): SearchEntry["chip"] {
   return device.id === front ? undefined : { label: device.label, local: device.kind !== "remote" };
 }
 
 /** An agent's state as the sidebar colours it (`chipTone`'s rules, as tones). */
-export function agentStatus(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" | "status_label">): EntryStatus {
+function agentStatus(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" | "status_label">): EntryStatus {
   const tone: Tone =
     agent.demand === "error"
       ? "failed"
@@ -153,6 +155,7 @@ export function agentEntry(scope: SearchDevice, agent: AgentRow, place: string |
     id: `agent:${agent.pane_id}`,
     title: agent.identity_label,
     subtitle: place ? `${place} · ${sentence}` : sentence,
+    place: place ?? undefined,
     kind: "agent",
     group: AGENTS_GROUP,
     agentKind: agent.agent_kind,
@@ -164,7 +167,7 @@ export function agentEntry(scope: SearchDevice, agent: AgentRow, place: string |
   };
 }
 
-export function projectEntry(scope: SearchDevice, workspace: Workspace, front: string): SearchEntry {
+function projectEntry(scope: SearchDevice, workspace: Workspace, front: string): SearchEntry {
   return {
     id: `project:${workspace.id}`,
     title: workspace.label,
@@ -204,19 +207,15 @@ const CI_STATUS: Partial<Record<NonNullable<PullRequest["checks"]>, EntryStatus>
 const PR_STATE: Record<PullRequest["badge"], { tone: Tone; label: string }> = {
   open: { tone: "open", label: "Open" },
   review: { tone: "open", label: "Open" },
-  merged: { tone: "muted", label: "Merged" },
-  closed: { tone: "muted", label: "Closed" },
+  merged: { tone: "merged", label: "Merged" },
+  closed: { tone: "closed", label: "Closed" },
 };
-
-export function prStateLabel(pr: PullRequest): string {
-  return PR_STATE[pr.badge].label;
-}
 
 export function pullRequestEntry(scope: SearchDevice, workspace: Workspace, pr: PullRequest, front: string): SearchEntry {
   return {
     id: `pr:${workspace.id}:${pr.number}`,
     title: `#${pr.number} ${pr.title}`,
-    subtitle: ["PR", prStateLabel(pr), pr.head_branch].filter(Boolean).join(" · "),
+    subtitle: ["PR", PR_STATE[pr.badge].label, pr.head_branch].filter(Boolean).join(" · "),
     kind: "pr",
     group: PULL_REQUESTS_GROUP,
     workspaceId: workspace.id,
@@ -257,20 +256,21 @@ function taskNumber(task: Task): number | undefined {
 }
 
 /** A GitHub search result as a row: opened on GitHub, whichever project it came from. */
-export function githubEntry(result: GithubSearchResult): SearchEntry {
+function githubEntry(result: GithubSearchResult): SearchEntry {
   const pr = result.kind === "pr";
-  const state = result.state.toLowerCase();
+  const state = result.state;
+  const status: EntryStatus = state === "open" ? { tone: "open", label: result.is_draft ? "Draft" : "Open" } : state === "merged" ? { tone: "merged", label: "Merged" } : { tone: "closed", label: "Closed" };
   return {
     id: `github:${result.kind}:${result.repository}#${result.number}`,
     title: `#${result.number} ${result.title}`,
-    subtitle: [pr ? "PR" : "Issue", result.repository, state === "open" ? "Open" : state === "merged" ? "Merged" : "Closed"].join(" · "),
+    subtitle: [pr ? "PR" : "Issue", result.repository, status.label].join(" · "),
     kind: pr ? "pr" : "issue",
     group: GITHUB_GROUP,
     number: result.number,
     url: result.url,
     repository: result.repository,
     external: true,
-    status: state === "open" ? { tone: "open", label: result.is_draft ? "Draft" : "Open" } : { tone: "muted", label: state === "merged" ? "Merged" : "Closed" },
+    status,
   };
 }
 
