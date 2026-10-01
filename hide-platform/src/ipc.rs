@@ -16,7 +16,8 @@
 //! - A read timeout ends a read with `ErrorKind::TimedOut` once the time has
 //!   passed; it never returns early with no data.
 //! - [`ShutdownHandle::shutdown`] called from another thread ends a read
-//!   that is blocked, with `Ok(0)`, and every later read and write fails.
+//!   that is blocked, with `Ok(0)`; later reads return `Ok(0)` and later
+//!   writes fail with `BrokenPipe`.
 //! - [`LocalListener::bind`] fails with `AddrInUse` while another listener
 //!   answers at the path, and replaces what a dead one left behind.
 //! - Only the account that bound the listener can connect to it.
@@ -42,13 +43,20 @@ use interprocess::local_socket::{
 };
 
 /// What a listener's path may hold when nobody listens: connecting to it is
-/// refused, finds nothing, or times out.
+/// refused or finds nothing. A connect that times out is a listener that
+/// answers too slowly, not an absent one.
 fn leftover_connect_error(kind: io::ErrorKind) -> bool {
     matches!(
         kind,
-        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound | io::ErrorKind::TimedOut
-    ) || (cfg!(windows) && kind == io::ErrorKind::WouldBlock)
+        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+    )
 }
+
+/// How long a connect waits for a listener that has not yet accepted. A
+/// Unix socket never waits; a Windows pipe whose instances are all busy
+/// would wait for ever without it.
+#[cfg(windows)]
+const CONNECT_BOUND: Duration = Duration::from_secs(2);
 
 #[cfg(unix)]
 fn endpoint_name(path: &Path) -> io::Result<Name<'_>> {
@@ -115,9 +123,10 @@ impl LocalStream {
     }
 
     /// Connects to the listener at `path`. `NotFound` or `ConnectionRefused`
-    /// when nobody answers there.
+    /// when nobody answers there; `TimedOut` on Windows when a listener
+    /// exists but takes no connection within two seconds.
     pub fn connect(path: &Path) -> io::Result<Self> {
-        RawStream::connect(endpoint_name(path)?).map(Self::from_raw)
+        sys::connect(path).map(Self::from_raw)
     }
 
     /// Bounds every later read. `None` blocks until data, end of stream or a
@@ -261,21 +270,36 @@ impl Drop for LocalListener {
 }
 
 /// Removes what a dead listener left at `path`, and refuses a live one.
+///
+/// Only what a listener leaves is removed: a socket on Unix, the marker file
+/// on Windows. Anything else at the path is the caller's, and `bind` fails
+/// rather than delete it.
 fn clear_leftover(path: &Path) -> io::Result<()> {
-    if fs::symlink_metadata(path).is_err() {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
         return Ok(());
+    };
+    if !sys::is_leftover_kind(&metadata) {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} exists and is not a local endpoint", path.display()),
+        ));
     }
     match LocalStream::connect(path) {
-        Ok(_) => Err(io::Error::new(
-            io::ErrorKind::AddrInUse,
-            format!("a listener already answers at {}", path.display()),
-        )),
+        Ok(_) => Err(already_answers(path)),
+        Err(error) if error.kind() == io::ErrorKind::TimedOut => Err(already_answers(path)),
         Err(error) if leftover_connect_error(error.kind()) => match fs::remove_file(path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
         },
         Err(error) => Err(error),
     }
+}
+
+fn already_answers(path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::AddrInUse,
+        format!("a listener already answers at {}", path.display()),
+    )
 }
 
 #[cfg(unix)]
@@ -287,6 +311,16 @@ mod sys {
     use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
 
     use super::*;
+
+    pub(super) fn connect(path: &Path) -> io::Result<RawStream> {
+        RawStream::connect(endpoint_name(path)?)
+    }
+
+    /// A listener leaves a socket; a regular file or directory is not its.
+    pub(super) fn is_leftover_kind(metadata: &fs::Metadata) -> bool {
+        use std::os::unix::fs::FileTypeExt;
+        metadata.file_type().is_socket()
+    }
 
     pub(super) fn set_read_timeout(_: &Shared, _: Option<Duration>) -> io::Result<()> {
         // Applied by `read`, which waits for the socket to be readable before
@@ -459,6 +493,39 @@ mod sys {
     use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 
     use super::*;
+
+    /// Connects with a bounded wait: the default of `connect` waits for ever
+    /// for a pipe whose instances are all busy, which is how Herdr's own
+    /// probe avoids it too.
+    pub(super) fn connect(path: &Path) -> io::Result<RawStream> {
+        use interprocess::ConnectWaitMode;
+        use interprocess::os::windows::named_pipe::local_socket::Stream as PipeStream;
+        use interprocess::os::windows::named_pipe::{DuplexPipeStream, pipe_mode::Bytes};
+
+        let name = format!(r"\\.\pipe\{}", path.to_string_lossy());
+        let pipe = DuplexPipeStream::<Bytes>::connect_by_path_with_wait_mode(
+            name.as_str(),
+            ConnectWaitMode::Timeout(CONNECT_BOUND),
+        )
+        .map_err(|error| match error.kind() {
+            // The wait mode documents `TimedOut` and reports `WouldBlock`.
+            io::ErrorKind::WouldBlock => io::Error::from(io::ErrorKind::TimedOut),
+            _ => error,
+        })?;
+        let handle = std::os::windows::io::OwnedHandle::try_from(pipe)
+            .map_err(|_| io::Error::other("a fresh pipe stream is not split"))?;
+        let pipe = PipeStream::try_from(handle).map_err(|error| {
+            error
+                .cause
+                .unwrap_or_else(|| io::Error::other("the pipe handle was not accepted"))
+        })?;
+        Ok(RawStream::from(pipe))
+    }
+
+    /// The marker file is the only thing a listener leaves on Windows.
+    pub(super) fn is_leftover_kind(metadata: &fs::Metadata) -> bool {
+        metadata.file_type().is_file()
+    }
 
     /// The owner of the pipe and nobody else; inherited rights are cut off.
     const PRIVATE_SDDL: &str = "D:P(A;;GA;;;OW)";

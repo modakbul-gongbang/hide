@@ -183,6 +183,42 @@ fn dropping_the_listener_removes_its_path() {
 }
 
 #[test]
+fn bind_refuses_to_delete_what_is_not_an_endpoint() {
+    let (_folder, path) = endpoint();
+    std::fs::create_dir(&path).unwrap();
+    let error = LocalListener::bind(&path).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert!(path.is_dir(), "the folder must still be there");
+}
+
+#[cfg(unix)]
+#[test]
+fn bind_keeps_a_regular_file_at_the_path() {
+    let (_folder, path) = endpoint();
+    std::fs::write(&path, b"mine").unwrap();
+    let error = LocalListener::bind(&path).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read(&path).unwrap(), b"mine");
+}
+
+#[test]
+fn a_read_after_shutdown_ends_and_a_write_fails_however_often_it_is_asked() {
+    // Many fresh streams, each shut down before its first read: the race the
+    // blocked-read test cannot reach, a shutdown that arrives first.
+    for _ in 0..50 {
+        let (mut client, _server) = LocalStream::pair().unwrap();
+        let handle = client.shutdown_handle();
+        handle.shutdown();
+        handle.shutdown();
+        assert_eq!(client.read(&mut [0_u8; 1]).unwrap(), 0);
+        assert_eq!(
+            client.write(b"x").unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+    }
+}
+
+#[test]
 fn a_read_timeout_fires_after_the_time_and_not_much_later() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
