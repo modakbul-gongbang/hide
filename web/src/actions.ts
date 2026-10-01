@@ -1176,6 +1176,25 @@ export function createActions(dispatch: DispatchFn) {
       ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, number));
     },
 
+    /**
+     * ⌘K's pick of a project, an issue or a pull request: the device that
+     * holds it comes forward (the rail and sidebar follow) and its Project's
+     * Overview shows, as one action. The screen is this page's own state, so
+     * the only event is the device's (PRD cmdk-navigation B20).
+     */
+    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number }) {
+      ui().setInbox(false);
+      if ((rest()?.navigator?.focused_device_id ?? "local") !== deviceId) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
+      if (lens && "pullRequest" in lens) return ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, lens.pullRequest));
+      const screen = overviewScreen(rest(), projectId);
+      ui().setScreen(lens ? { ...screen, lens: { ...screen.lens, tab: "issues", focusTask: lens.issue, panel: lens.issue } } : screen);
+    },
+
+    /** ⌘K's `GitHub에서 "…" 검색` row: one search of this Mac's GitHub projects, answered in `issue_work.search` by `requestId`. */
+    searchGithub(requestId: string, query: string) {
+      dispatch({ schema_version: 2, kind: "github_search", payload: { request_id: requestId, query } });
+    },
+
     /** Closes or reopens a Local issue; a GitHub one closes on GitHub. */
     setIssueOpen(taskKey: string, open: boolean) {
       dispatch({ schema_version: 2, kind: "issue_set_open", payload: { task_key: taskKey, open } });
@@ -1797,11 +1816,6 @@ export function createActions(dispatch: DispatchFn) {
       ui().closeOverlay();
       ui().setExplorerSelection(path);
       openInFront(path, false, "file_open", true);
-    },
-
-    /** "Open file to the side" from the palette: ⌘P's list, whose pick opens beside. */
-    openFilePaletteBeside() {
-      ui().openOverlay("file_palette_beside");
     },
 
     /** Registers a folder on `deviceId`; a device's own helper judges it against that device's home. */
