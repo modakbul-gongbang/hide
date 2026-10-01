@@ -57,18 +57,7 @@ impl LabelServices {
         let store = Arc::new(LabelStore::open(state_dir, home.as_deref()));
         let settings_home = home.clone();
         let analyzer = LabelAnalyzer::spawn(Box::new(move || {
-            let loaded = runtime.upgrade().and_then(|runtime| {
-                runtime
-                    .lock()
-                    .ok()
-                    .and_then(|guard| guard.label_ai_settings())
-            });
-            loaded.unwrap_or_else(|| {
-                settings_home
-                    .as_deref()
-                    .and_then(|home| hide_ai::settings::load(home).ok())
-                    .unwrap_or_default()
-            })
+            analysis_settings(&runtime, settings_home.as_deref())
         }))?;
         Ok(Self {
             store,
@@ -120,6 +109,35 @@ impl LabelServices {
             wake,
         )
     }
+}
+
+/// The provider choice an analysis runs with: the runtime's once it has read
+/// the settings, the saved file before then, and the defaults only when no
+/// choice was saved or the file cannot be read, which is logged.
+pub(crate) fn analysis_settings(
+    runtime: &Weak<Mutex<Runtime>>,
+    home: Option<&Path>,
+) -> hide_ai::AiSettings {
+    let loaded = runtime.upgrade().and_then(|runtime| {
+        runtime
+            .lock()
+            .ok()
+            .and_then(|guard| guard.label_ai_settings())
+    });
+    if let Some(settings) = loaded {
+        return settings;
+    }
+    let Some(home) = home else {
+        return hide_ai::AiSettings::default();
+    };
+    hide_ai::settings::load(home).unwrap_or_else(|error| {
+        crate::diagnostic!(serde_json::json!({
+            "component": "labels",
+            "kind": "settings.unreadable",
+            "message": error.to_string(),
+        }));
+        hide_ai::AiSettings::default()
+    })
 }
 
 /// The device helper's channel when it has one, or the stable reason it does

@@ -76,6 +76,7 @@ impl GeneratorLock {
         self.next_attempt = Some(now + RETRY);
         match try_lock(path) {
             Ok(Some(file)) => {
+                record_holder(&file);
                 self.held = Some(file);
                 if !first {
                     crate::diagnostic!(json!({
@@ -92,6 +93,7 @@ impl GeneratorLock {
                         "component": "labels",
                         "kind": "generator.standby",
                         "target": self.target,
+                        "holder": holder(path),
                     }));
                 }
                 (false, false)
@@ -113,6 +115,27 @@ impl GeneratorLock {
     pub(crate) fn held(&self) -> bool {
         self.path.is_none() || self.held.is_some()
     }
+}
+
+/// The holder writes who it is into the lock, so a daemon standing by can
+/// say which process generates for its server: a stray daemon on the same
+/// Herdr is otherwise invisible.
+fn record_holder(file: &File) {
+    use std::io::{Seek, Write};
+    let mut file = file;
+    let holder = json!({"pid": std::process::id()}).to_string();
+    let _ = file
+        .set_len(0)
+        .and_then(|()| file.seek(std::io::SeekFrom::Start(0)))
+        .and_then(|_| file.write_all(holder.as_bytes()));
+}
+
+/// What the holder wrote; `null` when it could not be read.
+fn holder(path: &Path) -> serde_json::Value {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or(serde_json::Value::Null)
 }
 
 fn try_lock(path: &Path) -> std::io::Result<Option<File>> {
@@ -158,6 +181,11 @@ mod tests {
         let now = Instant::now();
         assert_eq!(first.ensure(now), (true, false));
         assert_eq!(second.ensure(now), (false, false));
+        assert_eq!(
+            holder(&local_lock_path(&socket))["pid"],
+            std::process::id(),
+            "the standby can name the process that generates"
+        );
         assert_eq!(other.ensure(now), (true, false));
         drop(first);
         // Inside the retry window nothing is tried; after it, it takes over.

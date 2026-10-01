@@ -778,6 +778,12 @@ fn stop(env: &Env) -> Result<(), String> {
 /// stop, which ends its AI requests and provider processes, then SIGKILL.
 /// An error only when it is still alive after that.
 fn stop_daemon(env: &Env, state: &DaemonState) -> Result<(), String> {
+    // A damaged state naming pid 0 or 1 would signal this process group or
+    // launchd; it names no daemon, so it is only cleared.
+    if state.pid <= 1 {
+        state_file::remove_state(&env.state_dir);
+        return Ok(());
+    }
     let _ = send_signal(state.pid, libc::SIGTERM);
     for _ in 0..50 {
         if !pid_alive(state.pid) {

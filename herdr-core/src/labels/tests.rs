@@ -738,3 +738,70 @@ fn a_helper_that_cannot_read_conversations_leaves_the_provider_name() {
     assert_eq!(shown(&worker, &idle), None);
     assert_eq!(harness.backend.calls(), 0);
 }
+
+#[test]
+fn an_analysis_before_the_runtime_read_the_settings_uses_the_saved_choice() {
+    let home = tempfile::tempdir().unwrap();
+    let chosen = AiSettings {
+        provider: ProviderId::Claude,
+        ..AiSettings::default()
+    };
+    hide_ai::settings::save(home.path(), &chosen).unwrap();
+    let no_runtime = std::sync::Weak::new();
+    assert_eq!(
+        super::analysis_settings(&no_runtime, Some(home.path())).provider,
+        ProviderId::Claude
+    );
+}
+
+/// A source whose read panics, as a broken parser would.
+struct Panicking;
+
+impl TranscriptSource for Panicking {
+    fn read(&self, _: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
+        panic!("reader fixture panic");
+    }
+}
+
+#[test]
+fn a_read_that_panics_does_not_stop_the_servers_reads() {
+    let harness = Harness::new();
+    let path = harness.session("a", "native-a", &[("user", "요청"), ("assistant", "끝")]);
+    let (mut worker, woken) = harness.spawn(
+        harness.store(),
+        LOCAL_TARGET,
+        "local.lock",
+        Arc::new(Panicking),
+    );
+    observe(&mut worker, &agent(&path, "idle", 1));
+    // The panicked read is answered, so nothing stays in flight.
+    settle(&mut worker, &woken);
+}
+
+#[test]
+fn saves_from_two_workers_at_once_leave_a_whole_file() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let threads: Vec<_> = (0..8)
+        .map(|index| {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                for round in 0..20u64 {
+                    let mut records = std::collections::BTreeMap::new();
+                    records.insert(
+                        format!("w{index}:p1"),
+                        super::store::PaneRecord::first_seen(round, round),
+                    );
+                    store.save_target(&format!("device:{index}"), &records);
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().unwrap();
+    }
+    let reopened = LabelStore::open(Some(harness.state.path()), None);
+    for index in 0..8 {
+        assert_eq!(reopened.target(&format!("device:{index}")).len(), 1);
+    }
+}
