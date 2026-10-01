@@ -1460,6 +1460,10 @@ fn run_gh(
 mod tests {
     use super::*;
 
+    /// A fixture `gh` answers at once; a one-second deadline read a loaded
+    /// machine's slow shell start as a timeout, the network category.
+    const FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
+
     #[test]
     fn optional_project_permission_does_not_prevent_basic_issue_resolution() {
         let reference = crate::issues::IssueReference::parse("acme/project#42", None).unwrap();
@@ -1572,7 +1576,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 &["issue", "view", "7", "--repo", "acme/app", "--json", fields],
-                Duration::from_secs(1),
+                FIXTURE_DEADLINE,
             )
         };
         assert!(viewed(ISSUE_DETAIL_FIELDS).is_ok());
@@ -1741,9 +1745,6 @@ esac"#,
     #[test]
     #[cfg(unix)]
     fn gh_boundary_is_read_only_noninteractive_and_preserves_failure_categories() {
-        // The fixture answers at once; a one-second deadline read a loaded
-        // machine's slow shell start as a timeout, the network category.
-        const FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
         let fixture = GhFixture::new(
             r#"
 [ "$GH_PROMPT_DISABLED" = 1 ] && [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 90
