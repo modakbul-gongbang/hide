@@ -42,7 +42,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::wire;
-use hide_herdr_client::UnixSocketConnector;
+use hide_herdr_client::LocalSocketConnector;
 
 static NEXT_FAKE_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -138,8 +138,8 @@ impl FakeHerdr {
         &self.socket_path
     }
 
-    pub(crate) fn connector(&self) -> UnixSocketConnector {
-        UnixSocketConnector::new(&self.socket_path)
+    pub(crate) fn connector(&self) -> LocalSocketConnector {
+        LocalSocketConnector::new(&self.socket_path)
     }
 
     /// Every request answered so far, in arrival order.

@@ -2,12 +2,11 @@
 
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use hide_platform::ipc::{LocalStream, ShutdownHandle};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -64,12 +63,14 @@ pub trait ApiConnector: Send + Sync {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError>;
 }
 
+/// Reaches Herdr's socket API over the local stream the platform has: a Unix
+/// socket on macOS and Linux, a named pipe on Windows (`hide_platform::ipc`).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnixSocketConnector {
+pub struct LocalSocketConnector {
     socket_path: PathBuf,
 }
 
-impl UnixSocketConnector {
+impl LocalSocketConnector {
     pub fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self {
             socket_path: socket_path.into(),
@@ -77,9 +78,9 @@ impl UnixSocketConnector {
     }
 }
 
-impl ApiConnector for UnixSocketConnector {
+impl ApiConnector for LocalSocketConnector {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
-        let stream = UnixStream::connect(&self.socket_path).map_err(|error| {
+        let stream = LocalStream::connect(&self.socket_path).map_err(|error| {
             ApiError::Transport(format!(
                 "connect failed for {}: {error}",
                 self.socket_path.display()
@@ -89,74 +90,44 @@ impl ApiConnector for UnixSocketConnector {
     }
 }
 
-struct UnixStreamShutdown(UnixStream);
+struct LocalShutdown(ShutdownHandle);
 
-impl ConnectionShutdown for UnixStreamShutdown {
+impl ConnectionShutdown for LocalShutdown {
     fn shutdown(&self) {
-        let _ = self.0.shutdown(Shutdown::Both);
+        self.0.shutdown();
     }
 }
 
-impl ApiStream for UnixStream {
+impl ApiStream for LocalStream {
     fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError> {
-        UnixStream::set_read_timeout(self, timeout)
+        LocalStream::set_read_timeout(self, timeout)
             .map_err(|error| ApiError::Transport(format!("read timeout could not be set: {error}")))
     }
 
     fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError> {
-        UnixStream::set_write_timeout(self, timeout).map_err(|error| {
-            ApiError::Transport(format!("write timeout could not be set: {error}"))
-        })
+        match LocalStream::set_write_timeout(self, timeout) {
+            // A Windows pipe has no write timeout. A request is one line that
+            // fits the pipe's buffer, the read that follows is bounded, and the
+            // shutdown handle frees a writer a stalled peer holds.
+            Err(error) if error.kind() == std::io::ErrorKind::Unsupported => Ok(()),
+            result => result.map_err(|error| {
+                ApiError::Transport(format!("write timeout could not be set: {error}"))
+            }),
+        }
     }
 
     fn read_line_with_timeout(&mut self, timeout: Duration) -> Result<String, ApiError> {
-        self.set_nonblocking(true).map_err(|error| {
-            ApiError::Transport(format!(
-                "subscription could not enter nonblocking mode: {error}"
-            ))
-        })?;
-        let deadline = std::time::Instant::now() + timeout;
-        let mut bytes = Vec::new();
-        loop {
-            if std::time::Instant::now() >= deadline {
-                return Err(ApiError::Transport(
-                    "subscription acknowledgement timed out".to_owned(),
-                ));
-            }
-            let mut byte = [0_u8; 1];
-            match self.read(&mut byte) {
-                Ok(0) => {
-                    return Err(ApiError::Transport(
-                        "subscription acknowledgement reached EOF".to_owned(),
-                    ));
-                }
-                Ok(_) => {
-                    bytes.push(byte[0]);
-                    if byte[0] == b'\n' {
-                        break;
-                    }
-                    if bytes.len() > 64 * 1024 {
-                        return Err(ApiError::Malformed(
-                            "subscription acknowledgement exceeds 64 KiB".to_owned(),
-                        ));
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                Err(error) => {
-                    return Err(ApiError::Transport(format!(
-                        "subscription acknowledgement could not be read: {error}"
-                    )));
-                }
-            }
-        }
-        self.set_nonblocking(false).map_err(|error| {
+        let line = read_acknowledgement(self, Instant::now() + timeout);
+        // Whatever happened, the stream leaves here blocking: the reader it
+        // becomes after the acknowledgement has no deadline.
+        let restored = LocalStream::set_read_timeout(self, None).map_err(|error| {
             ApiError::Transport(format!(
                 "subscription could not enter blocking mode: {error}"
             ))
-        })?;
-        String::from_utf8(bytes).map_err(|error| {
+        });
+        let line = line?;
+        restored?;
+        String::from_utf8(line).map_err(|error| {
             ApiError::Malformed(format!(
                 "subscription acknowledgement was not UTF-8: {error}"
             ))
@@ -164,13 +135,54 @@ impl ApiStream for UnixStream {
     }
 
     fn shutdown_handle(&self) -> Result<Box<dyn ConnectionShutdown>, ApiError> {
-        self.try_clone()
-            .map(|stream| Box::new(UnixStreamShutdown(stream)) as Box<dyn ConnectionShutdown>)
-            .map_err(|error| {
-                ApiError::Transport(format!(
-                    "subscription shutdown handle could not be cloned: {error}"
-                ))
-            })
+        Ok(Box::new(LocalShutdown(LocalStream::shutdown_handle(self))))
+    }
+}
+
+/// Reads one line a byte at a time, so nothing after it is consumed: the
+/// events that follow the acknowledgement stay in the stream for the reader.
+fn read_acknowledgement(stream: &mut LocalStream, deadline: Instant) -> Result<Vec<u8>, ApiError> {
+    let mut bytes = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(ApiError::Transport(
+                "subscription acknowledgement timed out".to_owned(),
+            ));
+        }
+        LocalStream::set_read_timeout(stream, Some(remaining)).map_err(|error| {
+            ApiError::Transport(format!("read timeout could not be set: {error}"))
+        })?;
+        let mut byte = [0_u8; 1];
+        match stream.read(&mut byte) {
+            Ok(0) => {
+                return Err(ApiError::Transport(
+                    "subscription acknowledgement reached EOF".to_owned(),
+                ));
+            }
+            Ok(_) => {
+                bytes.push(byte[0]);
+                if byte[0] == b'\n' {
+                    return Ok(bytes);
+                }
+                if bytes.len() > 64 * 1024 {
+                    return Err(ApiError::Malformed(
+                        "subscription acknowledgement exceeds 64 KiB".to_owned(),
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+                return Err(ApiError::Transport(
+                    "subscription acknowledgement timed out".to_owned(),
+                ));
+            }
+            Err(error) => {
+                return Err(ApiError::Transport(format!(
+                    "subscription acknowledgement could not be read: {error}"
+                )));
+            }
+        }
     }
 }
 
@@ -248,7 +260,7 @@ pub fn request_with_timeout(
     timeout: Duration,
 ) -> Result<Value, ApiError> {
     request_with_connector(
-        &UnixSocketConnector::new(socket_path),
+        &LocalSocketConnector::new(socket_path),
         method,
         params,
         timeout,
@@ -313,7 +325,7 @@ pub fn subscribe(
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
     subscribe_with_connector(
-        &UnixSocketConnector::new(socket_path),
+        &LocalSocketConnector::new(socket_path),
         subscriptions,
         timeout,
     )
@@ -483,8 +495,9 @@ fn response_result(response: ResponseEnvelope, request_id: &str) -> Result<Value
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    use std::os::unix::net::UnixListener;
     use std::sync::{Arc, Mutex};
+
+    use hide_platform::ipc::LocalListener;
 
     use super::*;
 
@@ -552,18 +565,24 @@ mod tests {
         }
     }
 
+    /// Reads the request line a fake Herdr was sent, leaving the stream
+    /// usable for the answer.
+    fn read_request(stream: &mut LocalStream) -> String {
+        let mut request = String::new();
+        BufReader::new(&mut *stream)
+            .read_line(&mut request)
+            .expect("read request");
+        request
+    }
+
     #[test]
     fn small_response_rejects_a_peer_that_never_finishes_its_frame() {
-        let root = std::env::temp_dir().join(format!("hide-small-response-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let socket = root.join("peer.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("peer.sock");
+        let listener = LocalListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = String::new();
-            BufReader::new(stream.try_clone().unwrap())
-                .read_line(&mut request)
-                .unwrap();
+            let mut stream = listener.accept().unwrap();
+            read_request(&mut stream);
             // Keep making progress, so a per-read timeout would never fire.
             while stream.write_all(b" ").is_ok() {
                 std::thread::sleep(Duration::from_millis(5));
@@ -571,7 +590,7 @@ mod tests {
         });
         let started = std::time::Instant::now();
         let result = request_small_response(
-            &UnixSocketConnector::new(&socket),
+            &LocalSocketConnector::new(&socket),
             "pane.process_info",
             json!({"pane_id":"w1:p1"}),
             Duration::from_millis(50),
@@ -581,7 +600,6 @@ mod tests {
         );
         assert!(started.elapsed() < Duration::from_secs(2));
         server.join().unwrap();
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -616,17 +634,12 @@ mod tests {
 
     #[test]
     fn request_rejects_a_response_for_another_request() {
-        let root =
-            Path::new("/tmp").join(format!("herdr-core-api-id-contract-{}", std::process::id()));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake socket");
+        let root = tempfile::tempdir().expect("create socket directory");
+        let socket_path = root.path().join("herdr.sock");
+        let listener = LocalListener::bind(&socket_path).expect("bind fake socket");
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept request");
-            let mut ignored = String::new();
-            BufReader::new(stream.try_clone().expect("clone stream"))
-                .read_line(&mut ignored)
-                .expect("read request");
+            let mut stream = listener.accept().expect("accept request");
+            read_request(&mut stream);
             writeln!(stream, "{}", json!({"id": "somebody-else", "result": {}}))
                 .expect("write response");
         });
@@ -641,25 +654,16 @@ mod tests {
         assert!(matches!(error, ApiError::Malformed(_)));
 
         server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
     }
 
     #[test]
     fn subscribe_keeps_replay_buffered_after_the_acknowledgement() {
-        let root = Path::new("/tmp").join(format!(
-            "herdr-core-api-subscribe-contract-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake socket");
+        let root = tempfile::tempdir().expect("create socket directory");
+        let socket_path = root.path().join("herdr.sock");
+        let listener = LocalListener::bind(&socket_path).expect("bind fake socket");
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept request");
-            let mut request_line = String::new();
-            BufReader::new(stream.try_clone().expect("clone stream"))
-                .read_line(&mut request_line)
-                .expect("read request");
+            let mut stream = listener.accept().expect("accept request");
+            let request_line = read_request(&mut stream);
             let request: Value = serde_json::from_str(&request_line).expect("request JSON");
             assert_eq!(request["method"], "events.subscribe");
             assert_eq!(request["params"].get("after_sequence"), None);
@@ -704,8 +708,6 @@ mod tests {
         drop(shutdown);
 
         server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
     }
 
     #[test]

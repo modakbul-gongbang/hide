@@ -137,7 +137,7 @@ fn tree_runtime(status: &[(&str, &str)]) -> Runtime {
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
-        api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
+        api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
     });
     assert!(
         runtime.ingest_session_with_catalog(Ok(tree_payload(&EVERY, status)), Some(tree_catalog()))
@@ -484,7 +484,7 @@ fn a_device_descendant_closes_through_the_device_and_fails_when_it_disconnects()
         "mini".to_owned(),
         live::RemoteControlContext::new(
             "mini",
-            Arc::new(hide_herdr_client::UnixSocketConnector::new(
+            Arc::new(hide_herdr_client::LocalSocketConnector::new(
                 "/tmp/hide-tree-close-none.sock",
             )),
             std::sync::Weak::new(),

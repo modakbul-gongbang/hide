@@ -1272,7 +1272,7 @@ impl Mobile {
                 .herdr_socket
                 .as_ref()
                 .map(|socket| {
-                    Arc::new(hide_herdr_client::UnixSocketConnector::new(socket.clone()))
+                    Arc::new(hide_herdr_client::LocalSocketConnector::new(socket.clone()))
                         as Arc<dyn hide_herdr_client::ApiConnector>
                 })
                 .ok_or_else(|| {

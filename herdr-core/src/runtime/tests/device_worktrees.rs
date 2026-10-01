@@ -121,7 +121,7 @@ fn device_runtime(repo: &Repo) -> Arc<Mutex<Runtime>> {
     let mut runtime = shared.lock().unwrap();
     // No pane sits in the worktree, so the deletion never reaches Herdr.
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
-        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+        hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
     );
     runtime.install_remote_control(RemoteControlContext::new(
         DEVICE,

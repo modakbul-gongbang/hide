@@ -40,7 +40,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         catalog: Default::default(),
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
-        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+        hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
     );
     runtime.install_remote_control(RemoteControlContext::new(
         "mini",
@@ -780,7 +780,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         catalog: Default::default(),
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> =
-        Arc::new(hide_herdr_client::UnixSocketConnector::new(
+        Arc::new(hide_herdr_client::LocalSocketConnector::new(
             "/tmp/herdr-core-remote-focus-never-connect.sock",
         ));
     runtime.install_remote_control(RemoteControlContext::new(

@@ -111,6 +111,15 @@ fn bytes_travel_both_ways() {
 }
 
 #[test]
+fn a_pair_is_two_connected_ends() {
+    let (mut left, mut right) = LocalStream::pair().unwrap();
+    left.write_all(b"to the right\n").unwrap();
+    right.write_all(b"to the left\n").unwrap();
+    assert_eq!(read_line(&mut right), "to the right\n");
+    assert_eq!(read_line(&mut left), "to the left\n");
+}
+
+#[test]
 fn a_closing_peer_ends_the_read_with_zero() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
@@ -219,6 +228,26 @@ fn a_timeout_does_not_lose_bytes_that_arrive_later() {
     client.set_read_timeout(None).unwrap();
     assert_eq!(read_line(&mut client), "late\n");
     server.join().unwrap();
+}
+
+#[test]
+fn a_timeout_can_be_set_after_the_peer_has_closed_and_its_bytes_still_read() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let server = thread::spawn(move || {
+        let mut stream = listener.accept().unwrap();
+        stream.write_all(b"ack\nevent\n").unwrap();
+    });
+    let mut client = LocalStream::connect(&path).unwrap();
+    server.join().unwrap();
+    thread::sleep(Duration::from_millis(200));
+    // macOS refuses `SO_RCVTIMEO` on a socket whose peer has gone.
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    assert_eq!(read_line(&mut client), "ack\n");
+    assert_eq!(read_line(&mut client), "event\n");
+    assert_eq!(client.read(&mut [0_u8; 1]).unwrap(), 0);
 }
 
 #[test]

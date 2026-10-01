@@ -579,7 +579,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
     });
     runtime.ingest_remote_session(TARGET, Ok(session(Vec::new())));
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
-        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+        hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
     );
     runtime.install_remote_control(RemoteControlContext::new(
         TARGET,
@@ -671,7 +671,7 @@ impl hide_herdr_client::ApiConnector for RecordingHerdr {
         &self,
     ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError> {
         use std::io::BufRead;
-        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (client, server) = hide_platform::ipc::LocalStream::pair().unwrap();
         let requests = self.requests.clone();
         std::thread::spawn(move || {
             let mut line = String::new();
@@ -977,7 +977,7 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
     raw.focused_checkout_id = Some(format!("remote:{TARGET}:checkout:w1"));
     runtime.ingest_remote_session(TARGET, Ok(raw));
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
-        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+        hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
     );
     runtime.install_remote_control(RemoteControlContext::new(
         TARGET,
@@ -1144,7 +1144,7 @@ fn a_refused_device_request_does_not_bring_the_device_forward() {
         catalog: Default::default(),
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
-        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+        hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
     );
     runtime.install_remote_control(RemoteControlContext::new(
         TARGET,

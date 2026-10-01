@@ -679,7 +679,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
-        api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
+        api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
     });
     let payload = |focused_workspace_id: &str, focused_pane_id: &str| {
         crate::sidebar::owned_label_fixture(serde_json::json!({

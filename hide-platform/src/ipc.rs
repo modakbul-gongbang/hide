@@ -146,6 +146,12 @@ impl LocalStream {
         }
     }
 
+    /// Two connected streams inside this process, for a test double that
+    /// stands in for a peer. Nothing outside the process can reach them.
+    pub fn pair() -> io::Result<(Self, Self)> {
+        sys::pair()
+    }
+
     /// The pid of the process at the other end, when the system reports it.
     pub fn peer_pid(&self) -> io::Result<u32> {
         sys::peer_pid(&self.shared)
@@ -276,13 +282,18 @@ fn clear_leftover(path: &Path) -> io::Result<()> {
 mod sys {
     use std::net::Shutdown;
     use std::os::fd::AsRawFd;
+    use std::time::Instant;
 
     use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
 
     use super::*;
 
-    pub(super) fn set_read_timeout(shared: &Shared, timeout: Option<Duration>) -> io::Result<()> {
-        shared.raw.set_recv_timeout(timeout)
+    pub(super) fn set_read_timeout(_: &Shared, _: Option<Duration>) -> io::Result<()> {
+        // Applied by `read`, which waits for the socket to be readable before
+        // it reads. `SO_RCVTIMEO` would do the same, but macOS refuses to set
+        // it (`EINVAL`) once the peer has closed, even while bytes the peer
+        // sent are still waiting to be read.
+        Ok(())
     }
 
     pub(super) fn set_write_timeout(shared: &Shared, timeout: Option<Duration>) -> io::Result<()> {
@@ -305,13 +316,49 @@ mod sys {
         }
     }
 
+    /// Returns once a read would not block: data, end of stream or an error,
+    /// which the read that follows reports. `TimedOut` after `timeout`.
+    fn wait_readable(shared: &Shared, timeout: Duration) -> io::Result<()> {
+        let RawStream::UdSocket(socket) = &shared.raw;
+        let descriptor = socket.inner().as_raw_fd();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            // Rounded up, so the wait is never shorter than asked.
+            let millis = remaining.as_micros().div_ceil(1000).min(i32::MAX as u128) as libc::c_int;
+            let mut poll = libc::pollfd {
+                fd: descriptor,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: `poll` is a live local and the descriptor stays owned
+            // by the stream for the whole call.
+            let ready = unsafe { libc::poll(&mut poll, 1, millis) };
+            if ready > 0 {
+                return Ok(());
+            }
+            if ready < 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::Interrupted {
+                    return Err(error);
+                }
+            }
+        }
+    }
+
     pub(super) fn read(
         shared: &Shared,
         timeout: Option<Duration>,
         buffer: &mut [u8],
     ) -> io::Result<usize> {
+        if let Some(timeout) = timeout {
+            wait_readable(shared, timeout)?;
+        }
         let mut raw = &shared.raw;
-        timed_out(raw.read(buffer), timeout)
+        raw.read(buffer)
     }
 
     pub(super) fn write(
@@ -361,6 +408,14 @@ mod sys {
             .pid()
             .and_then(|pid| u32::try_from(pid).ok())
             .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
+    }
+
+    pub(super) fn pair() -> io::Result<(LocalStream, LocalStream)> {
+        let (first, second) = std::os::unix::net::UnixStream::pair()?;
+        Ok((
+            LocalStream::from_raw(RawStream::UdSocket(first.into())),
+            LocalStream::from_raw(RawStream::UdSocket(second.into())),
+        ))
     }
 
     pub(super) fn listen(path: &Path) -> io::Result<RawListener> {
@@ -560,6 +615,21 @@ mod sys {
             .peer_creds()?
             .pid()
             .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
+    }
+
+    /// A pipe has no unnamed pair, so the two ends meet on a private name that
+    /// goes away with the listener.
+    pub(super) fn pair() -> io::Result<(LocalStream, LocalStream)> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "hide-pair-{}-{}.sock",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let listener = LocalListener::bind(&path)?;
+        let client = LocalStream::connect(&path)?;
+        let server = listener.accept()?;
+        Ok((client, server))
     }
 
     pub(super) fn listen(path: &Path) -> io::Result<RawListener> {
