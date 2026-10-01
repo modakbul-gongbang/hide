@@ -342,7 +342,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect(tab(page, "Page A")).toBeVisible();
   pageA = await viewOf(`${origin}/a.html`);
 
-  // A page's new window is another browser display of the Workspace, not a window.
+  // A page's new tab is another browser display of the Workspace, not a window.
   await inPage(`${origin}/a.html`, `void window.open(${JSON.stringify(`${origin}/c.html`)}, "_blank")`);
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
   expect((await views()).filter((view) => view.url === `${origin}/c.html`)).toHaveLength(1);
@@ -369,7 +369,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   expect(await openFromCli(outside)).toMatchObject({ ok: false, reason: "path_outside_checkout" });
 
   // Closing B's display ends its renderer process. Without the Explorer both
-  // areas show again, B's among them.
+  // areas show again, B's tab among them (behind Page C, which opened beside A).
   await page.locator('[data-tools-toggle="on"]').click();
   await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
   await expect(tab(page, "Page B")).toBeVisible();
@@ -406,8 +406,9 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
     await plain.goto(status.url);
     await enterWorkspace(plain, "fixture");
     await tab(plain, "Page A").click();
-    await expect(plain.locator('[data-area-empty="browser-host"]')).toContainText("Pages open in the hide desktop app.");
-    await expect(plain.locator("[data-browser-open-external]")).toBeVisible();
+    // Page C, opened beside Page A, shows the same notice in its own area.
+    await expect(plain.locator(`[data-browser-display="${a}"] [data-area-empty="browser-host"]`)).toContainText("Pages open in the hide desktop app.");
+    await expect(plain.locator(`[data-browser-open-external="${a}"]`)).toBeVisible();
     await screenshot(plain, "browser-plain-tab");
   } finally {
     await browser.close();
@@ -456,6 +457,8 @@ test("browser: a login in one Workspace is available in another", async () => {
 test("browser: a sign-in popup keeps its opener, belongs to its page, and a link to another app asks first", async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
+  // The window a CI runner's screen holds.
+  await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setSize(size.width, size.height), WINDOW);
   await enterWorkspace(page, "fixture");
   const signin = `${origin}/signin.html`;
   const opened = await openFromCli(signin, ["--reveal", "--wait"]);
@@ -533,7 +536,8 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
   await expect.poll(() => events("browser.app_link_refused", "no_app").length).toBe(1);
 
   // A shift-click on a link is Chromium's new-window too, but with no window
-  // features it is a tab: another browser display, not a popup.
+  // features it is a tab: another browser display, not a popup, and it opens
+  // beside the page that asked, which stays in view.
   await inPage(signin, `document.body.insertAdjacentHTML("afterbegin", '<a href="${origin}/c.html" style="position:fixed;left:0;top:0;width:160px;height:60px;display:block">Page C</a>')`);
   await app.evaluate(({ BrowserWindow }, target) => {
     const main = BrowserWindow.getAllWindows().find((window) => window.getParentWindow() === null)!;
@@ -541,9 +545,21 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
     for (const type of ["mouseDown", "mouseUp"] as const) child.webContents.sendInputEvent({ type, x: 20, y: 20, button: "left", clickCount: 1, modifiers: ["shift"] });
   }, signin);
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
+  // Two View areas side by side need the Workspace's width: in this run's
+  // window the side panel is expanded over it, as the first test does.
+  await page.keyboard.press("Meta+KeyK");
+  await page.keyboard.type("Expand side panel");
+  await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+  await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
+  await expect.poll(async () => (await views()).filter((view) => view.visible).map((view) => view.url).sort()).toEqual([`${origin}/c.html`, signin].sort());
   expect(await windows()).toBe(1);
 
-  // The sign-in page is behind Page C now: a hidden page opens no popup and asks nothing.
+  // Behind another page in its own area, the sign-in page is hidden: a
+  // hidden page opens no popup and asks nothing.
+  await tab(page, "Sign in").click();
+  expect(await openFromCli(`${origin}/b.html`, ["--wait"])).toMatchObject({ status: 0, ok: true });
+  await expect.poll(async () => (await viewOf(signin)).visible).toBe(false);
   await inPage(signin, `void window.open(${JSON.stringify(`${origin}/stay.html`)}, "hidden", "width=300,height=300"); location.href = "hide-e2e-app://hidden"`);
   await expect.poll(() => events("browser.popup_refused", "hidden").length).toBe(1);
   await expect.poll(() => events("browser.app_link_refused", "hidden").length).toBe(1);
