@@ -1887,6 +1887,7 @@ mod tests {
 
     fn listener(port: u16, cwd: &str) -> ListeningPortSnapshot {
         ListeningPortSnapshot {
+            host: "127.0.0.1".into(),
             port,
             cwd: cwd.to_owned(),
         }

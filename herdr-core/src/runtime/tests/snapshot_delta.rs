@@ -510,3 +510,76 @@ fn diagnostics_keep_the_newest_entries_up_to_the_retention() {
         format!("entry {}", DIAGNOSTIC_RETENTION + 9)
     );
 }
+
+#[test]
+fn search_progress_has_its_own_small_idempotent_delta_and_shares_history_rows() {
+    let mut r = runtime();
+    let row = SessionRowSnapshot {
+        id: "s".into(),
+        provider: "codex".into(),
+        provider_label: "Codex".into(),
+        locator: "fixture.jsonl".into(),
+        checkout_path: "/fixture".into(),
+        first_human_request: None,
+        started_at_unix_ms: None,
+        updated_at_unix_ms: 0,
+        title: Some("History".repeat(10)),
+        unavailable_reason: None,
+    };
+    r.snapshot.project_sessions = Some(crate::model::ProjectSessionsSnapshot {
+        device_id: "local".into(),
+        workspace_id: "p".into(),
+        unavailable_reason: None,
+        loading: false,
+        failure: None,
+        rows: Arc::new(vec![row; 2000]),
+        detail: None,
+    });
+    r.snapshot.session_search = Some(crate::model::SessionSearchSnapshot {
+        workspace_id: "p".into(),
+        total: 2000,
+        indexing: true,
+        ..Default::default()
+    });
+    let full = r.snapshot_delta_payload(0, 0);
+    let full_bytes = serialize_snapshot_delta(&full).unwrap().len();
+    let rows = Arc::clone(&full.project_sessions.as_ref().unwrap().rows);
+    r.snapshot.session_search.as_mut().unwrap().indexed = 8;
+    let delta = r.snapshot_delta_payload(full.revision, 0);
+    assert!(
+        delta.project_sessions.is_none()
+            && delta.rest.is_none()
+            && delta.editor.is_none()
+            && delta.changes.is_none()
+    );
+    assert_eq!(delta.session_search.as_ref().unwrap().indexed, 8);
+    let bytes = serialize_snapshot_delta(&delta).unwrap();
+    assert_eq!(
+        bytes,
+        serialize_snapshot_delta(&r.snapshot_delta_payload(full.revision, 0)).unwrap()
+    );
+    assert!(bytes.len() < 1024);
+    assert!(Arc::ptr_eq(
+        &rows,
+        &r.snapshot.project_sessions.as_ref().unwrap().rows
+    ));
+    assert!(
+        r.snapshot_delta_payload(delta.revision, 0)
+            .session_search
+            .is_none()
+    );
+    r.snapshot.session_search = Some(Default::default());
+    let clear = r.snapshot_delta_payload(delta.revision, 0);
+    assert!(
+        clear
+            .session_search
+            .as_ref()
+            .unwrap()
+            .workspace_id
+            .is_empty()
+    );
+    eprintln!(
+        "2000-row wire full_bytes={full_bytes} search_progress_bytes={}",
+        bytes.len()
+    );
+}

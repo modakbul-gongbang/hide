@@ -78,6 +78,7 @@ pub struct Core {
     _changes: Option<crate::changes::ChangesPump>,
     _kit: Option<crate::kit::KitPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
+    _session_search: Option<crate::runtime::session_search::SearchWorker>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     owner_thread: ThreadId,
@@ -88,6 +89,7 @@ impl Drop for Core {
         // Reserve cancellation before any coordinator shutdown can wait: a
         // completing attachment must not enqueue input during destruction.
         let attachment_worker = { lock_recover(&self.runtime).take_attachment_worker() };
+        self._session_search.take();
         self._terminal_maintenance.take();
         self._changes.take();
         self._session_sync.take();
@@ -178,6 +180,21 @@ impl Core {
         let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
+        let session_search = match crate::runtime::session_search::SearchWorker::spawn(
+            Arc::downgrade(&runtime),
+            notifier.clone(),
+        ) {
+            Ok(worker) => {
+                worker.install(&mut lock_recover(&runtime));
+                Some(worker)
+            }
+            Err(message) => {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"session_search","kind":"worker.start_failed","message":message})
+                );
+                None
+            }
+        };
         let session_sync = if let Some(socket_path) = options.herdr_socket_path.as_deref() {
             live::install(
                 &runtime,
@@ -261,6 +278,7 @@ impl Core {
             _changes: changes,
             _kit: kit,
             _session_sync: session_sync,
+            _session_search: session_search,
             runtime,
             notifier,
             owner_thread: thread::current().id(),

@@ -24,8 +24,9 @@ use std::path::{Path, PathBuf};
 
 mod catalog;
 mod conversation_cursor;
+pub mod search;
 
-pub use conversation_cursor::ConversationCursor;
+pub use conversation_cursor::{ConversationCheckpoint, ConversationCursor};
 
 pub use catalog::{
     ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,

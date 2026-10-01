@@ -251,18 +251,25 @@ impl Runtime {
     /// than with a session snapshot, so a server that started since the last
     /// topology update would otherwise stay invisible until the topology moved.
     pub fn ingest_listening_ports(&mut self, ports: crate::model::ListeningPortsSnapshot) -> bool {
-        if self.listening_ports == ports {
+        let observed = !self.snapshot.status.server_discovery.loading;
+        if observed && self.listening_ports == ports {
             return false;
         }
+        let status_changed = self.snapshot.status.server_discovery.loading
+            || self.snapshot.status.server_discovery.failure != ports.unavailable_reason;
+        self.snapshot.status.server_discovery.loading = false;
+        self.snapshot.status.server_discovery.failure = ports.unavailable_reason.clone();
         self.listening_ports = ports;
         let entries = self.listening_ports.entries.clone();
-        let mut changed = false;
+        let mut changed = status_changed;
         for workspace in self.snapshot.navigator.workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
                 for tab in checkout.tabs.iter_mut() {
                     for pane in tab.panes.iter_mut() {
                         let attributed = crate::ports::attributed_ports(&pane.cwd, &entries);
-                        if pane.ports != attributed {
+                        let servers = crate::ports::attributed_servers(&pane.cwd, &entries);
+                        if pane.ports != attributed || pane.servers != servers {
+                            pane.servers = servers;
                             pane.ports = attributed;
                             changed = true;
                         }

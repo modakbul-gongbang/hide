@@ -1180,6 +1180,7 @@ pub(super) enum Event {
     PathTrash(PathTrashPayload),
     UiStateUpdate(Box<UiStateUpdatePayload>),
     SessionsRefresh(SessionsRefreshPayload),
+    SessionSearch(super::session_search::SearchPayload),
     SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
     ArchiveOpen(ArchiveOpenPayload),
@@ -1371,6 +1372,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
             .map_err(|_| invalid_payload(&kind)),
         "sessions_set_mode" => decode!(SessionsModePayload, SessionsSetMode),
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
+        "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
         "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
@@ -1456,6 +1458,7 @@ impl Runtime {
                 }
                 None => self.request_sessions_refresh(),
             },
+            Event::SessionSearch(payload) => self.request_session_search(payload),
             Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
                 self.set_sessions_filter(&payload.provider, payload.query)
