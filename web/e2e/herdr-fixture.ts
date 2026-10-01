@@ -287,6 +287,29 @@ export function writeFixtureTranscript(projects: string, sessionId: string, labe
   return file;
 }
 
+/**
+ * Appends a turn carrying `label` to the transcript of `sessionId`: the same
+ * session, so a parent relationship declared for it still holds. The core
+ * reads the new turn on the agent's next state change; the request carries
+ * the label too, so the analysis at the turn's start answers it as well.
+ */
+export function continueFixtureTranscript(fixture: Pick<HerdrFixture, "root">, sessionId: string, label: FixtureLabel): void {
+  const records = [
+    { type: "user", sessionId, timestamp: "2026-10-01T09:01:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 이어서 진행해줘\n${labelMarker(label)}` } },
+    { type: "assistant", sessionId, timestamp: "2026-10-01T09:01:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
+  ];
+  fs.appendFileSync(path.join(claudeProjects(fixture), "e2e", `${sessionId}.jsonl`), records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+}
+
+/**
+ * The native session id the fixture gives `pane`'s agent. A native id is
+ * letters, digits, `.`, `_` and `-`, and the core's transcript read refuses
+ * any other, so the pane id's `:` becomes `-`.
+ */
+export function fixtureSessionId(pane: string): string {
+  return `fixture-${pane.replaceAll(":", "-")}`;
+}
+
 /** The last session sequence each pane declared; a replacement must be newer. */
 const sessionSeqs = new Map<string, number>();
 
@@ -504,8 +527,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         [first, "Agent one"],
         [second, "Agent two"],
       ]) {
-        writeFixtureTranscript(path.join(root, "home", ".claude", "projects"), `fixture-${pane}`, { task: task! });
-        declareFixtureSession(env, bin, pane!, "claude", `fixture-${pane}`);
+        writeFixtureTranscript(path.join(root, "home", ".claude", "projects"), fixtureSessionId(pane!), { task: task! });
+        declareFixtureSession(env, bin, pane!, "claude", fixtureSessionId(pane!));
       }
     }
     return {
@@ -524,7 +547,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
           const pane = args[args.indexOf("--pane") + 1];
           const kind = args[args.indexOf("--kind") + 1];
           if (args.includes("--pane") && ["claude", "codex"].includes(kind!))
-            declareFixtureSession(env, bin, pane!, kind!, `fixture-${pane}`);
+            declareFixtureSession(env, bin, pane!, kind!, fixtureSessionId(pane!));
         }
         return result;
       },
@@ -538,9 +561,12 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
 
 /**
  * A workspace of its own at `cwd` with one agent in it, recorded as spawned
- * by `parent` the way hcoord records it (`declareParent`) when one is named. Returns the new pane.
+ * by `parent` the way hcoord records it (`declareParent`) when one is named.
+ * With `named`, the agent runs a session labelled so before the relationship
+ * is written for it, since a later session is no longer that child's.
+ * Returns the new pane.
  */
-export async function spawnAgent(fixture: HerdrFixture, label: string, parent: string | null, cwd = path.join(fixture.root, label)): Promise<string> {
+export async function spawnAgent(fixture: HerdrFixture, label: string, parent: string | null, cwd = path.join(fixture.root, label), named?: FixtureLabel): Promise<string> {
   fs.mkdirSync(cwd, { recursive: true });
   const created = fixture.run(["workspace", "create", "--cwd", cwd, "--label", label, "--env", `PATH=${fixture.fixturePath}`, "--no-focus"]) as {
     result: { root_pane: { pane_id: string } };
@@ -548,6 +574,7 @@ export async function spawnAgent(fixture: HerdrFixture, label: string, parent: s
   const pane = created.result.root_pane.pane_id;
   await waitFor(() => paneText(fixture.env, fixture.bin, pane).includes("fixture %"), `a prompt in pane ${pane}`, 20_000, () => JSON.stringify(paneRead(fixture.env, fixture.bin, pane)));
   fixture.run(["agent", "start", label, "--kind", "claude", "--pane", pane]);
+  if (named) labelAgent(fixture, pane, named);
   if (parent) declareParent(fixture, pane, parent);
   return pane;
 }

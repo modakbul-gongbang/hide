@@ -10,7 +10,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
-import { finishFixtureTurn, labelAgent, setFixtureLifecycle, spawnAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { finishFixtureTurn, labelAgent, setFixtureLifecycle, spawnAgent, startHerdr, type FixtureLabel, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
@@ -109,17 +109,14 @@ test("the close sheet counts and brightens what needs the operator, stays live w
   let daemon: Daemon | null = null;
   try {
     const target = herdr.panes[1];
-    const working = await spawnAgent(herdr, "working", target);
-    const asking = await spawnAgent(herdr, "asking", target);
-    const finished = await spawnAgent(herdr, "finished", target);
-    const quiet = await spawnAgent(herdr, "quiet", target);
-    labelAgent(herdr, working, { task: "계보 투영 구현" });
+    const spawn = (name: string, task: FixtureLabel) => spawnAgent(herdr, name, target, undefined, task);
+    const working = await spawn("working", { task: "계보 투영 구현" });
+    const asking = await spawn("asking", { task: "병합 전 검증 실행", reply: "병합 전에 검증을 다시 돌릴까요?", question: true });
+    const finished = await spawn("finished", { task: "릴리스 노트 초안" });
+    const quiet = await spawn("quiet", { task: "로그 파일 정리 작업" });
     await setFixtureLifecycle(herdr, working, "working");
-    labelAgent(herdr, asking, { task: "병합 전 검증 실행", reply: "병합 전에 검증을 다시 돌릴까요?", question: true });
-    labelAgent(herdr, finished, { task: "릴리스 노트 초안" });
     // Its own workspace is not the one Herdr's clients show.
     await finishFixtureTurn(herdr, finished, herdr.tab);
-    labelAgent(herdr, quiet, { task: "로그 파일 정리 작업" });
 
     daemon = await startHided(herdr, "close-subtree-states");
     const last = new Map<string, Record<string, unknown>>();

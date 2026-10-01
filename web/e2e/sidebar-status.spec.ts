@@ -8,7 +8,7 @@
 // child that goes away while the list is open leaves it.
 
 import { expect, test, type Page } from "@playwright/test";
-import { declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
+import { continueFixtureTranscript, declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflow } from "./wire";
 
@@ -39,7 +39,7 @@ test("a root waiting on its child, the badge's child list, and the progress line
     // B1: the parent finished its own turn and its child is working.
     labelAgent(herdr, parent, { task: "Agent one", progress: "하위 작업 위임 후 대기" });
     await finishFixtureTurn(herdr, parent, elsewhereTab(herdr));
-    labelAgent(herdr, child, { task: "Agent two", progress: "계보 투영 구현 중" });
+    const childSession = labelAgent(herdr, child, { task: "Agent two", progress: "계보 투영 구현 중" });
     await setFixtureLifecycle(herdr, child, "working");
     declareParent(herdr, child, parent);
     const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
@@ -60,8 +60,9 @@ test("a root waiting on its child, the badge's child list, and the progress line
 
     // B2: the child asks. The parent keeps waiting in Working, the badge
     // carries the question, and the row turns unread - never Needs You.
+    // The child's own session asks, so the relationship declared for it holds.
+    continueFixtureTranscript(herdr, childSession, { task: "Agent two", reply: QUESTION, question: true });
     await setFixtureLifecycle(herdr, child, "idle");
-    labelAgent(herdr, child, { task: "Agent two", reply: QUESTION, question: true });
     await expect(parentRow.locator('[data-badge-part="question"]')).toHaveText("?1", { timeout: 20_000 });
     await expect(parentRow).toHaveAttribute("data-waiting", "true");
     await expect(page.locator(`[data-agent-group="working"] [data-pane="${parent}"]`)).toBeVisible();
@@ -113,7 +114,9 @@ test("a root waiting on its child, the badge's child list, and the progress line
     // cut on one line; the pointer and the keyboard move neither row, the
     // child's request keeps its one line, and the unfolded chevron waits in
     // a slot kept at rest until the pointer or the keyboard reaches the row.
-    labelAgent(herdr, child, { task: LONG_TITLE, reply: QUESTION, question: true });
+    continueFixtureTranscript(herdr, childSession, { task: LONG_TITLE, reply: QUESTION, question: true });
+    await setFixtureLifecycle(herdr, child, "working");
+    await setFixtureLifecycle(herdr, child, "idle");
     const childTitle = childRow.locator("[data-agent-title]");
     await expect(childTitle).toHaveText(LONG_TITLE, { timeout: 20_000 });
     const parts = [parentRow.locator("[data-agent-title]"), parentRow.locator("[data-agent-elapsed]"), childTitle, childRow.locator("[data-agent-elapsed]")];
