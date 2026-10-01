@@ -10,8 +10,21 @@ import { inputReadiness, messageForDelivery } from "../../dist/hcoord/herdr.js";
 import { loadLedger, saveLedger } from "../../dist/hcoord/store.js";
 import { callDaemon } from "../../dist/hcoord/transport.js";
 
+
+// Explicit home arguments do not override an inherited HCOORD_HOME.
+// Each file/socket fixture owns the relocation and restores it after the test.
+function bindPrivateCoordinator(t, home) {
+  const previous = process.env.HCOORD_HOME;
+  process.env.HCOORD_HOME = path.join(home, ".hcoord");
+  t.after(() => {
+    if (previous === undefined) delete process.env.HCOORD_HOME;
+    else process.env.HCOORD_HOME = previous;
+  });
+}
+
 test("a denied local socket gives the caller a permission cause and next action", { skip: process.platform === "win32" }, async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-denied-socket-"));
+  bindPrivateCoordinator(t, home);
   const dir = path.join(home, ".hcoord");
   fs.mkdirSync(dir);
   const socketFile = path.join(dir, "api.sock");
@@ -432,8 +445,9 @@ test("oversized calls return an actionable capacity error before connecting", as
   await assert.rejects(callDaemon("request.send", { context: "a".repeat(1024 * 1024) }, "/nonexistent/hcoord-home"), { code: "capacity" });
 });
 
-test("invalid ledger JSON does not expose stored request text", () => {
+test("invalid ledger JSON does not expose stored request text", (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-corrupt-"));
+  bindPrivateCoordinator(t, home);
   try {
     fs.mkdirSync(path.join(home, ".hcoord"));
     fs.writeFileSync(path.join(home, ".hcoord", "ledger.json"), '{"request":"PRIVATE_ANSWER", invalid');
@@ -631,4 +645,51 @@ test("B24: a ledger field this version does not know, such as an old table of on
   saveLedger(loaded);
   assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(home, "data", "ledger.json"), "utf8")), "clientRuns"), false);
   assert.deepEqual(Object.keys(execute(loaded, "status", {}, "2026-09-26T00:00:00.000Z").value.counts).sort(), ["agents", "events", "requests", "watches"]);
+});
+
+test("an observer that never checks is woken and reminded once, then escalated to the human and left alone", () => {
+  const t0 = Date.parse("2026-09-01T00:00:00.000Z"), at = (minutes) => new Date(t0 + minutes * 60_000).toISOString();
+  const state = emptyLedger(at(0));
+  const run = (operation, args = {}, minutes = 0) => execute(state, operation, args, at(minutes)).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "working" });
+  const target = register("target"), observer = register("observer");
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 300_000 });
+  const wakes = [];
+  for (let minute = 1; minute <= 180; minute += 1) {
+    run("tick", { observedTargets: [target.id] }, minute);
+    for (const item of Object.values(state.requests)) for (const delivery of item.deliveries) if (delivery.status === "pending") { delivery.status = "accepted"; wakes.push(delivery.recipient === observer.id ? "observer" : delivery.recipient); }
+  }
+  assert.deepEqual(wakes, ["observer", "observer", "human"], "a check the observer cannot close costs two wakes and one human notice in three hours");
+  assert.equal(Object.values(state.requests).length, 1, "no new cycle piles up behind the unchecked one");
+  assert.equal(run("inbox").some((entry) => entry.kind === "question" && /watch/.test(entry.nextAction)), true, "the escalation reaches the human inbox with the watch as the next action");
+});
+
+test("a watch whose target and observer have both left ends after the grace, and only Herdr's own word counts", () => {
+  const t0 = Date.parse("2026-09-01T00:00:00.000Z"), at = (minutes) => new Date(t0 + minutes * 60_000).toISOString();
+  const state = emptyLedger(at(0));
+  const run = (operation, args = {}, minutes = 0) => execute(state, operation, args, at(minutes)).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "working" });
+  const target = register("target"), observer = register("observer");
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 300_000 });
+  const watch = () => state.watches[target.id];
+  const tick = (minutes, reading) => run("tick", { observedTargets: [target.id], watchReadings: reading === undefined ? {} : { [target.id]: reading } }, minutes);
+  tick(5, "gone");
+  assert.equal(watch().status, "active", "the first reading only starts the grace");
+  tick(10, "present");
+  assert.equal(watch().orphanedSince, null, "a reachable side clears the clock");
+  for (let minute = 15; minute <= 70; minute += 5) tick(minute, "gone");
+  assert.equal(watch().status, "active", "less than the grace has passed since the clock restarted");
+  for (let minute = 75; minute <= 120; minute += 5) tick(minute);
+  assert.equal(watch().status, "active", "an hour of Herdr or a remote not answering is not an hour of absence");
+  assert.equal(watch().orphanedSince, at(15), "an unanswered reading neither advances nor clears the clock");
+  tick(300, "gone");
+  assert.equal(watch().status, "active", "a daemon that was down or asleep for a long gap starts the grace over");
+  assert.equal(watch().orphanedSince, at(300));
+  for (let minute = 305; minute <= 360; minute += 5) tick(minute, "gone");
+  assert.equal(watch().status, "stopped");
+  assert.equal(watch().stoppedAt, at(360));
+  const ended = state.events.find((entry) => entry.type === "watch.orphaned");
+  assert.equal(ended.subjectId, target.id);
+  assert.equal(ended.detail.observer, observer.id);
+  assert.equal(run("watch.list").filter((entry) => entry.status === "active").length, 0);
 });

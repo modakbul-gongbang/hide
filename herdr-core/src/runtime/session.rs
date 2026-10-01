@@ -1786,6 +1786,7 @@ impl Runtime {
         let mut fetched = fetched;
         if let Ok(payload) = fetched.as_mut() {
             self.settle_agent_sleep(payload);
+            self.label_publications.apply(payload);
         }
         // The session update is this runtime's only regular tick, so it is
         // also where a notification Herdr never answered stops being pending.

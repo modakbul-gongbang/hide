@@ -10,6 +10,7 @@ import { blockedSpawnError, confirmSpawnPane, createSpawnPane, createSpawnWorktr
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman, notifyText } from "./platform";
+import { createFailureLog } from "./failure-log";
 import { isLocalMachine, remoteCall, remoteCallAsync, requireRemoteHerdr, remoteOutcome, savedMachine, type Raw } from "./remote";
 import { reconcileAlert, recordClean, recordReady, recordStart } from "./health";
 import { lineageCurrent, readRouteLineage, writeLineage, type LineageWrite } from "./lineage";
@@ -29,6 +30,8 @@ const SWEEP_LETTERS_PER_TICK = 16;
 // 2026-09-24; after a refusal the machine waits the longer backoff.
 const COLLECT_INTERVAL_MS = 5000;
 const COLLECT_BACKOFF_MS = 30_000;
+// One log line per machine and cause per this window while a collection keeps failing the same way.
+const COLLECT_FAILURE_LOG_WINDOW_MS = 10 * 60_000;
 const COLLECT_LETTERS = 64;
 // A local `pane list` costs one short Herdr call, so a lost token comes back
 // within seconds; a remote one is an SSH round trip inside the operation
@@ -512,6 +515,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
     return run;
   };
   const collections = new Map<string, { inFlight: boolean; nextAt: number }>();
+  const collectFailures = createFailureLog({ failed: "hcoord.collect_failed", recovered: "hcoord.collect_recovered" }, (line) => process.stderr.write(line), COLLECT_FAILURE_LOG_WINDOW_MS);
   const inFlight = new Set<Promise<void>>();
   const aborter = new AbortController();
   /** Starts at most one collection per remote machine; SSH runs outside the operation queue. */
@@ -537,9 +541,12 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
           retryAfter = COLLECT_INTERVAL_MS;
           // A failed deletion is harmless: the next take returns recorded letters, which are only deleted again.
           if (removable.length) await remoteCallAsync(target, ["drop", ...removable], aborter.signal);
+          collectFailures.recovered(machine, { machine });
         } catch (error) {
           // The SSH or remote diagnostic belongs in the log: one live run saw a single transient auth refusal that the code alone could not explain.
-          process.stderr.write(`${JSON.stringify({ event: "hcoord.collect_failed", at: new Date().toISOString(), machine, code: error instanceof HcoordError ? error.code : "internal", detail: error instanceof Error ? error.message.slice(0, 300) : null })}\n`);
+          // The same cause on the same machine logs once per window, with the count it folded.
+          const code = error instanceof HcoordError ? error.code : "internal";
+          collectFailures.failed(machine, code, { machine, code, detail: error instanceof Error ? error.message.slice(0, 300) : null });
         } finally { state.inFlight = false; state.nextAt = Date.now() + retryAfter; }
       })();
       inFlight.add(job);
@@ -748,13 +755,21 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
         const at = new Date().toISOString();
         const next: Ledger = structuredClone(ledger);
         const due = Object.values(next.watches).filter((watch) => watch.status === "active" && Date.parse(watch.dueAt) <= Date.parse(at)).sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt)).slice(0, 4);
-        const observedTargets: string[] = [];
+        const observedTargets: string[] = [], watchReadings: Record<string, "gone" | "present"> = {};
         for (const watch of due) {
           const participant = own(next.participants, watch.target);
           if (!participant) throw new HcoordError("corrupt_ledger", "active watch target is missing");
           const observed = inspectParticipant(participant);
           execute(next, "agent.observe", { id: participant.id, runtime: observed.runtime, connection: observed.connection, reason: observed.reason }, at);
           observedTargets.push(participant.id);
+          // Only a target Herdr says is gone, with an observer that is gone too, counts toward ending the watch;
+          // a Herdr or remote that could not be asked says nothing about either side. A reachable side clears the count.
+          if (observed.connection === "connected") { watchReadings[participant.id] = "present"; continue; }
+          if (!observed.gone) continue;
+          const observer = watch.observer === null ? undefined : own(next.participants, watch.observer);
+          const observerReading = observer === undefined ? null : inspectParticipant(observer);
+          if (observerReading === null || observerReading.gone) watchReadings[participant.id] = "gone";
+          else if (observerReading.connection === "connected") watchReadings[participant.id] = "present";
         }
         const oldestUnwatched = Object.values(next.participants).filter((person) => person.runtime !== "done" && next.watches[person.id]?.status !== "active" && Date.parse(at) - Date.parse(person.observedAt) >= 300_000).sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt))[0];
         if (oldestUnwatched) {
@@ -762,7 +777,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
           execute(next, "agent.observe", { id: oldestUnwatched.id, runtime: observed.runtime, connection: observed.connection, reason: observed.reason }, at);
         }
         const runRetention = Date.parse(at) - lastRetentionAt >= 3_600_000;
-        const outcome = execute(next, "tick", { observedTargets, runRetention }, at);
+        const outcome = execute(next, "tick", { observedTargets, watchReadings, runRetention }, at);
         if (outcome.changed || observedTargets.length > 0 || oldestUnwatched) { saveLedger(next, home); ledger = next; }
         if (runRetention) lastRetentionAt = Date.parse(at);
         collectLocal(null, LOCAL_SWEEP_GRACE_MS);

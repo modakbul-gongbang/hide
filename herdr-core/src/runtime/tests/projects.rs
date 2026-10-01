@@ -9,7 +9,7 @@ fn worktree_refresh_keeps_derived_checkout_purpose_with_its_agent() {
     row.agent_summary.representative_pane_id = Some("pane".into());
     runtime.snapshot.navigator.workspaces = vec![workspace("project", "Project", path, vec![row])];
     runtime.snapshot.navigator.agents = crate::sidebar::project_agents(
-        serde_json::from_value(serde_json::json!({"agents": [{
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [{
             "pane_id": "pane", "workspace_label": "Project", "agent": "claude",
             "agent_status": "idle", "state_change_seq": 1, "tokens": {"task": "메인 체크아웃 정리"}
         }]}))
@@ -3492,7 +3492,10 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
         );
     };
     git(&["init", "-q", "-b", "main"]);
+    // This synthetic commit must not invoke the operator's signing agent.
     git(&[
+        "-c",
+        "commit.gpgsign=false",
         "-c",
         "user.name=Fixture",
         "-c",

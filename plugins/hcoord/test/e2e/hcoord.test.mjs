@@ -57,7 +57,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   process.stdout.write(JSON.stringify({result:{outcome:'shown'}}));
 } else {process.stderr.write('unexpected Herdr operation');process.exitCode=9;}
 `, { mode: 0o755 });
-  const env = { ...process.env, HOME: home, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const env = { ...process.env, HOME: home, HCOORD_HOME: path.join(home, ".hcoord"), PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   delete env.HERDR_SOCKET_PATH;
   delete env.HERDR_BIN_PATH;
   delete env.HCOORD_FAKE_PROMPT_API;

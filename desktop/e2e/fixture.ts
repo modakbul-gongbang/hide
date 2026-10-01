@@ -31,7 +31,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin">, label: stri
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] =>
-        entry[1] !== undefined && !entry[0].startsWith("HERDR_") && !entry[0].startsWith("HIDE_") && !entry[0].startsWith("ELECTRON_"),
+        entry[1] !== undefined && !["HERDR_", "HIDE_", "ELECTRON_", "HCOORD_", "SASU_"].some((prefix) => entry[0].startsWith(prefix)),
     ),
   );
   const env: Record<string, string> = {
@@ -39,6 +39,8 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin">, label: stri
     HOME: home,
     // HOME relocates files; HCOORD_HOME also gives launchd a private label.
     HCOORD_HOME: path.join(home, ".hcoord"),
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_STATE_HOME: path.join(home, ".local", "state"),
     HIDE_STATE_DIR: path.join(root, "state"),
     HIDE_DESKTOP_USER_DATA_DIR: path.join(root, "user-data"),
     HIDE_CLI_PATH: HIDE_CLI,

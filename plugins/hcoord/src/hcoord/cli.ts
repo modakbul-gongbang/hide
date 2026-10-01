@@ -106,6 +106,20 @@ function warnIfUnstable(): void {
   }
 }
 
+/**
+ * An exception no caller-facing code classified. The stderr event keeps its
+ * own code (the errno when it has one) and message so the cause is findable;
+ * the caller gets `internal` plus the errno, which is safe to show. A
+ * SyntaxError's message quotes the text it failed to parse, which can be a
+ * request body, so only its name is kept.
+ */
+function unclassifiedFailure(error: unknown): HcoordError {
+  const cause = error instanceof Error ? error : new Error(String(error));
+  const errno = typeof (cause as NodeJS.ErrnoException).code === "string" ? (cause as NodeJS.ErrnoException).code! : null;
+  process.stderr.write(`${JSON.stringify({ event: "hcoord.command_failed", at: new Date().toISOString(), code: errno ?? "internal", name: cause.name, ...(cause instanceof SyntaxError ? {} : { message: cause.message.slice(0, 300) }) })}\n`);
+  return new HcoordError("internal", `command failed${errno ? ` (${errno})` : ""}; the cause is on stderr as hcoord.command_failed`);
+}
+
 function print(result: WireResult, json: boolean): void {
   warnIfUnstable();
   if (json) { process.stdout.write(`${JSON.stringify(result)}\n`); return; }
@@ -371,8 +385,7 @@ export async function main(argv: string[]): Promise<number> {
     print(result, json);
     return result.ok ? 0 : 1;
   } catch (error) {
-    const reason = error instanceof HcoordError ? error : new HcoordError("internal", "command failed; inspect stderr");
-    if (!(error instanceof HcoordError)) process.stderr.write(`${JSON.stringify({ event: "hcoord.command_failed", at: new Date().toISOString(), code: "internal" })}\n`);
+    const reason = error instanceof HcoordError ? error : unclassifiedFailure(error);
     print({ ok: false, error: { code: reason.code, message: reason.message, ...(reason.detail ? { detail: reason.detail } : {}) }, observedAt: new Date().toISOString() }, json);
     return reason.code === "invalid_argument" ? 2 : 1;
   }

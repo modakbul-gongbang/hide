@@ -1228,6 +1228,7 @@ pub struct Runtime {
     /// rebuild triggered by a registration change is not a session update, so
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
+    label_publications: crate::sidebar::LabelPublicationGuard,
     issue_tokens: crate::wire::IssueTokens,
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
     issue_write_pending: Option<(u64, String, String)>,
@@ -1624,6 +1625,7 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
+            label_publications: Default::default(),
             issue_tokens: Default::default(),
             issue_candidates: Default::default(),
             issue_write_pending: None,
