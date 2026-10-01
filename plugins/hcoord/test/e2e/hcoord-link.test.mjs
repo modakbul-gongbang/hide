@@ -110,7 +110,7 @@ test("a child whose pane now hosts another session loses its lineage tokens, the
   t.after(() => fake.cleanup());
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
   fake.addAgent("local", "child-pane", { name: "child", session: "s-child", instance: "i-child" });
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   link(coordinator);
   assert.deepEqual(fake.pane("local", "child-pane").tokens, lineageTokens);
@@ -134,7 +134,7 @@ test("a child that reports no session keeps its tokens, and a refused clear wait
   t.after(() => fake.cleanup());
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
   fake.addAgent("local", "child-pane", { name: "child", session: "s-child", instance: "i-child" });
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   link(coordinator);
 
@@ -162,7 +162,7 @@ test("tokens written before sessions were recorded converge to the full set with
   t.after(() => fake.cleanup());
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
   fake.addAgent("local", "child-pane", { name: "child", session: "s-child", instance: "i-child" });
-  const coordinator = hq(t, fake);
+  const coordinator = hq(fake);
   await coordinator.start();
   link(coordinator);
 
