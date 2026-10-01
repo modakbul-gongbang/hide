@@ -572,15 +572,26 @@ test("area cycle native: page input previews one exact area, releases once and c
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
       child.webContents.focus();
     }, url);
-    // macOS activates the window asynchronously; focus its visible page
-    // again after that activation rather than accepting shell focus alone.
-    await expect.poll(() => app!.evaluate(({ app: electron, BrowserWindow }, url) => {
+    // macOS activates the window asynchronously, and an activation still in
+    // flight can hand the keyboard back to the shell a moment after the page
+    // took it; keys posted then reach no page. Accept the page only once it
+    // has kept the keyboard in the key window for a while, refocusing it otherwise.
+    const holds = () => app!.evaluate(({ BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows()[0]!;
-      electron.focus({ steal: true }); window.focus();
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-      child.webContents.focus();
-      return child.webContents.isFocused();
-    }, url)).toBe(true);
+      return window.isFocused() && child.webContents.isFocused();
+    }, url);
+    await expect.poll(async () => {
+      await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
+        const window = BrowserWindow.getAllWindows()[0]!;
+        electron.focus({ steal: true }); window.focus();
+        const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+        child.webContents.focus();
+      }, url);
+      if (!(await holds())) return false;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return holds();
+    }).toBe(true);
   };
   const capture = async (name: string) => {
     const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
