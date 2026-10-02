@@ -45,6 +45,8 @@ pub fn move_legacy(
     if std::fs::symlink_metadata(target).is_ok() {
         return Ok(Moved::LeftBehind);
     }
+    // Before anything is made or read in it.
+    not_shared(legacy)?;
     // The legacy folder's own connect lock: an older `hide connect` takes the
     // same one, so neither starts a daemon there while it moves. The folder
     // itself is never made, so one another connect just moved is not made
@@ -61,7 +63,6 @@ pub fn move_legacy(
     if std::fs::symlink_metadata(target).is_ok() {
         return Ok(Moved::LeftBehind);
     }
-    not_shared(legacy)?;
     let parent = target
         .parent()
         .ok_or_else(|| format!("{} has no parent folder", target.display()))?;
@@ -85,6 +86,11 @@ pub fn move_legacy(
             ));
         }
     };
+    // The folder keeps its mode through the rename and holds the daemon's
+    // token, so it is made as private as a new one first; a failure here
+    // leaves nothing moved and the next connect tries again.
+    std::fs::set_permissions(legacy, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("{} could not be made private: {error}", legacy.display()))?;
     std::fs::rename(legacy, target).map_err(|error| {
         format!(
             "{} could not be moved to {}: {error}",
@@ -92,10 +98,6 @@ pub fn move_legacy(
             target.display()
         )
     })?;
-    // The folder keeps its old mode through the rename; it holds the
-    // daemon's token, so it becomes as private as a new one.
-    std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("{} could not be made private: {error}", target.display()))?;
     Ok(Moved::Moved { stopped_pid })
 }
 
@@ -296,6 +298,10 @@ mod tests {
         let error = move_legacy(&legacy, &target, |_| panic!("nothing is signalled")).unwrap_err();
         assert!(error.contains("other accounts"), "{error}");
         assert!(error.contains("chmod go-w"), "{error}");
+        assert!(
+            !legacy.join("connect.lock").exists(),
+            "nothing is made in it"
+        );
         assert!(legacy.join("core-state.json").is_file());
         // Beside an existing new folder it is only left, as any old folder is.
         std::fs::create_dir_all(&target).unwrap();
