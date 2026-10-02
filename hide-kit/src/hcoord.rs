@@ -313,9 +313,10 @@ fn link_state(target: &KitTarget) -> Link {
 /// Why `hcoord` on `PATH` is not Hide's, for an installed hcoord row (B14).
 pub(crate) fn link_note(target: &KitTarget) -> Option<String> {
     match link_state(target) {
+        // The row already shows where hcoord is installed; this says why
+        // `hcoord` on PATH is not that copy.
         Link::Foreign(reason) => Some(format!(
-            "Installed at {}, but {reason}, so `hcoord` on PATH runs that instead",
-            shim_path(target).display()
+            "{reason}, so `hcoord` on PATH does not run this copy"
         )),
         Link::Current | Link::Missing | Link::Ours => None,
     }

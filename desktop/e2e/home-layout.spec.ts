@@ -18,7 +18,6 @@ import path from "node:path";
 import { bootoutTestLabel, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL, stageBuild } from "./device-home";
 import { HIDE_CLI, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 import { herdrBinary, startHerdr } from "../../web/e2e/herdr-fixture";
-import { enterWorkspace } from "../../web/e2e/wire";
 
 test.describe.configure({ timeout: 240_000 });
 test.skip(process.platform !== "darwin", "hcoord's daemon runs through launchd on macOS only");
@@ -120,7 +119,6 @@ test("the first connect of a new app moves the old layout into ~/.hide once", as
     const app = await relaunch({ ...run.env, HIDE_STATE_DIR: moved, HIDE_CLI_PATH: appHide });
     try {
       const page = await shellPage(app);
-      await enterWorkspace(page, "projects").catch(() => undefined);
       await page.locator("[data-open-settings]").click();
       await page.locator('[data-settings-tab="devices"]').click();
       await expect(page.locator('[data-kit-part="local:hcoord:installed"]')).toBeVisible();
@@ -131,6 +129,44 @@ test("the first connect of a new app moves the old layout into ~/.hide once", as
   } finally {
     spawnSync(appHide, ["stop"], { env, timeout: 20_000 });
     if (oldPid && alive(oldPid)) spawnSync(HIDE_CLI, ["stop"], { env: { ...env, HIDE_STATE_DIR: legacyState }, timeout: 20_000 });
+    bootoutTestLabel(label);
+    run.cleanup();
+    herdr.stop();
+  }
+});
+
+test("another program's hcoord on PATH is left and the row says so", async () => {
+  const herdr = await startHerdr({ agents: false });
+  const run = isolate(herdr, "hp");
+  const home = run.env.HOME!;
+  const env: Record<string, string> = { ...run.env };
+  for (const key of ["HIDE_STATE_DIR", "XDG_STATE_HOME", "HCOORD_HOME"]) delete env[key];
+  const appHide = path.join(stageBundle(run.root), "hide");
+  const newHcoord = path.join(home, ".hide", "hcoord");
+  const label = hcoordLabel(newHcoord);
+  expect(label).not.toBe(OPERATOR_HCOORD_LABEL);
+  const theirs = path.join(home, ".local", "bin", "hcoord");
+  fs.mkdirSync(path.dirname(theirs), { recursive: true });
+  fs.writeFileSync(theirs, "#!/bin/sh\necho theirs\n", { mode: 0o755 });
+  try {
+    expect(json(appHide, ["connect"], env).ok).toBe(true);
+    await expect.poll(() => fs.existsSync(path.join(newHcoord, "bin", "hcoord")), { timeout: 120_000 }).toBe(true);
+    expect(fs.readFileSync(theirs, "utf8")).toBe("#!/bin/sh\necho theirs\n");
+
+    // B14: the hcoord row is installed and names the file that keeps `hcoord` on PATH from running it.
+    const app = await relaunch({ ...run.env, HIDE_STATE_DIR: path.join(home, ".hide", "state"), HIDE_CLI_PATH: appHide });
+    try {
+      const page = await shellPage(app);
+      await page.locator("[data-open-settings]").click();
+      await page.locator('[data-settings-tab="devices"]').click();
+      const note = page.locator('[data-kit-part="local:hcoord:installed"] [data-kit-part-note]');
+      await expect(note).toContainText(`${theirs} is another program's file; Hide left it`);
+      await screenshot(page, "home-layout-foreign-hcoord");
+    } finally {
+      await app.close().catch(() => undefined);
+    }
+  } finally {
+    spawnSync(appHide, ["stop"], { env, timeout: 20_000 });
     bootoutTestLabel(label);
     run.cleanup();
     herdr.stop();
