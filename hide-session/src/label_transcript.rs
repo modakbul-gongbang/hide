@@ -376,7 +376,13 @@ mod tests {
         )
         .unwrap();
         let link = transcript_path(root.path(), "s1.jsonl");
-        std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+        match hide_platform::fs::link::create_link(&elsewhere, &link) {
+            Ok(()) => {}
+            // A Windows account with neither the privilege nor Developer
+            // Mode cannot make the link this test needs.
+            Err(error) if hide_platform::fs::link::needs_privilege(&error) => return,
+            Err(error) => panic!("{error}"),
+        }
 
         assert_eq!(
             read(root.path(), &request(&link, None)).unwrap_err(),
