@@ -21,7 +21,11 @@ use crate::root::RootIdentity;
 /// 11: `home_sync` manages Hide's Home folder and its project links.
 /// 12: `label_transcript` reads a pane's conversation for its label (PRD
 /// labels-in-hided D-03); a helper on 11 would refuse it as unknown.
-pub const PROTOCOL_VERSION: u32 = 12;
+/// 13: a helper running from the default root `~/.hide/host-helper` takes
+/// the old layout's helper root and bridge folder off the device in its
+/// `kit` apply, and its report carries `legacy_retirement` (PRD
+/// hide-home-layout D-13); a helper on 12 would leave them.
+pub const PROTOCOL_VERSION: u32 = 13;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {

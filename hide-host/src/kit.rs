@@ -6,7 +6,10 @@
 //! `<root>/current` at that folder, so the hooks, the `hide` link and the
 //! plugin name a path that outlives the build (B16), and removes the builds
 //! the link no longer leads to. The root is always the one the running helper
-//! was installed under; no request can name another folder.
+//! was installed under; no request can name another folder. A helper under
+//! the default root also retires the old layout's root and bridge folder
+//! once nothing names them (`hide_kit::legacy::device`), whose paths are
+//! constants of the helper, never a request's.
 //!
 //! When the SSH channel closes, [`stop`] raises the kit's stop flag, which
 //! ends a child the kit is waiting on, so the helper does not outlive its
@@ -28,10 +31,7 @@ pub(crate) fn stop() {
     STOP.store(true, Ordering::Relaxed);
 }
 
-/// A build folder's name: the first sixteen hex digits of the build digest.
-pub fn is_build_name(name: &str) -> bool {
-    name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
+pub use hide_kit::is_build_name;
 
 /// Answers one `kit` request for the helper root the running helper was
 /// installed under.

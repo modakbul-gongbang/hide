@@ -244,10 +244,10 @@ export function kitConsentTerms(helperRoot: string | null, cliDir: string | null
   const root = helperRoot ?? "the helper folder in the device account's home";
   return [
     `Hide copies its helper, the hide command, its hook helper and hcoord into ${root}, and replaces them there when this version of Hide needs newer ones.`,
-    `It links hide in ${cliDir ?? "the account's command folder"}, adds its own entries to ~/.claude/settings.json and ~/.codex/hooks.json, and installs hcoord at ~/.hcoord/bin/hcoord with the device's Node. Another tool's entries and files are left as they are.`,
+    `It links hide and hcoord in ${cliDir ?? "the account's command folder"}, adds its own entries to ~/.claude/settings.json and ~/.codex/hooks.json, and installs hcoord at ~/.hide/hcoord/bin/hcoord with the device's Node, moving an existing ~/.hcoord there. It keeps its records in ~/.hide and takes the folders of an older Hide layout away. Another tool's entries and files are left as they are.`,
     "The helper runs only while Hide holds the SSH connection, serves registered projects, and manages the device's Home (~/hide and its project links). Agent labels for the device's panes are made on this Mac from conversations the helper reads, and hcoord keeps its own daemon.",
     "Every move to the Trash or worktree removal still asks you for its target each time. A part you take away stays away until you press Reinstall.",
-    "Removing the device takes Hide's parts off it again, except hcoord, which other tools there may use. A different SSH identity asks again.",
+    "Removing the device takes Hide's parts and its helper folder off it again; hcoord and the records in ~/.hide stay. A different SSH identity asks again.",
   ];
 }
 
@@ -263,7 +263,8 @@ export function kitRemovalLine(device: Device): string {
     return `${sharing} reaches the same account on ${where}, so Hide's kit stays there for it.`;
   }
   if (device.host?.state === "ready") {
-    return `On ${where}, Hide removes its hook entries, its hide link and its helper folder; hcoord stays because other tools may use it.`;
+    const folder = device.host?.helper_root ? ` (${device.host.helper_root})` : "";
+    return `On ${where}, Hide removes its hook entries, its hide link and its helper folder${folder}; hcoord and the records in ~/.hide stay.`;
   }
   return `Hide's helper is not connected to ${where}, so its kit stays there; it does not get in the way of agent sessions, and adding the device again replaces it.`;
 }

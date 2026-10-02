@@ -111,13 +111,39 @@ impl Runtime {
     /// chose to carry it to the whole kit on its next connection (D-13).
     fn consent_current(&self, consent: &HostConsent) -> bool {
         (consent.contract == HOST_CONSENT_CONTRACT || consent.contract == HOST_CONSENT_CARRIED_FROM)
-            && consent.helper_root == self.host_helper_root
+            && (consent.helper_root == self.host_helper_root || self.carries_root(consent))
             && consent.cli_dir.as_deref() == Some(self.host_cli_dir.as_str())
     }
 
-    /// Rewrites a contract-2 consent to this build's contract, keeping the
+    /// Whether a consent names the legacy default helper root while this
+    /// build installs at the default one: the operator allowed Hide's helper
+    /// in Hide's own folder, which moved, so the consent moves with it
+    /// without asking (PRD hide-home-layout D-12). A root the daemon was told
+    /// (HIDE_HOST_HELPER_ROOT) is another scope, and a consent for any other
+    /// root stays as it was.
+    fn carries_root(&self, consent: &HostConsent) -> bool {
+        self.host_helper_root == hide_kit::layout::HELPER_ROOT
+            && consent.helper_root == hide_kit::layout::LEGACY_HELPER_ROOT
+    }
+
+    /// The root a current consent installs at.
+    fn consent_root(&self, consent: &HostConsent) -> String {
+        if self.carries_root(consent) {
+            self.host_helper_root.clone()
+        } else {
+            consent.helper_root.clone()
+        }
+    }
+
+    /// Rewrites a carried consent to this build's scope (a contract-2 consent
+    /// to contract 3, a legacy default root to the default root), keeping the
     /// identity it was bound to, before the connection it covers starts.
     fn carry_consent_forward(&mut self, device_id: &str) {
+        let root = self.host_helper_root.clone();
+        let carries_root = self
+            .device_registration(device_id)
+            .and_then(|registration| registration.host_consent.as_ref())
+            .is_some_and(|consent| self.carries_root(consent));
         let Some(consent) = self
             .snapshot
             .ui_state
@@ -125,19 +151,42 @@ impl Runtime {
             .iter_mut()
             .find(|registration| registration.id == device_id)
             .and_then(|registration| registration.host_consent.as_mut())
-            .filter(|consent| consent.contract == HOST_CONSENT_CARRIED_FROM)
+            .filter(|consent| consent.contract == HOST_CONSENT_CARRIED_FROM || carries_root)
         else {
             return;
         };
+        let from_contract = consent.contract;
         consent.contract = HOST_CONSENT_CONTRACT;
+        let from_root = carries_root.then(|| std::mem::replace(&mut consent.helper_root, root));
         self.persist_current_ui_state();
-        crate::diagnostic!(serde_json::json!({
-            "component": "remote_host",
-            "kind": "host.consent_upgraded",
-            "target": device_id,
-            "from": HOST_CONSENT_CARRIED_FROM,
-            "contract": HOST_CONSENT_CONTRACT,
-        }));
+        if from_contract == HOST_CONSENT_CARRIED_FROM {
+            crate::diagnostic!(serde_json::json!({
+                "component": "remote_host",
+                "kind": "host.consent_upgraded",
+                "target": device_id,
+                "from": HOST_CONSENT_CARRIED_FROM,
+                "contract": HOST_CONSENT_CONTRACT,
+            }));
+        }
+        if let Some(from_root) = from_root {
+            crate::diagnostic!(serde_json::json!({
+                "component": "remote_host",
+                "kind": "host.consent_root_carried",
+                "target": device_id,
+                "from": from_root,
+                "helper_root": self.host_helper_root,
+            }));
+        }
+    }
+
+    /// The consent a connection starts with: carried forward first, then read
+    /// again, so the connection installs at the root the carry wrote rather
+    /// than at the one the registration was cloned with.
+    pub(super) fn carried_consent(&mut self, device_id: &str, consent: HostConsent) -> HostConsent {
+        self.carry_consent_forward(device_id);
+        self.device_registration(device_id)
+            .and_then(|registration| registration.host_consent.clone())
+            .unwrap_or(consent)
     }
 
     /// A fresh consent in this build's scope, unbound until the first
@@ -247,7 +296,7 @@ impl Runtime {
             self.set_host_phase(device_id, HostPhase::NotAllowed);
             return self.refresh_device_snapshots();
         }
-        self.carry_consent_forward(device_id);
+        let consent = self.carried_consent(device_id, consent);
         let Some(client) = self
             .remote_connections
             .get(device_id)
@@ -517,7 +566,7 @@ impl Runtime {
             helper_root: Some(
                 consent
                     .filter(|_| current)
-                    .map(|consent| consent.helper_root.clone())
+                    .map(|consent| self.consent_root(consent))
                     .unwrap_or_else(|| self.host_helper_root()),
             ),
             cli_dir: Some(
