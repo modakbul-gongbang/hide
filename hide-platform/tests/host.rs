@@ -18,6 +18,25 @@ fn the_home_folder_is_an_absolute_folder_that_exists() {
 }
 
 #[test]
+fn the_state_folder_under_a_home_is_the_systems_own_convention() {
+    let home = std::env::temp_dir().join("example-home");
+    let expected = if cfg!(target_os = "macos") {
+        home.join("Library").join("Application Support")
+    } else if cfg!(windows) {
+        home.join("AppData").join("Local")
+    } else {
+        home.join(".local").join("state")
+    };
+    assert_eq!(host::state_dir_under(&home), expected);
+    // Without a variable that moves it, the account's state folder is the
+    // one under its home.
+    let home_only = variables(vec![(host::HOME_VARIABLE, home.clone())]);
+    if !cfg!(windows) {
+        assert_eq!(host::state_dir_from(&home_only).unwrap(), expected);
+    }
+}
+
+#[test]
 fn the_state_folder_is_the_accounts_own() {
     let state = host::state_dir().unwrap();
     assert!(state.is_absolute(), "{}", state.display());

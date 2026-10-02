@@ -77,17 +77,28 @@ pub fn state_dir() -> io::Result<PathBuf> {
 
 /// [`state_dir`] from the caller's variables.
 pub fn state_dir_from(variables: Variables) -> io::Result<PathBuf> {
-    if cfg!(target_os = "macos") {
-        Ok(home_dir_from(variables)?
-            .join("Library")
-            .join("Application Support"))
-    } else if cfg!(windows) {
+    if cfg!(windows) {
         absolute_variable(variables, "LOCALAPPDATA")
+    } else if !cfg!(target_os = "macos") && nonempty_variable(variables, "XDG_STATE_HOME").is_some()
+    {
+        absolute_variable(variables, "XDG_STATE_HOME")
     } else {
-        match nonempty_variable(variables, "XDG_STATE_HOME") {
-            Some(_) => absolute_variable(variables, "XDG_STATE_HOME"),
-            None => Ok(home_dir_from(variables)?.join(".local").join("state")),
-        }
+        Ok(state_dir_under(&home_dir_from(variables)?))
+    }
+}
+
+/// The state folder this system's convention puts under `home` when no
+/// variable moves it: `Library/Application Support` on macOS,
+/// `.local/state` on Linux, `AppData\Local` on Windows. It is for a caller
+/// whose state follows a home it was handed (an isolated run) rather than
+/// the account's.
+pub fn state_dir_under(home: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library").join("Application Support")
+    } else if cfg!(windows) {
+        home.join("AppData").join("Local")
+    } else {
+        home.join(".local").join("state")
     }
 }
 

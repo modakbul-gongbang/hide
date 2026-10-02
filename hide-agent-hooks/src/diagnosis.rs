@@ -361,21 +361,19 @@ fn resolve_runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathBuf>
         AgentRuntime::ClaudeCode => "claude",
         AgentRuntime::Codex => "codex",
     };
-    let mut candidates = std::env::var_os("PATH")
-        .map(|path| {
-            std::env::split_paths(&path)
-                .map(|directory| directory.join(name))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    candidates.extend([
-        home.join(".local/bin").join(name),
-        home.join("Library/pnpm").join(name),
-        home.join(".npm-global/bin").join(name),
-        PathBuf::from("/opt/homebrew/bin").join(name),
-        PathBuf::from("/usr/local/bin").join(name),
-    ]);
-    candidates.into_iter().find(|candidate| candidate.is_file())
+    // Where the installers put a CLI that a hook's PATH may not reach.
+    let installed = std::env::join_paths([
+        home.join(".local/bin"),
+        home.join("Library/pnpm"),
+        home.join(".npm-global/bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ])
+    .ok()?;
+    hide_platform::host::login_path()
+        .ok()
+        .and_then(|path| hide_platform::host::find_program(&path, name))
+        .or_else(|| hide_platform::host::find_program(&installed, name))
 }
 
 fn version_output(binary: &Path, timeout: Duration) -> Option<String> {

@@ -180,18 +180,10 @@ fn owner_pid(name: &str) -> Option<u32> {
     pid.parse().ok().filter(|pid| *pid != 0)
 }
 
-#[cfg(unix)]
 fn is_own_directory(path: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
     // `symlink_metadata`, so a symlink carrying the prefix is never followed.
-    std::fs::symlink_metadata(path)
-        // SAFETY: `getuid` has no preconditions and cannot fail.
-        .is_ok_and(|meta| meta.is_dir() && meta.uid() == unsafe { libc::getuid() })
-}
-
-#[cfg(not(unix))]
-fn is_own_directory(_path: &Path) -> bool {
-    false
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
+        && hide_platform::fs::private::owned_by_current_user(path).unwrap_or(false)
 }
 
 /// The bytes a home holds, for the log line. Symlinks are counted as
@@ -219,12 +211,13 @@ fn home_unavailable(stage: &str, kind: std::io::ErrorKind) -> AiError {
 
 /// The directory the user's real `auth.json` lives in: an explicit
 /// `CODEX_HOME`, or `~/.codex`.
-fn source_codex_dir() -> PathBuf {
+fn source_codex_dir() -> Result<PathBuf, std::io::ErrorKind> {
     if let Some(dir) = std::env::var_os("CODEX_HOME") {
-        return PathBuf::from(dir);
+        return Ok(PathBuf::from(dir));
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    home.unwrap_or_default().join(".codex")
+    hide_platform::host::home_dir()
+        .map(|home| home.join(".codex"))
+        .map_err(|error| error.kind())
 }
 
 fn unique_suffix() -> u128 {
@@ -234,30 +227,16 @@ fn unique_suffix() -> u128 {
         .unwrap_or(0)
 }
 
-#[cfg(unix)]
 fn create_private_dir(dir: &Path) -> Result<(), std::io::ErrorKind> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(false)
-        .mode(0o700)
-        .create(dir)
-        .map_err(|error| error.kind())
+    hide_platform::fs::private::create_dir(dir).map_err(|error| error.kind())
 }
 
-#[cfg(not(unix))]
-fn create_private_dir(_dir: &Path) -> Result<(), std::io::ErrorKind> {
-    Err(std::io::ErrorKind::Unsupported)
-}
-
-#[cfg(unix)]
+/// A link to a file needs a privilege on a Windows account without
+/// Developer Mode; the home is then unavailable with that kind.
 fn link_auth_json(home: &Path) -> Result<(), std::io::ErrorKind> {
-    let source = source_codex_dir().join("auth.json");
-    std::os::unix::fs::symlink(source, home.join("auth.json")).map_err(|error| error.kind())
-}
-
-#[cfg(not(unix))]
-fn link_auth_json(_home: &Path) -> Result<(), std::io::ErrorKind> {
-    Err(std::io::ErrorKind::Unsupported)
+    let source = source_codex_dir()?.join("auth.json");
+    hide_platform::fs::link::create_link(&source, &home.join("auth.json"))
+        .map_err(|error| error.kind())
 }
 
 #[cfg(all(test, unix))]

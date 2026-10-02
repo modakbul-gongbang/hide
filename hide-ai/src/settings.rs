@@ -113,10 +113,10 @@ impl AiSettings {
     }
 }
 
-/// Where the settings file lives, given a home directory.
+/// Where the settings file lives, given a home directory: hide's folder in
+/// the state folder the system keeps under that home.
 pub fn settings_path(home: &Path) -> PathBuf {
-    home.join("Library")
-        .join("Application Support")
+    hide_platform::host::state_dir_under(home)
         .join("hide")
         .join("ai.json")
 }
@@ -195,6 +195,9 @@ mod tests {
     #[test]
     fn the_settings_file_sits_beside_hides_own_state() {
         let path = settings_path(Path::new("/Users/example"));
+        assert!(path.starts_with("/Users/example"), "{}", path.display());
+        assert!(path.ends_with("hide/ai.json"), "{}", path.display());
+        #[cfg(target_os = "macos")]
         assert_eq!(
             path,
             PathBuf::from("/Users/example/Library/Application Support/hide/ai.json")

@@ -1234,6 +1234,7 @@ name = "hide-memory"
 version = "0.1.0"
 dependencies = [
  "hide-ai",
+ "hide-platform",
  "hide-project",
  "regex",
  "ring",

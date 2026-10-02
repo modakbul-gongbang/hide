@@ -38,13 +38,24 @@ const REPORT_TIMEOUT: Duration = Duration::from_secs(2);
 ///
 /// Herdr exports `HERDR_SOCKET_PATH` to the panes of a server that was not
 /// started on the default path, so a hook inside such a pane reaches the
-/// server that owns it. Without the override the hook uses Herdr's default,
-/// which is the same resolution hided applies.
-pub fn socket_path(home: &Path) -> PathBuf {
-    std::env::var_os("HERDR_SOCKET_PATH")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config/herdr/herdr.sock"))
+/// server that owns it. Without the override the hook uses Herdr's default
+/// for `home`, in Herdr's own order (`hide_platform::host`), which is the
+/// same resolution hided applies; where that order has no answer the report
+/// fails with the reason.
+pub fn socket_path(home: &Path) -> Result<PathBuf, ApiError> {
+    if let Some(path) = std::env::var_os("HERDR_SOCKET_PATH").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    let variables = |name: &str| {
+        if name == hide_platform::host::HOME_VARIABLE {
+            Some(home.as_os_str().to_owned())
+        } else {
+            std::env::var_os(name)
+        }
+    };
+    hide_platform::host::herdr_socket_default_from(&variables).map_err(|error| {
+        ApiError::Transport(format!("Herdr's default socket has no location: {error}"))
+    })
 }
 
 /// The metadata source every hook report is filed under.
@@ -336,9 +347,12 @@ mod tests {
     fn the_socket_comes_from_the_environment_or_herdrs_default() {
         // The override is process-global, so this test only checks the
         // default; the override branch is one `var_os` read.
-        if std::env::var_os("HERDR_SOCKET_PATH").is_none() {
+        if std::env::var_os("HERDR_SOCKET_PATH").is_none()
+            && std::env::var_os("XDG_CONFIG_HOME").is_none()
+            && !cfg!(windows)
+        {
             assert_eq!(
-                socket_path(Path::new("/Users/example")),
+                socket_path(Path::new("/Users/example")).unwrap(),
                 Path::new("/Users/example/.config/herdr/herdr.sock")
             );
         }

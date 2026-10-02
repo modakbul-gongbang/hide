@@ -853,8 +853,6 @@ pub fn resolve_binary(binary: &Path) -> Option<PathBuf> {
     if binary.components().count() > 1 {
         return binary.is_file().then(|| binary.to_path_buf());
     }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(binary))
-        .find(|candidate| candidate.is_file())
+    let path = hide_platform::host::login_path().ok()?;
+    hide_platform::host::find_program(&path, binary.to_str()?)
 }
