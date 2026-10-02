@@ -1959,12 +1959,7 @@ impl Runtime {
     }
     /// Routes key bytes only to an official controller. The actual pipe write
     /// runs on the session writer thread, outside the runtime mutex.
-    pub(super) fn write_terminal_control(
-        &mut self,
-        pane_id: &str,
-        bytes_base64: &str,
-        trace: Option<crate::model::TerminalInputTrace>,
-    ) {
+    pub(super) fn write_terminal_control(&mut self, pane_id: &str, bytes_base64: &str) {
         if self.close_operation_holds_pane(pane_id) {
             self.set_error(
                 "terminal.close_pending",
@@ -1982,7 +1977,7 @@ impl Runtime {
         };
         match self.terminal_sessions.get(pane_id) {
             Some(session) if session.mode == TerminalSessionMode::Control => {
-                if let Err(message) = session.write_bytes(&bytes, trace) {
+                if let Err(message) = session.write_bytes(&bytes) {
                     self.set_error("terminal.write_failed", message, true);
                 }
             }
@@ -2004,24 +1999,6 @@ impl Runtime {
             }
         }
     }
-    pub(crate) fn ingest_terminal_input_sent(
-        &mut self,
-        pane_id: &str,
-        generation: u64,
-        sent: crate::model::TerminalInputSent,
-    ) -> bool {
-        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
-            return false;
-        }
-        self.append_terminal_chunk(pane_id.to_owned(), String::new());
-        self.snapshot
-            .terminal
-            .chunks
-            .last_mut()
-            .expect("just appended input trace")
-            .input_sent = Some(sent);
-        true
-    }
     pub(super) fn append_terminal_chunk(&mut self, pane_id: String, bytes_base64: String) {
         self.snapshot.terminal.sequence = self.snapshot.terminal.sequence.saturating_add(1);
         self.snapshot.terminal.chunks.push(TerminalChunk {
@@ -2029,7 +2006,6 @@ impl Runtime {
             sequence: self.snapshot.terminal.sequence,
             bytes_base64,
             frame: None,
-            input_sent: None,
         });
         const RETAINED_TERMINAL_CHUNKS: usize = 512;
         if self.snapshot.terminal.chunks.len() > RETAINED_TERMINAL_CHUNKS {

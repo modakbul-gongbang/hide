@@ -1764,21 +1764,6 @@ pub struct TerminalChunk {
     pub bytes_base64: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame: Option<TerminalFrame>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_sent: Option<TerminalInputSent>,
-}
-
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
-pub struct TerminalInputTrace {
-    pub id: u64,
-    pub started_ns: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
-pub struct TerminalInputSent {
-    pub id: u64,
-    pub milliseconds: f64,
-    pub outcome: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
