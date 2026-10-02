@@ -142,19 +142,12 @@ mod sys {
         private::open_or_create_file(&folder.join(format!("{:04x}.lock", hash % STRIPES)))
     }
 
-    /// `<local app data>\hide\locks`, made private on first use and, when it
+    /// `<state folder>\hide\locks` (under `%LOCALAPPDATA%`), made private on first use and, when it
     /// was there already, trusted only if the account owns it and nobody else
     /// can change it, since another account that made it first could hold
     /// every lock for ever.
     fn lock_folder() -> io::Result<PathBuf> {
-        let mut folder = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "LOCALAPPDATA is not set, so there is nowhere to keep the lock files",
-                )
-            })?;
+        let mut folder = crate::host::state_dir()?;
         for part in ["hide", "locks"] {
             folder.push(part);
             match private::create_dir(&folder) {

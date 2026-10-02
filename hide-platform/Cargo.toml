@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 interprocess = "=2.4.4"
+trash = { version = "=5.2.9", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
@@ -18,6 +19,9 @@ notify = "=8.2.0"
 
 [target.'cfg(windows)'.dependencies]
 junction = "=2.1.0"
+# trash refuses to compile on Windows unless one COM apartment mode is chosen
+# (it is deliberately a compile error). Apartment-threaded is its own default.
+trash = { version = "=5.2.9", default-features = false, features = ["coinit_apartmentthreaded"] }
 widestring = "=1.2.1"
 windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
@@ -29,6 +33,8 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_System_JobObjects",
     "Win32_System_Pipes",
     "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
 ] }
 
