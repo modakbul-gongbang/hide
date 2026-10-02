@@ -202,13 +202,19 @@ fn stable_links(home: &Path) -> [PathBuf; 3] {
 }
 
 /// `chosen` spelled by a stable link that resolves to the same file, so the
-/// shim keeps working after the package manager upgrades that Node; a Node
-/// no stable link leads to is kept as it is.
+/// shim keeps working after the package manager upgrades that Node; a stable
+/// link, or a Node no stable link leads to, is kept as it is.
 fn stable_spelling(chosen: PathBuf, home: &Path) -> PathBuf {
+    let links = stable_links(home);
+    if links.contains(&chosen) {
+        return chosen;
+    }
+    // `chosen` answered a version a moment ago, so this fails only if it was
+    // removed since; the unchanged path is then the safe answer.
     let Ok(real) = chosen.canonicalize() else {
         return chosen;
     };
-    stable_links(home)
+    links
         .into_iter()
         .find(|link| link.canonicalize().is_ok_and(|target| target == real))
         .unwrap_or(chosen)
@@ -358,7 +364,14 @@ mod tests {
         std::fs::create_dir_all(link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&versioned, &link).unwrap();
         shim_naming(home.path(), &versioned);
-        assert_eq!(find_node(home.path(), &stop), Ok(link));
+        assert_eq!(find_node(home.path(), &stop), Ok(link.clone()));
+        // The rewritten shim is a fixed point: the next pass keeps it.
+        shim_naming(home.path(), &link);
+        assert_eq!(find_node(home.path(), &stop), Ok(link.clone()));
+
+        // A stable link is kept as spelled, never swapped for another stable
+        // link that reaches the same file.
+        assert_eq!(stable_spelling(link.clone(), home.path()), link);
 
         let other = tempfile::tempdir().unwrap();
         let chosen = other.path().join("tools/node/bin/node");
