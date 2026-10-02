@@ -244,10 +244,12 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     // its pull request, then the agent in front. ⌘K read the project once if
     // nothing had, so the issue and the pull request arrive after the open.
     await openSearch(page);
-    await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Related"]);
+    // Recent follows Related with the other checkout of the project, which was in front before (PRD cmdk-recent B1, B4).
+    await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Related", "Recent"]);
     await expect
       .poll(() => rowIds(page), { timeout: 30_000 })
-      .toEqual([expect.stringMatching(/^issue:/), expect.stringMatching(/^checkout:/), expect.stringMatching(/^pr:.*:180$/), `agent:${agent}`]);
+      .toEqual([expect.stringMatching(/^issue:/), expect.stringMatching(/^checkout:/), expect.stringMatching(/^pr:.*:180$/), `agent:${agent}`, expect.stringMatching(/^checkout:/)]);
+    await expect(page.locator('[data-palette-group="recent"] [data-palette-row]')).toHaveCount(1);
     await expect(rows(page).first()).toContainText("팔레트 이동 이슈");
     await expect(page.locator('[data-palette-row^="pr:"]')).toContainText("⌘K를 이동 팔레트로");
     await expect(page.locator('[data-palette-row^="pr:"]')).toContainText("Open");
