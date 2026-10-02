@@ -96,9 +96,12 @@ pub fn canonical(path: &Path) -> io::Result<PathBuf> {
     sys::canonical(path)
 }
 
-/// The path the open file or folder is at now, spelled as [`canonical`]
-/// spells it: after a rename it is the new path. A file that was removed
-/// while open has none on Linux (`NotFound`).
+/// The path the open file or folder is at now, as the system spells it:
+/// after a rename it is the new path. On Windows it keeps the `\\?\`
+/// prefix whatever its length, so two answers compare by prefix (a file
+/// under a folder starts with the folder's answer), which [`canonical`]'s
+/// shortened spelling does not promise. A file that was removed while open
+/// has none on Linux (`NotFound`).
 pub fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
     sys::path_of(handle)
 }
@@ -450,7 +453,7 @@ mod sys {
     }
 
     pub(super) fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
-        Ok(short(crate::fs::path_of(handle)?))
+        crate::fs::path_of(handle)
     }
 
     /// The path without the `\\?\` prefix wherever it means the same.
