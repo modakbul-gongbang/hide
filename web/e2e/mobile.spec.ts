@@ -20,7 +20,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { screenshot } from "./wire";
 
@@ -186,16 +186,6 @@ async function phoneContext(browser: Browser, push?: { endpoint: string; p256dh:
   return context;
 }
 
-/** Sets and clears one pane's status tokens, the way the label plugin reports them. */
-function report(herdr: HerdrFixture, pane: string, set: Record<string, string>, clear: string[] = []): void {
-  const args = ["pane", "report-metadata", pane, "--source", "e2e-mobile"];
-  for (const [name, value] of Object.entries(set)) args.push("--token", `${name}=${value}`);
-  for (const name of clear) args.push("--clear-token", name);
-  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
-}
-
-const STATES = ["status_question_new", "status_working", "status_done", "expected_reply"];
-
 const SESSION = "0f0e0d0c-0b0a-4000-8000-000000000001";
 
 /** One Claude transcript record: an operator's prompt or the agent's text. */
@@ -203,25 +193,28 @@ function turn(type: "user" | "assistant", text: string, minute: number): string 
   const timestamp = `2026-09-29T${String(9 + Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}:00Z`;
   return JSON.stringify(
     type === "user"
-      ? { type, userType: "external", promptId: `prompt-${minute}`, timestamp, message: { role: "user", content: text } }
-      : { type, timestamp, message: { role: "assistant", content: [{ type: "text", text }] } },
+      ? { type, sessionId: SESSION, userType: "external", promptId: `prompt-${minute}`, timestamp, message: { role: "user", content: text } }
+      : { type, sessionId: SESSION, timestamp, message: { role: "assistant", content: [{ type: "text", text }] } },
   );
 }
 
 function toolOutput(text: string): string {
-  return JSON.stringify({ type: "user", timestamp: "2026-09-29T10:05:00Z", message: { role: "user", content: [{ type: "tool_result", content: text }] } });
+  return JSON.stringify({ type: "user", sessionId: SESSION, timestamp: "2026-09-29T10:05:00Z", message: { role: "user", content: [{ type: "tool_result", content: text }] } });
 }
 
-function ask(herdr: HerdrFixture, pane: string, question: string): void {
-  report(herdr, pane, { status_question_new: "?", expected_reply: question }, STATES.filter((name) => name !== "status_question_new" && name !== "expected_reply"));
+/** The fixture's titles, which the core keeps on every label it makes. */
+function title(herdr: HerdrFixture, pane: string): string {
+  return pane === herdr.panes[0] ? "Agent one" : "Agent two";
 }
 
-function work(herdr: HerdrFixture, pane: string): void {
-  report(herdr, pane, { status_working: "●" }, STATES.filter((name) => name !== "status_working"));
+/** The agent stops and its label asks the operator `question`. */
+async function ask(herdr: HerdrFixture, pane: string, question: string): Promise<void> {
+  await setFixtureLifecycle(herdr, pane, "idle");
+  labelAgent(herdr, pane, { task: title(herdr, pane), reply: question, question: true });
 }
 
-function finish(herdr: HerdrFixture, pane: string): void {
-  report(herdr, pane, { status_done: "✓" }, STATES.filter((name) => name !== "status_done"));
+async function work(herdr: HerdrFixture, pane: string): Promise<void> {
+  await setFixtureLifecycle(herdr, pane, "working");
 }
 
 async function openMobileSettings(page: Page, daemon: Daemon): Promise<void> {
@@ -277,6 +270,9 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
   const contexts: BrowserContext[] = [];
   try {
     const [one, two] = herdr.panes;
+    // Herdr's clients look here while a turn ends, so it ends unseen: done.
+    const elsewhere = elsewhereTab(herdr);
+    const finish = (pane: string) => finishFixtureTurn(herdr, pane, elsewhere);
     daemon = await startHided(herdr, "mobile", undefined, { HIDE_TAILSCALE_BIN: tailscale.bin });
 
     // B1: off by default, and nothing asked Tailscale anything.
@@ -328,8 +324,8 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(stale.locator('[data-phone-guidance="code_expired"]')).toHaveText("코드가 만료됐어요. 맥에서 QR을 다시 여세요.", { timeout: 20_000 });
 
     // Agent states before the phone opens: one asks, two works.
-    ask(herdr, one, "배포 전에 테스트를 다시 돌릴까요?");
-    work(herdr, two);
+    await ask(herdr, one, "배포 전에 테스트를 다시 돌릴까요?");
+    await work(herdr, two);
 
     // B11: the QR opens the pairing page; 연결 lands on the list and the Mac lists the phone.
     const phoneContextOne = await phoneContext(browser, push);
@@ -367,7 +363,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(phone.locator('[data-phone-group="working"]').locator(`[data-phone-agent$="|${two}"]`)).toBeVisible();
     await expect(phone.locator("[data-phone-group] h2").first()).toContainText("내 확인 대기");
     // B21: live; two asks and joins one under 내 확인 대기 without a reload.
-    ask(herdr, two, "어느 브랜치에 올릴까요?");
+    await ask(herdr, two, "어느 브랜치에 올릴까요?");
     await expect(phone.locator('[data-phone-group="needs_you"] [data-phone-group-count]')).toHaveText("2", { timeout: 20_000 });
     // B41: an idle list sends nothing; the phone hears only changes.
     const agentFrames = () => frames.filter((frame) => frame.includes('"type":"agents"')).length;
@@ -381,6 +377,9 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const transcript = path.join(daemon.home, ".claude", "projects", "-fixture", `${SESSION}.jsonl`);
     fs.mkdirSync(path.dirname(transcript), { recursive: true });
     const turns = Array.from({ length: 70 }, (_, index) => turn(index % 2 === 0 ? "user" : "assistant", `turn ${String(index).padStart(2, "0")}`, index));
+    // The first request carries what the fixture provider answers, so the
+    // session keeps the agent's title.
+    turns[0] = turn("user", `turn 00 ${labelMarker({ task: "Agent one" })}`, 0);
     turns[69] = turn("assistant", "turn 69 **굵게**\n\n- 항목 하나\n- 항목 둘\n\n```\ncode line\n```", 69);
     turns.splice(66, 0, toolOutput("SECRET-TOOL-OUTPUT"), turn("user", "<system-reminder>INJECTED-CONTEXT</system-reminder>", 66));
     fs.writeFileSync(transcript, `${turns.join("\n")}\n`);
@@ -490,7 +489,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(page.locator("[data-mobile-phone-line]")).toHaveText("방금 · 알림 받는 중");
 
     // B31, B33 (항상): two finishes; one notification for it, with no terminal content.
-    finish(herdr, two);
+    await finish(two);
     await expect.poll(() => push.received.length, { timeout: 20_000 }).toBe(1);
     const done = push.received[0]!;
     expect(done.payload.title).toBe("Agent two");
@@ -503,9 +502,9 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     // B33: while the phone views one, one's request sends nothing.
     await oneRow.tap();
     await expect(detail).toBeVisible();
-    work(herdr, one);
+    await work(herdr, one);
     await expect.poll(() => groupOf(frames, one)).toBe("working");
-    ask(herdr, one, "정말 배포할까요?");
+    await ask(herdr, one, "정말 배포할까요?");
     await expect.poll(() => groupOf(frames, one)).toBe("needs_you");
     await noPushFor(push.received, 1);
     await expect.poll(() => coreLog(daemon as Daemon)).toContain('"reason":"viewing"');
@@ -513,18 +512,18 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
 
     // B33 (끔): nothing.
     await page.locator('[data-push-choice="off"]').click();
-    work(herdr, two);
+    await work(herdr, two);
     await expect.poll(() => groupOf(frames, two)).toBe("working");
-    ask(herdr, two, "끔에서는 조용히");
+    await ask(herdr, two, "끔에서는 조용히");
     await expect.poll(() => groupOf(frames, two)).toBe("needs_you");
     await noPushFor(push.received, 1);
 
     // B33 (앱이 닫혀 있을 때만): nothing while the desktop is connected. The
     // desktop then reads two, which clears its notification (B34).
     await page.locator('[data-push-choice="app_closed"]').click();
-    work(herdr, two);
+    await work(herdr, two);
     await expect.poll(() => groupOf(frames, two)).toBe("working");
-    finish(herdr, two);
+    await finish(two);
     await expect.poll(() => groupOf(frames, two)).toBe("done");
     await noPushFor(push.received, 1);
     await expect.poll(() => coreLog(daemon as Daemon)).toContain('"mode":"app_closed","renderers":1');
@@ -534,9 +533,9 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await page.locator(`[data-agent-list] [data-agent-open="${two}"]`).click();
     await expect(phone.locator('[data-phone-group="seen"]').locator(`[data-phone-agent$="|${two}"]`)).toBeVisible({ timeout: 20_000 });
     await page.close();
-    work(herdr, one);
+    await work(herdr, one);
     await expect.poll(() => groupOf(frames, one)).toBe("working");
-    ask(herdr, one, "데스크톱이 닫혔을 때");
+    await ask(herdr, one, "데스크톱이 닫혔을 때");
     await expect.poll(() => push.received.length, { timeout: 20_000 }).toBe(2);
     const closed = push.received[1]!;
     expect(closed.payload.title).toBe("Agent one");
@@ -544,10 +543,9 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     expect(closed.payload.clear).toContain(`${closed.payload.device_id}|${two}`);
 
     // B28: the pane closes under an open detail; the reply bar goes inert.
-    // Two reported no session, so its detail is its terminal alone.
     await twoRow.tap();
+    await phone.locator('[data-phone-view="terminal"]').tap();
     await expect(phone.locator("[data-phone-scrollback]")).toBeVisible({ timeout: 20_000 });
-    await expect(phone.locator("[data-phone-view]")).toHaveCount(0);
     execFileSync(herdr.bin, ["pane", "close", two], { env: herdr.env, timeout: 30_000 });
     await expect(phone.locator('[data-phone-rows-state="gone"]')).toHaveText("이 pane은 더 이상 열려 있지 않아요.", { timeout: 20_000 });
     await expect(phone.locator('[data-phone-reply="true"]')).toBeDisabled();

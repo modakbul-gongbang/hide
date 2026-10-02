@@ -22,8 +22,9 @@ export type AgentRow = {
   detail?: string | null;
   /** Everything the agent last said through its hooks, uncut: the request, then the progress, one per line; absent when it said nothing. */
   message?: string | null;
-  elapsed: string;
-  /** The core's ordering key: the label plugin's activity clock, else Herdr's state sequence, zero-padded so it sorts as text. */
+  /** When the core last saw this agent change state (epoch ms); the shell counts the elapsed time from it. `null` before the core observed it. */
+  changed_at_unix_ms: number | null;
+  /** The core's ordering key: `changed_at_unix_ms` as thirteen digits, else Herdr's state sequence zero-padded, so it sorts as text. */
   last_activity?: string;
   emphasized: boolean;
   unread: boolean;
@@ -856,7 +857,7 @@ export type Device = {
 };
 
 /** One part of the install kit (`contracts/snapshot-wire-enums.json`: `kit_component_id`). */
-export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "labels" | "hcoord";
+export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "hcoord";
 
 /** What a part is on its machine (`contracts/snapshot-wire-enums.json`: `kit_component_state`). */
 export type KitComponentState = "installed" | "outdated" | "not_installed" | "removed" | "failed" | "absent";

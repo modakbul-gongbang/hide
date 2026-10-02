@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 
 # The one list of what Hide installs on a machine - the hide command, the
-# Claude Code and Codex hooks, the agent labels plugin and hcoord - and how
+# Claude Code and Codex hooks and hcoord - and how
 # each is installed, judged and removed. hided runs it for this Mac and the
 # device helper (`hide-host-helper`) runs the same code on a device, so the
 # two machines get the same kit (PRD device-parity D-09, D-10).

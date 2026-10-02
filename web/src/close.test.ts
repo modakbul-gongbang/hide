@@ -25,7 +25,7 @@ function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
     symbol: "c",
     group: "working",
     status_label: "Working",
-    elapsed: "1m",
+    changed_at_unix_ms: null,
     emphasized: false,
     unread: false,
     ...extra,

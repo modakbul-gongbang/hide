@@ -152,10 +152,6 @@ pub(crate) fn agents_response(value: Value) -> Result<Vec<ProjectedAgent>, Sessi
     }
 }
 
-pub(crate) fn agent_activity(agent: &ProjectedAgent) -> Option<&str> {
-    agent.tokens.get("activity").and_then(Value::as_str)
-}
-
 pub(crate) fn parse_subscription_line(line: &str) -> Result<SubscriptionLine, SessionFetchError> {
     if line.trim().is_empty() {
         return Err(malformed("Herdr event stream emitted an empty line"));
@@ -310,8 +306,8 @@ record_conversions!(ev);
 ///
 /// hcoord is the sole writer, including for a child created by Hide's Fork.
 /// It declares the token after both executions exist with
-/// `pane.report_metadata`, the same display-only channel the label plugin and
-/// the hook helper already use. The value is the parent's pane id, it dies
+/// `pane.report_metadata`, the same display-only channel the hook helper
+/// already uses. The value is the parent's pane id, it dies
 /// with the pane, and Hide reads it here and nowhere else.
 ///
 /// The token outlives the agent that earned it, because it dies with the

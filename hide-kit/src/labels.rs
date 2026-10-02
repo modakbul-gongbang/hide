@@ -1,49 +1,134 @@
-//! The agent labels Herdr plugin, `hide.agent-context-labels`.
+//! Retires the agent labels Herdr plugin, `hide.agent-context-labels` (PRD
+//! labels-in-hided D-12).
 //!
-//! The build ships the plugin prebuilt in `<kit_dir>/agent-context-labels/`
-//! (a manifest with no build step, its scripts and the release binary). The
-//! kit copies it to `~/.hide/kit/plugins/agent-context-labels/` and links
-//! that copy in the machine's Herdr, because Herdr keeps a linked plugin by
-//! its resolved path and a build folder does not outlive the next update.
+//! Labels are made by hided's core now, so every kit pass takes the plugin
+//! off the machine: its Herdr link however it was installed, the watcher it
+//! left running, the kit's copy, and the plugin's state folder. A watcher
+//! left behind would analyze the same turns again. Herdr's server, the agent
+//! sessions, Herdr's per-plugin config folder and the operator's
+//! `config.toml` are never touched.
 //!
-//! The same plugin installed another way - from GitHub, or linked from a
-//! checkout - is replaced, since two copies of one id cannot both run
-//! (B9). Herdr's per-plugin config folder is Herdr's and is never touched
-//! (D-15).
+//! A part that could not be taken out is reported and tried again on the next
+//! pass; the copy and the state folder stay until the link is gone, because
+//! they are how a later pass knows the plugin was ever here.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hide_herdr_client::wire::success_response::{InstalledPluginInfo, PluginSourceKind};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{KitTarget, Observed, RemoveOutcome, payload, process};
+use crate::{KitTarget, process};
 
 pub const LABELS_PLUGIN_ID: &str = "hide.agent-context-labels";
 
-/// The build's folder name for the plugin, under the kit folder.
-const PACKAGED: &str = "agent-context-labels";
-
 const HERDR_DEADLINE: Duration = Duration::from_secs(5);
 const UNINSTALL_DEADLINE: Duration = Duration::from_secs(20);
+const LSOF_DEADLINE: Duration = Duration::from_secs(5);
+/// How long a watcher has to end on SIGTERM before it is killed.
+const WATCHER_EXIT_DEADLINE: Duration = Duration::from_secs(5);
 
-/// Where the kit keeps the copy Herdr links.
+/// What retiring the plugin did on one machine.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LabelsRetirement {
+    /// Each part found and taken out, in a few words.
+    #[serde(default)]
+    pub removed: Vec<String>,
+    /// Why a part stayed; the next kit pass tries again.
+    #[serde(default)]
+    pub failures: Vec<String>,
+}
+
+impl LabelsRetirement {
+    pub fn is_empty(&self) -> bool {
+        self.removed.is_empty() && self.failures.is_empty()
+    }
+}
+
+/// Where the kit kept the copy Herdr linked.
 pub fn labels_home(home: &Path) -> PathBuf {
     crate::record::kit_state_dir(home)
         .join("plugins")
-        .join(PACKAGED)
+        .join("agent-context-labels")
 }
 
-fn packaged(target: &KitTarget) -> PathBuf {
-    target.kit_dir.join(PACKAGED)
+/// The plugin's own state folder, which the core imports once on this Mac
+/// before the kit runs (D-11).
+pub fn plugin_state_dir(home: &Path) -> PathBuf {
+    home.join(".local/state/hide.agent-context-labels")
+}
+
+pub(crate) fn retire(target: &KitTarget) -> LabelsRetirement {
+    let mut outcome = LabelsRetirement::default();
+    let copy = labels_home(&target.home);
+    let state = plugin_state_dir(&target.home);
+    // Nothing of the plugin is left: no Herdr call on an ordinary launch.
+    if !copy.exists() && !state.exists() {
+        return outcome;
+    }
+    let unlinked = match unlink(target) {
+        Ok(Some(source)) => {
+            outcome
+                .removed
+                .push(format!("Herdr plugin link ({source})"));
+            true
+        }
+        Ok(None) => true,
+        Err(reason) => {
+            outcome.failures.push(reason);
+            false
+        }
+    };
+    // The lock is the only handle on a running watcher: the folders stay
+    // until it is free, so a pass that could not stop the watcher leaves
+    // the next pass a way to find it.
+    let stopped = match stop_watchers(target, &state.join("watcher.lock")) {
+        Ok(stopped) => {
+            outcome.removed.extend(
+                stopped
+                    .into_iter()
+                    .map(|pid| format!("watcher process {pid}")),
+            );
+            true
+        }
+        Err(reason) => {
+            outcome.failures.push(reason);
+            false
+        }
+    };
+    if unlinked && stopped {
+        for (folder, name) in [(&copy, "kit copy"), (&state, "state folder")] {
+            match std::fs::remove_dir_all(folder) {
+                Ok(()) => outcome.removed.push(name.to_owned()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => outcome.failures.push(format!(
+                    "the plugin's {name} could not be removed: {}",
+                    error.kind()
+                )),
+            }
+        }
+    }
+    outcome
 }
 
 fn request(target: &KitTarget, method: &str, params: Value) -> Result<Value, String> {
     hide_herdr_client::request_with_timeout(&target.herdr_socket, method, params, HERDR_DEADLINE)
-        .map_err(|error| format!("Herdr on this machine did not answer {method}: {error}"))
+        .map_err(|error| {
+            // A transport message can carry the socket's path (B20); the
+            // remote code is the part a reader needs.
+            let reason = match &error {
+                hide_herdr_client::ApiError::Remote { code, .. } => code.as_str(),
+                hide_herdr_client::ApiError::Transport(_) => "transport",
+                hide_herdr_client::ApiError::Malformed(_) => "malformed",
+            };
+            format!("Herdr on this machine did not answer {method}: {reason}")
+        })
 }
 
-fn linked(target: &KitTarget) -> Result<Option<InstalledPluginInfo>, String> {
+/// Takes the plugin out of Herdr however it was installed. Returns where it
+/// came from, or `None` when Herdr has no such plugin.
+fn unlink(target: &KitTarget) -> Result<Option<&'static str>, String> {
     let result = request(
         target,
         "plugin.list",
@@ -55,88 +140,33 @@ fn linked(target: &KitTarget) -> Result<Option<InstalledPluginInfo>, String> {
         .ok_or_else(|| "Herdr's plugin list had no plugins".to_owned())?;
     let plugins: Vec<InstalledPluginInfo> = serde_json::from_value(plugins)
         .map_err(|error| format!("Herdr's plugin list could not be read: {error}"))?;
-    Ok(plugins
+    let Some(plugin) = plugins
         .into_iter()
-        .find(|plugin| plugin.plugin_id == LABELS_PLUGIN_ID))
-}
-
-/// The copy's path as Herdr records it: resolved, so a `~/.hide` reached
-/// through a link still compares equal.
-fn canonical_home(target: &KitTarget) -> PathBuf {
-    let home = labels_home(&target.home);
-    std::fs::canonicalize(&home).unwrap_or(home)
-}
-
-fn is_ours(target: &KitTarget, plugin: &InstalledPluginInfo) -> bool {
-    matches!(plugin.source.kind, PluginSourceKind::Local)
-        && Path::new(&plugin.plugin_root) == canonical_home(target)
-}
-
-pub(crate) fn observe(target: &KitTarget) -> Observed {
-    if !packaged(target).join("herdr-plugin.toml").is_file() {
-        return Observed::Blocked(format!(
-            "this build has no labels plugin at {}",
-            packaged(target).display()
-        ));
-    }
-    let plugin = match linked(target) {
-        Ok(plugin) => plugin,
-        Err(reason) => return Observed::Blocked(reason),
+        .find(|plugin| plugin.plugin_id == LABELS_PLUGIN_ID)
+    else {
+        return Ok(None);
     };
-    let Some(plugin) = plugin else {
-        return Observed::Missing;
-    };
-    if !is_ours(target, &plugin) {
-        let from = match plugin.source.kind {
-            PluginSourceKind::Github => "GitHub".to_owned(),
-            PluginSourceKind::Local => plugin.plugin_root.clone(),
-        };
-        return Observed::Stale(format!("the plugin is installed from {from}"));
-    }
-    if let Err(reason) = crate::record::private_state_dir(&target.home, false) {
-        return Observed::Blocked(reason);
-    }
-    match payload::is_current(&packaged(target), &labels_home(&target.home)) {
-        Ok(true) => Observed::Current,
-        Ok(false) => Observed::Stale("an older copy of the plugin is linked".to_owned()),
-        Err(reason) => Observed::Blocked(reason),
-    }
-}
-
-pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
-    crate::record::private_state_dir(&target.home, true)?;
-    payload::sync(&packaged(target), &labels_home(&target.home))?;
-    let existing = linked(target)?;
-    // An operator who turned the plugin off in Herdr keeps it off.
-    let enabled = existing.as_ref().is_none_or(|plugin| plugin.enabled);
-    if let Some(plugin) = existing.as_ref().filter(|plugin| !is_ours(target, plugin)) {
-        match plugin.source.kind {
-            PluginSourceKind::Github => uninstall_managed(target)?,
-            PluginSourceKind::Local => {
-                request(
-                    target,
-                    "plugin.unlink",
-                    json!({ "plugin_id": LABELS_PLUGIN_ID }),
-                )?;
-            }
+    match plugin.source.kind {
+        PluginSourceKind::Github => {
+            uninstall_managed(target)?;
+            Ok(Some("GitHub"))
+        }
+        PluginSourceKind::Local => {
+            request(
+                target,
+                "plugin.unlink",
+                json!({ "plugin_id": LABELS_PLUGIN_ID }),
+            )?;
+            Ok(Some("linked folder"))
         }
     }
-    request(
-        target,
-        "plugin.link",
-        json!({
-            "path": labels_home(&target.home).display().to_string(),
-            "enabled": enabled,
-        }),
-    )?;
-    Ok(())
 }
 
 /// A GitHub install is Herdr's managed checkout, which only the `herdr` CLI
 /// takes out; unlinking it through the socket would leave the checkout.
 fn uninstall_managed(target: &KitTarget) -> Result<(), String> {
     let herdr = target.herdr_bin.as_deref().ok_or_else(|| {
-        "the plugin is installed from GitHub and no herdr command was found to replace it"
+        "the labels plugin is installed from GitHub and no herdr command was found to remove it"
             .to_owned()
     })?;
     let mut env = vec![(
@@ -160,34 +190,97 @@ fn uninstall_managed(target: &KitTarget) -> Result<(), String> {
     if finished.succeeded() {
         Ok(())
     } else {
+        // Its stderr can name the operator's folders (B20): the exit code
+        // is the reason that reaches the log.
         Err(format!(
-            "herdr could not remove the GitHub copy of the plugin: {}",
-            finished.last_error_line()
+            "herdr could not remove the GitHub copy of the labels plugin: exit {:?}",
+            finished.code
         ))
     }
 }
 
-pub(crate) fn remove(target: &KitTarget) -> RemoveOutcome {
-    let plugin = match linked(target) {
-        Ok(plugin) => plugin,
-        Err(reason) => return RemoveOutcome::Failed { reason },
-    };
-    let outcome = match plugin {
-        Some(plugin) if is_ours(target, &plugin) => {
-            match request(
-                target,
-                "plugin.unlink",
-                json!({ "plugin_id": LABELS_PLUGIN_ID }),
-            ) {
-                Ok(_) => RemoveOutcome::Removed,
-                Err(reason) => return RemoveOutcome::Failed { reason },
-            }
+/// Ends every process holding this home's watcher lock. A watcher is found by
+/// the lock it holds rather than by its executable, which a swap renames to
+/// `.old-<pid>` and a GitHub install keeps elsewhere; the lock is under the
+/// target's home, so a test home never reaches the operator's watcher.
+fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<i32>, String> {
+    if !lock.exists() || !lock_is_held(lock)? {
+        return Ok(Vec::new());
+    }
+    // A daemon started from the Dock may have no `/usr/sbin` on its PATH.
+    let lsof = ["/usr/sbin/lsof", "/usr/bin/lsof"]
+        .into_iter()
+        .map(Path::new)
+        .find(|path| path.is_file())
+        .unwrap_or(Path::new("lsof"));
+    let finished = process::run(
+        lsof,
+        &["-t", &lock.display().to_string()],
+        &[],
+        &target.home,
+        LSOF_DEADLINE,
+        &target.stop,
+    )
+    .map_err(|reason| format!("the labels watcher could not be found: {reason}"))?;
+    let pids: Vec<i32> = finished
+        .stdout
+        .lines()
+        .filter_map(|line| line.trim().parse().ok())
+        .filter(|pid| *pid > 1 && *pid != std::process::id() as i32)
+        .collect();
+    if pids.is_empty() {
+        return Err("the labels watcher holds its lock but lsof named no process".to_owned());
+    }
+    for pid in &pids {
+        // SAFETY: kill with a pid and a signal number has no memory effects.
+        unsafe { libc::kill(*pid, libc::SIGTERM) };
+    }
+    let started = Instant::now();
+    while pids.iter().any(|pid| alive(*pid)) && started.elapsed() < WATCHER_EXIT_DEADLINE {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    for pid in pids.iter().filter(|pid| alive(**pid)) {
+        // SAFETY: as above.
+        unsafe { libc::kill(*pid, libc::SIGKILL) };
+    }
+    // Stopped means the lock is free, whatever the signals answered: a pid
+    // that survived, or a holder lsof did not name, keeps it.
+    let started = Instant::now();
+    // A lock file that went with its watcher is as free as an unheld one.
+    while lock.exists() && lock_is_held(lock)? {
+        if started.elapsed() >= WATCHER_EXIT_DEADLINE {
+            return Err(format!(
+                "the labels watcher still holds its lock after {} signalled process(es)",
+                pids.len()
+            ));
         }
-        Some(_) => RemoveOutcome::Kept {
-            reason: "the plugin there was not installed by Hide".to_owned(),
-        },
-        None => RemoveOutcome::Absent,
-    };
-    let _ = std::fs::remove_dir_all(labels_home(&target.home));
-    outcome
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(pids)
+}
+
+/// Whether some process holds the watcher's exclusive lock: taking it for a
+/// moment answers without asking lsof on the ordinary pass where none runs.
+fn lock_is_held(lock: &Path) -> Result<bool, String> {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::File::open(lock)
+        .map_err(|error| format!("the watcher lock could not be opened: {}", error.kind()))?;
+    // SAFETY: flock on a descriptor `file` owns; dropping `file` releases it.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(false);
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+        Ok(true)
+    } else {
+        Err(format!(
+            "the watcher lock could not be checked: {}",
+            error.kind()
+        ))
+    }
+}
+
+fn alive(pid: i32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    unsafe { libc::kill(pid, 0) == 0 }
 }

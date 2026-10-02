@@ -641,6 +641,9 @@ pub enum ConnectError {
     StartFailed(String),
     /// A daemon was started but never answered its health check.
     NoResponse(String),
+    /// A daemon of another build runs here and this `hide` is not the app's,
+    /// so it neither replaces nor attaches to it.
+    OtherBuild(String),
 }
 
 impl ConnectError {
@@ -648,12 +651,15 @@ impl ConnectError {
         match self {
             ConnectError::StartFailed(_) => "start_failed",
             ConnectError::NoResponse(_) => "no_response",
+            ConnectError::OtherBuild(_) => "other_build",
         }
     }
 
     fn detail(&self) -> &str {
         match self {
-            ConnectError::StartFailed(detail) | ConnectError::NoResponse(detail) => detail,
+            ConnectError::StartFailed(detail)
+            | ConnectError::NoResponse(detail)
+            | ConnectError::OtherBuild(detail) => detail,
         }
     }
 }
@@ -661,9 +667,66 @@ impl ConnectError {
 /// The one discovery path: the live daemon the state file names, or a new
 /// one started and waited for. `open` and `connect` both run it, so a host
 /// that loads the shell itself can never start a second daemon.
+///
+/// A live daemon of another build than the `hided` beside this CLI is
+/// stopped and replaced (PRD labels-in-hided D-19) when this `hide` is the
+/// app's own, the one in an app bundle's `Contents/Resources`: the app and
+/// its daemon are always one build. Any other `hide` (a dev build, a copy)
+/// refuses with the mismatch named and attaches to nothing, because the
+/// installed app's daemon is the operator's. A daemon that will not stop
+/// is a start failure. Only the daemon of this state folder is looked at,
+/// so a dev or e2e daemon elsewhere is never replaced, and stopping it
+/// leaves Herdr, its panes and their agents running.
+///
+/// The whole look-and-replace holds this state folder's connect lock, so
+/// two connects never both stop a daemon and start their own.
 fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
-    if let Some(state) = healthy_state(env) {
-        return Ok(state);
+    let build = crate::build_id::of_file(&daemon_binary().map_err(ConnectError::StartFailed)?)
+        .map_err(ConnectError::StartFailed)?;
+    let _serialized = state_file::lock_connect(&env.state_dir)
+        .map_err(|error| ConnectError::StartFailed(format!("the connect lock: {error}")))?;
+    if let Some((state, health)) = healthy_daemon(env) {
+        let running = health.get("build").and_then(serde_json::Value::as_str);
+        if running == Some(build.as_str()) {
+            return Ok(state);
+        }
+        // Judged by the file this `hide` is, not the link it was invoked
+        // through: the kit's `~/.local/bin/hide` link into the app is the
+        // app's, and a link that only looks like a bundle path is not.
+        let from_app = std::env::current_exe()
+            .and_then(|path| path.canonicalize())
+            .ok()
+            .as_deref()
+            .and_then(hide_kit::bundled_kit_dir)
+            .is_some();
+        if !from_app {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "hide", "kind": "daemon.other_build_refused",
+                    "pid": state.pid, "running_build": running, "build": build,
+                })
+            );
+            return Err(ConnectError::OtherBuild(format!(
+                "a hided of another build is running (pid {}, build {}); this hide is not the app's (build {build}) and neither replaces nor attaches to it",
+                state.pid,
+                running.unwrap_or("unknown"),
+            )));
+        }
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "hide", "kind": "daemon.replacing",
+                "pid": state.pid, "running_build": running, "build": build,
+            })
+        );
+        stop_daemon(env, &state).map_err(|detail| {
+            eprintln!(
+                "{}",
+                serde_json::json!({"component": "hide", "kind": "daemon.replace_failed", "pid": state.pid, "message": detail})
+            );
+            ConnectError::StartFailed(detail)
+        })?;
     }
     spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
     wait_healthy(env).map_err(ConnectError::NoResponse)
@@ -742,23 +805,54 @@ fn status(env: &Env) -> Result<(), String> {
 
 fn stop(env: &Env) -> Result<(), String> {
     if let Some(state) = state_file::read_state(&env.state_dir).map_err(|e| e.to_string())? {
-        let _ = send_signal(state.pid, libc::SIGTERM);
-        for _ in 0..50 {
+        stop_daemon(env, &state)?;
+    }
+    Ok(())
+}
+
+/// Ends the daemon `state` names: SIGTERM and five seconds for its graceful
+/// stop, which ends its AI requests and provider processes, then SIGKILL.
+/// An error only when it is still alive after that.
+fn stop_daemon(env: &Env, state: &DaemonState) -> Result<(), String> {
+    // A damaged state's pid names no daemon (`send_signal` refuses it), so
+    // the state is only cleared.
+    if send_signal(state.pid, 0).is_err_and(|error| error.kind() == io::ErrorKind::InvalidInput) {
+        state_file::forget_daemon(&env.state_dir, state.pid);
+        return Ok(());
+    }
+    let _ = send_signal(state.pid, libc::SIGTERM);
+    for _ in 0..50 {
+        if !pid_alive(state.pid) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if pid_alive(state.pid) {
+        let _ = send_signal(state.pid, libc::SIGKILL);
+        for _ in 0..20 {
             if !pid_alive(state.pid) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        if pid_alive(state.pid) {
-            let _ = send_signal(state.pid, libc::SIGKILL);
-        }
     }
-    state_file::remove_state(&env.state_dir);
+    if pid_alive(state.pid) {
+        return Err(format!(
+            "the running hided (pid {}) did not stop",
+            state.pid
+        ));
+    }
+    // Only the state of the daemon stopped here: another connect may have
+    // started its own since, and its state and lock stay.
+    state_file::forget_daemon(&env.state_dir, state.pid);
     Ok(())
 }
 
 fn serve(mut env: Env, keep_alive: bool) -> Result<(), String> {
     env.keep_alive = keep_alive || env.keep_alive;
+    // The daemon runs inside this CLI here; its build is the `hided` this
+    // CLI ships beside, the one `hide connect` compares against.
+    env.build = Some(crate::build_id::of_file(&daemon_binary()?)?);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("hide-serve")
@@ -834,12 +928,23 @@ fn wait_healthy(env: &Env) -> Result<DaemonState, String> {
 }
 
 fn healthy_state(env: &Env) -> Option<DaemonState> {
+    healthy_daemon(env).map(|(state, _)| state)
+}
+
+/// The live daemon of this state folder and what its `/health` answered.
+/// The answer has to come from the process the state names: a pid reused
+/// after a crash, with another daemon on the port, is a stale state that
+/// `hide connect` must never signal.
+fn healthy_daemon(env: &Env) -> Option<(DaemonState, serde_json::Value)> {
     let state = state_file::read_state(&env.state_dir).ok().flatten()?;
     if !pid_alive(state.pid) {
         return None;
     }
-    health_json(state.port).ok()?;
-    Some(state)
+    let health = health_json(state.port).ok()?;
+    if health.get("pid").and_then(serde_json::Value::as_u64) != Some(u64::from(state.pid)) {
+        return None;
+    }
+    Some((state, health))
 }
 
 fn health_json(port: u16) -> Result<serde_json::Value, String> {
@@ -868,8 +973,15 @@ fn pid_alive(pid: u32) -> bool {
     send_signal(pid, 0).is_ok()
 }
 
+/// Signals one process. A pid of 0 or 1, or one past `i32::MAX`, would
+/// reach this process group, launchd or every process this user owns, and
+/// names no daemon; a damaged state cannot make it one.
 fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
-    let result = unsafe { libc::kill(pid as i32, signal) };
+    let pid = i32::try_from(pid)
+        .ok()
+        .filter(|pid| *pid > 1)
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let result = unsafe { libc::kill(pid, signal) };
     if result == 0 {
         Ok(())
     } else {
@@ -880,6 +992,19 @@ fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_signal_reaches_a_pid_that_names_no_daemon() {
+        for pid in [0, 1, u32::MAX, i32::MAX as u32 + 1] {
+            assert_eq!(
+                send_signal(pid, 0).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput,
+                "pid {pid}"
+            );
+            assert!(!pid_alive(pid));
+        }
+        assert!(pid_alive(std::process::id()));
+    }
 
     #[test]
     fn parse_serve_keep_alive() {

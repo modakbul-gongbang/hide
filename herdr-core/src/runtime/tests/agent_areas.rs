@@ -357,7 +357,7 @@ fn authoritative_overflow_waits_without_hidden_focus_and_admits_when_a_slot_open
     );
     assert_eq!(arranged.active(), Some("w-order:t1"));
     let mut restored: crate::agent_layout::Layout =
-        serde_json::from_value(serde_json::to_value(&arranged).unwrap()).unwrap();
+        crate::sidebar::owned_label_fixture(serde_json::to_value(&arranged).unwrap()).unwrap();
     restored.repair();
     assert!(restored.tree.display("w-order:t65").is_some());
 }
@@ -796,23 +796,24 @@ fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
             }
             let mut local = tab_order_payload("/agent-groups", &refs, &refs, "w-order:t1");
             local.agents = serde_json::from_value(
-                crate::sidebar::lineage_fixture_value(serde_json::json!({"agents": [{
-                    "id":"child", "pane_id":"w-order:t2:p", "agent_status":"working",
-                    "state_change_seq":1, "spawned_from_pane_id":"parent",
-                    "spawned_from_machine_id":"machine-mini", "tokens":{"task":"Child"}
-                }]}))["agents"]
+                crate::sidebar::owned_label_fixture::<serde_json::Value>(
+                    serde_json::json!({"agents": [{
+                        "id":"child", "pane_id":"w-order:t2:p", "agent_status":"working",
+                        "state_change_seq":1, "spawned_from_pane_id":"parent",
+                        "spawned_from_machine_id":"machine-mini", "tokens":{"task":"Child"}
+                    }]}),
+                )
+                .unwrap()["agents"]
                     .clone(),
             )
             .unwrap();
             let remote = RemoteSessionSnapshot {
             workspaces: vec![],
             agents: project_agents(
-                serde_json::from_value(crate::sidebar::lineage_fixture_value(
-                    serde_json::json!({"agents":[{
-                        "id":"parent", "pane_id":"remote:mini:pane:parent", "agent_status":"working",
-                        "state_change_seq":1, "tokens":{"task":"Parent"}
-                    }]}),
-                ))
+                crate::sidebar::owned_label_fixture(serde_json::json!({"agents":[{
+                    "id":"parent", "pane_id":"remote:mini:pane:parent", "agent_status":"working",
+                    "state_change_seq":1, "tokens":{"task":"Parent"}
+                }]}))
                 .unwrap(),
             )
             .agents,

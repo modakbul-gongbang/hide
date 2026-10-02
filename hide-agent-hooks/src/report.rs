@@ -6,7 +6,7 @@
 //! is added by this path.
 //!
 //! The request goes over the socket through `hide-herdr-client`, the same
-//! client the context-label plugin reports through, rather than through the
+//! client hided's own Herdr connections use, rather than through the
 //! `herdr` CLI. The CLI's argument grammar is checked by nothing in this
 //! repository, and the first release of this hook shelled out with the pane
 //! id in a position the pinned CLI refuses, so every report exited 2, the
@@ -39,7 +39,7 @@ const REPORT_TIMEOUT: Duration = Duration::from_secs(2);
 /// Herdr exports `HERDR_SOCKET_PATH` to the panes of a server that was not
 /// started on the default path, so a hook inside such a pane reaches the
 /// server that owns it. Without the override the hook uses Herdr's default,
-/// which is the same resolution the context-label plugin applies.
+/// which is the same resolution hided applies.
 pub fn socket_path(home: &Path) -> PathBuf {
     std::env::var_os("HERDR_SOCKET_PATH")
         .filter(|value| !value.is_empty())

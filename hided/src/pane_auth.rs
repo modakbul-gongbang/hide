@@ -1190,6 +1190,7 @@ mod tests {
     fn bare_core(directory: &Path) -> CoreHandle {
         CoreHandle::spawn(herdr_core::CoreOptions {
             schema_version: crate::state_file::SCHEMA_VERSION,
+            home: None,
             machine_id: None,
             herdr_socket_path: None,
             herdr_bin_path: None,

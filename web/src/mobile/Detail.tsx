@@ -11,6 +11,7 @@
 import { AnsiUp } from "ansi_up";
 import { ArrowLeftIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { Elapsed } from "../components/elapsed";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { renderMarkdown } from "./markdown";
@@ -85,7 +86,9 @@ export function Detail({ onBack }: { onBack: () => void }) {
               </TabsList>
             </Tabs>
           ) : null}
-          <span className="min-w-0 flex-1 basis-0 text-right font-mono text-body text-muted-foreground">{agent?.elapsed}</span>
+          <span className="min-w-0 flex-1 basis-0 text-right font-mono text-body text-muted-foreground">
+            <Elapsed since={agent?.changed_at_unix_ms} />
+          </span>
         </div>
         {agent ? (
           <div className="mt-xs flex flex-col gap-xs">

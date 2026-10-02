@@ -12,7 +12,7 @@ function agent(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
     group: "working",
     status_label: "Working",
     detail: null,
-    elapsed: "1m",
+    changed_at_unix_ms: null,
     emphasized: false,
     unread: false,
     demand: "none",

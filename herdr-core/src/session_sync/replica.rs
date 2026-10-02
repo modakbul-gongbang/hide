@@ -51,7 +51,6 @@ pub(crate) struct SessionReplica {
     /// stream carries no sequence, so this is the only position a diagnostic
     /// can name.
     pub(crate) applied_events: u64,
-    label_publications: crate::sidebar::LabelPublicationGuard,
 }
 
 /// How an event that disagrees with the replica is treated.
@@ -111,15 +110,10 @@ impl SessionReplica {
             retired_ids: VecDeque::new(),
             early_focuses: Vec::new(),
             applied_events: 0,
-            label_publications: Default::default(),
         };
         replica.validate()?;
         replica.validate_active_tabs()?;
         Ok(replica)
-    }
-
-    pub(crate) fn retain_label_publications(&mut self, previous: &Self) {
-        self.label_publications = previous.label_publications.clone();
     }
 
     pub(crate) fn project(&self) -> SessionSnapshotPayload {
@@ -271,13 +265,14 @@ impl SessionReplica {
         Ok(changed)
     }
 
+    /// The remote session built from `payload`, which is [`Self::project`]
+    /// with the target's labels laid on.
     pub(crate) fn project_remote(
-        &mut self,
+        &self,
         target_id: &str,
+        payload: SessionSnapshotPayload,
     ) -> Result<(RemoteSessionSnapshot, Vec<crate::sidebar::AgentExclusion>), SessionFetchError>
     {
-        let mut payload = self.project();
-        self.label_publications.apply(&mut payload);
         let agent_projection = crate::sidebar::project_agents(payload);
         let mut agents = agent_projection.agents;
 
@@ -391,12 +386,8 @@ impl SessionReplica {
                                     requires_close_status_check: agent
                                         .is_some_and(|agent| agent.requires_close_status_check),
                                     identity_label: agent.map(|agent| agent.identity_label.clone()),
-                                    activity_at_unix_ms: state
-                                        .agents
-                                        .iter()
-                                        .find(|source| source.pane_id == pane.pane_id)
-                                        .and_then(wire::agent_activity)
-                                        .and_then(|activity| activity.parse().ok()),
+                                    activity_at_unix_ms: agent
+                                        .and_then(|agent| agent.changed_at_unix_ms),
                                     fork: crate::runtime::pane_fork_snapshot(agent),
                                     // Ports describe this machine's listeners,
                                     // so a remote pane reports none rather than

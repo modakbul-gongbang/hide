@@ -25,6 +25,15 @@ cd "$(dirname "$0")/.."
 
 export CARGO_TARGET_DIR="$PWD/target"
 
+# A Herdr pane carries the socket and identity of the Herdr that opened it,
+# and a test daemon that reads them from its environment follows the
+# operator's live Herdr and labels its agents from the operator's
+# conversations. No test may reach that server; each one that needs Herdr
+# names its own.
+for name in $(compgen -e); do
+    case "$name" in HERDR_*) unset "$name" ;; esac
+done
+
 case "${1:-}" in
     test)
         shift
@@ -37,10 +46,10 @@ case "${1:-}" in
     release)
         # The binaries the packaged app ships; release hided embeds web/dist,
         # so `pnpm --dir web build` runs first (desktop/scripts/package.mjs).
-        exec cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks -p agent-context-labels --bin hide-agent-context-labels
+        exec cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     cli)
-        exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks -p agent-context-labels --bin hide-agent-context-labels
+        exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     *)
         printf 'usage: %s test [cargo test arguments...]|lint|release|cli\n' "$0" >&2

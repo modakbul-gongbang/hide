@@ -22,7 +22,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture, declareParent } from "./herdr-fixture";
+import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, sessionOf, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, screenshot } from "./wire";
 
@@ -51,7 +51,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
   await prompt(herdr, pane);
   if (task) {
     herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
-    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env: herdr.env, timeout: 30_000 });
+    labelAgent(herdr, pane, { task });
   }
   return pane;
 }
@@ -250,17 +250,20 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const mainPane = await workspaceAt(herdr, repo, "최신 hide 서버 웹 실행");
     const workingPane = await workspaceAt(herdr, tree("working"), "웹 디자인 시스템 리셋 구현");
     const askingPane = await workspaceAt(herdr, tree("asking"), "사이드바 상태 규칙 구현");
-    const shippedPane = await workspaceAt(herdr, tree("shipped"), "머지된 작업");
+    const shippedPane = await workspaceAt(herdr, tree("shipped"), "머지된 작업 마무리");
     // The Observer on main delegated the working worktree's Implementor,
     // which is working, so the Observer waits on it (B14, B21).
     declareParent(herdr, workingPane, mainPane);
     await setFixtureLifecycle(herdr, workingPane, "working");
-    // An agent asking the operator: the label plugin's `expected_reply` is
-    // its question, and its `progress` the rest of what it said; the node
-    // shows the question, its popover the whole message (B21, B22).
+    // An agent asking the operator: its label's expected reply is its
+    // question, and its progress the rest of what it said; the node shows
+    // the question, its popover the whole message (B21, B22).
     await setFixtureLifecycle(herdr, askingPane, "blocked");
-    execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "expected_reply=Done 그룹 회색 링을 바꿔도 될까요?"], { env: herdr.env, timeout: 30_000 });
-    execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "progress=사이드바 상태 규칙을 세 곳에 적용했고 Done 그룹만 남았습니다."], { env: herdr.env, timeout: 30_000 });
+    labelAgent(herdr, askingPane, {
+      task: "사이드바 상태 규칙 구현",
+      progress: "사이드바 상태 규칙을 세 곳에 적용했고 Done 그룹만 남았습니다.",
+      reply: "Done 그룹 회색 링을 바꿔도 될까요?",
+    });
     // A project with only a shell: no agent at all.
     const quiet = path.join(herdr.root, "quiet");
     fs.mkdirSync(quiet);
@@ -567,7 +570,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await chip("turn").click();
     await expect(rows).toHaveCount(4);
 
-    // Nothing moves when the picture is the same, and a changed one moves once (B33, B39).
+    // Nothing moves while the picture is the same, and a changed one moves once (B33, B39);
+    // that new text alone keeps the picture is the graph unit test's (D-26).
     // The graph's own relayouts and animation frames are counted on its canvas;
     // the last glide (a chip just changed the picture) is let finish first.
     await atRest(page);
@@ -576,14 +580,15 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const frames = async () => Number(await canvas.getAttribute("data-graph-frames"));
     const revisionBefore = await revision();
     const framesBefore = await frames();
-    execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "progress=한 번 더 바뀐 말: 사이드바 규칙을 정리했습니다."], { env: herdr.env, timeout: 30_000 });
     await page.waitForTimeout(1500);
     expect(await revision()).toBe(revisionBefore);
     expect(await frames()).toBe(framesBefore);
     // The Implementor asks: its row grows a second line, its line turns orange, the graph is laid out once and glides.
-    execFileSync(herdr.bin, ["pane", "report-metadata", workingPane, "--source", "e2e", "--token", "expected_reply=이 줄을 그대로 둬도 될까요?"], { env: herdr.env, timeout: 30_000 });
+    // Its own session asks, so the relationship declared for it holds.
+    continueFixtureTranscript(herdr, sessionOf(herdr, workingPane), { task: "웹 디자인 시스템 리셋 구현", reply: "이 줄을 그대로 둬도 될까요?" });
     await setFixtureLifecycle(herdr, workingPane, "blocked");
     await expect(edge).toHaveAttribute("data-edge-kind", "ask", { timeout: 20_000 });
+    await expect(row(workingPane).locator(`[data-graph-row-line="${workingPane}"]`)).toHaveText("이 줄을 그대로 둬도 될까요?", { timeout: 20_000 });
     await expect.poll(revision).toBeGreaterThan(revisionBefore);
     await expect(row(workingPane)).toHaveAttribute("data-attention", "0");
     await setFixtureLifecycle(herdr, workingPane, "working");

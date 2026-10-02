@@ -127,6 +127,7 @@ fn env(dir: &Path, tailscale: &Path) -> Env {
         vite_origin: None,
         bind: "127.0.0.1:0".parse().unwrap(),
         idle_secs: 600,
+        build: None,
         open_command: None,
         host_helper_root: None,
         host_cli_dir: None,

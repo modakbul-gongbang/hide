@@ -1,6 +1,7 @@
 //! Coordinates Herdr snapshot bootstrap, topology subscriptions, and capability readers.
 
 use super::*;
+use crate::labels::worker::{LabelWorker, ObservedAgent};
 use crate::live;
 
 pub(crate) fn spawn(
@@ -90,6 +91,7 @@ fn run_coordinator(
     if let Some(home) = hook_home.as_deref() {
         publish_ai_settings(&context, home);
     }
+    let mut labels = start_label_worker(&context, &sender);
 
     loop {
         if context.runtime.upgrade().is_none() {
@@ -106,16 +108,13 @@ fn run_coordinator(
                 has_projection,
             ) {
                 Ok(Connected {
-                    replica: mut next_replica,
+                    replica: next_replica,
                     subscription: next_subscription,
                     snapshot_at,
                 }) => {
                     if context.is_local() && !begin_local_read_record_reconciliation(&context) {
                         stop_subscription(&mut subscription);
                         return;
-                    }
-                    if let Some(previous) = replica.as_ref() {
-                        next_replica.retain_label_publications(previous);
                     }
                     replica = Some(next_replica);
                     subscription = Some(next_subscription);
@@ -133,6 +132,7 @@ fn run_coordinator(
                             replica.as_mut().unwrap(),
                             &mut catalog_cache,
                             &mut purpose_mirror,
+                            &mut labels,
                         )
                     {
                         stop_subscription(&mut subscription);
@@ -186,6 +186,7 @@ fn run_coordinator(
                                         current,
                                         &mut catalog_cache,
                                         &mut purpose_mirror,
+                                        &mut labels,
                                     ) =>
                             {
                                 stop_subscription(&mut subscription);
@@ -241,6 +242,22 @@ fn run_coordinator(
                     context.notifier.notify();
                 }
             }
+            if labels
+                .as_mut()
+                .is_some_and(|worker| worker.tick(Instant::now()))
+                && subscription.is_some()
+                && let Some(current) = replica.as_mut()
+                && !publish_replica(
+                    &context,
+                    current,
+                    &mut catalog_cache,
+                    &mut purpose_mirror,
+                    &mut labels,
+                )
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
             if subscription.is_some()
                 && let Some(current) = replica.as_mut()
                 && !current.workspaces_awaiting_active_tab().is_empty()
@@ -252,6 +269,7 @@ fn run_coordinator(
                             current,
                             &mut catalog_cache,
                             &mut purpose_mirror,
+                            &mut labels,
                         ) {
                             stop_subscription(&mut subscription);
                             return;
@@ -271,7 +289,10 @@ fn run_coordinator(
             }
         }
 
-        let run_background_reads = subscription.is_some() && !defer_background_reads;
+        // With no window attached only label work runs; these readers feed
+        // nothing else (PRD labels-in-hided B29).
+        let run_background_reads =
+            subscription.is_some() && !defer_background_reads && read_ui_attached(&context);
         defer_background_reads = false;
         if run_background_reads {
             if let Some(current) = replica.as_mut()
@@ -279,7 +300,13 @@ fn run_coordinator(
             {
                 match current.refresh_published_state() {
                     Ok(true) => {
-                        publish_replica(&context, current, &mut catalog_cache, &mut purpose_mirror);
+                        publish_replica(
+                            &context,
+                            current,
+                            &mut catalog_cache,
+                            &mut purpose_mirror,
+                            &mut labels,
+                        );
                     }
                     Ok(false) => {}
                     Err(error) => {
@@ -359,7 +386,13 @@ fn run_coordinator(
                 }
                 if rebuild
                     && let Some(current) = replica.as_mut()
-                    && !publish_replica(&context, current, &mut catalog_cache, &mut purpose_mirror)
+                    && !publish_replica(
+                        &context,
+                        current,
+                        &mut catalog_cache,
+                        &mut purpose_mirror,
+                        &mut labels,
+                    )
                 {
                     stop_subscription(&mut subscription);
                     return;
@@ -480,6 +513,7 @@ fn run_coordinator(
                                         current,
                                         &mut catalog_cache,
                                         &mut purpose_mirror,
+                                        &mut labels,
                                     )
                                 {
                                     stop_subscription(&mut subscription);
@@ -497,6 +531,7 @@ fn run_coordinator(
                                                 current,
                                                 &mut catalog_cache,
                                                 &mut purpose_mirror,
+                                                &mut labels,
                                             ) {
                                                 stop_subscription(&mut subscription);
                                                 return;
@@ -593,6 +628,26 @@ fn run_coordinator(
                 }
                 reconnect_at = Instant::now() + reconnect_delay;
                 reconnect_delay = next_reconnect_delay(reconnect_delay);
+            }
+            Ok(CoordinatorMessage::Labels) => {
+                // A disconnected replica is stale; its labels wait for the
+                // reconnect's first publish rather than clearing the error.
+                if labels
+                    .as_mut()
+                    .is_some_and(|worker| worker.drain(Instant::now()))
+                    && subscription.is_some()
+                    && let Some(current) = replica.as_mut()
+                    && !publish_replica(
+                        &context,
+                        current,
+                        &mut catalog_cache,
+                        &mut purpose_mirror,
+                        &mut labels,
+                    )
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
@@ -699,9 +754,18 @@ fn publish_replica(
     replica: &mut SessionReplica,
     catalog_cache: &mut Option<CatalogCache>,
     purpose_mirror: &mut Option<live::PurposeMirror>,
+    labels: &mut Option<LabelWorker>,
 ) -> bool {
+    let mut payload = replica.project();
+    let overlay = labels.as_mut().map(|worker| {
+        observe_labels(worker, replica);
+        worker.overlay()
+    });
     if let SessionSyncTarget::Remote { target_id, .. } = &context.target {
-        let projection = replica.project_remote(target_id);
+        if let Some(overlay) = &overlay {
+            overlay.apply(&mut payload);
+        }
+        let projection = replica.project_remote(target_id, payload);
         let (fetched, excluded) = match projection {
             Ok((session, excluded)) => (Ok(session), excluded),
             Err(error) => (Err(error), Vec::new()),
@@ -730,7 +794,6 @@ fn publish_replica(
         return true;
     }
 
-    let payload = replica.project();
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
@@ -783,7 +846,12 @@ fn publish_replica(
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_session_with_catalog(Ok(payload), Some(precomputed)),
+        Ok(mut guard) => {
+            if let Some(overlay) = overlay {
+                guard.set_label_overlay(overlay);
+            }
+            guard.ingest_session_with_catalog(Ok(payload), Some(precomputed))
+        }
         Err(_) => return false,
     };
     drop(runtime);
@@ -791,6 +859,71 @@ fn publish_replica(
         context.notifier.notify();
     }
     true
+}
+
+/// The label worker for this coordinator's Herdr server, built on the
+/// core's shared label services. `None` when the core has none (tests) or
+/// the worker could not start, which is logged: the rows then show
+/// provider names.
+fn start_label_worker(
+    context: &SessionSyncContext,
+    sender: &Sender<CoordinatorMessage>,
+) -> Option<LabelWorker> {
+    let services = {
+        let runtime = context.runtime.upgrade()?;
+        let guard = runtime.lock().ok()?;
+        guard.label_services()?
+    };
+    let wake_sender = sender.clone();
+    let wake: crate::labels::worker::Wake = Arc::new(move || {
+        let _ = wake_sender.send(CoordinatorMessage::Labels);
+    });
+    let worker = match &context.target {
+        SessionSyncTarget::Local { socket_path } => services.local_worker(socket_path, wake),
+        SessionSyncTarget::Remote { target_id, .. } => services
+            .device_worker(target_id, context.runtime.clone(), wake)
+            .map(Some),
+    };
+    worker.unwrap_or_else(|message| {
+        crate::diagnostic!(json!({
+            "component": "labels",
+            "kind": "worker.start_failed",
+            "target": context.log_target(),
+            "message": message,
+        }));
+        None
+    })
+}
+
+/// Hands the worker the agents and the complete pane topology the replica
+/// publishes. Per publish this is one pass over the agents and the panes.
+fn observe_labels(worker: &mut LabelWorker, replica: &SessionReplica) {
+    let state = &replica.published_state;
+    let agents: Vec<ObservedAgent> = state
+        .agents
+        .iter()
+        .map(|agent| ObservedAgent {
+            pane_id: agent.pane_id.clone(),
+            agent: agent.agent.clone(),
+            status: agent.agent_status.clone(),
+            reference: agent
+                .agent_session
+                .as_ref()
+                .map(|session| (session.kind.clone(), session.value.clone())),
+            cwd: agent.cwd.clone(),
+            state_change_seq: agent.state_change_seq,
+        })
+        .collect();
+    let live: HashSet<String> = state
+        .panes
+        .iter()
+        .map(|pane| pane.pane_id.clone())
+        .collect();
+    let now_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0);
+    worker.observe(&agents, Some(&live), Instant::now(), now_unix_ms);
 }
 
 /// Marks persisted read records before the first projection from a fresh
@@ -849,6 +982,16 @@ fn publish_provider_usage(
 fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::UsageActivity> {
     let runtime = context.runtime.upgrade()?;
     runtime.lock().ok().map(|guard| guard.usage_activity())
+}
+
+/// Whether a window draws the snapshot; a gone runtime reads as attached,
+/// and the loop's own check ends the coordinator.
+fn read_ui_attached(context: &SessionSyncContext) -> bool {
+    context
+        .runtime
+        .upgrade()
+        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.ui_attached()))
+        .unwrap_or(true)
 }
 
 /// Whether the Settings agents tab is on screen. `None` means the runtime is

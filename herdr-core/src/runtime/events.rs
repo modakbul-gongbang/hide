@@ -1010,6 +1010,16 @@ pub(super) struct KitReinstallPayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct KitCheckPayload {}
 
+/// Whether any window draws this daemon's snapshot, sent by hided as its
+/// first window arrives and its last one leaves. Without one, the readers
+/// that only feed what a window draws (ports, worktrees, pull requests,
+/// disk, foreground processes) rest, and label work alone goes on (PRD
+/// labels-in-hided B29).
+#[derive(Debug, Deserialize)]
+pub(super) struct UiAttachedPayload {
+    pub(super) attached: bool,
+}
+
 /// One Background AI settings event, carrying whatever it is about.
 ///
 /// It folds three things a single screen does into one event, the way
@@ -1217,6 +1227,7 @@ pub(super) enum Event {
     CancelRepositoryClone(CancelRepositoryClonePayload),
     KitReinstall(KitReinstallPayload),
     KitCheck(KitCheckPayload),
+    UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
     TerminalResize(TerminalResizePayload),
     TerminalViewport(TerminalResizePayload),
@@ -1416,6 +1427,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
+        "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
         "terminal_viewport" => decode!(TerminalResizePayload, TerminalViewport),
@@ -1660,6 +1672,11 @@ impl Runtime {
                 self.request_kit_reinstall(&payload.device_id, payload.components.as_deref())
             }
             Event::KitCheck(_) => self.request_kit_check(),
+            // Nothing drawn changes; the coordinator reads it on its next wake.
+            Event::UiAttached(payload) => {
+                self.ui_attached = payload.attached;
+                false
+            }
             Event::AiSettings(payload) => self.apply_ai_settings(payload),
             Event::RetryConnect(payload) => self.retry_remote_device(&payload.target_id),
             Event::CloneRepository(payload) => {

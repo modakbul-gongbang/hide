@@ -101,7 +101,7 @@ function agent(pane: string, extra: Partial<AgentRow> = {}): AgentRow {
     symbol: "○",
     group: "seen",
     status_label: "Idle",
-    elapsed: "1m",
+    changed_at_unix_ms: null,
     emphasized: false,
     unread: false,
     demand: "none",
@@ -521,7 +521,7 @@ describe("what moves", () => {
   it("answers identical input with identical targets, so a snapshot that changes nothing starts no motion (D-26)", () => {
     const project = workspace([checkout("main", { primary: true, tabs: [["m"]] }), checkout("w", { tabs: [["w"]] })]);
     const first = graphTargets(only(graph(one(project, [agent("m", WORKING), child("w", "m", WORKING)]))));
-    const second = graphTargets(only(graph(one(project, [agent("m", { ...WORKING, elapsed: "2m" }), child("w", "m", { ...WORKING, elapsed: "2m" })]))));
+    const second = graphTargets(only(graph(one(project, [agent("m", { ...WORKING, changed_at_unix_ms: 120_000 }), child("w", "m", { ...WORKING, changed_at_unix_ms: 120_000 })]))));
     expect(second).toEqual(first);
     const moved = graphTargets(only(graph(one(project, [agent("m", WORKING), child("w", "m", ASKING)]))));
     expect(moved).not.toEqual(first);

@@ -6,6 +6,7 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
     Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,
+            home: None,
             machine_id: None,
             herdr_socket_path: Some("/tmp/herdr-core-appearance.sock".to_owned()),
             herdr_bin_path: None,
@@ -20,7 +21,6 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            herdr_socket_path_override: None,
             home_path: None,
             codex_home: None,
         },

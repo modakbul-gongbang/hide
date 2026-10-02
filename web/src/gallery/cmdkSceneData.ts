@@ -12,7 +12,7 @@ export const READ_AT = 1_000_000;
 const HASH = "#";
 
 const agent = (pane: string, label: string, extra: Partial<AgentRow> = {}): AgentRow =>
-  ({ id: `a-${pane}`, pane_id: pane, identity_label: label, agent_kind: "claude", symbol: "●", group: "working", status_label: "Working", elapsed: "1m", emphasized: false, unread: false, activity: "working", ...extra }) as AgentRow;
+  ({ id: `a-${pane}`, pane_id: pane, identity_label: label, agent_kind: "claude", symbol: "●", group: "working", status_label: "Working", changed_at_unix_ms: Date.now() - 60_000, emphasized: false, unread: false, activity: "working", ...extra }) as AgentRow;
 
 export const PARENT = agent("p-parent", "codex workspace-write 원인 조사", { lineage_child_pane_ids: ["p-child"] });
 export const CHILD = agent("p-child", "hcoord 쓰기 명령 sandbox 오류 해결", { group: "done", status_label: "Done", activity: "stopped", emphasized: true, lineage_parent_pane_id: "p-parent" });

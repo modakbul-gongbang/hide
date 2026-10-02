@@ -26,6 +26,7 @@ import { AgentMark } from "./AgentMark";
 import { badgeParts, badgeWords, lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint } from "./components/pr-card";
+import { Elapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
 import { BadgeMarks } from "./components/status-badge";
 import { Badge } from "./components/ui/badge";
@@ -518,7 +519,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
             </span>
           </Hint>
         ) : null}
-        <span className="shrink-0 font-mono text-caption text-muted-foreground group-focus-within/row:hidden group-hover/row:hidden">{agent.elapsed}</span>
+        <Elapsed since={agent.changed_at_unix_ms} className="shrink-0 font-mono text-caption text-muted-foreground group-focus-within/row:hidden group-hover/row:hidden" />
         <span className="hidden shrink-0 text-caption text-foreground group-focus-within/row:inline group-hover/row:inline" data-graph-row-hint="true">
           {asking ? "↵ 답하기" : "↵ 패널"}
         </span>

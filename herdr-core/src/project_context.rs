@@ -31,7 +31,7 @@ fn checkout_activity(
     };
     for pane in checkout.tabs.iter().flat_map(|tab| &tab.panes) {
         if let Some(agent) = by_pane.get(pane.id.as_str()) {
-            // The label plugin's wall timestamp has 13 digits. Its padded
+            // The label worker's wall timestamp has 13 digits. Its padded
             // sequence is deliberately not interpreted as a date.
             let timestamp = (agent.last_activity.len() == 13)
                 .then(|| agent.last_activity.parse::<u64>().ok())
@@ -370,7 +370,7 @@ mod tests {
     /// validates.
     fn agents(rows: Value) -> Vec<SidebarAgentSnapshot> {
         crate::sidebar::project_agents(
-            serde_json::from_value(json!({ "agents": rows })).expect("valid fixture"),
+            crate::sidebar::owned_label_fixture(json!({ "agents": rows })).expect("valid fixture"),
         )
         .agents
     }
@@ -382,6 +382,7 @@ mod tests {
     fn navigator(workspaces: Vec<WorkspaceSnapshot>) -> NavigatorSnapshot {
         let mut navigator = Snapshot::initial(&CoreOptions {
             schema_version: SCHEMA_VERSION,
+            home: None,
             machine_id: None,
             herdr_socket_path: None,
             herdr_bin_path: None,

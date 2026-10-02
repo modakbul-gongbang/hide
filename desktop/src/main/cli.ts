@@ -122,7 +122,7 @@ export function rememberedCliValue(file: string): unknown {
   return { schema: REMEMBERED_SCHEMA, path: file };
 }
 
-export type FailureReason = "cli_missing" | "start_failed" | "no_response";
+export type FailureReason = "cli_missing" | "start_failed" | "no_response" | "other_build";
 
 export type Attached = { url: string; origin: string; port: number; pid: number };
 
@@ -175,7 +175,7 @@ export function parseConnect(result: ChildResult): ConnectAnswer {
     const daemon = attached(value);
     if (daemon) return { kind: "attached", ...daemon };
   }
-  if (value?.ok === false && (value.reason === "start_failed" || value.reason === "no_response")) {
+  if (value?.ok === false && (value.reason === "start_failed" || value.reason === "no_response" || value.reason === "other_build")) {
     return { kind: "failed", reason: value.reason, detail: typeof value.detail === "string" ? value.detail : "" };
   }
   return { kind: "failed", reason: "start_failed", detail: unreadable(result) };

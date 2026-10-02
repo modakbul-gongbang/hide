@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 mod catalog;
 mod conversation_cursor;
 mod label_owner;
+pub mod label_transcript;
 pub mod search;
 
 pub use label_owner::{ConfirmedLabelSession, confirm_label_session, label_reference_token};

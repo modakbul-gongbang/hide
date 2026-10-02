@@ -160,6 +160,17 @@ pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
     )
 }
 
+/// The same provider boundary for agent labels (PRD labels-in-hided D-05):
+/// the operator's provider and model choice, and the router's own retry,
+/// cooldown and budget rules.
+pub(crate) fn labels_router(settings: &AiSettings) -> AiRouter {
+    AiRouter::new(
+        backends(&settings.models),
+        settings.router_config(),
+        Arc::new(DiagnosticLogSink),
+    )
+}
+
 fn memory_router_config(settings: &AiSettings) -> hide_ai::RouterConfig {
     settings.router_config()
 }

@@ -9,6 +9,12 @@ pub const SCHEMA_VERSION: u32 = 2;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CoreOptions {
     pub schema_version: u32,
+    /// The account home the core reads and writes for: agent conversations,
+    /// label state, saved AI settings, usage and the install kit. Absent
+    /// means the process `HOME`; an embedder running with a private home
+    /// (a test daemon) names it so nothing reaches the operator's.
+    #[serde(default)]
+    pub home: Option<String>,
     /// The stable operating-system machine identity, read by the host before
     /// the core is placed behind its runtime mutex.
     #[serde(default)]
@@ -718,7 +724,7 @@ pub struct SidebarAgentSnapshot {
     /// Herdr's `done` and `idle` are the same activity. Completion and Hide's
     /// pane-level read state remain separate axes.
     pub activity: String,
-    /// Whether Herdr or the label plugin reported a completed turn. A newly
+    /// Whether Herdr reported a completed turn. A newly
     /// opened agent can be stopped while it waits for its first instruction;
     /// that ready state is not a completion and must not appear as Done.
     #[serde(skip_serializing)]
@@ -745,7 +751,7 @@ pub struct SidebarAgentSnapshot {
     /// The title every surface calls this agent by; `sidebar.rs` owns the
     /// ladder that picks it (PRD D-01).
     pub identity_label: String,
-    /// The label plugin's one-line progress sentence.
+    /// The label's one-line progress sentence (`labels`).
     #[serde(skip_serializing)]
     pub progress: Option<String>,
     /// The one action the operator is being asked for, at most 40 characters.
@@ -765,9 +771,13 @@ pub struct SidebarAgentSnapshot {
     /// read rows, where the mark already says it, and stays on rows that
     /// still concern the operator.
     pub status_word_visible: bool,
-    pub elapsed: String,
-    /// The ordering key: the label plugin's activity timestamp when it has one,
-    /// otherwise Herdr's state change sequence zero-padded to the same width.
+    /// When the core last saw this agent change state, in epoch
+    /// milliseconds; `None` before the core has observed it. The shell turns
+    /// it into the elapsed time on its own one-second clock, so time passing
+    /// never republishes the snapshot (PRD labels-in-hided D-07).
+    pub changed_at_unix_ms: Option<u64>,
+    /// The ordering key: `changed_at_unix_ms` as thirteen digits when the
+    /// core has it, otherwise Herdr's state change sequence zero-padded.
     pub last_activity: String,
     /// Herdr's own state change sequence, one of the three inputs to a pane's
     /// read record.
@@ -3959,7 +3969,7 @@ pub struct DocumentsDelta {
 /// are present only when the caller's `have_revision` predates their last
 /// change; `chunks` carries only sequences past the caller's cursor. The
 /// changes view holds a whole file's diff text, so it is kept off `rest`,
-/// which restamps whenever any agent's elapsed time ticks.
+/// which restamps whenever any agent row changes.
 ///
 /// It borrows from a `SnapshotDeltaPayload`, never from the runtime, so
 /// building and serializing it needs no lock.
@@ -4342,7 +4352,6 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::Labels
                 | hide_kit::ComponentId::Hcoord => {}
             }
         }

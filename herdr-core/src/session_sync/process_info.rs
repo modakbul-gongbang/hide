@@ -170,7 +170,7 @@ mod tests {
         });
         let runtime = Arc::new(std::sync::Mutex::new(Runtime::new(
             serde_json::from_value(json!({"schema_version":crate::model::SCHEMA_VERSION, "herdr_socket_path":null, "app_state_path":"/tmp/hide-process-owner-unused.json"})).unwrap(),
-            crate::environment::EnvironmentReport { statuses: Vec::new(), home_path: None, herdr_socket_path_override: None, codex_home: None },
+            crate::environment::EnvironmentReport { statuses: Vec::new(), home_path: None, codex_home: None },
         )));
         let context = SessionSyncContext::remote(
             "fixture",

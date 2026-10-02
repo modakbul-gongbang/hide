@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 
 pub use device::{CURRENT, device_target};
 pub use hcoord::{HcoordRuntime, NODE_MINIMUM, find_node};
-pub use labels::{LABELS_PLUGIN_ID, labels_home};
+pub use labels::{LABELS_PLUGIN_ID, LabelsRetirement, labels_home, plugin_state_dir};
 pub use local::{STANDALONE_REASON, bundled_kit_dir, local_target};
 pub use record::kit_state_dir;
 
@@ -51,18 +51,15 @@ pub enum ComponentId {
     ClaudeCodeHook,
     /// Hide's entries in `~/.codex/hooks.json`.
     CodexHook,
-    /// The agent labels Herdr plugin, `hide.agent-context-labels`.
-    Labels,
     /// The `hcoord` command and its daemon.
     Hcoord,
 }
 
 impl ComponentId {
-    pub const ALL: [ComponentId; 5] = [
+    pub const ALL: [ComponentId; 4] = [
         Self::Cli,
         Self::ClaudeCodeHook,
         Self::CodexHook,
-        Self::Labels,
         Self::Hcoord,
     ];
 
@@ -72,7 +69,6 @@ impl ComponentId {
             Self::Cli => "cli",
             Self::ClaudeCodeHook => "claude_code_hook",
             Self::CodexHook => "codex_hook",
-            Self::Labels => "labels",
             Self::Hcoord => "hcoord",
         }
     }
@@ -83,7 +79,6 @@ impl ComponentId {
             Self::Cli => "hide command",
             Self::ClaudeCodeHook => "Claude Code hook",
             Self::CodexHook => "Codex hook",
-            Self::Labels => "Agent labels plugin",
             Self::Hcoord => "hcoord",
         }
     }
@@ -141,6 +136,10 @@ pub struct ComponentReport {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct KitReport {
     pub components: Vec<ComponentReport>,
+    /// What an apply took out of the retired labels plugin; empty when there
+    /// was nothing of it (PRD labels-in-hided D-12).
+    #[serde(default, skip_serializing_if = "LabelsRetirement::is_empty")]
+    pub labels_retirement: LabelsRetirement,
 }
 
 impl KitReport {
@@ -161,6 +160,7 @@ impl KitReport {
                     location: None,
                 })
                 .collect(),
+            labels_retirement: LabelsRetirement::default(),
         }
     }
 }
@@ -170,8 +170,8 @@ impl KitReport {
 pub struct KitTarget {
     /// The account's home, whose configuration files the hooks go into.
     pub home: PathBuf,
-    /// The folder holding this build's parts: `hide`, `hide-agent-hooks`,
-    /// `agent-context-labels/` and `hcoord/dist/`. It is the path the hooks,
+    /// The folder holding this build's parts: `hide`, `hide-agent-hooks`
+    /// and `hcoord/dist/`. It is the path the hooks,
     /// the `hide` link and the hcoord shim name, so it must outlive the
     /// process: the app bundle's `Contents/Resources` on this Mac, the helper
     /// root's `current` link on a device (D-11).
@@ -183,10 +183,11 @@ pub struct KitTarget {
     /// `Contents/Resources`, such as a device helper root, so a `hide` link
     /// into one of them is replaced rather than left as the operator's.
     pub owned_roots: Vec<PathBuf>,
-    /// The Herdr server the plugin is linked in.
+    /// The machine's Herdr server, which the retired labels plugin is taken
+    /// out of.
     pub herdr_socket: PathBuf,
     /// The `herdr` CLI, needed only to take out a GitHub install of the
-    /// labels plugin; `None` when the machine has none Hide can find.
+    /// retired labels plugin; `None` when the machine has none Hide can find.
     pub herdr_bin: Option<PathBuf>,
     /// What runs hcoord on this machine, or why nothing can.
     pub hcoord: Result<HcoordRuntime, String>,
@@ -236,7 +237,6 @@ fn observe(id: ComponentId, target: &KitTarget) -> Observed {
             hooks::observe(target, hide_agent_hooks::AgentRuntime::ClaudeCode)
         }
         ComponentId::CodexHook => hooks::observe(target, hide_agent_hooks::AgentRuntime::Codex),
-        ComponentId::Labels => labels::observe(target),
         ComponentId::Hcoord => hcoord::observe(target),
     }
 }
@@ -248,7 +248,6 @@ fn install(id: ComponentId, target: &KitTarget) -> Result<(), String> {
             hooks::install(target, hide_agent_hooks::AgentRuntime::ClaudeCode)
         }
         ComponentId::CodexHook => hooks::install(target, hide_agent_hooks::AgentRuntime::Codex),
-        ComponentId::Labels => labels::install(target),
         ComponentId::Hcoord => hcoord::install(target),
     }
 }
@@ -264,7 +263,6 @@ fn location(id: ComponentId, target: &KitTarget) -> String {
             .config_path(&target.home)
             .display()
             .to_string(),
-        ComponentId::Labels => labels_home(&target.home).display().to_string(),
         ComponentId::Hcoord => hcoord::shim_path(&target.home).display().to_string(),
     }
 }
@@ -351,6 +349,7 @@ pub fn status(target: &KitTarget) -> KitReport {
             .into_iter()
             .map(|id| report(id, target, observe(id, target), recorded(id), None))
             .collect(),
+        labels_retirement: LabelsRetirement::default(),
     }
 }
 
@@ -370,6 +369,9 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         Ok(record) => (record, None),
         Err(reason) => (record::Record::default(), Some(reason)),
     };
+    // Before any part, so a watcher left running stops analyzing as soon as
+    // possible; on this Mac the core has already imported its labels.
+    let labels_retirement = labels::retire(target);
     let mut changed = false;
     let mut components = Vec::with_capacity(ComponentId::ALL.len());
     for id in ComponentId::ALL {
@@ -425,7 +427,10 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
             }
         }
     }
-    KitReport { components }
+    KitReport {
+        components,
+        labels_retirement,
+    }
 }
 
 /// What removing the kit did to one part.
@@ -450,8 +455,8 @@ pub struct RemoveReport {
 }
 
 /// Takes Hide's parts off a machine that is being removed from Hide: the
-/// hook entries carrying Hide's marker, the labels plugin Hide linked, the
-/// `hide` link when it is Hide's, and the record. hcoord stays, because other
+/// hook entries carrying Hide's marker, the `hide` link when it is Hide's,
+/// and the record. hcoord stays, because other
 /// tools on that machine drive agents through it (D-16).
 pub fn remove(target: &KitTarget) -> RemoveReport {
     let _lock = match lock_account(target) {
@@ -476,7 +481,6 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
                 hooks::remove(target, hide_agent_hooks::AgentRuntime::ClaudeCode)
             }
             ComponentId::CodexHook => hooks::remove(target, hide_agent_hooks::AgentRuntime::Codex),
-            ComponentId::Labels => labels::remove(target),
             ComponentId::Hcoord => RemoveOutcome::Kept {
                 reason: "hcoord stays, because other tools on this machine use it".to_owned(),
             },

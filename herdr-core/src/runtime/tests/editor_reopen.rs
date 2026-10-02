@@ -544,7 +544,7 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
     }];
     runtime.restore_hint_pending = false;
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "panes": [{"pane_id": "w-close:p2", "cwd": checkout_path}],
         "focused_pane_id": "w-close:p2",
@@ -609,7 +609,7 @@ fn read_record_change_leaves_remote_and_editor_zoom_alone() {
         assert!(runtime.dispatch_json(&event));
     };
     let idle_payload = || -> SessionSnapshotPayload {
-        serde_json::from_value(serde_json::json!({
+        crate::sidebar::owned_label_fixture(serde_json::json!({
             "agents": [{
                 "pane_id": "w1:p1",
                 "workspace_label": "Fixture",

@@ -10,7 +10,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
-import { spawnAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { finishFixtureTurn, labelAgent, setFixtureLifecycle, spawnAgent, startHerdr, type FixtureLabel, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
@@ -96,13 +96,6 @@ async function agentsMode(page: Page): Promise<void> {
   await page.locator('[data-sidebar-mode="agents"]').click();
 }
 
-/** Sets and clears the status tokens one pane reports, the way the label plugin does. */
-function report(herdr: HerdrFixture, pane: string, set: Record<string, string>): void {
-  const args = ["pane", "report-metadata", pane, "--source", "e2e-status"];
-  for (const [name, value] of Object.entries(set)) args.push("--token", `${name}=${value}`);
-  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
-}
-
 /** The tops of `buttons`, rounded: one value means they share one row. */
 async function rowTops(buttons: Locator[]): Promise<number[]> {
   const tops = new Set<number>();
@@ -116,14 +109,14 @@ test("the close sheet counts and brightens what needs the operator, stays live w
   let daemon: Daemon | null = null;
   try {
     const target = herdr.panes[1];
-    const working = await spawnAgent(herdr, "working", target);
-    const asking = await spawnAgent(herdr, "asking", target);
-    const finished = await spawnAgent(herdr, "finished", target);
-    const quiet = await spawnAgent(herdr, "quiet", target);
-    report(herdr, working, { status_working: "●", task: "계보 투영 구현" });
-    report(herdr, asking, { status_question_new: "?", expected_reply: "병합 전에 검증을 다시 돌릴까요?", task: "병합 전 검증" });
-    report(herdr, finished, { status_done: "✓", task: "릴리스 노트 초안" });
-    report(herdr, quiet, { task: "로그 정리" });
+    const spawn = (name: string, task: FixtureLabel) => spawnAgent(herdr, name, target, undefined, task);
+    const working = await spawn("working", { task: "계보 투영 구현" });
+    const asking = await spawn("asking", { task: "병합 전 검증 실행", reply: "병합 전에 검증을 다시 돌릴까요?", question: true });
+    const finished = await spawn("finished", { task: "릴리스 노트 초안" });
+    const quiet = await spawn("quiet", { task: "로그 파일 정리 작업" });
+    await setFixtureLifecycle(herdr, working, "working");
+    // Its own workspace is not the one Herdr's clients show.
+    await finishFixtureTurn(herdr, finished, herdr.tab);
 
     daemon = await startHided(herdr, "close-subtree-states");
     const last = new Map<string, Record<string, unknown>>();
@@ -262,20 +255,14 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
   }
 });
 
-/** Clears status tokens `report` set. */
-function clear(herdr: HerdrFixture, pane: string, names: string[]): void {
-  const args = ["pane", "report-metadata", pane, "--source", "e2e-status"];
-  for (const name of names) args.push("--clear-token", name);
-  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
-}
-
 test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a subtree sheet whose last child leaves turns back into it", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
     const [keeper, target] = herdr.panes;
-    report(herdr, target, { status_working: "●", task: "계보 투영 구현" });
+    labelAgent(herdr, target, { task: "계보 투영 구현" });
+    await setFixtureLifecycle(herdr, target, "working");
     daemon = await startHided(herdr, "close-stop-work-live");
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
@@ -298,11 +285,11 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
 
     // The pane settles while the sheet is open: its row dims and says so, and
     // the sheet stays until the operator answers (B28, D-40).
-    clear(herdr, target, ["status_working"]);
+    await setFixtureLifecycle(herdr, target, "idle");
     await expect(row).toHaveAttribute("data-stop-work-state", "quiet", { timeout: 30_000 });
     expect(await opacity()).toBeLessThan(1);
     // It starts again: bright again, in place.
-    report(herdr, target, { status_working: "●" });
+    await setFixtureLifecycle(herdr, target, "working");
     await expect(row).toHaveAttribute("data-stop-work-state", "active", { timeout: 30_000 });
     expect(await opacity()).toBe(1);
     await screenshot(page, "close-stop-work-live");
@@ -316,7 +303,7 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
 
     // The target settles, then its last child closes elsewhere: the sheet
     // turns back into the target's Stop-work sheet with the quiet target dimmed.
-    clear(herdr, target, ["status_working"]);
+    await setFixtureLifecycle(herdr, target, "idle");
     herdr.run(["pane", "close", child]);
     await expect(subtree).toHaveCount(0, { timeout: 30_000 });
     await expect(confirm.getByRole("heading")).toHaveText("Stop the active pane?");

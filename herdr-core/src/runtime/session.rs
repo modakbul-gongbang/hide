@@ -1774,6 +1774,11 @@ impl Runtime {
             self.resync_navigator_focus();
         }
     }
+    /// Keeps the labels the local coordinator published for every later
+    /// local projection; see [`crate::labels::overlay::LabelOverlay`].
+    pub(crate) fn set_label_overlay(&mut self, overlay: crate::labels::overlay::LabelOverlay) {
+        self.label_overlay = overlay;
+    }
     /// Like [`Self::ingest_session`], with a workspace catalog the caller
     /// built outside the runtime lock.
     pub fn ingest_session_with_catalog(
@@ -1785,8 +1790,8 @@ impl Runtime {
         // before anything below reads the agents (PRD agent-sleep B10).
         let mut fetched = fetched;
         if let Ok(payload) = fetched.as_mut() {
+            self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
-            self.label_publications.apply(payload);
         }
         // The session update is this runtime's only regular tick, so it is
         // also where a notification Herdr never answered stops being pending.

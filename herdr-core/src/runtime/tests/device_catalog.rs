@@ -1193,7 +1193,7 @@ fn a_device_pane_carries_its_children_and_its_path_to_the_parent() {
     let child = format!("remote:{TARGET}:pane:t2");
     let row = |pane: &str, spawned_from: Option<&str>| {
         let mut agents = crate::sidebar::project_agents(
-            serde_json::from_value(serde_json::json!({"agents": [{
+            crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [{
                 "pane_id": pane, "agent": "claude", "agent_status": "working",
                 "state_change_seq": 1, "tokens": {"task": format!("Task {pane}")}
             }]}))
@@ -1265,10 +1265,10 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
     let parent = format!("remote:{TARGET}:pane:t1");
     let child = format!("remote:{TARGET}:pane:t2");
     raw.agents = crate::sidebar::project_agents(
-        serde_json::from_value(crate::sidebar::lineage_fixture_value(serde_json::json!({"agents": [
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
             {"pane_id": parent, "agent": "claude", "agent_status": "working", "state_change_seq": 1},
             {"pane_id": child, "agent": "claude", "agent_status": "working", "state_change_seq": 1}
-        ]})))
+        ]}))
         .unwrap(),
     )
     .agents;
@@ -1297,6 +1297,7 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
                 reason: None,
                 location: None,
             }],
+            labels_retirement: Default::default(),
         },
     );
     assert_eq!(descendants(&runtime), vec![child]);
@@ -1327,7 +1328,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
     )]);
     let pane_id = format!("remote:{TARGET}:pane:t1");
     raw.agents = crate::sidebar::project_agents(
-        serde_json::from_value(serde_json::json!({"agents": [{
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [{
             "pane_id": pane_id, "agent": "claude", "agent_status": "working",
             "state_change_seq": 1
         }]}))
@@ -1401,6 +1402,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
                 reason: None,
                 location: None,
             }],
+            labels_retirement: Default::default(),
         },
     );
     let after = children(&runtime);

@@ -135,25 +135,19 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
  * A daemon folder laid out as the app's Contents/Resources: this build's
  * binaries and every kit part a device gets. The daemon reads the device
  * payload from beside its own executable, so a daemon started from here
- * installs the labels plugin and hcoord too.
+ * installs hcoord too.
  */
 export function stageBuild(root: string): string {
   const debug = path.dirname(HIDE_CLI);
   const build = path.join(root, "build");
-  const labels = path.join(REPO, "plugins", "agent-context-labels", "package");
   const hcoord = path.join(REPO, "plugins", "hcoord", "dist");
-  for (const required of [path.join(debug, "hide-agent-context-labels"), path.join(hcoord, "hcoord", "cli.js")]) {
-    if (!fs.existsSync(required)) {
-      throw new Error(`${required} is missing: run \`cargo build -p agent-context-labels --bin hide-agent-context-labels\` and \`pnpm --dir plugins/hcoord build\``);
-    }
-  }
+  const cli = path.join(hcoord, "hcoord", "cli.js");
+  if (!fs.existsSync(cli)) throw new Error(`${cli} is missing: run \`pnpm --dir plugins/hcoord build\``);
   fs.mkdirSync(build, { recursive: true });
   const place = (source: string, target: string) => {
     try { fs.linkSync(source, target); } catch { fs.copyFileSync(source, target); fs.chmodSync(target, 0o755); }
   };
   for (const name of ["hided", "hide", "hide-agent-hooks", "hide-host-helper"]) place(path.join(debug, name), path.join(build, name));
-  fs.cpSync(labels, path.join(build, "agent-context-labels"), { recursive: true });
-  place(path.join(debug, "hide-agent-context-labels"), path.join(build, "agent-context-labels", "hide-agent-context-labels"));
   fs.cpSync(hcoord, path.join(build, "hcoord", "dist"), { recursive: true });
   return build;
 }

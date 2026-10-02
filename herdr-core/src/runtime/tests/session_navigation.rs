@@ -50,7 +50,7 @@ fn eligible_agent_panes_open_on_the_terminal_and_keep_the_conversation_they_aske
                 })
             })
             .collect();
-        serde_json::from_value(serde_json::json!({
+        crate::sidebar::owned_label_fixture(serde_json::json!({
             "agents": agents,
             "workspaces": [{"workspace_id": "w1", "label": "fixture"}],
             "panes": panes,
@@ -167,7 +167,7 @@ fn a_refused_relocation_keeps_its_stamp() {
 #[test]
 fn an_acknowledged_relocation_stays_in_flight_until_the_layout_shows_the_move() {
     let mut runtime = runtime();
-    runtime.ingest_session(Ok(serde_json::from_value(
+    runtime.ingest_session(Ok(crate::sidebar::owned_label_fixture(
         super::lineage::split_lineage_json(),
     )
     .expect("split payload")));
@@ -187,7 +187,7 @@ fn an_acknowledged_relocation_stays_in_flight_until_the_layout_shows_the_move() 
         }),
         3,
     );
-    runtime.ingest_session(Ok(serde_json::from_value(
+    runtime.ingest_session(Ok(crate::sidebar::owned_label_fixture(
         super::lineage::split_lineage_json(),
     )
     .expect("split payload")));
@@ -210,7 +210,9 @@ fn an_acknowledged_relocation_stays_in_flight_until_the_layout_shows_the_move() 
          "area":{"x":0,"y":0,"width":80,"height":24},"focused_pane_id":"w1:p2",
          "panes":[{"pane_id":"w1:p2","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}
     ]);
-    runtime.ingest_session(Ok(serde_json::from_value(moved).expect("moved payload")));
+    runtime.ingest_session(Ok(
+        crate::sidebar::owned_label_fixture(moved).expect("moved payload")
+    ));
     assert!(
         !runtime.pane_relocations_in_flight.contains_key("w1:p2"),
         "the child in its own tab is the move done"
@@ -680,7 +682,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
         api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
     });
     let payload = |focused_workspace_id: &str, focused_pane_id: &str| {
-        serde_json::from_value(serde_json::json!({
+        crate::sidebar::owned_label_fixture(serde_json::json!({
             "agents": [],
             "focused_workspace_id": focused_workspace_id,
             "focused_pane_id": focused_pane_id,
@@ -2143,7 +2145,7 @@ fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
     runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
     runtime.reset_terminal_projection(None);
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "tabs": [{
             "workspace_id": "herdr-workspace",
@@ -2212,7 +2214,7 @@ fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
 
 #[test]
 fn an_exited_panes_root_directory_does_not_become_a_checkout() {
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "workspaces": [{"workspace_id": "w2W", "label": "modakbul"}],
         "panes": [
@@ -2330,7 +2332,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
         Some("pane.projection_unavailable")
     );
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "panes": [
             {"pane_id": "w2X:pB", "cwd": checkout_path},
@@ -2427,7 +2429,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
     // The user chose this pane against a running session, so it is an
     // authoritative selection rather than a restore hint.
     runtime.restore_hint_pending = false;
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "panes": [{"pane_id": "old:p1", "cwd": checkout_path}],
         "tabs": [{"workspace_id": "old-workspace", "tab_id": "old-workspace:t1", "label": ""}],
@@ -2475,7 +2477,7 @@ fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
     runtime.snapshot.ui_state.focused_checkout_id = Some("checkout:gone".to_owned());
     runtime.snapshot.navigator.focused_checkout_id = Some("checkout:gone".to_owned());
 
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "panes": [{"pane_id": "w19:p1", "cwd": "/tmp/hide-restored"}],
         "focused_pane_id": "w19:p1",
@@ -3131,7 +3133,7 @@ fn tab_name_follows_core_focus_before_herdr_and_on_refusal() {
     second_rect.rect.width = 40;
     payload.layouts[0].panes[0].rect.width = 40;
     payload.layouts[0].panes.push(second_rect);
-    payload.layouts[0].splits = serde_json::from_value(serde_json::json!([{
+    payload.layouts[0].splits = crate::sidebar::owned_label_fixture(serde_json::json!([{
         "direction":"right", "ratio":0.5,
         "rect":{"x":0,"y":0,"width":80,"height":24}
     }]))

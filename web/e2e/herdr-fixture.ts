@@ -11,6 +11,16 @@
 // appends every byte it reads to `HIDE_E2E_INPUT_LOG`: that file is what the
 // PTY received, which is how a test tells a click's mouse report from what
 // the shell only sent (PRD S2 B20).
+//
+// The same binary is the daemon's Claude provider, because hided finds
+// `claude` on the same PATH: `claude auth status` answers logged in, and a
+// print-mode request (`--json-schema`) answers with the label written after
+// the last `HIDE_E2E_LABEL ` in its prompt, after the delay a
+// `HIDE_E2E_DELAY_MS ` line before it asks for, and appends the answered
+// task to `HIDE_E2E_PROVIDER_LOG` when that is set. `labelAgent` writes that marker
+// into a synthetic Claude transcript, so a pane's label comes from the
+// core's own transcript read and analysis, never from a token (PRD
+// labels-in-hided).
 
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
@@ -38,10 +48,47 @@ export type HerdrFixture = {
 };
 
 const SHIM_SOURCE = `#include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
-int main(void) {
+static char prompt[1 << 20];
+static int provider(int argc, char **argv) {
+  if (argc > 2 && strcmp(argv[1], "auth") == 0 && strcmp(argv[2], "status") == 0) {
+    puts("{\\"loggedIn\\":true}");
+    return 0;
+  }
+  size_t len = 0; ssize_t n;
+  while (len < sizeof prompt - 1 && (n = read(0, prompt + len, sizeof prompt - 1 - len)) > 0) len += (size_t)n;
+  prompt[len] = 0;
+  char *label = NULL;
+  for (char *at = prompt; (at = strstr(at, "HIDE_E2E_LABEL ")) != NULL; at++) label = at;
+  if (!label) {
+    puts("{\\"type\\":\\"result\\",\\"is_error\\":true,\\"subtype\\":\\"error_during_execution\\"}");
+    return 1;
+  }
+  char *delay = NULL;
+  for (char *at = prompt; (at = strstr(at, "HIDE_E2E_DELAY_MS ")) != NULL && at < label; at++) delay = at;
+  if (delay) {
+    long ms = atol(delay + strlen("HIDE_E2E_DELAY_MS "));
+    struct timespec wait = { ms / 1000, (ms % 1000) * 1000000L };
+    nanosleep(&wait, NULL);
+  }
+  label += strlen("HIDE_E2E_LABEL ");
+  char *end = strchr(label, '\\n');
+  if (end) *end = 0;
+  const char *calls = getenv("HIDE_E2E_PROVIDER_LOG");
+  FILE *log = calls ? fopen(calls, "a") : NULL;
+  if (log) { fprintf(log, "%s\\n", label); fclose(log); }
+  printf("{\\"type\\":\\"result\\",\\"is_error\\":false,\\"structured_output\\":%s}\\n", label);
+  return 0;
+}
+int main(int argc, char **argv) {
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
+  }
   const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
   int log = log_path ? open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
   struct termios tio;
@@ -177,19 +224,111 @@ async function waitFor(predicate: () => boolean, what: string, ms = 10_000, deta
   throw new Error(`timed out waiting for ${what}${detail ? `; last seen: ${detail()}` : ""}`);
 }
 
+/** What the fixture provider answers for one transcript. */
+export type FixtureLabel = {
+  /** 8 to 30 characters: the core refuses a shorter title. */
+  task: string;
+  /** How long the provider takes to answer. */
+  delayMs?: number;
+  progress?: string;
+  /** The reply the agent asks for; with `question`, the row's request line. */
+  reply?: string;
+  question?: boolean;
+};
+
+/** Where the fixture's Claude transcripts live: the fixture HOME's, which
+ * `startHided` links into the daemon's HOME. */
+export function claudeProjects(fixture: Pick<HerdrFixture, "root">): string {
+  return path.join(fixture.root, "home", ".claude", "projects");
+}
+
+/**
+ * The daemon reads agent transcripts under its own HOME; the fixture writes
+ * them under its own, before or after the daemon starts. One folder for both
+ * keeps every label the fixture writes readable by a daemon on `home`.
+ */
+export function linkFixtureTranscripts(fixture: Pick<HerdrFixture, "root">, home: string): void {
+  const own = claudeProjects(fixture);
+  const daemon = path.join(home, ".claude", "projects");
+  fs.mkdirSync(own, { recursive: true });
+  if (path.resolve(daemon) === path.resolve(own) || fs.existsSync(daemon)) return;
+  fs.mkdirSync(path.dirname(daemon), { recursive: true });
+  fs.symlinkSync(own, daemon);
+}
+
+/**
+ * A Claude transcript for `sessionId`: one operator turn and the agent's
+ * answer, which carries the label the fixture provider returns. Written
+ * before the session is declared, because the core reads a session when its
+ * reference or state changes, not when its file grows.
+ */
+/** The text a transcript carries for the fixture provider to answer with. */
+export function labelMarker(label: FixtureLabel): string {
+  const answer = {
+    task: label.task,
+    task_changed: true,
+    progress: label.progress ?? "",
+    expected_reply: label.reply ?? "",
+    attention: label.question ? "question" : "none",
+  };
+  const delay = label.delayMs ? `HIDE_E2E_DELAY_MS ${label.delayMs}\n` : "";
+  return `${delay}HIDE_E2E_LABEL ${JSON.stringify(answer)}`;
+}
+
+export function writeFixtureTranscript(projects: string, sessionId: string, label: FixtureLabel): string {
+  const records = [
+    { type: "user", sessionId, timestamp: "2026-10-01T09:00:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 진행해줘` } },
+    { type: "assistant", sessionId, timestamp: "2026-10-01T09:00:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
+  ];
+  const dir = path.join(projects, "e2e");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  fs.writeFileSync(file, records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+  return file;
+}
+
+/**
+ * Appends a turn carrying `label` to the transcript of `sessionId`: the same
+ * session, so a parent relationship declared for it still holds. The core
+ * reads the new turn on the agent's next state change; the request carries
+ * the label too, so the analysis at the turn's start answers it as well.
+ */
+export function continueFixtureTranscript(fixture: Pick<HerdrFixture, "root">, sessionId: string, label: FixtureLabel): void {
+  const records = [
+    { type: "user", sessionId, timestamp: "2026-10-01T09:01:00Z", origin: { kind: "human" }, message: { role: "user", content: `${label.task} 이어서 진행해줘\n${labelMarker(label)}` } },
+    { type: "assistant", sessionId, timestamp: "2026-10-01T09:01:01Z", message: { role: "assistant", content: [{ type: "text", text: labelMarker(label) }] } },
+  ];
+  fs.appendFileSync(path.join(claudeProjects(fixture), "e2e", `${sessionId}.jsonl`), records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+}
+
+/**
+ * The native session id the fixture gives `pane`'s agent. A native id is
+ * letters, digits, `.`, `_` and `-`, and the core's transcript read refuses
+ * any other, so the pane id's `:` becomes `-`.
+ */
+export function fixtureSessionId(pane: string): string {
+  return `fixture-${pane.replaceAll(":", "-")}`;
+}
+
+/** The native session id `pane`'s agent reports now. */
+export function sessionOf(fixture: Pick<HerdrFixture, "run">, pane: string): string {
+  type Agent = { pane_id: string; agent_session?: { value: string } };
+  const listed = fixture.run(["agent", "list"]) as { result: { agents: Agent[] } };
+  const value = listed.result.agents.find((agent) => agent.pane_id === pane)?.agent_session?.value;
+  if (!value) throw new Error(`pane ${pane} reports no agent session`);
+  return value;
+}
+
+/** The last session sequence each pane declared; a replacement must be newer. */
+const sessionSeqs = new Map<string, number>();
+
 /** Controlled fake-agent provenance. This publishes the explicit test session,
  * not a transcript-discovery claim; native isolation tests use raw CLI reports. */
 function declareFixtureSession(env: NodeJS.ProcessEnv, bin: string, pane: string, kind: string, sessionId: string, replacing = false): void {
-  execFileSync(bin, ["pane", "report-agent-session", pane, "--source", `herdr:${kind}`, "--agent", kind, "--agent-session-id", sessionId, "--seq", replacing ? "2" : "1", ...(replacing ? ["--session-start-source", "clear"] : [])], { env, timeout: 30_000 });
-  const hash = crypto.createHash("sha256");
-  for (const part of [kind, "id", sessionId]) {
-    const bytes = Buffer.from(part);
-    const size = Buffer.alloc(8);
-    size.writeBigUInt64BE(BigInt(bytes.length));
-    hash.update(size).update(bytes);
-  }
-  const owner = `v1:${hash.digest("hex")}`;
-  execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `label_owner=${owner}`, "--token", `status_owner=${owner}`, "--token", "label_generation=fixture", "--token", "status_generation=fixture"], { env, timeout: 30_000 });
+  const key = `${env.HERDR_SOCKET_PATH}|${pane}`;
+  const seq = replacing ? (sessionSeqs.get(key) ?? 1) + 1 : 1;
+  sessionSeqs.set(key, seq);
+  execFileSync(bin, ["pane", "report-agent-session", pane, "--source", `herdr:${kind}`, "--agent", kind, "--agent-session-id", sessionId, "--seq", String(seq), ...(replacing ? ["--session-start-source", "clear"] : [])], { env, timeout: 30_000 });
 }
 
 /**
@@ -213,9 +352,26 @@ export function setFixtureSession(fixture: HerdrFixture, pane: string, sessionId
   declareFixtureSession(fixture.env, fixture.bin, pane, "claude", sessionId, true);
 }
 
+let labelSessions = 0;
+
+/**
+ * Gives `pane` a new Claude session whose transcript the core analyzes into
+ * `label`. A new session, because the same session is read again only when
+ * the agent's state changes.
+ */
+export function labelAgent(fixture: HerdrFixture, pane: string, label: FixtureLabel): string {
+  const sessionId = `label-${process.pid}-${(labelSessions += 1)}`;
+  writeFixtureTranscript(claudeProjects(fixture), sessionId, label);
+  setFixtureSession(fixture, pane, sessionId);
+  return sessionId;
+}
+
 /** Drive the fake Claude's actual screen detector while retaining its native
- * session identity. Lifecycle hook reports may be ignored after declaration. */
-export async function setFixtureLifecycle(fixture: HerdrFixture, pane: string, state: "working" | "blocked"): Promise<void> {
+ * session identity. Lifecycle hook reports may be ignored after declaration.
+ *
+ * `idle` ends the turn: Herdr reports `done` when the pane's tab is not the
+ * one its clients show, and `idle` when it is, so either answers it. */
+export async function setFixtureLifecycle(fixture: HerdrFixture, pane: string, state: "working" | "blocked" | "idle"): Promise<string> {
   type Agent = { pane_id: string; agent_status: string; agent_session?: { source: string; agent: string; kind: string; value: string } };
   const current = () => (fixture.run(["agent", "list"]) as { result: { agents: Agent[] } }).result.agents.find((agent) => agent.pane_id === pane);
   const reference = current()?.agent_session;
@@ -224,12 +380,18 @@ export async function setFixtureLifecycle(fixture: HerdrFixture, pane: string, s
   }
   // The existing raw-mode shim echoes these bytes, so pinned Herdr's
   // osc_title_working / bash_permission_prompt rules see a controlled TUI.
+  // Leaving a permission prompt clears it off the screen, where Herdr would
+  // still read it as blocked; nothing else touches the pane's text.
+  const clear = reference && current()?.agent_status === "blocked" ? "\x1b[2J\x1b[H" : "";
   const screen = state === "working"
-    ? "\x1b]0;\u280b Working\x07"
-    : "\x1b]0;Fixture\x07\x1b[2J\x1b[Hdo you want to proceed?\n"
-      + "bash command\n❯ 1. Yes\n2. No\n";
+    ? `${clear}\x1b]0;\u280b Working\x07`
+    : state === "idle"
+      ? `${clear}\x1b]0;\u2733 Claude Code\x07`
+      : "\x1b]0;Fixture\x07\x1b[2J\x1b[Hdo you want to proceed?\n"
+        + "bash command\n❯ 1. Yes\n2. No\n";
+  const reached = (status: string | undefined) => (state === "idle" ? status === "idle" || status === "done" : status === state);
   execFileSync(fixture.bin, ["pane", "send-text", pane, screen], { env: fixture.env, timeout: 30_000 });
-  await waitFor(() => current()?.agent_status === state, `native fixture state ${state}`, 10_000,
+  await waitFor(() => reached(current()?.agent_status), `native fixture state ${state}`, 10_000,
     () => JSON.stringify({ expected: state, observed: current()?.agent_status }));
   const observed = current()!;
   if (JSON.stringify(observed.agent_session) !== JSON.stringify(reference)) {
@@ -243,6 +405,29 @@ export async function setFixtureLifecycle(fixture: HerdrFixture, pane: string, s
     fs.writeFileSync(path.join(evidence, `lifecycle-${pane.replaceAll(":", "-")}-${state}.json`),
       JSON.stringify({ expected: state, observed: observed.agent_status, nativeSessionUnchanged: true, explanation: JSON.parse(explanation) }));
   }
+  return observed.agent_status;
+}
+
+/** A new tab in the fixture's workspace, which no agent runs in: Herdr's
+ * clients look at it while a turn ends elsewhere, so that turn ends unseen. */
+export function elsewhereTab(fixture: HerdrFixture): string {
+  const created = fixture.run(["tab", "create", "--workspace", fixture.workspace, "--label", "elsewhere", "--env", `PATH=${fixture.fixturePath}`, "--no-focus"]) as {
+    result: { tab: { tab_id: string } };
+  };
+  return created.result.tab.tab_id;
+}
+
+/**
+ * A finished turn the operator has not seen: the pane works, then stops
+ * while its tab is not the one Herdr's clients show, which Herdr reports as
+ * `done`. `elsewhere` is another tab; focusing it moves Herdr's clients off
+ * the pane's tab first.
+ */
+export async function finishFixtureTurn(fixture: HerdrFixture, pane: string, elsewhere: string): Promise<void> {
+  fixture.run(["tab", "focus", elsewhere]);
+  await setFixtureLifecycle(fixture, pane, "working");
+  const status = await setFixtureLifecycle(fixture, pane, "idle");
+  if (status !== "done") throw new Error(`pane ${pane} stopped as ${status}, not done: its tab is still shown`);
 }
 
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
@@ -346,15 +531,13 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     if (agents) {
       herdr(env, bin, ["agent", "start", "one", "--kind", "claude", "--pane", first]);
       herdr(env, bin, ["agent", "start", "two", "--kind", "claude", "--pane", second]);
-      // Distinct row labels; report-metadata prints nothing on success.
+      // Distinct row labels, made by the core from each pane's transcript.
       for (const [pane, task] of [
         [first, "Agent one"],
         [second, "Agent two"],
       ]) {
-        // A label fixture declares the provider's actual native reference;
-        // ownerless metadata deliberately cannot title an agent.
-        declareFixtureSession(env, bin, pane, "claude", `fixture-${pane}`);
-        execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env, timeout: 30_000 });
+        writeFixtureTranscript(path.join(root, "home", ".claude", "projects"), fixtureSessionId(pane!), { task: task! });
+        declareFixtureSession(env, bin, pane!, "claude", fixtureSessionId(pane!));
       }
     }
     return {
@@ -373,7 +556,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
           const pane = args[args.indexOf("--pane") + 1];
           const kind = args[args.indexOf("--kind") + 1];
           if (args.includes("--pane") && ["claude", "codex"].includes(kind!))
-            declareFixtureSession(env, bin, pane!, kind!, `fixture-${pane}`);
+            declareFixtureSession(env, bin, pane!, kind!, fixtureSessionId(pane!));
         }
         return result;
       },
@@ -387,9 +570,12 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
 
 /**
  * A workspace of its own at `cwd` with one agent in it, recorded as spawned
- * by `parent` the way hcoord records it (`declareParent`) when one is named. Returns the new pane.
+ * by `parent` the way hcoord records it (`declareParent`) when one is named.
+ * With `named`, the agent runs a session labelled so before the relationship
+ * is written for it, since a later session is no longer that child's.
+ * Returns the new pane.
  */
-export async function spawnAgent(fixture: HerdrFixture, label: string, parent: string | null, cwd = path.join(fixture.root, label)): Promise<string> {
+export async function spawnAgent(fixture: HerdrFixture, label: string, parent: string | null, cwd = path.join(fixture.root, label), named?: FixtureLabel): Promise<string> {
   fs.mkdirSync(cwd, { recursive: true });
   const created = fixture.run(["workspace", "create", "--cwd", cwd, "--label", label, "--env", `PATH=${fixture.fixturePath}`, "--no-focus"]) as {
     result: { root_pane: { pane_id: string } };
@@ -397,6 +583,7 @@ export async function spawnAgent(fixture: HerdrFixture, label: string, parent: s
   const pane = created.result.root_pane.pane_id;
   await waitFor(() => paneText(fixture.env, fixture.bin, pane).includes("fixture %"), `a prompt in pane ${pane}`, 20_000, () => JSON.stringify(paneRead(fixture.env, fixture.bin, pane)));
   fixture.run(["agent", "start", label, "--kind", "claude", "--pane", pane]);
+  if (named) labelAgent(fixture, pane, named);
   if (parent) declareParent(fixture, pane, parent);
   return pane;
 }

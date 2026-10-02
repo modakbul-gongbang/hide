@@ -1715,6 +1715,10 @@ fn run_gh(
 mod tests {
     use super::*;
 
+    /// A fixture `gh` answers at once; a one-second deadline read a loaded
+    /// machine's slow shell start as a timeout, the network category.
+    const FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
+
     #[test]
     fn optional_project_permission_does_not_prevent_basic_issue_resolution() {
         let reference = crate::issues::IssueReference::parse("acme/project#42", None).unwrap();
@@ -1825,7 +1829,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 &["issue", "view", "7", "--repo", "acme/app", "--json", fields],
-                Duration::from_secs(1),
+                FIXTURE_DEADLINE,
             )
         };
         assert!(viewed(ISSUE_DETAIL_FIELDS).is_ok());
@@ -2013,7 +2017,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 &["pr", "list"],
-                Duration::from_secs(1)
+                FIXTURE_DEADLINE
             )
             .unwrap(),
             "[]"
@@ -2023,7 +2027,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 &["issue", "list"],
-                Duration::from_secs(1)
+                FIXTURE_DEADLINE
             )
             .unwrap(),
             "[]"
@@ -2039,7 +2043,7 @@ esac"#,
                     &fixture.binary,
                     Some(&fixture.root),
                     &write,
-                    Duration::from_secs(1)
+                    FIXTURE_DEADLINE
                 )
                 .is_err()
             );
@@ -2048,7 +2052,7 @@ esac"#,
             &fixture.binary,
             Some(&fixture.root),
             &["auth", "status"],
-            Duration::from_secs(1),
+            FIXTURE_DEADLINE,
         )
         .unwrap_err();
         assert_eq!(failure.category, "not logged in");
@@ -2058,7 +2062,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 &["auth", "login"],
-                Duration::from_secs(1)
+                FIXTURE_DEADLINE
             )
             .is_err()
         );
@@ -2073,7 +2077,7 @@ esac"#,
                 &fixture.root.join("missing"),
                 None,
                 &["pr", "list"],
-                Duration::from_secs(1)
+                FIXTURE_DEADLINE
             )
             .unwrap_err()
             .category,
@@ -2087,13 +2091,8 @@ esac"#,
             ("HTTP 429 rate limit exceeded", "network or rate limit"),
         ] {
             let fixture = GhFixture::new(&format!("printf '%s' '{stderr}' >&2; exit 1"));
-            let failure = run_gh(
-                &fixture.binary,
-                None,
-                &["pr", "list"],
-                Duration::from_secs(1),
-            )
-            .unwrap_err();
+            let failure =
+                run_gh(&fixture.binary, None, &["pr", "list"], FIXTURE_DEADLINE).unwrap_err();
             assert_eq!(failure.category, expected);
             assert_eq!(failure.reason, stderr);
         }

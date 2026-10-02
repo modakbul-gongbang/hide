@@ -38,7 +38,9 @@ pub struct PhoneAgent {
     pub place: Option<String>,
     /// The SSH device's name; `None` on this Mac.
     pub device_label: Option<String>,
-    pub elapsed: String,
+    /// When the core last saw the agent change state; the phone counts the
+    /// elapsed time from it, so time passing sends nothing.
+    pub changed_at_unix_ms: Option<u64>,
     pub line: Option<Line>,
     pub status_label: String,
     pub demand: String,
@@ -260,7 +262,7 @@ fn rows(
             title: title.to_owned(),
             place: places.get(pane_id).cloned(),
             device_label: device_label.map(str::to_owned),
-            elapsed: str_of(agent, "elapsed").to_owned(),
+            changed_at_unix_ms: agent.get("changed_at_unix_ms").and_then(Value::as_u64),
             line: line(agent),
             status_label: str_of(agent, "status_label").to_owned(),
             demand: agent
@@ -366,7 +368,7 @@ mod tests {
     fn agent(pane: &str, group: &str, extra: Value) -> Value {
         let mut value = json!({
             "pane_id": pane, "group": group, "symbol": "●", "identity_label": format!("task {pane}"),
-            "agent_kind": "claude", "elapsed": "2m", "status_label": group, "demand": "none",
+            "agent_kind": "claude", "changed_at_unix_ms": 1_790_000_000_000_u64, "status_label": group, "demand": "none",
         });
         for (key, field) in extra.as_object().unwrap() {
             value[key] = field.clone();

@@ -397,7 +397,7 @@ fn ordinary_click_uses_detected_pane_agent_and_never_sends_enter() {
         (pane_id, "unknown", false),
         (pane_id, "claude", true),
     ] {
-        let payload = serde_json::from_value(serde_json::json!({
+        let payload = crate::sidebar::owned_label_fixture(serde_json::json!({
             "agents": [{"pane_id": detected_pane, "agent": kind, "state_change_seq": 1}]
         }))
         .unwrap();
@@ -950,7 +950,7 @@ fn read_record_follows_a_tab_switch_the_operator_made() {
                 "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
             })
         };
-        serde_json::from_value(serde_json::json!({
+        crate::sidebar::owned_label_fixture(serde_json::json!({
             "agents": [agent("w-order:t1", seq_t1), agent("w-order:t2", seq_t2)],
             "focused_workspace_id": "w-order",
             "focused_pane_id": "w-order:t1:p",
@@ -1086,7 +1086,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
                 "tokens": {"status_done_new": "\u{25cf}", "activity": format!("{seq:013}")}
             })
         };
-        serde_json::from_value(serde_json::json!({
+        crate::sidebar::owned_label_fixture(serde_json::json!({
             "agents": [agent("wa:pA", seq_a), agent("wb:pB", 1), agent("wb:pC", 1)],
             "focused_workspace_id": "wa",
             "focused_pane_id": "wa:pA",
@@ -1197,7 +1197,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
     runtime.snapshot.ui_state.selected_pane_id = Some("remote:mini:pane:w59:p2".to_owned());
     runtime.snapshot.terminal.pane_id = Some("remote:mini:pane:w59:p2".to_owned());
     runtime.restore_hint_pending = false;
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
         "panes": [{"pane_id": "wL:p1", "cwd": checkout_path}],
         "tabs": [{"workspace_id": "wL", "tab_id": "wL:t1", "label": ""}],
@@ -1290,7 +1290,8 @@ fn read_record_is_written_for_the_operator_focused_pane_and_evicted_when_it_disa
     assert!(stored.contains("w1:p1"), "the record reached the file");
 
     let empty: SessionSnapshotPayload =
-        serde_json::from_value(serde_json::json!({"agents": []})).expect("empty payload");
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": []}))
+            .expect("empty payload");
     runtime.ingest_session(Ok(empty));
     assert!(
         runtime.snapshot().ui_state.pane_read_records.is_empty(),
@@ -1474,9 +1475,9 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
                         "pane_id": pane_id,
                         "workspace_label": "Remote",
                         "agent": "codex",
-                        "agent_status": "idle",
+                        "agent_status": "done",
                         "state_change_seq": 4,
-                        "tokens": {"status_done_new": "\u{25cf}", "activity": "0000000000001"}
+                        "tokens": {"activity": "0000000000001"}
                     }))
                     .collect::<Vec<_>>()
             }))
@@ -1732,7 +1733,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
             "splits": []
         })
     };
-    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+    let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [idle("plain:p1"), done("plain:p2")],
         "focused_pane_id": "plain:p1",
         "panes": [
@@ -1947,4 +1948,26 @@ fn remote_purpose_resolver_reports_an_unsupported_server_in_the_sheet() {
             .iter()
             .any(|diagnostic| { diagnostic.kind == "checkout_purpose.remote_unsupported" })
     );
+}
+
+#[test]
+fn window_readers_rest_while_no_window_draws_the_snapshot() {
+    let mut runtime = runtime();
+    let event = |attached: bool| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "ui_attached", "payload": {"attached": attached}
+        }))
+        .expect("the event encodes")
+    };
+    assert!(
+        runtime.ui_attached(),
+        "a core no daemon told otherwise is drawn, so every reader runs"
+    );
+    assert!(
+        !runtime.dispatch_json(&event(false)),
+        "the last window leaving is known and changes nothing on screen"
+    );
+    assert!(!runtime.ui_attached());
+    assert!(!runtime.dispatch_json(&event(true)));
+    assert!(runtime.ui_attached());
 }

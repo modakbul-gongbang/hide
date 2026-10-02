@@ -188,6 +188,8 @@ pub(crate) enum CoordinatorMessage {
         generation: u64,
         message: String,
     },
+    /// The label worker has a read or an analysis result to take.
+    Labels,
 }
 
 pub(crate) struct ActiveSubscription {

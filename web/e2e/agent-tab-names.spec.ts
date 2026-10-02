@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { execFileSync } from "node:child_process";
-import { startHerdr } from "./herdr-fixture";
+import { labelAgent, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 
@@ -16,16 +15,16 @@ test("focused agent titles, inline rename, clear and reconnect", async ({ page }
     await expect(tab).toBeVisible();
     await expect(tab).toContainText(/zsh|Tab \d+/);
     const [first, second] = herdr.panes;
-    for (const [pane, name, title] of [[first, "one", "첫 번째 작업"], [second, "two", "두 번째 작업"]]) {
+    for (const [pane, name, title] of [[first, "one", "첫 번째 작업 진행"], [second, "two", "두 번째 작업 진행"]]) {
       herdr.run(["agent", "start", name!, "--kind", "claude", "--pane", pane!]);
-      execFileSync(herdr.bin, ["pane", "report-metadata", pane!, "--source", "tab-names", "--token", `task=${title}`], { env: herdr.env, timeout: 30_000 });
+      labelAgent(herdr, pane!, { task: title! });
     }
     await page.locator(`[data-pane-view="${first}"]`).click({ position: { x: 30, y: 60 } });
-    await expect(tab).toContainText("첫 번째 작업", { timeout: 15_000 });
+    await expect(tab).toContainText("첫 번째 작업 진행", { timeout: 15_000 });
     await expect(tab.locator("[data-tab-status]")).toHaveCount(1);
     await expect(tab.locator("img")).toHaveCount(1);
     await page.locator(`[data-pane-view="${second}"]`).click({ position: { x: 30, y: 60 } });
-    await expect(tab).toContainText("두 번째 작업");
+    await expect(tab).toContainText("두 번째 작업 진행");
     await screenshot(page, "tab-names-automatic");
     const rename = async () => {
       await tab.click({ button: "right" });
@@ -46,11 +45,11 @@ test("focused agent titles, inline rename, clear and reconnect", async ({ page }
       return input;
     };
     let input = await rename();
-    await expect(input).toHaveValue("두 번째 작업");
-    expect(await input.evaluate((node: HTMLInputElement) => [node.selectionStart, node.selectionEnd])).toEqual([0, "두 번째 작업".length]);
+    await expect(input).toHaveValue("두 번째 작업 진행");
+    expect(await input.evaluate((node: HTMLInputElement) => [node.selectionStart, node.selectionEnd])).toEqual([0, "두 번째 작업 진행".length]);
     await input.fill("취소할 이름");
     await input.press("Escape");
-    await expect(tab).toContainText("두 번째 작업");
+    await expect(tab).toContainText("두 번째 작업 진행");
     input = await rename();
     await input.fill("고정 이름");
     await input.press("Enter");
@@ -65,12 +64,12 @@ test("focused agent titles, inline rename, clear and reconnect", async ({ page }
     await input.fill("");
     await input.press("Enter");
     await expect(input).toHaveCount(0);
-    await expect(tab).toContainText("첫 번째 작업");
+    await expect(tab).toContainText("첫 번째 작업 진행");
     input = await rename();
     await input.fill("blur 취소");
     await page.locator("[data-workspace-toolbar]").click();
     await expect(input).toHaveCount(0);
-    await expect(tab).toContainText("첫 번째 작업");
+    await expect(tab).toContainText("첫 번째 작업 진행");
   } finally {
     daemon?.stop();
     herdr.stop();

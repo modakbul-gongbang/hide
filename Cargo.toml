@@ -10,7 +10,6 @@ members = [
     "hide-project",
     "hide-session",
     "hided",
-    "plugins/agent-context-labels",
 ]
 resolver = "3"
 

@@ -4,6 +4,7 @@ import { AgentMark } from "../AgentMark";
 import { badgeLabel, badgeParts, branchChip, lineShownAtRest, lineTone, markTone, rowAccessibleName, rowLine } from "../agentRow";
 import type { AgentRow } from "../snapshot";
 import { AgentChildrenPopover } from "./agent-children-popover";
+import { Elapsed } from "./elapsed";
 import { BadgeMarks } from "./status-badge";
 import { StatusMark } from "./status-mark";
 import { DeviceChip } from "./device-chip";
@@ -137,7 +138,7 @@ export const AgentRowItem = memo(function AgentRowItem({
           returnFocus={() => main.current?.focus()}
         />
       ) : null}
-      <span className="pointer-events-none shrink-0 self-start pt-xxs text-micro text-muted-foreground">{agent.elapsed}</span>
+      <Elapsed since={agent.changed_at_unix_ms} className="pointer-events-none shrink-0 self-start pt-xxs text-micro text-muted-foreground" />
     </li>
   );
 });

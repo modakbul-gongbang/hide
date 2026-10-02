@@ -17,7 +17,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
+import { labelAgent, agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -46,7 +46,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
   await prompt(herdr, pane);
   if (task) {
     herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
-    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env: herdr.env, timeout: 30_000 });
+    labelAgent(herdr, pane, { task });
   }
   return pane;
 }
@@ -243,7 +243,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     git(repo, ["branch", "-D", "dependabot/cargo/sha2"]);
 
     await workspaceAt(herdr, repo, null);
-    const fixingPane = await workspaceAt(herdr, tree("fixing"), "리뷰 반영");
+    const fixingPane = await workspaceAt(herdr, tree("fixing"), "리뷰 반영 작업 진행");
     await setFixtureLifecycle(herdr, fixingPane, "working");
 
     const gh = fakeGh(herdr.root);

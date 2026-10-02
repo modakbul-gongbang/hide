@@ -1323,6 +1323,28 @@ impl Runtime {
         true
     }
 
+    /// The operator's provider choice once the settings file has been read.
+    pub(crate) fn label_ai_settings(&self) -> Option<hide_ai::AiSettings> {
+        self.ai_settings.clone()
+    }
+
+    pub(crate) fn install_label_services(
+        &mut self,
+        services: std::sync::Arc<crate::labels::LabelServices>,
+    ) {
+        self.label_services = Some(services);
+    }
+
+    /// Whether the readers that only feed a window should run.
+    pub(crate) fn ui_attached(&self) -> bool {
+        self.ui_attached
+    }
+
+    /// What a starting session-sync coordinator builds its label worker on.
+    pub(crate) fn label_services(&self) -> Option<std::sync::Arc<crate::labels::LabelServices>> {
+        self.label_services.clone()
+    }
+
     /// Applies one Background AI settings event.
     ///
     /// The choice takes effect on the snapshot at once, so the control moves

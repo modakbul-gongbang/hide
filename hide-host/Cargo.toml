@@ -19,6 +19,7 @@ cap-std = "=4.0.3"
 hide-project = { path = "../hide-project" }
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-kit = { path = "../hide-kit" }
+hide-session = { path = "../hide-session" }
 ignore = "=0.4.33"
 libc = "=0.2.189"
 serde = { version = "=1.0.229", features = ["derive"] }

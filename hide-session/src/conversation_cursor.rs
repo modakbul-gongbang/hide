@@ -8,7 +8,7 @@ use std::path::Path;
 
 /// Search-only durable progress, including a skipped oversized tool record.
 /// No transcript bytes or Memory cursor state are retained.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConversationCheckpoint {
     cursor: crate::CursorCheckpoint,
     discarded_bytes: u64,
@@ -48,6 +48,21 @@ impl ConversationCursor {
             discarded_bytes: self.discarded_bytes,
             has_more: self.has_more,
             classifier: self.classifier.clone(),
+        }
+    }
+
+    /// A checkpoint of this file that resumes at `offset`, an earlier record
+    /// boundary this cursor already read past (an event offset). Reading
+    /// from it again yields the records from there on; nothing beyond the
+    /// file identity is carried, so no transcript bytes are kept.
+    pub fn checkpoint_at(&self, offset: u64) -> ConversationCheckpoint {
+        let mut cursor = self.cursor.checkpoint();
+        cursor.offset = offset.min(cursor.offset);
+        ConversationCheckpoint {
+            cursor,
+            discarded_bytes: 0,
+            has_more: false,
+            classifier: None,
         }
     }
 
@@ -227,7 +242,7 @@ fn read_appended_file(
 // A bounded lexical/structural scan of an oversized provider envelope.
 // Key order and tool-output contents cannot decide whether a record is text.
 // The normal serde parser remains responsible for retained conversation JSON.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 struct LargeRecord {
     frames: Vec<JsonFrame>,
     token: Option<JsonString>,
@@ -247,7 +262,7 @@ enum Scope {
     Block,
     Other,
 }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct JsonFrame {
     scope: Scope,
     object: bool,
@@ -255,7 +270,7 @@ struct JsonFrame {
     expecting_key: bool,
     block_kind: bool,
 }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct JsonString {
     key: bool,
     scope: Scope,

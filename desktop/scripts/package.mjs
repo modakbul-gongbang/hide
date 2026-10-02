@@ -1,6 +1,6 @@
 // Packages the release hide.app: the Electron host with the release daemon,
 // the hide CLI, the hook and device helpers, the pinned Herdr binary, the
-// labels plugin and hcoord in its Contents/Resources, ad-hoc signed, zipped beside a SHA-256 checksum
+// hcoord in its Contents/Resources, ad-hoc signed, zipped beside a SHA-256 checksum
 // (the Electron release app PRD, D-03 and D-08).
 //
 // The CLI finds `hided` beside its own file and the daemon offers the device
@@ -97,20 +97,6 @@ const stagedHcoord = path.join(staged, "hcoord");
 fs.mkdirSync(stagedHcoord, { recursive: true });
 fs.cpSync(hcoordBuild, path.join(stagedHcoord, "dist"), { recursive: true });
 extraResource.push(stagedHcoord);
-// The install kit links the labels plugin from this folder: the packaged
-// manifest (no build step), its scripts and the release watcher beside them,
-// so a machine with no checkout and no Rust toolchain runs the same plugin
-// (docs/agent-hooks.md, "The install kit").
-const labelsPackage = path.join(repo, "plugins", "agent-context-labels", "package");
-const labelsBinary = path.join(release, "hide-agent-context-labels");
-for (const required of [path.join(labelsPackage, "herdr-plugin.toml"), path.join(labelsPackage, "scripts"), labelsBinary]) {
-  if (!fs.existsSync(required)) throw new Error(`cannot package hide.app: the labels plugin is missing ${required}`);
-}
-const stagedLabels = path.join(staged, "agent-context-labels");
-fs.cpSync(labelsPackage, stagedLabels, { recursive: true });
-fs.copyFileSync(labelsBinary, path.join(stagedLabels, "hide-agent-context-labels"));
-fs.chmodSync(path.join(stagedLabels, "hide-agent-context-labels"), 0o755);
-extraResource.push(stagedLabels);
 const notices = path.join(resources, "THIRD_PARTY_NOTICES");
 if (!fs.existsSync(notices)) throw new Error(`third-party notices are missing: ${notices}`);
 extraResource.push(notices);
@@ -144,11 +130,6 @@ for (const [name] of shipped) {
 }
 const bundledHcoord = path.join(bundledResources, "hcoord", "dist", "hcoord", "cli.js");
 if (!fs.statSync(bundledHcoord).isFile()) throw new Error(`built hcoord CLI did not land in ${bundledResources}`);
-const bundledLabels = path.join(bundledResources, "agent-context-labels", "hide-agent-context-labels");
-fs.accessSync(bundledLabels, fs.constants.X_OK);
-if (!fs.statSync(path.join(bundledResources, "agent-context-labels", "herdr-plugin.toml")).isFile()) {
-  throw new Error(`the labels plugin manifest did not land in ${bundledResources}`);
-}
 
 // The packaged daemon runs in Electron's Node runtime. Execute the exact
 // bundle before signing so a disabled RunAsNode fuse fails the package by

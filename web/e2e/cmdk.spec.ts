@@ -15,7 +15,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace } from "./wire";
 
@@ -206,7 +206,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string): Prom
   const pane = created.result.root_pane.pane_id;
   await prompt(herdr, pane);
   herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
-  execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env: herdr.env, timeout: 30_000 });
+  labelAgent(herdr, pane, { task });
   return pane;
 }
 

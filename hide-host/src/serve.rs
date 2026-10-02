@@ -165,6 +165,25 @@ fn open_root(root: &RootRef) -> HostResult<Root> {
     Root::open_pinned(Path::new(&root.path), root.identity)
 }
 
+/// The `label_transcript` answer for the transcripts under `home`; the
+/// message of a refusal is the stable reason code, never a path or
+/// transcript text.
+pub fn label_transcript(
+    home: &Path,
+    request: &hide_session::label_transcript::LabelTranscriptRequest,
+) -> HostResult<Value> {
+    let transcript = hide_session::label_transcript::read(home, request).map_err(|reason| {
+        let code = match reason.as_str() {
+            "session_file_missing" => ErrorCode::NotFound,
+            "session_kind_unsupported" => ErrorCode::Unsupported,
+            reason if reason.starts_with("session_capacity:") => ErrorCode::TooLarge,
+            _ => ErrorCode::Io,
+        };
+        HostError::new(code, reason)
+    })?;
+    to_value(transcript)
+}
+
 /// Answers one request. Public so the core's tests can drive the exact
 /// dispatch the helper runs without a process.
 pub fn handle(call: Call) -> HostResult<Value> {
@@ -271,6 +290,12 @@ pub fn handle(call: Call) -> HostResult<Value> {
             cli_dir,
             herdr_socket,
         } => crate::kit::handle(action, &cli_dir, herdr_socket.as_deref()),
+        Call::LabelTranscript { request } => {
+            let home = std::env::var_os("HOME").ok_or_else(|| {
+                HostError::new(ErrorCode::Unsupported, "label_session_home_unavailable")
+            })?;
+            label_transcript(Path::new(&home), &request)
+        }
         Call::WorktreeRemove { removal } => {
             absolute(&removal.repository_root)?;
             absolute(&removal.checkout_path)?;

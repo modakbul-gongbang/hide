@@ -117,12 +117,7 @@ impl KitDeclined {
 }
 
 /// What a removal leaves on a device whose helper is not connected (B24).
-const LEFT_ON_DEVICE: [&str; 4] = [
-    "Hide's hook entries",
-    "the labels plugin link",
-    "Hide's hide link",
-    "the helper root",
-];
+const LEFT_ON_DEVICE: [&str; 3] = ["Hide's hook entries", "Hide's hide link", "the helper root"];
 
 impl Runtime {
     /// This Mac cannot run the kit at all, and its row says why (B11).
@@ -181,6 +176,19 @@ impl Runtime {
     /// Stores what a check or an install found on one machine. A report that
     /// lands while an install is queued for that machine keeps it busy.
     pub(crate) fn ingest_kit_report(&mut self, device_id: &str, report: &KitReport) -> bool {
+        // The retired labels plugin is no part the operator acts on; what was
+        // taken out, and what stayed for the next pass, goes to the log
+        // (PRD labels-in-hided D-12, design principle 13).
+        let retirement = &report.labels_retirement;
+        if !retirement.is_empty() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "labels",
+                "kind": if retirement.failures.is_empty() { "plugin.retired" } else { "plugin.retire_incomplete" },
+                "device_id": device_id,
+                "removed": retirement.removed,
+                "failures": retirement.failures,
+            }));
+        }
         let mut snapshot = KitSnapshot::from_report(report);
         snapshot.busy = self.kit_install_queued(device_id);
         self.set_kit_state(device_id, snapshot)
@@ -628,13 +636,13 @@ mod tests {
             KitJob::Apply(Scope::Automatic)
         );
         assert_eq!(
-            reinstall(&[ComponentId::Labels]).merge(KitJob::Apply(Scope::Automatic)),
-            reinstall(&[ComponentId::Labels])
+            reinstall(&[ComponentId::Hcoord]).merge(KitJob::Apply(Scope::Automatic)),
+            reinstall(&[ComponentId::Hcoord])
         );
         assert_eq!(
-            reinstall(&[ComponentId::Labels])
-                .merge(reinstall(&[ComponentId::Cli, ComponentId::Labels])),
-            reinstall(&[ComponentId::Cli, ComponentId::Labels])
+            reinstall(&[ComponentId::Hcoord])
+                .merge(reinstall(&[ComponentId::Cli, ComponentId::Hcoord])),
+            reinstall(&[ComponentId::Cli, ComponentId::Hcoord])
         );
         assert_eq!(KitJob::Status.merge(KitJob::Status), KitJob::Status);
     }

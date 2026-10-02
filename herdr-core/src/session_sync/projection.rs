@@ -109,6 +109,9 @@ impl ProjectionState {
                     lineage_session: agent.lineage_session.clone(),
                     state_change_seq: Some(agent.state_change_seq),
                     tokens: agent.tokens.clone(),
+                    // The coordinator's label worker lays these on.
+                    label: None,
+                    changed_at_unix_ms: None,
                 }
             })
             .collect();

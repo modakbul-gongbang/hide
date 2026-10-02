@@ -6,6 +6,7 @@ const REASONS = {
   cli_missing: "The hide command was not found.",
   start_failed: "hided could not start.",
   no_response: "hided did not respond.",
+  other_build: "A hided of another build is running; only the app replaces it.",
 };
 
 function show() {

@@ -142,8 +142,9 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(page.locator('[data-session-row="claude-broken"]')).toHaveAttribute("aria-label", /unavailable$/);
     await page.locator('[data-session-copy="claude-broken"]').click();
     await expect(broken).toContainText("Copied");
-    // The daemon spells its HOME as it was given, so compare the files, not the spelling.
-    expect(fs.realpathSync(await page.evaluate(() => navigator.clipboard.readText()))).toBe(files["claude-broken"]);
+    // The daemon spells its HOME as it was given, and its transcript folder is
+    // a link to the fixture's, so compare the files, not the spelling.
+    expect(fs.realpathSync(await page.evaluate(() => navigator.clipboard.readText()))).toBe(fs.realpathSync(files["claude-broken"]));
     await screenshot(page, "s8-unavailable-row");
     // Opening it answers with the same reason in the detail place.
     await page.locator('[data-session-row="claude-broken"]').click();
@@ -189,7 +190,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await screenshot(page, "s8-detail");
     // The detail copies the file it read.
     await page.locator('[data-session-copy="detail"]').click();
-    expect(fs.realpathSync(await page.evaluate(() => navigator.clipboard.readText()))).toBe(files["claude-release"]);
+    expect(fs.realpathSync(await page.evaluate(() => navigator.clipboard.readText()))).toBe(fs.realpathSync(files["claude-release"]));
 
     // Arrow keys walk the rows and the provider choice.
     await page.locator('[data-session-row="claude-release"]').focus();

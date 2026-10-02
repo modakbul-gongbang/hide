@@ -27,6 +27,7 @@ import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
 import { CheckoutCardHint } from "./components/pr-card";
+import { Elapsed, formatElapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -800,7 +801,7 @@ export function CardAgentRow({ agent, depth, place, selected, onOpen }: { agent:
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
         <AgentMark kind={agent.agent_kind} />
         <span className={cn("min-w-0 flex-1 truncate text-body", turn ? "text-foreground" : "text-subtle-foreground")}>{agent.identity_label}</span>
-        <span className="shrink-0 font-mono text-caption text-muted-foreground">{agent.elapsed}</span>
+        <Elapsed since={agent.changed_at_unix_ms} className="shrink-0 font-mono text-caption text-muted-foreground" />
       </span>
       {said ? (
         <span className="relative pl-(--size-icon)">
@@ -1056,7 +1057,8 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
   const [open, setOpen] = useState(card.needsYou);
   const { task } = card;
   const word = turnWord(card);
-  const age = card.shown[0]?.elapsed ?? relativeActivity(card.updatedAt, now);
+  const lead = card.shown[0]?.changed_at_unix_ms;
+  const age = lead != null ? formatElapsed(now - lead) : relativeActivity(card.updatedAt, now);
   const createdAge = relativeActivity(task.created_at_unix_ms, now);
   const hasRows = card.rows.length > 0;
   const selected = page.panel === task.key;

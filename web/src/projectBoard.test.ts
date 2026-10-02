@@ -66,7 +66,7 @@ function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task
 }
 
 function agent(pane: string, group = "working", extra: Partial<AgentRow> = {}): AgentRow {
-  return { id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_label: group, elapsed: "1m", emphasized: false, unread: false, demand: "none", activity: "working", ...extra };
+  return { id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_label: group, changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...extra };
 }
 
 function one(project: Workspace, agents: AgentRow[] = []): BoardProject[] {

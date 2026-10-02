@@ -8,18 +8,11 @@
 // no GitHub project here, offers no GitHub search. Captured in Dark and Light.
 
 import { expect, test, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { labelAgent, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
-
-function report(herdr: HerdrFixture, pane: string, set: Record<string, string>): void {
-  const args = ["pane", "report-metadata", pane, "--source", "e2e-palette"];
-  for (const [name, value] of Object.entries(set)) args.push("--token", `${name}=${value}`);
-  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
-}
 
 /** The group headings the open palette draws, top to bottom. */
 function headings(page: Page) {
@@ -39,7 +32,8 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     // The sidebar opens on Projects; these rows are the Agents list's.
     await page.locator('[data-sidebar-mode="agents"]').click({ timeout: 20_000 });
     await expect(page.locator('[data-sidebar="agents"]')).toBeVisible();
-    report(herdr, one, { status_working: "●", progress: "팔레트 그룹 검증 중" });
+    labelAgent(herdr, one, { task: "Agent one", progress: "팔레트 그룹 검증 중" });
+    await setFixtureLifecycle(herdr, one, "working");
     await expect(page.locator(`[data-agent-list] [data-pane="${one}"]`)).toContainText("팔레트 그룹 검증 중", { timeout: 20_000 });
 
     // The sidebar's Search icon opens the palette with the query focused. The
