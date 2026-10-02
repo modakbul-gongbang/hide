@@ -1003,6 +1003,12 @@ fn a_link_planted_at_an_own_files_name_is_neither_followed_nor_accepted() {
     let folder_at = outer.path().join("folder.lock");
     link::create_link(outer.path(), &folder_at).unwrap();
     assert!(private::open_own_file(&folder_at, true).is_err());
+    // A hard link is a second name of the target itself.
+    let hard = outer.path().join("hard.lock");
+    fs::hard_link(&target, &hard).unwrap();
+    assert!(private::open_own_file(&hard, true).is_err());
+    assert!(private::open_own_file(&hard, false).is_err());
+    assert_eq!(read(&target), "kept");
 }
 
 #[test]
@@ -1103,14 +1109,14 @@ fn an_open_file_knows_the_path_it_is_at_even_after_a_rename() {
     let first = outer.path().join("first.txt");
     fs::write(&first, "contents").unwrap();
     let file = File::open(&first).unwrap();
+    let folder_handle = hide_platform::fs::open_dir(outer.path()).unwrap();
+    let folder_path = identity::path_of(&folder_handle).unwrap();
+    assert!(identity::same_file(&folder_path, outer.path()).unwrap());
+    // A file's answer is its folder's answer and its name, so a boundary can
+    // compare the two by prefix.
     assert_eq!(
         identity::path_of(&file).unwrap(),
-        identity::canonical(&first).unwrap()
-    );
-    let folder_handle = hide_platform::fs::open_dir(outer.path()).unwrap();
-    assert_eq!(
-        identity::path_of(&folder_handle).unwrap(),
-        identity::canonical(outer.path()).unwrap()
+        folder_path.join("first.txt")
     );
     let second = outer.path().join("second.txt");
     // Windows renames an open file only when it was opened sharing delete,
@@ -1118,6 +1124,6 @@ fn an_open_file_knows_the_path_it_is_at_even_after_a_rename() {
     fs::rename(&first, &second).unwrap();
     assert_eq!(
         identity::path_of(&file).unwrap(),
-        identity::canonical(&second).unwrap()
+        folder_path.join("second.txt")
     );
 }

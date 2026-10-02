@@ -52,16 +52,22 @@ pub fn open_or_create_file(path: &Path) -> io::Result<fs::File> {
 
 /// Opens the account's own file `path` for reading, and for writing too when
 /// `create` asks for it to be made, private, if it is not there. The name
-/// itself is opened, never what a link at it leads to, and only a regular
-/// file the current account owns is accepted (`PermissionDenied` otherwise):
-/// the file may sit in a folder other accounts write, where a planted link
-/// would have its target written or read, or a planted pipe would block.
+/// itself is opened, never what a symbolic link at it leads to, and only a
+/// regular file the current account owns and that has no other name is
+/// accepted (`PermissionDenied` otherwise): the file may sit in a folder
+/// other accounts write, where a planted link would have its target written
+/// or read, or a planted pipe would block.
 pub fn open_own_file(path: &Path, create: bool) -> io::Result<fs::File> {
     let file = sys::open_own(path, create)?;
-    if !file.metadata()?.is_file() || !handle_owned_by_current_user(&file)? {
+    // A second name would be another account's hard link to one of this
+    // account's files, planted where the caller looks.
+    if !file.metadata()?.is_file()
+        || !handle_owned_by_current_user(&file)?
+        || super::identity::link_count(&file)? != 1
+    {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "the file is not the account's own regular file",
+            "the file is not the account's own regular file with one name",
         ));
     }
     Ok(file)
