@@ -254,12 +254,26 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
     } else {
         assert!(!fixture.home().join(".hide/hcoord").exists());
     }
-    let record = std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap();
-    for code in ["cli", "claude_code_hook"] {
-        assert!(record.contains(code), "{record}");
+    let record: Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap(),
+    )
+    .unwrap();
+    let mut installed = vec!["claude_code_hook", "cli"];
+    if HCOORD_INSTALLS {
+        installed.push("hcoord");
     }
-    assert_eq!(record.contains("hcoord"), HCOORD_INSTALLS, "{record}");
-    assert!(!record.contains("codex_hook"));
+    assert_eq!(
+        record["installed"],
+        serde_json::json!(installed),
+        "{record}"
+    );
+    // The standalone plugin is looked for on every platform, so its
+    // retirement is recorded whether or not this one installs hcoord.
+    assert_eq!(
+        record["retired"],
+        serde_json::json!(["hide.hcoord"]),
+        "{record}"
+    );
 }
 
 #[test]
