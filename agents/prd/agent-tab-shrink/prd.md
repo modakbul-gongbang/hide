@@ -4,7 +4,7 @@ status: "ready"
 human_approval: "pending"
 review_profile: "standard"
 review_rationale: "운영자가 매일 보는 Agent 탭 스트립의 폭과 표시 상태를 바꾸는 사용자 가시 UI 변경이지만, 코어 상태, 와이어, 저장 데이터, 권한 경계는 바꾸지 않는다."
-source_intake: "GitHub issue #322 + agents/runs/agent-tab-shrink/HANDOFF.md (current conversation)"
+source_intake: "current conversation"
 created_at: "2026-10-02"
 updated_at: "2026-10-02"
 ---
