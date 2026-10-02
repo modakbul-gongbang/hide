@@ -11,6 +11,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use hide_platform::process::OwnedChild;
 use serde_json::Value;
 
 const CLI_TIMEOUT: Duration = Duration::from_secs(2);
@@ -54,20 +55,20 @@ fn run_cli(program: &OsString, arguments: &[&str], reference: Option<&Path>) -> 
     if let Some(reference) = reference {
         command.env(CAP_REF_ENV, reference);
     }
-    let mut child = command.spawn().ok()?;
+    let mut child = OwnedChild::spawn(&mut command).ok()?;
     let deadline = Instant::now() + CLI_TIMEOUT;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {}
             Err(_) => {
-                let _ = child.kill();
+                let _ = child.kill_tree();
                 let _ = child.wait();
                 return None;
             }
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
+            let _ = child.kill_tree();
             let _ = child.wait();
             return None;
         }
@@ -78,8 +79,7 @@ fn run_cli(program: &OsString, arguments: &[&str], reference: Option<&Path>) -> 
     }
     let mut output = Vec::new();
     child
-        .stdout
-        .take()?
+        .take_stdout()?
         .take(OUTPUT_LIMIT)
         .read_to_end(&mut output)
         .ok()?;
