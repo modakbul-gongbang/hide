@@ -1397,14 +1397,12 @@ mod tests {
 
     #[test]
     fn purpose_authority_normalizes_symlink_and_dot_segment_cwds() {
-        use std::os::unix::fs::symlink;
-
         let root = temp_dir("purpose-authority-alias");
         let checkout = root.join("checkout");
         let nested = checkout.join("nested");
         let alias = root.join("checkout-alias");
         fs::create_dir_all(&nested).expect("checkout fixture");
-        symlink(&checkout, &alias).expect("checkout symlink");
+        hide_platform::fs::link::create_link(&checkout, &alias).expect("checkout symlink");
         let spaces = vec![
             SessionSpace {
                 id: "symlink".to_owned(),

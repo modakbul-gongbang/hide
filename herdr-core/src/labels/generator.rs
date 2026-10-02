@@ -1,11 +1,12 @@
 //! One label generator per Herdr server (PRD labels-in-hided D-10).
 //!
 //! Every hided that follows the same Herdr server would otherwise analyze
-//! the same turns. The worker that holds an exclusive `flock` on the
-//! server's lock file generates; any other shows provider names, logs once
-//! that it is standing by, and tries again every thirty seconds, so it
-//! takes over when the holder exits. The lock is advisory and released by
-//! the kernel with its process, so a crashed holder blocks nobody.
+//! the same turns. The worker that holds an exclusive lock on the server's
+//! lock file generates; any other shows provider names, logs once that it is
+//! standing by, and tries again every thirty seconds, so it takes over when
+//! the holder exits. The kernel releases the lock with its process, so a
+//! crashed holder blocks nobody. Windows locks the file's bytes against
+//! reading too, so a daemon standing by there cannot name the holder.
 //!
 //! A local server's lock sits beside its socket, the one place every daemon
 //! that reaches the server shares whatever HOME it runs with, so a daemon
@@ -13,7 +14,6 @@
 //! device's lock sits under the daemon's HOME, which owns the registration.
 
 use std::fs::File;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -148,23 +148,7 @@ fn holder(path: &Path) -> serde_json::Value {
 /// directory other users write (a socket under `/tmp`), where a planted
 /// link would otherwise have its target truncated.
 fn open_private(path: &Path, create: bool) -> std::io::Result<File> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let file = std::fs::OpenOptions::new()
-        .create(create)
-        .truncate(false)
-        .read(true)
-        .write(create)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
-    let metadata = file.metadata()?;
-    // SAFETY: geteuid has no preconditions and no memory effects.
-    if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } {
-        return Err(std::io::Error::other(
-            "the lock is not this user's regular file",
-        ));
-    }
-    Ok(file)
+    hide_platform::fs::private::open_own_file(path, create)
 }
 
 fn try_lock(path: &Path) -> std::io::Result<Option<File>> {
@@ -172,17 +156,10 @@ fn try_lock(path: &Path) -> std::io::Result<Option<File>> {
         std::fs::create_dir_all(directory)?;
     }
     let file = open_private(path, true)?;
-    // SAFETY: `flock` on a descriptor this function owns; no memory is
-    // shared with the call.
-    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if result == 0 {
-        return Ok(Some(file));
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-        Ok(None)
-    } else {
-        Err(error)
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => Err(error),
     }
 }
 
@@ -196,7 +173,11 @@ mod tests {
         let socket = dir.path().join("herdr.sock");
         let target = dir.path().join("operator-file.json");
         std::fs::write(&target, r#"{"secret":"kept"}"#).unwrap();
-        std::os::unix::fs::symlink(&target, local_lock_path(&socket)).unwrap();
+        match hide_platform::fs::link::create_link(&target, &local_lock_path(&socket)) {
+            // A Windows account without the privilege cannot plant one either.
+            Err(error) if hide_platform::fs::link::needs_privilege(&error) => return,
+            planted => planted.unwrap(),
+        }
 
         let mut lock = GeneratorLock::new(Some(local_lock_path(&socket)), "local");
         assert_eq!(lock.ensure(Instant::now()), (false, false));

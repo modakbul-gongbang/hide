@@ -277,22 +277,12 @@ impl LabelStore {
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     let directory = path
         .parent()
         .ok_or_else(|| std::io::Error::other("labels path has no directory"))?;
     std::fs::create_dir_all(directory)?;
-    let temporary = directory.join(format!(".{LABELS_FILE}.{}.tmp", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&temporary)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    std::fs::rename(&temporary, path)
+    hide_platform::fs::atomic::write_file(path, bytes, hide_platform::fs::Access::Private)
+        .map(|_| ())
 }
 
 #[cfg(test)]
@@ -318,12 +308,7 @@ mod tests {
         store.save_target(LOCAL_TARGET, &records);
         let reopened = LabelStore::open(Some(root.path()), None);
         assert_eq!(reopened.target(LOCAL_TARGET), records);
-        let mode = std::os::unix::fs::PermissionsExt::mode(
-            &std::fs::metadata(root.path().join(LABELS_FILE))
-                .unwrap()
-                .permissions(),
-        );
-        assert_eq!(mode & 0o777, 0o600);
+        assert!(hide_platform::fs::private::is_private(&root.path().join(LABELS_FILE)).unwrap());
     }
 
     #[test]

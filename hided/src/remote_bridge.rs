@@ -11,7 +11,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use herdr_core::WorkspaceRemoteRoute;
-use hide_host::workspace_bridge::PaneIdentity;
+use hide_host::pane_peer::PaneIdentity;
 use serde_json::{Value, json};
 
 use crate::core::CoreHandle;

@@ -3874,13 +3874,13 @@ pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use serde_json::json;
 
     use super::*;
     use crate::fake_herdr::FakeHerdr;
 
+    // The fixture is a shell script.
+    #[cfg(unix)]
     #[test]
     fn a_hung_hcoord_link_is_killed_without_closing_the_started_fork() {
         let directory = tempfile::tempdir().expect("create hcoord fixture directory");
@@ -4145,8 +4145,11 @@ mod tests {
         assert!(ensure_complete_tab_restore(3, 3).is_ok());
     }
 
+    // A folder is made untraversable through its mode bits.
+    #[cfg(unix)]
     #[test]
     fn file_reopen_distinguishes_metadata_failure_from_a_missing_file() {
+        use std::os::unix::fs::PermissionsExt;
         let root =
             std::env::temp_dir().join(format!("hide-file-metadata-denied-{}", std::process::id()));
         let denied = root.join("denied");

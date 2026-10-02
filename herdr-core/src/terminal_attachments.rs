@@ -1,7 +1,8 @@
 //! Bounded, explicit terminal file ingress. No provider draft or submission state.
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Read;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+use hide_platform::fs::identity::stamp_of;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -72,20 +73,19 @@ pub(crate) fn read_sources(
                 "File paths must be absolute and contain no control characters.".to_owned(),
             );
         }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|_| {
+        let mut file = hide_platform::fs::open_regular(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::InvalidInput {
+                "Folders, symbolic links and special files cannot be attached. Choose regular files."
+                    .to_owned()
+            } else {
                 "A selected file is unavailable or is a symbolic link. Choose a regular file."
                     .to_owned()
-            })?;
+            }
+        })?;
         let before = file
             .metadata()
             .map_err(|_| "Could not inspect a selected file.".to_owned())?;
-        if !before.is_file() {
-            return Err("Folders, symbolic links and special files cannot be attached. Choose regular files.".to_owned());
-        }
+        let stamp = stamp_of(&file).map_err(|_| "Could not inspect a selected file.".to_owned())?;
         if before.len() > MAX_FILE_BYTES {
             return Err("A file exceeds the 20 MiB attachment limit.".to_owned());
         }
@@ -102,16 +102,8 @@ pub(crate) fn read_sources(
             .map_err(|_| {
                 "Could not read a selected file. Check its permissions and retry.".to_owned()
             })?;
-        let after = file
-            .metadata()
-            .map_err(|_| "Could not recheck a selected file.".to_owned())?;
-        if bytes.len() as u64 != before.len()
-            || before.len() != after.len()
-            || before.mtime() != after.mtime()
-            || before.mtime_nsec() != after.mtime_nsec()
-            || before.ctime() != after.ctime()
-            || before.ctime_nsec() != after.ctime_nsec()
-        {
+        let after = stamp_of(&file).map_err(|_| "Could not recheck a selected file.".to_owned())?;
+        if bytes.len() as u64 != before.len() || stamp != after {
             return Err(
                 "A selected file changed while it was being read. Choose it again.".to_owned(),
             );
@@ -177,7 +169,6 @@ pub(crate) fn remove_clipboard(state_path: &Path, request_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
     #[test]
     fn paths_are_quoted_in_file_order_without_submission() {
         let paths = vec![
@@ -208,11 +199,17 @@ mod tests {
         let file = root.join("한글.png");
         fs::write(&file, b"explicit bytes").unwrap();
         let link = root.join("link.png");
-        symlink(&file, &link).unwrap();
+        // A Windows account without the privilege cannot make the link.
+        let linked = match hide_platform::fs::link::create_link(&file, &link) {
+            Err(error) if hide_platform::fs::link::needs_privilege(&error) => false,
+            made => made.map(|()| true).unwrap(),
+        };
         let cancelled = AtomicBool::new(false);
         let result = read_sources(&[file.to_string_lossy().into_owned()], &cancelled).unwrap();
         assert_eq!(result[0].bytes, b"explicit bytes");
-        assert!(read_sources(&[link.to_string_lossy().into_owned()], &cancelled).is_err());
+        assert!(
+            !linked || read_sources(&[link.to_string_lossy().into_owned()], &cancelled).is_err()
+        );
         assert!(read_sources(&[root.to_string_lossy().into_owned()], &cancelled).is_err());
         let oversized = root.join("large");
         fs::File::create(&oversized)

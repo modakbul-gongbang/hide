@@ -622,7 +622,7 @@ pub fn attest_remote(
     core: &CoreHandle,
     device_id: &str,
     source_pane_id: &str,
-    identity: &hide_host::workspace_bridge::PaneIdentity,
+    identity: &hide_host::pane_peer::PaneIdentity,
 ) -> Result<Attestation, &'static str> {
     if device_id.is_empty() || source_pane_id.is_empty() || source_pane_id.len() > 256 {
         return Err("invalid_request");
