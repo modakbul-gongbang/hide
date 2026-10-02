@@ -631,6 +631,12 @@ export type RecentClosed = {
   reopen_blocked_reason: string | null;
 };
 
+/**
+ * One entry of ⌘K's Recent list: the ids that open the checkout and the names
+ * its row is drawn from while its device has no catalog to read them from.
+ */
+export type RecentCheckout = { device_id: string; checkout_id: string; project_name: string; branch: string; device_name: string };
+
 /** The explorer's most recent filesystem change and how far it got. */
 export type ExplorerOperation = {
   id: number;
@@ -1159,6 +1165,8 @@ export type SnapshotRest = {
     project_issue_sources?: Record<string, string>;
     issue_settings?: IssueSettings;
     agent_start?: AgentStartChoice;
+    /** The checkouts last brought to the front, newest first, up to ten (PRD cmdk-recent). */
+    recent_checkouts?: RecentCheckout[];
     [key: string]: unknown;
   };
   status?: {

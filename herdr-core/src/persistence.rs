@@ -127,6 +127,10 @@ struct StoredUiState {
     /// The stamps and the sleeping agents; absent loads as none.
     #[serde(default)]
     agent_sleep: crate::agent_sleep::AgentSleepStore,
+    /// Absent in a store written before the recent list existed, which loads
+    /// empty. More entries than the limit (a hand edit) are cut to it.
+    #[serde(default)]
+    recent_checkouts: Vec<crate::model::RecentCheckout>,
 }
 
 /// Settings › Issues as stored. `default_agent` is only ever read: it named
@@ -301,6 +305,11 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
                 store.after_load();
                 store
             },
+            recent_checkouts: {
+                let mut recent = stored.recent_checkouts;
+                recent.truncate(crate::model::RECENT_CHECKOUT_LIMIT);
+                recent
+            },
         },
         stored.pane_terminal_sizes,
         disposition,
@@ -364,6 +373,7 @@ pub fn save(
         },
         agent_start: Some(state.agent_start.clone()),
         agent_sleep: state.agent_sleep.clone(),
+        recent_checkouts: state.recent_checkouts.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;

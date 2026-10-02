@@ -37,8 +37,8 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     await expect(page.locator(`[data-agent-list] [data-pane="${one}"]`)).toContainText("팔레트 그룹 검증 중", { timeout: 20_000 });
 
     // The sidebar's Search icon opens the palette with the query focused. The
-    // page shows Main, which has nothing to relate to, so the palette is the
-    // input alone (B7).
+    // page shows Main, which has nothing to relate to, so the palette holds
+    // Recent alone: the checkout the daemon had in front (PRD cmdk-recent B5).
     const field = page.locator("[data-sidebar-search]");
     await expect(field).toHaveAccessibleName("Search");
     await field.click();
@@ -46,10 +46,10 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     await expect(input).toBeFocused();
     await expect(input).toHaveAttribute("placeholder", "이름이나 #번호를 입력하세요");
     await expect(page.locator("[data-palette-esc]")).toHaveText("Esc");
-    await expect(page.locator("[data-cmdk]")).toHaveAttribute("data-cmdk", "collapsed");
-    await expect(page.locator("[data-palette-row]")).toHaveCount(0);
-    await expect(page.locator("[data-palette-footer]")).toHaveCount(0);
-    await screenshot(page, "palette-dark-collapsed");
+    await expect(page.locator("[data-cmdk]")).toHaveAttribute("data-cmdk", "open");
+    await expect(headings(page)).toHaveText(["Recent"]);
+    await expect(page.locator("[data-palette-row]")).toHaveCount(1);
+    await screenshot(page, "palette-dark-recent");
 
     // Typing opens the results: agents first for an agent's name, and the one command ⌘K keeps is not among them.
     await page.keyboard.type("Agent");

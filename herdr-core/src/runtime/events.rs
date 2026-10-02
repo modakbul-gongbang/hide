@@ -2309,6 +2309,7 @@ impl Runtime {
                     .count();
                 self.retire_device_editor_tabs(&payload.device_id);
                 self.forget_device_views(&payload.device_id);
+                self.forget_recent_checkouts(|held| held.device_id == payload.device_id);
                 self.rebuild_device_rows();
                 self.rebuild_tab_strips();
                 self.persist_current_ui_state();
@@ -3452,6 +3453,9 @@ impl Runtime {
                     // Every agent start owns this; a shared save carries it.
                     agent_start: current.agent_start,
                     agent_sleep: current.agent_sleep,
+                    // The core records it on the front change; a shared save
+                    // carries it through, or any save would empty the list.
+                    recent_checkouts: current.recent_checkouts,
                 };
                 // Visibility and popover activity wake the provider reader,
                 // but they are not durable preferences. The shell sends the

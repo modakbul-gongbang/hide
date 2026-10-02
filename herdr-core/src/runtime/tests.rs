@@ -40,6 +40,8 @@ mod project_sessions;
 mod projects;
 #[path = "tests/pull_requests.rs"]
 mod pull_requests;
+#[path = "tests/recent_checkouts.rs"]
+mod recent_checkouts;
 #[path = "tests/repository_clone.rs"]
 mod repository_clone;
 #[path = "tests/session_navigation.rs"]
