@@ -178,8 +178,13 @@ fn a_filtered_watch_reports_only_what_it_keeps_and_a_burst_it_drops_is_not_an_ov
     fs::create_dir_all(&objects).unwrap();
     fs::create_dir_all(&refs).unwrap();
     drain(&changes);
-    for index in 0..10_000 {
+    // More paths than the queue holds, paced so the system's own queue keeps
+    // up: an overflow there is the system's and no filter can prevent it.
+    for index in 0..CAPACITY + 500 {
         fs::write(objects.join(format!("o{index}")), b"x").unwrap();
+        if index % 100 == 99 {
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
     let dropped = drain(&changes);
     assert!(
