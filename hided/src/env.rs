@@ -237,12 +237,11 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
             kind: "empty",
         });
     }
-    let resolved = hide_kit::layout::state_dir(
+    let state_dir = hide_kit::layout::state_dir(
         &home,
         hide_state_dir.as_deref(),
         read(XDG_STATE_HOME).as_deref(),
     );
-    let state_dir = resolved.path;
     // Judged by the folder, not by which variable named it: `hide connect`
     // hands the daemon it starts the default folder through HIDE_STATE_DIR.
     let legacy_state_dir = (state_dir == hide_kit::layout::default_state_dir(&home))

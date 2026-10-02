@@ -40,14 +40,6 @@ pub fn legacy_state_dir(home: &Path) -> PathBuf {
     home.join(".local/state/hide")
 }
 
-/// Which state folder a process uses, and whether it is the default one, the
-/// only folder the one-time move fills.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StateDir {
-    pub path: PathBuf,
-    pub is_default: bool,
-}
-
 /// `HIDE_STATE_DIR` wins; a set `XDG_STATE_HOME` keeps `$XDG_STATE_HOME/hide`
 /// as before and is never moved; otherwise `~/.hide/state` (D-04). Empty
 /// values count as unset, as the callers read them.
@@ -55,23 +47,14 @@ pub fn state_dir(
     home: &Path,
     hide_state_dir: Option<&str>,
     xdg_state_home: Option<&str>,
-) -> StateDir {
+) -> PathBuf {
     if let Some(dir) = hide_state_dir.filter(|value| !value.is_empty()) {
-        return StateDir {
-            path: PathBuf::from(dir),
-            is_default: false,
-        };
+        return PathBuf::from(dir);
     }
     if let Some(xdg) = xdg_state_home.filter(|value| !value.is_empty()) {
-        return StateDir {
-            path: Path::new(xdg).join("hide"),
-            is_default: false,
-        };
+        return Path::new(xdg).join("hide");
     }
-    StateDir {
-        path: default_state_dir(home),
-        is_default: true,
-    }
+    default_state_dir(home)
 }
 
 /// [`state_dir`] from this process's environment, for a program that has no
@@ -83,7 +66,6 @@ pub fn state_dir_from_process(home: &Path) -> PathBuf {
         read("HIDE_STATE_DIR").as_deref(),
         read("XDG_STATE_HOME").as_deref(),
     )
-    .path
 }
 
 /// Where a device's helper and the `hide` command beside it meet (D-06).
@@ -150,10 +132,7 @@ mod tests {
         let home = Path::new("/Users/example");
         assert_eq!(
             state_dir(home, None, None),
-            StateDir {
-                path: PathBuf::from("/Users/example/.hide/state"),
-                is_default: true
-            }
+            PathBuf::from("/Users/example/.hide/state")
         );
         assert_eq!(
             state_dir(home, Some(""), Some("")),
@@ -161,17 +140,11 @@ mod tests {
         );
         assert_eq!(
             state_dir(home, None, Some("/xdg")),
-            StateDir {
-                path: PathBuf::from("/xdg/hide"),
-                is_default: false
-            }
+            PathBuf::from("/xdg/hide")
         );
         assert_eq!(
             state_dir(home, Some("/isolated"), Some("/xdg")),
-            StateDir {
-                path: PathBuf::from("/isolated"),
-                is_default: false
-            }
+            PathBuf::from("/isolated")
         );
     }
 

@@ -40,11 +40,16 @@ pub fn move_legacy(
     if !own_folder(legacy)? {
         return Ok(Moved::Nothing);
     }
+    // Checked before any lock is taken, so a legacy folder left beside the
+    // new one is not touched at all (B5).
+    if std::fs::symlink_metadata(target).is_ok() {
+        return Ok(Moved::LeftBehind);
+    }
     // The legacy folder's own connect lock: an older `hide connect` takes the
-    // same one, so neither starts a daemon there while it moves. Opened
-    // without creating the folder, so a folder another connect just moved
-    // is not made again.
-    let _lock = match lock_without_creating(&legacy.join("connect.lock")) {
+    // same one, so neither starts a daemon there while it moves. The folder
+    // itself is never made, so one another connect just moved is not made
+    // again.
+    let _lock = match lock_in_folder(&legacy.join("connect.lock")) {
         Ok(lock) => lock,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Moved::Nothing),
         Err(error) => return Err(format!("{} could not be locked: {error}", legacy.display())),
@@ -145,7 +150,9 @@ fn private_parent(parent: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn lock_without_creating(path: &Path) -> io::Result<File> {
+/// Locks `path`, making the file inside its existing folder but never the
+/// folder: a missing folder is `NotFound`.
+fn lock_in_folder(path: &Path) -> io::Result<File> {
     use std::os::fd::AsRawFd;
     let file = OpenOptions::new()
         .create(true)
@@ -238,6 +245,7 @@ mod tests {
         let moved = move_legacy(&legacy, &target, |_| panic!("no daemon is stopped")).unwrap();
         assert_eq!(moved, Moved::LeftBehind);
         assert!(legacy.join("core-state.json").is_file());
+        assert!(!legacy.join("connect.lock").exists(), "the old folder is not touched");
         assert!(!target.join("core-state.json").exists());
     }
 
