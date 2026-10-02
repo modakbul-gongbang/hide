@@ -5,7 +5,9 @@
 //! default state folder: a folder HIDE_STATE_DIR or XDG_STATE_HOME chose is
 //! never moved (D-04). The whole folder is renamed at once, so there is never
 //! a copy in two places or a half-moved folder; a daemon running from the old
-//! folder is stopped first, because it keeps writing there. When the new
+//! folder is stopped first, because it keeps writing there, and the folder
+//! moves only once its instance lock is free: a daemon that holds it but did
+//! not answer as itself is never signalled, and nothing moves. When the new
 //! folder already exists nothing is merged: the old folder stays as it is
 //! and the daemon's boot logs both paths (`log_left_behind`). Every later run
 //! finds no old folder and does nothing.
@@ -28,7 +30,8 @@ pub enum Moved {
 
 /// Moves `legacy` to `target` once. `stop` ends the daemon a legacy state
 /// file names when that daemon answers as itself, and returns its pid; a
-/// daemon that will not stop is an error and nothing moves.
+/// daemon that will not stop, or any process still holding the folder's
+/// instance lock afterwards, is an error and nothing moves.
 pub fn move_legacy(
     legacy: &Path,
     target: &Path,
@@ -58,6 +61,24 @@ pub fn move_legacy(
         .ok_or_else(|| format!("{} has no parent folder", target.display()))?;
     private_parent(parent)?;
     let stopped_pid = stop(legacy)?;
+    // The lock is the liveness test: a pid or a `/health` answer can be stale
+    // or slow, but a running daemon always holds it. Held across the rename,
+    // so no older daemon starts in the folder meanwhile.
+    let _instance = match instance_lock(legacy) {
+        Ok(lock) => lock,
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            return Err(format!(
+                "a hided still runs from {} and did not answer as itself, so nothing was moved; quit it and connect again",
+                legacy.display()
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "{} could not be locked: {error}",
+                crate::state_file::lock_path(legacy).display()
+            ));
+        }
+    };
     std::fs::rename(legacy, target).map_err(|error| {
         format!(
             "{} could not be moved to {}: {error}",
@@ -84,9 +105,15 @@ pub fn log_left_behind(legacy: Option<&Path>, state_dir: &Path) {
 }
 
 /// Whether `path` is a real folder this account owns. A link or another
-/// account's folder is not moved, whatever it leads to.
+/// account's folder is not moved, whatever it leads to; one another account
+/// can write to is refused, since its state file names the pid that `stop`
+/// signals.
 fn own_folder(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() && metadata.uid() == euid() && metadata.mode() & 0o022 != 0 => Err(format!(
+            "{} can be written by other accounts, so Hide does not move it",
+            path.display()
+        )),
         Ok(metadata) => Ok(metadata.is_dir() && metadata.uid() == euid()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!("{} could not be read: {error}", path.display())),
@@ -131,6 +158,30 @@ fn lock_without_creating(path: &Path) -> io::Result<File> {
     // SAFETY: flock on a descriptor `file` owns; dropping it releases.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
+/// The legacy folder's instance lock, taken without waiting; a missing lock
+/// file means no daemon ever ran there and is created inside the folder.
+fn instance_lock(legacy: &Path) -> io::Result<File> {
+    use std::os::fd::AsRawFd;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(crate::state_file::lock_path(legacy))?;
+    // SAFETY: flock on a descriptor `file` owns; dropping it releases.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let error = io::Error::last_os_error();
+        return Err(if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            io::Error::from(io::ErrorKind::WouldBlock)
+        } else {
+            error
+        });
     }
     Ok(file)
 }
@@ -188,6 +239,36 @@ mod tests {
         assert_eq!(moved, Moved::LeftBehind);
         assert!(legacy.join("core-state.json").is_file());
         assert!(!target.join("core-state.json").exists());
+    }
+
+    #[test]
+    fn a_process_still_holding_the_instance_lock_leaves_everything_in_place() {
+        let home = tempfile::tempdir().unwrap();
+        let legacy = legacy_with(home.path());
+        let target = home.path().join(".hide/state");
+        // A daemon that did not answer as itself: `stop` finds nothing to signal.
+        let held = crate::state_file::acquire_lock(&legacy).unwrap();
+        let error = move_legacy(&legacy, &target, |_| Ok(None)).unwrap_err();
+        assert!(error.contains("still runs"), "{error}");
+        assert!(legacy.join("core-state.json").is_file());
+        assert!(!target.exists());
+        drop(held);
+        assert_eq!(
+            move_legacy(&legacy, &target, |_| Ok(None)).unwrap(),
+            Moved::Moved { stopped_pid: None }
+        );
+    }
+
+    #[test]
+    fn a_folder_other_accounts_can_write_is_not_moved() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let legacy = legacy_with(home.path());
+        std::fs::set_permissions(&legacy, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let target = home.path().join(".hide/state");
+        let error = move_legacy(&legacy, &target, |_| panic!("nothing is signalled")).unwrap_err();
+        assert!(error.contains("other accounts"), "{error}");
+        assert!(legacy.join("core-state.json").is_file());
     }
 
     #[test]

@@ -420,3 +420,38 @@ fn with_both_folders_the_new_one_is_used_and_the_old_one_logged() {
     let _ = isolated(&cli, &home, &moved).arg("stop").status();
     assert!(wait_gone(line["pid"].as_i64().unwrap() as i32));
 }
+
+/// A process that holds the old folder's instance lock without answering
+/// `/health` as itself is never signalled, and the folder stays whole: the
+/// connect fails naming it rather than moving the state out from under it.
+#[test]
+fn a_silent_process_holding_the_old_folders_lock_keeps_it_from_moving() {
+    use std::os::fd::AsRawFd;
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let legacy = home.join(".local/state/hide");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::write(legacy.join("core-state.json"), "{}").unwrap();
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(legacy.join("hided.lock"))
+        .unwrap();
+    // SAFETY: flock on a descriptor `held` owns; dropping it releases.
+    assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX) }, 0);
+    let cli = Path::new(env!("CARGO_BIN_EXE_hided")).with_file_name("hide");
+    let _stop = StopOnDrop {
+        cli: &cli,
+        home: &home,
+        state: &home.join(".hide/state"),
+    };
+
+    let output = default_state(&cli, &home).arg("connect").output().unwrap();
+    let line: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!output.status.success(), "{line}");
+    assert_eq!(line["reason"], "start_failed", "{line}");
+    assert!(line["detail"].as_str().unwrap().contains("still runs"), "{line}");
+    assert!(legacy.join("core-state.json").is_file());
+    assert!(!home.join(".hide/state").exists());
+}
