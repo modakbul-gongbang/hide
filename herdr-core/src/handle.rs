@@ -266,14 +266,22 @@ impl Core {
             };
         // This Mac's install kit runs whether or not Herdr answers; only
         // retiring the old labels plugin needs it (PRD labels-in-hided D-12).
+        // Without a socket from the embedder it is the one Herdr would use
+        // for the core's home.
         let herdr_socket = options
             .herdr_socket_path
             .as_ref()
             .map(std::path::PathBuf::from)
             .or_else(|| {
-                environment_home
-                    .as_ref()
-                    .map(|home| home.join(".config/herdr/herdr.sock"))
+                let home = environment_home.clone()?;
+                let variables = |name: &str| {
+                    if name == hide_platform::host::HOME_VARIABLE {
+                        Some(home.clone().into_os_string())
+                    } else {
+                        std::env::var_os(name)
+                    }
+                };
+                hide_platform::host::herdr_socket_default_from(&variables).ok()
             })
             .unwrap_or_default();
         let kit = match crate::kit::local_target(

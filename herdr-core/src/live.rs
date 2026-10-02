@@ -2495,13 +2495,13 @@ fn run_agent_fork_with_registration(
 }
 
 fn register_fork_lineage(parent_pane_id: &str, child_pane_id: &str) -> Result<(), String> {
-    let home = std::env::var_os("HOME").ok_or_else(|| {
-        "HOME is unavailable, so the hcoord command cannot register the fork".to_owned()
+    let home = hide_platform::host::home_dir().map_err(|error| {
+        format!("The home folder is unavailable ({error}), so the hcoord command cannot register the fork")
     })?;
     // The command the kit installs in hcoord's home (PRD hide-home-layout
     // D-08), relocated with hcoord when HCOORD_HOME is set.
     let binary = hide_kit::layout::hcoord_command(&hide_kit::layout::hcoord_home(
-        Path::new(&home),
+        &home,
         hide_kit::layout::hcoord_home_override().as_deref(),
     ));
     register_fork_lineage_with_binary(
