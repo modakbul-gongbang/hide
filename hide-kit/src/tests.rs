@@ -826,12 +826,20 @@ fn an_install_that_failed_after_the_move_is_finished_on_the_next_pass() {
     std::fs::create_dir(old.join("bin/hcoord")).unwrap();
 
     let first = apply(&fixture.target, &Scope::Automatic);
-    assert_eq!(state(&first, ComponentId::Hcoord), ComponentState::Failed, "{first:?}");
+    assert_eq!(
+        state(&first, ComponentId::Hcoord),
+        ComponentState::Failed,
+        "{first:?}"
+    );
     assert!(fixture.home().join(".hide/hcoord/ledger.json").is_file());
 
     std::fs::remove_dir(fixture.home().join(".hide/hcoord/bin/hcoord")).unwrap();
     let second = apply(&fixture.target, &Scope::Automatic);
-    assert_eq!(state(&second, ComponentId::Hcoord), ComponentState::Installed, "{second:?}");
+    assert_eq!(
+        state(&second, ComponentId::Hcoord),
+        ComponentState::Installed,
+        "{second:?}"
+    );
     assert!(fixture.home().join(".hide/hcoord/bin/hcoord").is_file());
     let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
     assert!(calls.contains("daemon ensure"), "{calls}");

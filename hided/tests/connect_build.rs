@@ -451,7 +451,10 @@ fn a_silent_process_holding_the_old_folders_lock_keeps_it_from_moving() {
     let line: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(!output.status.success(), "{line}");
     assert_eq!(line["reason"], "start_failed", "{line}");
-    assert!(line["detail"].as_str().unwrap().contains("still runs"), "{line}");
+    assert!(
+        line["detail"].as_str().unwrap().contains("still runs"),
+        "{line}"
+    );
     assert!(legacy.join("core-state.json").is_file());
     assert!(!home.join(".hide/state").exists());
 }

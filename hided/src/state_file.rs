@@ -21,7 +21,10 @@ pub struct DaemonState {
 /// 0700: it holds the daemon's token. An existing folder keeps its mode.
 fn create_private_dir(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
-    fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {

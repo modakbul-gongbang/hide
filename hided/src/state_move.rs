@@ -115,10 +115,14 @@ pub fn log_left_behind(legacy: Option<&Path>, state_dir: &Path) {
 /// signals.
 fn own_folder(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() && metadata.uid() == euid() && metadata.mode() & 0o022 != 0 => Err(format!(
-            "{} can be written by other accounts, so Hide does not move it",
-            path.display()
-        )),
+        Ok(metadata)
+            if metadata.is_dir() && metadata.uid() == euid() && metadata.mode() & 0o022 != 0 =>
+        {
+            Err(format!(
+                "{} can be written by other accounts, so Hide does not move it",
+                path.display()
+            ))
+        }
         Ok(metadata) => Ok(metadata.is_dir() && metadata.uid() == euid()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!("{} could not be read: {error}", path.display())),
@@ -245,7 +249,10 @@ mod tests {
         let moved = move_legacy(&legacy, &target, |_| panic!("no daemon is stopped")).unwrap();
         assert_eq!(moved, Moved::LeftBehind);
         assert!(legacy.join("core-state.json").is_file());
-        assert!(!legacy.join("connect.lock").exists(), "the old folder is not touched");
+        assert!(
+            !legacy.join("connect.lock").exists(),
+            "the old folder is not touched"
+        );
         assert!(!target.join("core-state.json").exists());
     }
 

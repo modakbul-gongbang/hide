@@ -351,12 +351,12 @@ pub(crate) fn note(target: &KitTarget) -> Option<String> {
             home_dir(target).display()
         ));
     }
-    if target.hcoord_home.is_none() {
-        if let Link::Foreign(reason) = link_state(target) {
-            notes.push(format!(
-                "{reason}, so `hcoord` on PATH does not run this copy"
-            ));
-        }
+    if target.hcoord_home.is_none()
+        && let Link::Foreign(reason) = link_state(target)
+    {
+        notes.push(format!(
+            "{reason}, so `hcoord` on PATH does not run this copy"
+        ));
     }
     (!notes.is_empty()).then(|| notes.join(". "))
 }
