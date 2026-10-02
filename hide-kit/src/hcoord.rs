@@ -201,11 +201,10 @@ fn stable_links(home: &Path) -> [PathBuf; 3] {
     ]
 }
 
-/// `chosen` spelled by a stable link that resolves to the same file, so the
-/// shim keeps working after the package manager upgrades that Node; a stable
-/// link, or a Node no stable link leads to, is kept as it is.
-fn stable_spelling(chosen: PathBuf, home: &Path) -> PathBuf {
-    let links = stable_links(home);
+/// `chosen` spelled by one of `links` that resolves to the same file, so the
+/// shim keeps working after the package manager upgrades that Node; one of
+/// `links`, or a Node none of them leads to, is kept as it is.
+fn stable_spelling(chosen: PathBuf, links: &[PathBuf]) -> PathBuf {
     if links.contains(&chosen) {
         return chosen;
     }
@@ -215,8 +214,9 @@ fn stable_spelling(chosen: PathBuf, home: &Path) -> PathBuf {
         return chosen;
     };
     links
-        .into_iter()
+        .iter()
         .find(|link| link.canonicalize().is_ok_and(|target| target == real))
+        .cloned()
         .unwrap_or(chosen)
 }
 
@@ -257,7 +257,7 @@ pub fn find_node(home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
         };
         match parse_node_version(&finished.stdout) {
             Some(version) if version >= NODE_MINIMUM => {
-                return Ok(stable_spelling(candidate, home));
+                return Ok(stable_spelling(candidate, &stable_links(home)));
             }
             Some((major, minor, patch)) => {
                 too_old.get_or_insert(format!("{major}.{minor}.{patch}"));
@@ -369,9 +369,14 @@ mod tests {
         shim_naming(home.path(), &link);
         assert_eq!(find_node(home.path(), &stop), Ok(link.clone()));
 
-        // A stable link is kept as spelled, never swapped for another stable
-        // link that reaches the same file.
-        assert_eq!(stable_spelling(link.clone(), home.path()), link);
+        // A stable link is kept as spelled, never swapped for an earlier
+        // stable link that reaches the same file.
+        let earlier = home.path().join("opt/bin/node");
+        std::fs::create_dir_all(earlier.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&versioned, &earlier).unwrap();
+        let links = [earlier.clone(), link.clone()];
+        assert_eq!(stable_spelling(link.clone(), &links), link);
+        assert_eq!(stable_spelling(versioned.clone(), &links), earlier);
 
         let other = tempfile::tempdir().unwrap();
         let chosen = other.path().join("tools/node/bin/node");
