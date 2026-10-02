@@ -167,7 +167,9 @@ fn take_back_from_the_trash(name: &str) -> bool {
 #[test]
 fn a_trashed_file_leaves_its_folder_for_the_trash() {
     let folder = tempfile::tempdir().unwrap();
-    let name = format!("hide-platform-trash-{}.txt", std::process::id());
+    // No extension: the Recycle Bin lists an item by its shell display name,
+    // which drops an extension Explorer knows (`.txt`) under its default view.
+    let name = format!("hide-platform-trash-{}", std::process::id());
     let file: PathBuf = folder.path().join(&name);
     fs::write(&file, b"to be trashed").unwrap();
     host::trash(&file).unwrap();
