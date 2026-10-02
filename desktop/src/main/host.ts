@@ -38,7 +38,7 @@ import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { openRoute, probe, probeRequest } from "./localPath";
-import { revealablePath } from "./reveal";
+import { revealablePath, revealTarget } from "./reveal";
 
 declare const __HIDE_BACKGROUND__: string;
 
@@ -173,10 +173,11 @@ export class DesktopHost {
   }
 
   /**
-   * Reveal in Finder from a sidebar row (PRD sidebar-context-menus D-07):
-   * Finder selects the folder and opens nothing, so no program on this Mac
-   * starts from it. Only this window's page on the daemon origin is heard,
-   * and only an absolute path; the log records the outcome, never the path.
+   * A menu's `reveal_external` (issue 324) on an Explorer, History, View tab
+   * or sidebar row: the OS file manager selects the file or folder in its
+   * parent folder and opens nothing, so no program on this computer starts
+   * from it. Only this window's page on the daemon origin is heard, and only
+   * an absolute path that exists; the log records the outcome, never the path.
    */
   private listenReveal(): void {
     ipcMain.on(REVEAL_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
@@ -184,13 +185,14 @@ export class DesktopHost {
         this.log.event("reveal.refused", { reason: "sender" });
         return;
       }
-      const path = revealablePath(reported);
-      if (path === null) {
-        this.log.event("reveal.refused", { reason: "path" });
-        return;
-      }
-      shell.showItemInFolder(path);
-      this.log.event("reveal.finder", {});
+      void revealTarget(reported).then((target) => {
+        if ("refused" in target) {
+          this.log.event("reveal.refused", { reason: target.refused });
+          return;
+        }
+        shell.showItemInFolder(target.path);
+        this.log.event("reveal.shown", { kind: target.kind });
+      });
     });
   }
 

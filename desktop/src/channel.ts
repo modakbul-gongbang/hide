@@ -4,7 +4,7 @@ export const COMMAND_CHANNEL = "hide:command";
 /** The stored macOS pane chords the menu is built from, renderer -> main. */
 export const BINDINGS_CHANNEL = "hide:bindings";
 
-/** A folder the shell asks Finder to show (a sidebar row's Reveal in Finder), renderer -> main. */
+/** A file or folder the shell asks the OS file manager to show (a menu's `reveal_external`), renderer -> main. */
 export const REVEAL_CHANNEL = "hide:reveal";
 
 /**

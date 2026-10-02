@@ -902,12 +902,13 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
     const layoutEvents = () => viewEvents(stack).length;
 
     // A preview alone in its area: New tab, Keep open, four splits that cannot land
-    // (with the reason), the path, Reveal and Close view; no Move without a
-    // neighbour and never a file deletion. Opening it changes nothing (B11).
+    // (with the reason), the path, Select in File Tree and Close view (a browser
+    // tab has no OS file manager to reveal in); no Move without a neighbour and
+    // never a file deletion. Opening it changes nothing (B11).
     const sentBefore = layoutEvents();
     const alone = await tabMenuRows(page, page, "f01.txt");
-    expect(alone.map((row) => row.id)).toEqual(["new_tab", "keep_open", ...SPLITS, "copy_path", "reveal", "close_view"]);
-    expect(alone.map((row) => row.label)).toEqual(["New tab", "Keep open", "Split right", "Split left", "Split up", "Split down", "Copy path", "Reveal in Explorer", "Close view"]);
+    expect(alone.map((row) => row.id)).toEqual(["new_tab", "keep_open", ...SPLITS, "copy_path", "select_in_tree", "close_view"]);
+    expect(alone.map((row) => row.label)).toEqual(["New tab", "Keep open", "Split right", "Split left", "Split up", "Split down", "Copy path", "Select in File Tree", "Close view"]);
     for (const row of alone.filter((entry) => SPLITS.includes(entry.id))) expect(row).toMatchObject({ disabled: true, reason: "This is the only view in its area." });
     expect(layoutEvents()).toBe(sentBefore);
     await tab(page, "f01.txt").click({ button: "right" });
@@ -923,10 +924,10 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
     await tabMenu(page, page, "f10.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(f02.txt f03.txt f04.txt f05.txt f06.txt f07.txt f08.txt >f09.txt) | @(>f10.txt)");
     const left = await tabMenuRows(page, area(page, 0), "f02.txt");
-    expect(left.map((row) => row.id)).toEqual(["new_tab", ...SPLITS, "move_right", "copy_path", "reveal", "close_view"]);
+    expect(left.map((row) => row.id)).toEqual(["new_tab", ...SPLITS, "move_right", "copy_path", "select_in_tree", "close_view"]);
     expect(left.every((row) => !row.disabled)).toBe(true);
     const right = await tabMenuRows(page, area(page, 1), "f10.txt");
-    expect(right.map((row) => row.id)).toEqual(["new_tab", ...SPLITS, "move_left", "copy_path", "reveal", "close_view"]);
+    expect(right.map((row) => row.id)).toEqual(["new_tab", ...SPLITS, "move_left", "copy_path", "select_in_tree", "close_view"]);
 
     // Room is a reason too: in a narrower window the areas side by side
     // cannot be halved again across, only down (B9, D-06).
@@ -1181,8 +1182,8 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator("[data-tools-overlay]")).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
-    // Reveal in Explorer, from the tab's menu, requests the tool the narrow panel kept hidden.
-    await tabMenu(page, page, "a.txt", "reveal");
+    // Select in File Tree, from the tab's menu, requests the tool the narrow panel kept hidden.
+    await tabMenu(page, page, "a.txt", "select_in_tree");
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);

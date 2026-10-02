@@ -7,6 +7,7 @@
 // values, so every rule is testable without a page; nothing here dispatches.
 
 import type { ViewDisplaySnapshot, ViewLayoutSnapshot, ViewNode } from "./snapshot";
+import { revealExternalEntry, type RevealHost } from "./revealExternal";
 
 /** The order a display's menu offers directions in. */
 const MENU_EDGES: readonly Edge[] = ["right", "left", "up", "down"];
@@ -110,12 +111,16 @@ export function besideUnavailable(
 
 // --- a display's menu --------------------------------------------------------
 
+/** The OS file manager's reveal as a display's menu offers it: the host's item, and the device the Workspace's files are on. */
+export type ExternalReveal = { host: RevealHost; device: string };
+
 export type ViewMenuId =
   | "keep_open"
   | `split_${Edge}`
   | `move_${Edge}`
   | "copy_path"
-  | "reveal"
+  | "select_in_tree"
+  | "reveal_external"
   | "close_view";
 
 export type ViewMenuEntry = { id: ViewMenuId; label: string; unavailable: string | null; separated?: boolean };
@@ -126,7 +131,9 @@ const MENU_ITEMS: readonly { id: ViewMenuId; label: string }[] = [
   ...MENU_EDGES.map((edge) => ({ id: `split_${edge}` as const, label: `Split ${EDGE_NAME[edge]}` })),
   ...MENU_EDGES.map((edge) => ({ id: `move_${edge}` as const, label: `Move ${EDGE_NAME[edge]}` })),
   { id: "copy_path", label: "Copy path" },
-  { id: "reveal", label: "Reveal in Explorer" },
+  { id: "select_in_tree", label: "Select in File Tree" },
+  // Labelled by the host's OS (`revealLabel`).
+  { id: "reveal_external", label: "" },
   { id: "close_view", label: "Close view" },
 ];
 
@@ -140,12 +147,24 @@ const NO_AREA: Record<Edge, string> = {
 /**
  * Every command of a display's menu with the reason it cannot run now, or
  * null: Keep open for a preview, a split that can land (B9, B19), a move
- * toward an area that exists, Reveal while the file can be read. `drawn` is
- * what the page last drew; without it a split's room cannot be judged.
+ * toward an area that exists, Select in File Tree while the file can be read,
+ * and the OS file manager's reveal where the host has one, for a file on this
+ * computer that can be read (issue 324). `drawn` is what the page last drew;
+ * without it a split's room cannot be judged.
  */
-function displayCommands(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry; sizes: LayoutSizes } | null, located: LocatedDisplay): (ViewMenuEntry & { hidden: boolean })[] {
+function displayCommands(
+  layout: ViewLayoutSnapshot,
+  drawn: { geometry: Geometry; sizes: LayoutSizes } | null,
+  located: LocatedDisplay,
+  external: ExternalReveal,
+): (ViewMenuEntry & { hidden: boolean })[] {
   const { area, display } = located;
   return MENU_ITEMS.map(({ id, label }) => {
+    if (id === "reveal_external") {
+      // A page is not a file of the checkout.
+      const [entry] = display.kind === "browser" ? [] : revealExternalEntry(external.host, external.device, revealBlocked(display));
+      return entry ? { ...entry, hidden: false } : { id, label, unavailable: null, hidden: true };
+    }
     const edge = menuEdge(id);
     let unavailable: string | null = null;
     let hidden = false;
@@ -158,7 +177,7 @@ function displayCommands(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry
     } else if (edge) {
       unavailable = neighbourArea(layout.root, area.id, edge) ? null : NO_AREA[edge];
       hidden = unavailable !== null;
-    } else if (id === "reveal") {
+    } else if (id === "select_in_tree") {
       unavailable = revealBlocked(display);
       // A page is not a file of the checkout.
       hidden = display.kind === "browser";
@@ -172,13 +191,13 @@ function displayCommands(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry
  * The commands a display's tab menu and its area's overflow button offer, and
  * nothing else (B11, D-07): Keep open while it is a preview, a split in each
  * direction (disabled with the reason when it cannot land), a move toward
- * each direction that has an area, the path, Reveal in Explorer, and Close
- * view. There is no file deletion here.
+ * each direction that has an area, the path, Select in File Tree, the OS file
+ * manager's reveal, and Close view. There is no file deletion here.
  */
-export function displayMenu(layout: ViewLayoutSnapshot, geometry: Geometry, sizes: LayoutSizes, displayId: string): ViewMenuEntry[] {
+export function displayMenu(layout: ViewLayoutSnapshot, geometry: Geometry, sizes: LayoutSizes, displayId: string, external: ExternalReveal): ViewMenuEntry[] {
   const located = locateDisplay(layout.root, displayId);
   if (!located) return [];
-  return displayCommands(layout, { geometry, sizes }, located)
+  return displayCommands(layout, { geometry, sizes }, located, external)
     .filter((entry) => !entry.hidden)
     .map(({ id, label, unavailable, separated }) => ({ id, label, unavailable, ...(separated ? { separated } : {}) }));
 }

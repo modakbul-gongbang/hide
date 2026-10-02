@@ -36,7 +36,7 @@ import {
   type CheckoutPresentation,
   type ProjectRow,
 } from "./projects";
-import { hostBridge, hostKind } from "./host";
+import { hostBridge, hostKind, revealHost } from "./host";
 import { displayCommand, hostRegistry, type Digit } from "./shortcuts";
 import { contextAgents, contextHome, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
@@ -1380,10 +1380,10 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
 /** A tree drawn with nothing folded lists no folded children. */
 const NO_AGENT_ROWS: AgentRow[] = [];
 
-/** What a row's menu reads from the host when it opens: Finder, and the new-tab chord the registry binds here. */
+/** What a row's menu reads from the host when it opens: the OS file manager, and the new-tab chord the registry binds here. */
 function menuHost(): MenuHost {
   const host = hostKind();
-  return { finder: host === "electron", newTabChord: displayCommand("new_tab", host, hostRegistry(useShellStore.getState().rest?.ui_state, host).registry) };
+  return { reveal: revealHost(), newTabChord: displayCommand("new_tab", host, hostRegistry(useShellStore.getState().rest?.ui_state, host).registry) };
 }
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
@@ -1396,8 +1396,8 @@ function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["
       const primary = primaryCheckout(workspace);
       return primary ? actions.newTabIn(workspace.device_id, primary) : undefined;
     }
-    case "reveal_finder":
-      return actions.revealInFinder(workspace.path);
+    case "reveal_external":
+      return actions.revealExternal(workspace.path);
     case "copy_path":
       return actions.copyText(workspace.path, "path");
     case "pin":
@@ -1426,8 +1426,8 @@ function runCheckoutItem(actions: Actions, workspace: Workspace, checkout: Check
       return checkout.branch ? actions.copyText(checkout.branch, "branch name") : undefined;
     case "copy_path":
       return actions.copyText(checkout.path, "path");
-    case "reveal_finder":
-      return actions.revealInFinder(checkout.path);
+    case "reveal_external":
+      return actions.revealExternal(checkout.path);
     case "delete_worktree":
       return useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: workspace.id, checkoutId: checkout.id });
   }

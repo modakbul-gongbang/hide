@@ -7,7 +7,7 @@ import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay } from "./browserViews";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { hostKind } from "./host";
+import { hostKind, revealHost } from "./host";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
 import { editorTabFor, frontCheckout, type ViewDisplaySnapshot, type ViewLayoutSnapshot } from "./snapshot";
@@ -97,7 +97,7 @@ function ViewTree({ layout, deviceId, path, trailing, actions }: { layout: ViewL
     body: (display) => <DisplayBody key={display.id} display={display} workspace={workspace} actions={actions} />,
     empty: () => <AreaEmpty state="no-view" text="No file, diff or page is open in this area." />,
     floating: (display) => <>{displayMark(display)}<span className={`truncate ${display.preview ? "italic" : ""}`}>{display.label}</span></>,
-    menu: (id, geometry, sizes) => [{ id: "new_tab", label: "New tab", unavailable: null }, ...displayMenu(layout, geometry, sizes, id)],
+    menu: (id, geometry, sizes) => [{ id: "new_tab", label: "New tab", unavailable: null }, ...displayMenu(layout, geometry, sizes, id, { host: revealHost(), device: workspace.device_id })],
     runMenu: (id, displayId) => id === "new_tab" ? actions.openBrowser("", workspace, locateDisplay(layout.root, displayId)?.area.id) : actions.runViewMenu(id as ViewMenuId, displayId),
     focus: actions.focusView,
     focusArea: actions.focusViewArea,

@@ -4,12 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { isHtmlFile } from "./browserViews";
 import { holdShellDrag } from "./shellDrag";
-import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
+import { EntryPointMenu } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Hint } from "./components/ui/tooltip";
 import {
   disclosureMark,
+  explorerMenuItems,
   explorerRows,
   firstChildSelection,
   explorerGitLine,
@@ -31,6 +32,7 @@ import { drawnViews } from "./viewFocus";
 import { besideUnavailable } from "./viewLayout";
 import { expandedUnderRoot, watchedFolders } from "./watch";
 import { workspaceViewOf } from "./workspace";
+import { revealHost } from "./host";
 
 // The Explorer tree (PRD B1, B3, B9, B10): a lazy tree over the focused
 // checkout. The core owns which folders are expanded (`ui_state.expanded_paths`)
@@ -493,6 +495,10 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
             setMenu(null);
             actions.openInBrowser(path);
           }}
+          onRevealExternal={(path) => {
+            setMenu(null);
+            actions.revealExternal(path);
+          }}
           onNewFile={beginCreate}
           onRename={beginRename}
           onTrash={requestTrash}
@@ -580,14 +586,13 @@ function DraftRowView({
   );
 }
 
-type ExplorerMenuId = "new-file" | "new-folder" | "open-beside" | "open-browser" | "rename" | "trash";
-
 function ExplorerContextMenu({
   menu,
   row,
   onClose,
   onOpenBeside,
   onOpenBrowser,
+  onRevealExternal,
   onNewFile,
   onRename,
   onTrash,
@@ -599,22 +604,22 @@ function ExplorerContextMenu({
   onOpenBeside: (path: string) => void;
   /** An HTML file as a page in a browser display (issue 155). */
   onOpenBrowser: (path: string) => void;
+  /** The file or folder selected in the OS file manager (issue 324). */
+  onRevealExternal: (path: string) => void;
   onNewFile: (parent: string, kind: "file" | "folder") => void;
   onRename: (row: ExplorerRow) => void;
   onTrash: (row: ExplorerRow) => void;
 }) {
   // Read as the menu opens: the room beside the only View area (S7 B9, D-06).
   const besideReason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());
-  const items: MenuEntry<ExplorerMenuId>[] = [];
-  if (menu.isDirectory) {
-    items.push({ id: "new-file", label: "New File", unavailable: null });
-    items.push({ id: "new-folder", label: "New Folder", unavailable: null });
-  } else if (row) {
-    items.push({ id: "open-beside", label: "Open to the side", unavailable: besideReason });
-    if (isHtmlFile(row.path)) items.push({ id: "open-browser", label: "Open in Browser", unavailable: null });
-  }
-  if (row) items.push({ id: "rename", label: "Rename", unavailable: null });
-  if (row) items.push({ id: "trash", label: "Move to Trash", unavailable: null, separated: true, destructive: true });
+  const items = explorerMenuItems({
+    isDirectory: menu.isDirectory,
+    row,
+    html: row !== null && isHtmlFile(row.path),
+    besideReason,
+    reveal: revealHost(),
+    device: explorerContext(useShellStore.getState().rest).device,
+  });
   return (
     <EntryPointMenu
       label={row ? `${row.name} actions` : "Folder actions"}
@@ -627,6 +632,7 @@ function ExplorerContextMenu({
         else if (id === "new-folder") onNewFile(menu.path, "folder");
         else if (row && id === "open-beside") onOpenBeside(row.path);
         else if (row && id === "open-browser") onOpenBrowser(row.path);
+        else if (row && id === "reveal_external") onRevealExternal(row.path);
         else if (row && id === "rename") onRename(row);
         else if (row && id === "trash") onTrash(row);
       }}

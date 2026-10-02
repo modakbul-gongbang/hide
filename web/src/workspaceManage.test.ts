@@ -82,14 +82,14 @@ describe("branch names", () => {
 });
 
 describe("row menus", () => {
-  const desktop = { finder: true, newTabChord: "⌘T" };
-  const browser = { finder: false, newTabChord: "⌥T" };
+  const desktop = { reveal: { label: "Reveal in Finder" }, newTabChord: "⌘T" };
+  const browser = { reveal: null, newTabChord: "⌥T" };
   /** Each item as the menu draws it: a separator line before it, its label, and its reason when disabled. */
   const drawn = (items: { label: string; separated?: boolean; unavailable: string | null; shortcut?: string }[]) =>
     items.flatMap((item) => [...(item.separated ? ["─"] : []), item.shortcut ? `${item.label} ${item.shortcut}` : item.label]);
   const primary = (patch: Partial<Checkout> = {}) => checkout({ id: "c0", label: "main", branch: "main", path: "/Users/example/hide", is_worktree: false, is_primary: true, ...patch });
 
-  it("draws a project's menu in the board's order, Finder only on the desktop (B1)", () => {
+  it("draws a project's menu in the board's order, the file manager only on the desktop (B1)", () => {
     const project = workspace({ checkouts: [primary(), checkout()] });
     expect(drawn(projectMenu(project, desktop))).toEqual([
       "Open Overview",
@@ -137,7 +137,7 @@ describe("row menus", () => {
       "─",
       "Delete worktree…",
     ]);
-    // No pull request, no Finder, and a checkout that is not a linked worktree.
+    // No pull request, no file manager, and a checkout that is not a linked worktree.
     expect(drawn(checkoutMenu(workspace(), primary({ is_primary: false }), browser))).toEqual([
       "Open",
       "New tab here ⌥T",
@@ -163,14 +163,14 @@ describe("row menus", () => {
     expect(reason(workspace(), checkout({ exists: false }))).toMatch(/missing/);
   });
 
-  it("greys out Finder and the default on a device's checkout and keeps the rest, deletion included (B9)", () => {
+  it("greys out the file manager and the default on a device's checkout and keeps the rest, deletion included (B9)", () => {
     const remote = checkoutMenu(workspace({ device_id: "studio", remote_target_id: "studio" }), checkout(), desktop);
     expect(remote.filter((item) => item.unavailable !== null).map((item) => [item.id, item.unavailable])).toEqual([
       ["set_primary", "Not available for a checkout on another device."],
-      ["reveal_finder", "Only for folders on this Mac."],
+      ["reveal_external", "Only for files and folders on this computer."],
     ]);
     const project = projectMenu(workspace({ device_id: "studio", remote_target_id: "studio", checkouts: [primary()] }), desktop);
-    expect(project.filter((item) => item.unavailable !== null).map((item) => item.id)).toEqual(["reveal_finder"]);
+    expect(project.filter((item) => item.unavailable !== null).map((item) => item.id)).toEqual(["reveal_external"]);
   });
 
   it("never disables Delete worktree, dirty or unread, and keeps a detached checkout's missing branch", () => {

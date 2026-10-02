@@ -109,7 +109,7 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     await expect(page.locator('[data-section="Pinned"]')).toHaveCount(0);
 
     // B1, B3: the project row's menu, in the board's order. A browser tab has
-    // no Finder, so Reveal in Finder is absent; a row Herdr shows without a
+    // no OS file manager, so its reveal is absent; a row Herdr shows without a
     // registration still offers Pin and Remove project….
     let menu = await openMenu(page, projectRow, "repo actions");
     expect(await menuLines(menu)).toEqual(["Open Overview", "New worktree…", "New tab in main ⌥T", "─", "Copy path", "─", "Pin", "Remove project…"]);

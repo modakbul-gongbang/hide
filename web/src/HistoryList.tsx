@@ -4,7 +4,9 @@ import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
 import { Hint } from "./components/ui/tooltip";
-import { changesFor, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
+import { changesFor, explorerContext, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
+import { revealHost } from "./host";
+import { revealExternalEntry } from "./revealExternal";
 import { useShellStore } from "./store";
 import { drawnViews } from "./viewFocus";
 import { besideUnavailable } from "./viewLayout";
@@ -39,15 +41,20 @@ function ChangeRow({ entry, committed, selected, actions }: {
   const status = STATUS[entry.status];
   const title = identity(entry, committed);
   // The row's diff beside the active View area (S7 B4, contract 4.2), as a
-  // click would open it in the active area; a deleted file has a diff too.
-  const menu = (): MenuEntry<"open_beside">[] => [
-    { id: "open_beside", label: "Open to the side", unavailable: besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews()) },
-  ];
+  // click would open it in the active area; a deleted file has a diff too,
+  // but nothing on disk for the OS file manager to show (issue 324).
+  const menu = (): MenuEntry<"open_beside" | "reveal_external">[] => {
+    const rest = useShellStore.getState().rest;
+    return [
+      { id: "open_beside", label: "Open to the side", unavailable: besideUnavailable(workspaceViewOf(rest)?.layout, drawnViews()) },
+      ...revealExternalEntry(revealHost(), explorerContext(rest).device, entry.status === "deleted" ? "The file was deleted." : null, true),
+    ];
+  };
   return (
     <EntryContextMenu
       label={`${name} actions`}
       items={menu}
-      onSelect={() => actions.openChangeBeside(entry.path, committed)}
+      onSelect={(id) => (id === "reveal_external" ? actions.revealExternal(entry.path) : actions.openChangeBeside(entry.path, committed))}
       className="block"
       data-history-menu={entry.relative_path}
     >

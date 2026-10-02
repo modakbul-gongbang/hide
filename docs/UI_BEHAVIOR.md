@@ -206,8 +206,10 @@ A drag never moves a view to another Workspace, never turns an Agent tab into a 
 
 ### The View tab menu
 
-A right-click on a View tab, or the menu key while the tab has focus, opens its menu with these items in order: Keep open, Split right, Split left, Split up, Split down, Move right, Move left, Move up, Move down, Copy path, Reveal in Explorer, Close view.
+A right-click on a View tab, or the menu key while the tab has focus, opens its menu with these items in order: Keep open, Split right, Split left, Split up, Split down, Move right, Move left, Move up, Move down, Copy path, Select in File Tree, the OS file manager's reveal, Close view.
 Keep open appears only on a preview view.
+Select in File Tree shows the Explorer with the file's row unfolded and selected and opens nothing; the reveal follows [the reveal rule](#explorer-file-management), and a page has neither.
+Both are disabled with the reason while the file is unavailable or cannot be read yet.
 A Move item appears only toward an area that exists in that direction, and moves the view into it without a split.
 A Split item the Workspace cannot make stays listed, disabled, with its reason under it, the way every web menu draws an item its target cannot use.
 The labels say where the view goes, never "Move to Group".
@@ -644,11 +646,17 @@ A card row carries no chevron and no descendant badge.
 
 Web owner: `web/src/ExplorerTree.tsx`, `web/src/explorer.ts`. Core owner: `herdr-core/src/changes.rs`.
 
-The tree's context menu follows VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
-A folder row has no open items, because its open is Reveal in Finder; the empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
-The item set the menu offers is a presentation decision a test can check directly, not something the platform decides implicitly.
+The tree's context menu on a file row is Open to the side (and Open in Browser for an HTML file), a separator, the reveal, a separator, Rename, a separator, Move to Trash.
+A folder row has New File and New Folder in place of the opens; the empty area below the rows stands for the root and offers only the two creations.
+The item set the menu offers is a presentation decision a test can check directly (`explorerMenuItems` in `web/src/explorer.ts`), not something the platform decides implicitly.
 
-Open with Default App hands the file to the OS through the existing external opener, and a refusal is reported with the path and the reason.
+The reveal is one action, `reveal_external`, on Explorer rows, History rows, View tabs and sidebar project and checkout rows (`web/src/revealExternal.ts`).
+A History row's menu is Open to the side, a separator, then the reveal of the row's file.
+It hands the file or folder to the desktop host, which shows it selected in its parent folder in the OS file manager (`shell.showItemInFolder`) and opens nothing.
+Its label is the host's OS's name for that: `Reveal in Finder` on macOS, `Reveal in File Explorer` on Windows, `Open Containing Folder` on Linux, and `Show in File Manager` elsewhere; the host reports its OS through the preload bridge, and the shell never guesses it.
+A plain browser tab has no file manager to hand anything to, so no menu lists the item there.
+On another device's files the item is listed disabled with `Only for files and folders on this computer.`; a History row for a deleted file lists it disabled with `The file was deleted.`
+The host refuses a path that is not absolute or no longer exists, and records the refusal or the reveal in its log without the path; nothing is shown on screen.
 
 Delete has two entry points, the menu item and a delete shortcut while the tree holds the keyboard, and both end in the same confirmation: an alert asking to move the item to Trash, telling the operator everything in a folder goes too, and that the item can be restored from Finder, with Cancel as the default action and Move to Trash as the destructive one.
 Nothing reaches the core without that alert; Cancel and Escape send nothing.
@@ -763,11 +771,11 @@ In the web shell every row reads on the left and ends the same way on the right:
 A folded chevron is always shown; an unfolded one shows under the pointer, while focus is inside the row, while its menu is open, and always on an input with no hover.
 Nothing on a row stands for its menu: a right-click, or the menu key or ⇧F10 on the focused row, opens it.
 Project, checkout and agent rows each have one (PRD sidebar-context-menus), and every other item runs at once; only `Remove project…`, `Delete worktree…` and `Close tab…` go through their existing confirmations.
-A project row's menu is `Open Overview`, `New worktree…`, `New tab in main` (a new tab in the checkout the home glyph marks, brought to the front), then `Reveal in Finder` and `Copy path`, then `Pin` or `Unpin` and `Remove project…`, on every project row, registered or not.
-A checkout row's menu is `Open` (the row's open, without unfolding its agents), `New tab here`, `Open pull request #n` while GitHub knows one, then `Set purpose…`, `Set as default checkout`, `Copy branch name`, `Copy path` and `Reveal in Finder`, then `Delete worktree…` in the destructive color on a linked worktree.
+A project row's menu is `Open Overview`, `New worktree…`, `New tab in main` (a new tab in the checkout the home glyph marks, brought to the front), then the reveal and `Copy path`, then `Pin` or `Unpin` and `Remove project…`, on every project row, registered or not.
+A checkout row's menu is `Open` (the row's open, without unfolding its agents), `New tab here`, `Open pull request #n` while GitHub knows one, then `Set purpose…`, `Set as default checkout`, `Copy branch name`, `Copy path` and the reveal, then `Delete worktree…` in the destructive color on a linked worktree.
 An agent row's menu, in Agents and under an opened checkout, is `Show` (the row's own open, with the ⌥n that selects the same row where the host has one), then `Copy title` and `Copy session id` (the conversation id Herdr recorded, disabled when it recorded none), then `Close tab…`, which closes the tab holding the agent's pane, wherever it is, through the tab close flow, including its question about the agents spawned from it; Herdr 0.9.1 can neither mark a pane seen nor stop an agent, so neither is offered.
-`New tab in main` and `New tab here` show the registry's new-tab chord; `Reveal in Finder` is the desktop app's only (a browser tab lists no such item) and shows the folder in Finder without opening anything.
-On a device's rows `Reveal in Finder` and `Set as default checkout` are disabled with the reason; the rest act on that device as they do here.
+`New tab in main` and `New tab here` show the registry's new-tab chord; the reveal follows [the reveal rule](#explorer-file-management): the desktop app's only, labelled by its OS, showing the folder selected in the OS file manager without opening anything.
+On a device's rows the reveal and `Set as default checkout` are disabled with the reason; the rest act on that device as they do here.
 `Delete worktree…` is never disabled on a linked worktree, on any device and before its Git state has been read; its confirmation says what would be lost and holds the choices, and reads `Reading the worktree's Git state…` until the row arrives.
 Under the title and the path, one facts line says the folder is removed for good, how many panes close, and every agent those panes stop with its state; the core's warnings (uncommitted files with their count, a worktree inside it, the base branch, Git status unavailable, commits not merged, not pushed) follow as neutral badges.
 `Keep worktree` is a neutral button, and only the widest action is in the destructive colour.
@@ -811,7 +819,7 @@ An expanded Git project starts with an Overview row using the checkout row’s c
 Click, Enter or Space opens the same Overview as the project name without changing the fold; only the Overview child carries its selection fill, and folding the project hides the child too.
 A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
 Its first line is the project's folder glyph, name and status badge, set in the checkout row's columns, and the badge stays while its agent rows are open, as a project's does; its second line and trailing chevron are the checkout's, and a plain folder has no commit age.
-It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's own `Open`, `Open pull request #n` and `Set purpose…` (the folder is the checkout, so its new tab, path and Finder items are the project's), and its Overview is reached from the Overview, ⌘K or the Workspace toolbar.
+It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's own `Open`, `Open pull request #n` and `Set purpose…` (the folder is the checkout, so its new tab, path and reveal items are the project's), and its Overview is reached from the Overview, ⌘K or the Workspace toolbar.
 While a checkout's agent rows are closed, its status badge ends line one; opening them takes the badge away, since their own marks now speak, and changes nothing else on the row.
 A checkout's second line is its purpose, after the parent checkout it was raised from when there is one, with the last-commit age ending it on the time column; it is drawn only while the checkout has a purpose or a raising parent, so a checkout with agents and neither is one line.
 A checkout with neither, or one whose Git facts have not been read yet, is one line, with its age on that line.

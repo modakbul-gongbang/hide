@@ -53,8 +53,8 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
   await expect(page.locator("[data-pane-view] .xterm").first()).toBeVisible();
   await screenshot(page, "desktop-attached");
 
-  // B11: no Node API in the page; the bridge is the host kind, the menu
-  // channel, the pane-chord report, the Finder reveal, Add a project's folder
+  // B11: no Node API in the page; the bridge is the host kind and OS, the menu
+  // channel, the pane-chord report, the file manager reveal, Add a project's folder
   // picker and the browser displays' views (issue 155).
   expect(
     await page.evaluate(() => ({
@@ -63,7 +63,7 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
       bridge: Object.keys(window.hideHost ?? {}).sort(),
       kind: window.hideHost?.kind,
     })),
-  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "onCommand", "openPath", "pickFolder", "probePaths", "reportBindings", "revealPath"], kind: "electron" });
+  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "onCommand", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "revealPath"], kind: "electron" });
 
   // B9: ⌘T is one create_tab here; the browser's ⌥T is not a chord in the app.
   const tabs = await page.locator("[role=tab]").count();
