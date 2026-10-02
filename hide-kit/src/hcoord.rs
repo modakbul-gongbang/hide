@@ -175,6 +175,18 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
     let path = shim_path(target);
     let found = match std::fs::read_to_string(&path) {
         Ok(found) => found,
+        // A home with a ledger and no shim is one a move filled and an
+        // install did not finish (removal never takes hcoord's home), so it
+        // is finished on the next pass rather than read as taken away.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && home_dir(target).join("ledger.json").is_file() =>
+        {
+            return Observed::Stale(format!(
+                "hcoord moved to {} but is not installed there yet",
+                home_dir(target).display()
+            ));
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Observed::Missing,
         Err(error) => {
             return Observed::Blocked(format!("{} could not be read: {error}", path.display()));

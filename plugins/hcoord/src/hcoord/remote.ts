@@ -174,7 +174,7 @@ export function remoteOutcome(machine: string, raw: Raw): Record<string, unknown
     throw new HcoordError("machine_unreachable", `SSH to ${machine} failed: ${text || "no diagnostic"}`);
   }
   if (raw.status === null) throw new HcoordError("machine_unreachable", `SSH to ${machine} did not finish in time`);
-  if (raw.status === 127 || (/no such file|not found/i.test(text) && raw.stdout.trim() === "")) throw new HcoordError("remote_not_installed", `hcoord is not installed on ${machine}; add it as a device in hide (Settings > Devices), which installs hcoord there`);
+  if (raw.status === 127 || (/no such file|not found/i.test(text) && raw.stdout.trim() === "")) throw new HcoordError("remote_not_installed", `hcoord is not installed at ~/.hide/hcoord on ${machine}; connect hide to that device (Settings > Devices), whose next connection installs hcoord there or moves an older ~/.hcoord into place`);
   if (raw.status === 126) throw new HcoordError("permission_denied", `the remote hcoord on ${machine} is not executable: ${text}`);
   let parsed: { ok?: boolean; value?: Record<string, unknown>; error?: { code?: string; message?: string } };
   try { parsed = JSON.parse(raw.stdout.trim().split("\n").at(-1) ?? ""); }
