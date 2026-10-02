@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use hide_herdr_client::{UnixSocketConnector, request_with_connector};
+use hide_herdr_client::{LocalSocketConnector, request_with_connector};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -60,7 +60,7 @@ pub fn inspect(socket: &Path, pane_id: &str) -> Result<PaneIdentity, &'static st
     if !socket.is_absolute() || pane_id.is_empty() || pane_id.len() > 256 {
         return Err("invalid_request");
     }
-    let connector = UnixSocketConnector::new(socket);
+    let connector = LocalSocketConnector::new(socket);
     let process = request_with_connector(
         &connector,
         "pane.process_info",

@@ -38,7 +38,7 @@ use crate::sidebar::{
 };
 use crate::workspace;
 use hide_herdr_client::{
-    ApiConnector, ApiError, UnixSocketConnector, request_with_connector,
+    ApiConnector, ApiError, LocalSocketConnector, request_with_connector,
     request_with_correlation_id,
 };
 #[cfg(test)]
@@ -2857,7 +2857,7 @@ pub(crate) fn install(
         herdr_bin: herdr_bin.map(PathBuf::from),
         runtime: Arc::downgrade(runtime),
         notifier: notifier.clone(),
-        api_connector: Arc::new(UnixSocketConnector::new(socket_path)),
+        api_connector: Arc::new(LocalSocketConnector::new(socket_path)),
     };
     if let Ok(mut guard) = runtime.lock() {
         guard.set_live(context.clone());
@@ -2891,7 +2891,7 @@ pub fn fetch_session(socket_path: &Path) -> Result<SessionSnapshotPayload, Sessi
             socket_path.display()
         )));
     }
-    fetch_session_with_connector(&UnixSocketConnector::new(socket_path))
+    fetch_session_with_connector(&LocalSocketConnector::new(socket_path))
 }
 
 fn fetch_session_with_connector(
@@ -4166,7 +4166,7 @@ mod tests {
             replacement_shell: false,
         };
         let error = repair_incomplete_tab_layout(
-            &UnixSocketConnector::new("/tmp/hide-reopen-over-count-must-not-connect.sock"),
+            &LocalSocketConnector::new("/tmp/hide-reopen-over-count-must-not-connect.sock"),
             "over-count",
             &context,
             &expected_root,

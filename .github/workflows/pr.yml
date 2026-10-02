@@ -227,6 +227,12 @@ jobs:
       shards: 1
       grep: "@platform"
 
+  # The OS contract's Linux and Windows legs (see os-contract.yml). Its macOS
+  # leg runs in `desktop-e2e` below, on the runner that job already holds.
+  os-contract:
+    name: os contract
+    uses: ./.github/workflows/os-contract.yml
+
   desktop-e2e:
     name: desktop e2e
     runs-on: macos-15
@@ -258,6 +264,15 @@ jobs:
       - name: Fetch the pinned Herdr runtime
         id: herdr
         run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
+      - name: OS contract on macOS
+        # The macOS leg of os-contract.yml, here because this job already
+        # holds a macOS runner and the workspace build it needs.
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: |
+          bash -lc 'source scripts/toolchain-env.sh && cargo test --locked -p hide-platform -p hide-herdr-client'
+          bash -lc 'source scripts/toolchain-env.sh && cargo test --locked -p hide-herdr-client --test real_herdr -- --ignored --nocapture'
       - name: Desktop app end-to-end
         # The desktop app against an isolated Herdr, starting its own hided
         # through the hide CLI built above. Electron downloads its runtime on
@@ -303,7 +318,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e]
+    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e, os-contract]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

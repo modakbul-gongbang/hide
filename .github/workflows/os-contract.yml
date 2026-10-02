@@ -1,0 +1,64 @@
+# What differs between operating systems, checked on the systems that differ.
+#
+# `hide-platform` holds the code whose behaviour depends on the OS (today the
+# local stream, a Unix socket or a Windows named pipe); its tests under
+# `hide-platform/tests/` state each contract as what a caller observes and run
+# unchanged on every system. Each leg then runs `hide-herdr-client` against the
+# pinned Herdr for that system, the one place the pinned Windows asset runs.
+# The crates are small, so this lane builds in minutes and does not wait for
+# the workspace. The macOS leg runs inside `desktop-e2e` in `pr.yml`, which
+# already holds a macOS runner, instead of taking a second one.
+name: os contract
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: os contract (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: linux
+            runner: ubuntu-latest
+          - system: windows
+            runner: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Contract tests and the client's own tests
+        run: cargo test --locked -p hide-platform -p hide-herdr-client
+      - name: Lint the platform crates
+        run: cargo clippy --locked -p hide-platform -p hide-herdr-client --all-targets -- -D warnings
+      - name: Install zsh for the Herdr fetch
+        if: matrix.system == 'linux'
+        run: sudo apt-get install -y --no-install-recommends zsh
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        # The manifest is the pin; both scripts verify the download against
+        # its digest before the binary answers anything.
+        run: |
+          if [ "${{ matrix.system }}" = linux ]; then
+            echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
+          else
+            echo "bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The client against the pinned Herdr
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: cargo test --locked -p hide-herdr-client --test real_herdr -- --ignored --nocapture

@@ -1736,8 +1736,8 @@ fn open_worktree(
 mod tests {
     use super::*;
     use hide_herdr_client::{ApiError, ApiStream};
+    use hide_platform::ipc::LocalStream;
     use std::collections::VecDeque;
-    use std::os::unix::net::UnixStream;
 
     // The only fake is the external server's newline-delimited protocol.
     struct Server {
@@ -1753,12 +1753,10 @@ mod tests {
                 .pop_front()
                 .expect("unexpected request");
             let requests = self.requests.clone();
-            let (client, mut server) = UnixStream::pair().unwrap();
+            let (client, mut server) = LocalStream::pair().unwrap();
             thread::spawn(move || {
                 let mut line = String::new();
-                BufReader::new(server.try_clone().unwrap())
-                    .read_line(&mut line)
-                    .unwrap();
+                BufReader::new(&mut server).read_line(&mut line).unwrap();
                 let request: Value = serde_json::from_str(&line).unwrap();
                 let mut response = reply;
                 response["id"] = request["id"].clone();

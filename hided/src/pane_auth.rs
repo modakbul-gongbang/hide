@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use herdr_core::remote::RusshRemoteClient;
 use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
-use hide_herdr_client::{UnixSocketConnector, request_with_connector};
+use hide_herdr_client::{LocalSocketConnector, request_with_connector};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::UnixListener;
@@ -665,7 +665,7 @@ fn inspect_pane(
     herdr_socket: &Path,
     core: &CoreHandle,
 ) -> Result<Attestation, &'static str> {
-    let connector = UnixSocketConnector::new(herdr_socket);
+    let connector = LocalSocketConnector::new(herdr_socket);
     let value = request_with_connector(
         &connector,
         "pane.process_info",

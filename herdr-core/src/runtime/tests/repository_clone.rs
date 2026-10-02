@@ -75,7 +75,7 @@ fn shared_runtime() -> Arc<Mutex<Runtime>> {
         herdr_bin: None,
         runtime: Arc::downgrade(&shared),
         notifier: crate::handle::ChangeNotifier::noop(),
-        api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
+        api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
     });
     shared
 }

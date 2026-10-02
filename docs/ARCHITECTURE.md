@@ -317,7 +317,7 @@ A relaunch forgets an end that was in flight, because it cannot know whether it 
 
 ## The Herdr wire boundary
 
-The bundled Herdr release is pinned in one place, `contracts/herdr-bundle.json`, and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
+The bundled Herdr release is pinned in one place, `contracts/herdr-bundle.json` (the macOS asset, and the Linux and Windows assets that only CI runs), and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
 `hide-herdr-client/build.rs` turns the five sub-schemas into Rust modules under `hide_herdr_client::wire` at build time; generated source stays in `OUT_DIR` and is never committed.
 `herdr-core/src/wire.rs` is the only core boundary that converts generated values into the core's projection and event inputs; shared request and subscription encoding lives in `hide-herdr-client`.
 Do not write new wire deserialization structs in `session_sync/{projection,replica}.rs` or import generated types into domain, runtime or sidebar code.
@@ -328,6 +328,24 @@ The envelope `id` is request correlation, never retry identity; mutation converg
 The boundary preserves remote protocol diagnostics before decoding the complete generated snapshot, and the isolated pinned-server probe checks the control responses.
 Terminal input, scroll, resize and release messages and the parameterless snapshot request remain boundary-owned schema gaps, with tests that require migration when their parameter types appear.
 
+
+## The platform layer
+
+`hide-platform` is the one place code that depends on the operating system is written, so that macOS, Linux and Windows differ in one small crate rather than in every crate that touches a socket, a process or a file.
+It is a leaf: no hide dependencies, no state, nothing under the runtime mutex, and no policy; a caller decides what a save or a request means, and the crate only answers the operating-system question under it.
+Each function answers the same way on all three systems or says `ErrorKind::Unsupported`; none guesses a default.
+`hide-platform/tests/` states each module's contract as what a caller observes (bytes both ways, a timeout that fires after the time and not before, a shutdown that frees a blocked read, a live bind refused and a dead one replaced, an endpoint only the account can reach) and runs unchanged on every system in the `os contract` lane (`.github/workflows/os-contract.yml`, with its macOS leg inside `desktop-e2e`).
+The crate is small on purpose, so that lane builds in minutes on a runner with no workspace.
+Windows is a host for the app (hided, a local Herdr, the desktop window); a Windows machine as a remote device is not supported.
+
+`ipc` is the first module: a Unix domain socket on macOS and Linux and a named pipe on Windows behind `LocalStream` and `LocalListener`, built on `interprocess`, the crate Herdr itself uses.
+The address is a path everywhere, because that is how Herdr names its socket; on Windows the path is also the pipe's name (`\\.\pipe\<path>`, as Herdr's client reaches its server) and a marker file stays at the path while the listener lives, so "the path exists" means the same on every system.
+A Windows pipe has no read or write timeout, so a read with a timeout looks at the pipe before it reads, and the Unix side waits for readiness with `poll` instead of `SO_RCVTIMEO`, which macOS refuses to set once the peer has closed even though its bytes are still waiting; the contract tests pin both.
+A Windows pipe has no write timeout at all, and says `Unsupported` where a Unix socket keeps one; `hide-herdr-client` treats that one answer as no timeout, because a request is one line that fits the pipe's buffer and never blocks.
+A Windows connect waits at most two seconds for a pipe whose instances are all busy (`TimedOut`; the default would wait for ever), and `bind` reads that answer as a live listener; `bind` also removes only a socket (Unix) or the marker file (Windows) and refuses anything else at the path.
+A blocked read is freed by `ShutdownHandle` from any thread on every system: `shutdown(2)` on Unix, `CancelIoEx` on Windows.
+`hide-herdr-client`'s `LocalSocketConnector` and its `ApiStream` for `LocalStream` are the only users so far; the other local sockets (`hided` pane auth and workspace bridge, the supervisor channel) and the process, file and watch concerns move into the crate one slice at a time.
+`hide-platform/tests/` and `hide-herdr-client/tests/real_herdr.rs` (the client against the pinned Herdr, ignored unless `HIDE_E2E_HERDR_BIN` names the binary) are where a change to the transport is proved; the subscription's reader is the high-frequency path, and on Unix it is the same blocking `read` as before.
 
 ## The bundled Herdr runtime
 

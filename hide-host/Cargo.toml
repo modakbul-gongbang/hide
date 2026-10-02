@@ -28,6 +28,11 @@ sha2 = "=0.10.9"
 tempfile = "=3.27.0"
 trash = { version = "=5.2.9", default-features = false }
 
+# trash refuses to compile on Windows unless one COM apartment mode is chosen
+# (it is deliberately a compile error). Apartment-threaded is its own default.
+[target.'cfg(windows)'.dependencies]
+trash = { version = "=5.2.9", default-features = false, features = ["coinit_apartmentthreaded"] }
+
 [features]
 # Records every Git call the worktree read makes, for the core's tests.
 call-log = []

@@ -28,6 +28,7 @@ bash scripts/check-no-workstation-identity.sh
 bash scripts/check-worktree-removal-boundary.sh
 zsh scripts/check-herdr-pin-single-source.sh
 zsh scripts/check-herdr-contract.sh --schema-only   # needs a Herdr CLI on PATH or --herdr-bin
+cargo test -p hide-platform -p hide-herdr-client   # the OS contract and the client's own tests; add HIDE_E2E_HERDR_BIN=<pinned herdr> and `--test real_herdr -- --ignored` to run the client against it
 ```
 
 Then open the pull request against `main` and answer the template.
@@ -57,6 +58,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | worktree removal boundary | The host's confirmed removal (`hide_host::worktrees::remove_confirmed`) forces only what the operator accepted in the delete confirmation: `git worktree remove --force` only with Discard ticked, `git branch -D` only for a branch they were told is unmerged; the Overview cleanup (`worktree_cleanup.rs`) never forces | `bash scripts/check-worktree-removal-boundary.sh` | Tie any force to the operator's recorded choice; a removal nobody confirmed must fail and surface the reason. |
 | herdr pin single source | The Herdr version and digest live only in `herdr-bundle.json` | `zsh scripts/check-herdr-pin-single-source.sh` | Derive from the manifest; never restate the value. Bump with `scripts/bump-herdr.sh <version>`. |
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |
+| os contract | What differs between macOS, Linux and Windows behaves the same on all three, observed from the caller: the local stream under the Herdr client, and the client against the pinned Herdr for that system (the Windows zip runs only here) | `cargo test -p hide-platform -p hide-herdr-client`, then `HIDE_E2E_HERDR_BIN=<pinned herdr> cargo test -p hide-herdr-client --test real_herdr -- --ignored` | A contract failed on one system: fix the code under it, not the test; the Linux and Windows legs are `os-contract.yml`, the macOS leg runs in `desktop-e2e`. |
 
 A web or desktop e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that is the only way a test leaves a required gate.
 Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required web shards and the required desktop step skip it with `--grep-invert @flaky`, and web shard 1 and the desktop job each still run every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
