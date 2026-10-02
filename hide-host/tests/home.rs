@@ -329,12 +329,15 @@ fn a_link_the_operator_pointed_elsewhere_is_not_removed() {
     account.sync(&[&alpha]);
     let entry = account.hide().join("alpha");
     std::fs::remove_file(&entry).unwrap();
-    std::os::unix::fs::symlink(&other, &entry).unwrap();
+    hide_platform::fs::link::create_link(Path::new(&other), &entry).unwrap();
 
     let synced = account.sync(&[]);
 
     assert!(synced.dropped.is_empty());
-    assert_eq!(std::fs::read_link(&entry).unwrap(), Path::new(&other));
+    assert!(hide_platform::fs::link::is_link_to(
+        &entry,
+        Path::new(&other)
+    ));
 }
 
 #[test]
@@ -395,7 +398,7 @@ fn a_folder_named_hide_that_is_not_homes_is_refused_and_untouched() {
 
     let link = Account::new();
     let target = link.project("alpha");
-    std::os::unix::fs::symlink(&target, link.hide()).unwrap();
+    hide_platform::fs::link::create_link(Path::new(&target), &link.hide()).unwrap();
     assert_eq!(
         sync(&link.home, &[]).unwrap_err().code,
         ErrorCode::HomeConflict

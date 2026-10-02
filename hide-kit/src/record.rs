@@ -82,7 +82,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
     let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
     bytes.push(b'\n');
     private_state_dir(home, true)?;
-    crate::write_atomically(&path(home), &bytes, 0o600)
+    crate::write_atomically(&path(home), &bytes, hide_platform::fs::Access::Private)
 }
 
 pub(crate) fn forget(home: &Path) -> Result<(), String> {

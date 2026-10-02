@@ -147,7 +147,11 @@ pub fn changes(root: &Root, scope: &Path, query: &ChangesQuery) -> HostResult<Ch
             format!("{} is not inside a Git repository", root.path().display()),
         )
     })?;
-    if std::fs::canonicalize(&toplevel).ok().as_deref() != Some(root.real_path()) {
+    if hide_platform::fs::identity::canonical(Path::new(&toplevel))
+        .ok()
+        .as_deref()
+        != Some(root.real_path())
+    {
         return Err(HostError::new(
             ErrorCode::Conflict,
             "This History scope belongs to another checkout",

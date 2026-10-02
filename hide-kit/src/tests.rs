@@ -545,7 +545,7 @@ fn a_watcher_holding_another_homes_lock_is_left_running() {
 /// a watcher lsof cannot name or SIGKILL cannot end would be.
 #[test]
 fn a_watcher_that_cannot_be_stopped_keeps_its_state_folder() {
-    use std::os::fd::AsRawFd;
+    use hide_platform::fs::lock::{Mode, Waited, lock_file};
     let fixture = Fixture::new();
     fixture.legacy_plugin("local");
     let lock = plugin_state_dir(fixture.home()).join("watcher.lock");
@@ -555,11 +555,10 @@ fn a_watcher_that_cannot_be_stopped_keeps_its_state_folder() {
         .append(true)
         .open(&lock)
         .unwrap();
-    // SAFETY: flock on a descriptor `held` owns until the end of the test.
-    assert_eq!(
-        unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-        0
-    );
+    let held = match lock_file(held, Mode::Exclusive, Duration::ZERO, &|| false).unwrap() {
+        Waited::Locked(lock) => lock,
+        other => panic!("the test could not take the lock: {other:?}"),
+    };
 
     let report = apply(&fixture.target, &Scope::Automatic);
 

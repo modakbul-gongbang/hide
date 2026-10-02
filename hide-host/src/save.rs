@@ -9,9 +9,11 @@
 //!    caller read; a different hash is a conflict and nothing is written;
 //! 2. the new bytes go to a temporary file in the same opened folder, with the
 //!    original's permissions, and are synced;
-//! 3. the temporary file and the original are exchanged in one atomic call
-//!    (`RENAME_SWAP` on macOS, `RENAME_EXCHANGE` on Linux), so the path names
-//!    either the old file or the new one and never a truncated one;
+//! 3. the temporary file and the original are exchanged by the platform layer
+//!    (`hide_platform::fs::atomic::exchange`: one atomic call on macOS and
+//!    Linux, a replace that keeps the old file under another name on
+//!    Windows), so the path names either the old file or the new one and
+//!    never a truncated one;
 //! 4. the file that was displaced is hashed again. If it is not the revision
 //!    the caller read, someone changed it between step 1 and step 3: the two
 //!    are exchanged back, their version stays at the path, and the save is a
@@ -22,7 +24,7 @@
 //! happens. What this cannot see is a writer that already holds the old file
 //! open and writes to it after step 4; a later save of that writer's content
 //! will then be judged against the new revision like any other edit.
-//! A filesystem that has no atomic exchange is refused before anything is
+//! A filesystem that cannot exchange at all is refused before anything is
 //! written (PRD S5.5 B13-B15).
 //! A process that dies between steps 3 and 4 leaves the displaced original
 //! beside the file under its `.hide-save-` name, so it is kept, not lost.
@@ -46,6 +48,9 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use cap_std::fs::{Dir, OpenOptions};
+use hide_platform::fs::lock::{self, Mode, Waited};
+use hide_platform::fs::permissions::Permissions;
+use hide_platform::fs::{atomic, identity, private};
 use serde::{Deserialize, Serialize};
 
 use crate::document::{MAX_EDITABLE_BYTES, read_bounded, revision_of};
@@ -102,7 +107,7 @@ pub fn save_observed(
     }
     let resolved = resolve_link(dir, relative)?;
     let (parent, name) = open_parent(dir, &resolved)?;
-    let _lock = FolderLock::acquire(&parent, true)?;
+    let _lock = lock_folder(&parent, true)?;
     let original = inspect_target(&parent, &name)?;
     let current = read_revision(&parent, &name)?;
     if current == revision_of(contents) {
@@ -115,23 +120,21 @@ pub fn save_observed(
         ));
     }
 
-    let temporary = write_temporary(&parent, &name, contents, original.mode)?;
+    let temporary = write_temporary(&parent, &name, contents, &original.permissions)?;
     observe(SaveStage::BeforeExchange, &parent, &name);
-    if let Err(error) = exchange(&parent, &temporary, &name) {
+    if let Err(error) = atomic::exchange(&parent, &temporary, &name) {
         let _ = parent.remove_file(Path::new(&temporary));
-        return Err(
-            if matches!(error.raw_os_error(), Some(code) if exchange_unsupported(code)) {
-                HostError::new(
-                    ErrorCode::Unsupported,
-                    "This filesystem cannot replace a file atomically, so the file was not saved; the draft was preserved",
-                )
-            } else {
-                HostError::io(
-                    &error,
-                    "The file could not be saved; the draft was preserved",
-                )
-            },
-        );
+        return Err(if error.kind() == io::ErrorKind::Unsupported {
+            HostError::new(
+                ErrorCode::Unsupported,
+                "This filesystem cannot replace a file atomically, so the file was not saved; the draft was preserved",
+            )
+        } else {
+            HostError::io(
+                &error,
+                "The file could not be saved; the draft was preserved",
+            )
+        });
     }
 
     // The displaced file now sits under the temporary name.
@@ -139,7 +142,7 @@ pub fn save_observed(
     if displaced.as_deref().ok() != Some(expected_revision) {
         let actual = displaced.ok();
         observe(SaveStage::BeforeSwapBack, &parent, &name);
-        return match exchange(&parent, &temporary, &name) {
+        return match atomic::exchange(&parent, &temporary, &name) {
             Ok(()) => {
                 // The swap back normally leaves this save's own bytes under
                 // the temporary name. If a third writer replaced the path in
@@ -183,14 +186,29 @@ pub fn save_observed(
             ),
         )
     })?;
-    sync_directory(&parent);
+    // A directory that cannot be flushed does not undo a save that landed.
+    let _ = atomic::sync_dir(&parent);
     Ok(Saved {
         revision: revision_of(contents),
     })
 }
 
 struct Target {
-    mode: u32,
+    permissions: Permissions,
+}
+
+/// Opens the existing file at `name` to read it, without waiting on a
+/// device that has no writer and without following a link swapped in since
+/// it was inspected.
+fn open_regular(parent: &Dir, name: &OsStr) -> io::Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_NOFOLLOW);
+    }
+    Ok(parent.open_with(Path::new(name), &options)?.into_std())
 }
 
 /// Refuses every target a replace-by-exchange could not save faithfully.
@@ -213,58 +231,42 @@ fn inspect_target(parent: &Dir, name: &OsStr) -> HostResult<Target> {
             "The save target is no longer a regular file; the draft was preserved",
         ));
     }
-    #[cfg(unix)]
-    {
-        use cap_std::fs::MetadataExt;
-        if metadata.nlink() > 1 {
-            return Err(HostError::new(
-                ErrorCode::Unsupported,
-                "The file has other hard links, which a save would separate from it; the draft was preserved",
-            ));
-        }
-        if metadata.uid() != unsafe { libc::geteuid() } {
-            return Err(HostError::new(
-                ErrorCode::PermissionDenied,
-                "The file belongs to another user, and saving would change its owner; the draft was preserved",
-            ));
-        }
-        if metadata.mode() & 0o200 == 0 {
-            return Err(HostError::new(
-                ErrorCode::PermissionDenied,
-                "The file is read-only on disk; the draft was preserved",
-            ));
-        }
-        Ok(Target {
-            mode: metadata.mode() & 0o7777,
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        Err(HostError::new(
+    let inspect = |error: io::Error| {
+        HostError::io(
+            &error,
+            "The existing file could not be inspected; the draft was preserved",
+        )
+    };
+    let file = open_regular(parent, name).map_err(inspect)?;
+    if identity::link_count(&file).map_err(inspect)? > 1 {
+        return Err(HostError::new(
             ErrorCode::Unsupported,
-            "Saving is not supported on this platform; the draft was preserved",
-        ))
+            "The file has other hard links, which a save would separate from it; the draft was preserved",
+        ));
     }
+    if !private::handle_owned_by_current_user(&file).map_err(inspect)? {
+        return Err(HostError::new(
+            ErrorCode::PermissionDenied,
+            "The file belongs to another user, and saving would change its owner; the draft was preserved",
+        ));
+    }
+    let permissions = Permissions::of(&file).map_err(inspect)?;
+    if !permissions.owner_can_write() {
+        return Err(HostError::new(
+            ErrorCode::PermissionDenied,
+            "The file is read-only on disk; the draft was preserved",
+        ));
+    }
+    Ok(Target { permissions })
 }
 
 fn read_revision(parent: &Dir, name: &OsStr) -> HostResult<String> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use cap_std::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_NOFOLLOW);
-    }
-    let mut file = parent
-        .open_with(Path::new(name), &options)
-        .map_err(|error| {
-            HostError::io(
-                &error,
-                "The existing file could not be read; the draft was preserved",
-            )
-        })?
-        .into_std();
+    let mut file = open_regular(parent, name).map_err(|error| {
+        HostError::io(
+            &error,
+            "The existing file could not be read; the draft was preserved",
+        )
+    })?;
     let bytes = read_bounded(&mut file)?.ok_or_else(|| {
         HostError::new(
             ErrorCode::TooLarge,
@@ -274,7 +276,12 @@ fn read_revision(parent: &Dir, name: &OsStr) -> HostResult<String> {
     Ok(revision_of(&bytes))
 }
 
-fn write_temporary(parent: &Dir, name: &OsStr, contents: &[u8], mode: u32) -> HostResult<OsString> {
+fn write_temporary(
+    parent: &Dir,
+    name: &OsStr,
+    contents: &[u8],
+    permissions: &Permissions,
+) -> HostResult<OsString> {
     let mut last_error = None;
     for attempt in 0..8u32 {
         let mut temporary = OsString::from(".");
@@ -283,21 +290,19 @@ fn write_temporary(parent: &Dir, name: &OsStr, contents: &[u8], mode: u32) -> Ho
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
-        {
+        if let Some(mode) = permissions.unix_mode() {
             use cap_std::fs::OpenOptionsExt;
+            // Made with the original's bits so it is never wider than it,
+            // even for the moment before they are applied exactly.
             options.mode(mode);
         }
         match parent.open_with(Path::new(&temporary), &options) {
             Ok(file) => {
                 let mut file = file.into_std();
                 let written = (|| {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        // create applies the umask; the saved file keeps the
-                        // original's exact permissions.
-                        file.set_permissions(std::fs::Permissions::from_mode(mode))?;
-                    }
+                    // create applies the umask; the saved file keeps the
+                    // original's exact permissions.
+                    permissions.apply(&file)?;
                     file.write_all(contents)?;
                     file.sync_all()
                 })();
@@ -325,91 +330,12 @@ fn write_temporary(parent: &Dir, name: &OsStr, contents: &[u8], mode: u32) -> Ho
     ))
 }
 
-#[cfg(target_os = "macos")]
-fn exchange(parent: &Dir, left: &OsStr, right: &OsStr) -> io::Result<()> {
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-    let left = CString::new(left.as_bytes())?;
-    let right = CString::new(right.as_bytes())?;
-    let fd = parent.as_raw_fd();
-    let result =
-        unsafe { libc::renameatx_np(fd, left.as_ptr(), fd, right.as_ptr(), libc::RENAME_SWAP) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn exchange(parent: &Dir, left: &OsStr, right: &OsStr) -> io::Result<()> {
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-    let left = CString::new(left.as_bytes())?;
-    let right = CString::new(right.as_bytes())?;
-    let fd = parent.as_raw_fd();
-    let result =
-        unsafe { libc::renameat2(fd, left.as_ptr(), fd, right.as_ptr(), libc::RENAME_EXCHANGE) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn exchange(_parent: &Dir, _left: &OsStr, _right: &OsStr) -> io::Result<()> {
-    Err(io::Error::from_raw_os_error(libc::ENOTSUP))
-}
-
-fn exchange_unsupported(code: i32) -> bool {
-    code == libc::ENOTSUP
-        || code == libc::EINVAL
-        || code == libc::ENOSYS
-        || code == libc::EOPNOTSUPP
-}
-
-fn sync_directory(parent: &Dir) {
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        if let Ok(folder) = reopen_for_io(parent) {
-            unsafe {
-                libc::fsync(folder.as_raw_fd());
-            }
-        }
-    }
-}
-
-/// A readable descriptor for the folder `dir` holds. cap-std opens its
-/// directory handles with `O_PATH` on Linux, and the kernel answers `EBADF`
-/// to `flock` and `fsync` on such a descriptor, so a lock or a flush has to
-/// go through a fresh one; macOS has no `O_PATH` and the same call works there.
-#[cfg(unix)]
-fn reopen_for_io(dir: &Dir) -> io::Result<std::os::fd::OwnedFd> {
-    use std::os::fd::{AsRawFd, FromRawFd};
-    let fd = unsafe {
-        libc::openat(
-            dir.as_raw_fd(),
-            c".".as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: openat returned a new descriptor that nothing else owns.
-    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
-}
-
 /// The content revision of `relative` now, read the same way a save reads it
 /// and after any save in progress in its folder has finished.
 pub fn current_revision(dir: &Dir, relative: &Path) -> HostResult<String> {
     let resolved = resolve_link(dir, relative)?;
     let (parent, name) = open_parent(dir, &resolved)?;
-    let _lock = FolderLock::acquire(&parent, false)?;
+    let _lock = lock_folder(&parent, false)?;
     read_revision(&parent, &name)
 }
 
@@ -437,63 +363,23 @@ fn resolve_link(dir: &Dir, relative: &Path) -> HostResult<std::path::PathBuf> {
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// The folder's advisory lock, released when dropped (or when the process
-/// holding it ends). It owns its descriptor, so dropping it closes the lock.
-struct FolderLock {
-    #[cfg(unix)]
-    folder: std::os::fd::OwnedFd,
-}
-
-impl FolderLock {
-    fn acquire(folder: &Dir, exclusive: bool) -> HostResult<Self> {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            let folder = reopen_for_io(folder).map_err(|error| {
-                HostError::io(
-                    &error,
-                    "The folder could not be locked for the save; the draft was preserved",
-                )
-            })?;
-            let operation = if exclusive {
-                libc::LOCK_EX
-            } else {
-                libc::LOCK_SH
-            } | libc::LOCK_NB;
-            let deadline = std::time::Instant::now() + LOCK_WAIT;
-            loop {
-                if unsafe { libc::flock(folder.as_raw_fd(), operation) } == 0 {
-                    return Ok(Self { folder });
-                }
-                let error = io::Error::last_os_error();
-                if error.raw_os_error() != Some(libc::EWOULDBLOCK) {
-                    return Err(HostError::io(
-                        &error,
-                        "The folder could not be locked for the save; the draft was preserved",
-                    ));
-                }
-                if std::time::Instant::now() >= deadline {
-                    return Err(HostError::new(
-                        ErrorCode::Busy,
-                        "Another save in this folder has not finished; the draft was preserved",
-                    ));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = (folder, exclusive);
-            Ok(Self {})
-        }
-    }
-}
-
-#[cfg(unix)]
-impl Drop for FolderLock {
-    fn drop(&mut self) {
-        use std::os::fd::AsRawFd;
-        unsafe {
-            libc::flock(self.folder.as_raw_fd(), libc::LOCK_UN);
-        }
+/// holding it ends). `parent` is a handle `cap-std` opened, which the
+/// platform layer locks through a descriptor the system accepts.
+fn lock_folder(folder: &Dir, exclusive: bool) -> HostResult<lock::Lock> {
+    let mode = if exclusive {
+        Mode::Exclusive
+    } else {
+        Mode::Shared
+    };
+    match lock::lock_dir(folder, mode, LOCK_WAIT, &|| false) {
+        Ok(Waited::Locked(held)) => Ok(held),
+        Ok(Waited::TimedOut | Waited::Cancelled) => Err(HostError::new(
+            ErrorCode::Busy,
+            "Another save in this folder has not finished; the draft was preserved",
+        )),
+        Err(error) => Err(HostError::io(
+            &error,
+            "The folder could not be locked for the save; the draft was preserved",
+        )),
     }
 }

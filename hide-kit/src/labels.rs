@@ -265,20 +265,16 @@ fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<u32>, String> {
 /// Whether some process holds the watcher's exclusive lock: taking it for a
 /// moment answers without asking lsof on the ordinary pass where none runs.
 fn lock_is_held(lock: &Path) -> Result<bool, String> {
-    use std::os::fd::AsRawFd;
+    use hide_platform::fs::lock::{Mode, Waited, lock_file};
     let file = std::fs::File::open(lock)
         .map_err(|error| format!("the watcher lock could not be opened: {}", error.kind()))?;
-    // SAFETY: flock on a descriptor `file` owns; dropping `file` releases it.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-        return Ok(false);
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-        Ok(true)
-    } else {
-        Err(format!(
+    // Dropping the lock a free file hands back releases it again.
+    match lock_file(file, Mode::Exclusive, Duration::ZERO, &|| false) {
+        Ok(Waited::Locked(_)) => Ok(false),
+        Ok(Waited::TimedOut | Waited::Cancelled) => Ok(true),
+        Err(error) => Err(format!(
             "the watcher lock could not be checked: {}",
             error.kind()
-        ))
+        )),
     }
 }

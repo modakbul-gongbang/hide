@@ -93,16 +93,8 @@ pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
     let link = link_path(target);
     std::fs::create_dir_all(&target.cli_dir)
         .map_err(|error| format!("{} could not be created: {error}", target.cli_dir.display()))?;
-    let temporary = target
-        .cli_dir
-        .join(format!(".{CLI_NAME}.hide-kit-{}", std::process::id()));
-    let _ = std::fs::remove_file(&temporary);
-    std::os::unix::fs::symlink(wanted(target), &temporary)
-        .and_then(|()| std::fs::rename(&temporary, &link))
-        .map_err(|error| {
-            let _ = std::fs::remove_file(&temporary);
-            format!("{} could not be linked: {error}", link.display())
-        })
+    hide_platform::fs::link::replace_link(&wanted(target), &link)
+        .map_err(|error| format!("{} could not be linked: {error}", link.display()))
 }
 
 pub(crate) fn remove(target: &KitTarget) -> RemoveOutcome {

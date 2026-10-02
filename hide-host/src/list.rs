@@ -73,7 +73,7 @@ pub fn list(dir: &Dir, relative: &Path, real_root: &Path) -> HostResult<Listing>
                 if !link.is_absolute() {
                     return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
                 }
-                let resolved = std::fs::canonicalize(&link)?;
+                let resolved = hide_platform::fs::identity::canonical(&link)?;
                 let inside = resolved
                     .strip_prefix(real_root)
                     .map_err(|_| std::io::Error::from(std::io::ErrorKind::PermissionDenied))?;
@@ -95,13 +95,18 @@ pub fn list(dir: &Dir, relative: &Path, real_root: &Path) -> HostResult<Listing>
             truncated = true;
             break;
         }
-        let Ok(metadata) = item.metadata() else {
-            continue;
+        let inode = match crate::mutate::item_inode(&folder, std::ffi::OsStr::new(name)) {
+            Ok(inode) => inode,
+            // The entry went between the read and the look.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(HostError::io(&error, "The folder could not be read"));
+            }
         };
         entries.push(Entry {
             name: name.to_owned(),
             is_directory,
-            inode: crate::mutate::item_inode(&metadata),
+            inode,
         });
     }
     entries.sort_by(|left, right| {

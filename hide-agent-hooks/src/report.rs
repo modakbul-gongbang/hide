@@ -171,8 +171,8 @@ pub fn last_failure(home: &Path) -> Option<ReportFailure> {
 
 #[cfg(test)]
 mod tests {
+    use hide_platform::ipc::LocalListener;
     use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixListener;
 
     use super::*;
 
@@ -234,18 +234,24 @@ mod tests {
         let root = scratch("request");
         // A Unix socket path is capped at SUN_LEN (104 bytes on macOS), and a
         // harness that points TMPDIR into its run directory exceeds it, so the
-        // socket alone binds under the short system root, as the
-        // hide-herdr-client socket tests do.
+        // socket alone binds under the short system root. Windows has no
+        // such root and no such cap.
+        let short_root = if cfg!(unix) {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
         let socket_root =
-            Path::new("/tmp").join(format!("hide-agent-hooks-report-{}", std::process::id()));
+            short_root.join(format!("hide-agent-hooks-report-{}", std::process::id()));
         fs::create_dir_all(&socket_root).expect("socket directory");
         let socket = socket_root.join("herdr.sock");
         let _ = fs::remove_file(&socket);
-        let listener = UnixListener::bind(&socket).expect("bind fake socket");
+        let listener = LocalListener::bind(&socket).expect("bind fake socket");
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
+            let mut stream = listener.accept().expect("accept");
             let mut line = String::new();
-            BufReader::new(stream.try_clone().expect("clone"))
+            // One request line; nothing else is sent before the response.
+            BufReader::new(&mut stream)
                 .read_line(&mut line)
                 .expect("read request");
             let request: serde_json::Value = serde_json::from_str(&line).expect("request JSON");

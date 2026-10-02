@@ -8,7 +8,6 @@
 //! judging it reads the build's folder and one small file.
 
 use std::io::Read;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -30,7 +29,9 @@ pub(crate) fn digest(source: &Path) -> Result<String, String> {
         let metadata = std::fs::metadata(&path)
             .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
         hasher.update(relative.to_string_lossy().as_bytes());
-        hasher.update([0, u8::from(metadata.permissions().mode() & 0o111 != 0)]);
+        let executable = hide_platform::fs::permissions::is_executable(&path)
+            .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
+        hasher.update([0, u8::from(executable)]);
         hasher.update(metadata.len().to_le_bytes());
         let mut file = std::fs::File::open(&path)
             .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
