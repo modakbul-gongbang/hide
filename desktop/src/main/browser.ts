@@ -105,16 +105,16 @@ export class BrowserViews {
       const page = target ? this.pages.get(viewKey(target.workspace, target.id)) : undefined;
       // A covered page's still: the shell asks while the page still shows, ahead of the sync that hides it.
       if (!page || !page.visible) {
-        this.log.event("browser.capture_refused", { reason: page ? "hidden" : "missing" });
+        this.log.event("browser.capture_refused", { id: target?.id ?? null, reason: page ? "hidden" : "missing" });
         return null;
       }
       try {
         const image = await page.view.webContents.capturePage();
         if (!image.isEmpty()) return image.toDataURL();
-        this.log.event("browser.capture_empty", {});
+        this.log.event("browser.capture_empty", { id: page.id });
         return null;
       } catch (error) {
-        this.log.event("browser.capture_failed", { detail: String(error) });
+        this.log.event("browser.capture_failed", { id: page.id, detail: String(error) });
         return null;
       }
     });

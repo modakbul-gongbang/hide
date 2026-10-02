@@ -47,11 +47,13 @@ function TooltipTrigger({ ref, ...props }: ComponentProps<typeof TooltipPrimitiv
  * fits the window clear of them (`tooltipSide.ts`); with none shown it keeps
  * the side it was given.
  */
-function TooltipContent({ className, side = "top", align = "center", sideOffset = 4, children, ...props }: ComponentProps<typeof TooltipPrimitive.Content>) {
+function TooltipContent({ ref, className, side = "top", align = "center", sideOffset = 4, children, ...props }: ComponentProps<typeof TooltipPrimitive.Content>) {
   const trigger = useContext(TriggerContext);
   const [clear, setClear] = useState<HintSide | null>(null);
   const measure = useCallback(
     (node: HTMLDivElement | null) => {
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
       const pages = visiblePageRects();
       const anchor = trigger?.current;
       if (!node || !anchor || pages.length === 0) return setClear(null);
@@ -68,7 +70,7 @@ function TooltipContent({ className, side = "top", align = "center", sideOffset 
         }),
       );
     },
-    [trigger, side, align, sideOffset],
+    [ref, trigger, side, align, sideOffset],
   );
   return (
     <TooltipPrimitive.Portal>

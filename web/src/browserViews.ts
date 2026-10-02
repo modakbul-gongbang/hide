@@ -225,9 +225,14 @@ class BrowserSyncLoop {
     if (front) {
       const ids = new Set(front.rows.map((row) => row.id));
       this.forget((id) => !ids.has(id));
+      for (const id of this.frozen) if (!ids.has(id)) this.frozen.delete(id);
       useBrowserStore.setState((current) => {
         const pages = withoutClosed(current.pages, front.workspace, ids);
-        return pages === current.pages ? current : { pages };
+        const gone = Object.keys(current.stills).filter((id) => !ids.has(id));
+        if (pages === current.pages && gone.length === 0) return current;
+        const stills = { ...current.stills };
+        for (const id of gone) delete stills[id];
+        return { pages, stills };
       });
     }
     this.front = front;
@@ -350,6 +355,8 @@ class BrowserSyncLoop {
     if (!stillWanted(this.cache.get(id), url, rect, this.stale.has(id))) return this.unwait(id);
     const taken = `${url}\n${Math.round(rect.width)}x${Math.round(rect.height)}`;
     if (this.due.get(id) === taken) {
+      // A capture already on its way keeps the trigger; its answer flushes again.
+      if (this.capturing.has(id)) return;
       this.due.delete(id);
       this.stale.delete(id);
       this.capture(workspace, id, url, rect);
@@ -404,6 +411,7 @@ class BrowserSyncLoop {
         const kept = this.cache.get(id);
         this.cache.set(id, { ...taken, still: still ?? (stillFits(kept, url, rect) ? kept.still : null) });
         if (still && this.frozen.has(id)) useBrowserStore.setState((current) => ({ stills: { ...current.stills, [id]: still } }));
+        this.schedule();
       });
   }
 }

@@ -455,16 +455,27 @@ test("browser: a shell layer never has a page drawn over it, and a page tab's hi
 
   // The page repaints, and the host's capture is slowed: the palette's first
   // frames find the page already hidden, a still stands in at once, and the
-  // still turns to what the page shows now when the capture arrives.
-  await page.waitForTimeout(1_500);
-  await inPage(url, "document.body.style.background = 'rgb(255, 0, 0)'");
+  // still turns to what the page shows now when the capture arrives. The
+  // idle still is waited for first, so none is in flight when the page turns.
   await app.evaluate(({ BrowserWindow }, target) => {
-    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === target) as unknown as { webContents: Electron.WebContents & { __capture?: unknown } };
+    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === target) as unknown as { webContents: Electron.WebContents };
     const contents = child.webContents;
     const original = contents.capturePage.bind(contents);
-    contents.__capture = contents.capturePage;
-    contents.capturePage = ((...args: Parameters<Electron.WebContents["capturePage"]>) => original(...args).then((image) => new Promise((resolve) => setTimeout(() => resolve(image), 1_500)))) as Electron.WebContents["capturePage"];
+    const probe = { started: 0, done: 0, delay: 0 };
+    (globalThis as { __captureProbe?: typeof probe }).__captureProbe = probe;
+    contents.capturePage = ((...args: Parameters<Electron.WebContents["capturePage"]>) => {
+      probe.started += 1;
+      const delay = probe.delay;
+      return original(...args).then((image) => new Promise((resolve) => setTimeout(() => { probe.done += 1; resolve(image); }, delay)));
+    }) as Electron.WebContents["capturePage"];
   }, url);
+  const probe = () => app!.evaluate(() => (globalThis as unknown as { __captureProbe: { started: number; done: number } }).__captureProbe);
+  // A slot of another size wants a new idle still.
+  await fitWindow(app, { width: WINDOW.width, height: WINDOW.height - 40 });
+  await expectOnSlot(page, url, a);
+  await expect.poll(async () => { const { started, done } = await probe(); return started > 0 && started === done; }, { message: "a new idle still is taken once the resized page is quiet" }).toBe(true);
+  await inPage(url, "document.body.style.background = 'rgb(255, 0, 0)'");
+  await app.evaluate(() => { (globalThis as unknown as { __captureProbe: { delay: number } }).__captureProbe.delay = 1_500; });
   await page.keyboard.press("Meta+KeyK");
   const palette = page.locator("[data-palette-input]");
   await expect(palette).toBeVisible();
@@ -476,10 +487,7 @@ test("browser: a shell layer never has a page drawn over it, and a page tab's hi
   await expect(palette).toHaveCount(0);
   await expect.poll(shown).toBe(true);
   await expect(page.locator("[data-browser-still]")).toHaveCount(0);
-  await app.evaluate(({ BrowserWindow }, target) => {
-    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === target) as unknown as { webContents: Electron.WebContents & { __capture?: Electron.WebContents["capturePage"] } };
-    child.webContents.capturePage = child.webContents.__capture!;
-  }, url);
+  await app.evaluate(() => { (globalThis as unknown as { __captureProbe: { delay: number } }).__captureProbe.delay = 0; });
 
   // A window too narrow for the tools beside the View areas floats them over
   // the areas: the page under them gives way to its still until they close,
