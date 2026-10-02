@@ -82,8 +82,19 @@ fn shim_dirs(target: &KitTarget, create: bool) -> Result<PathBuf, String> {
     }
 }
 
-/// The old home still waiting to be adopted, when hcoord is not relocated.
+/// The old home still waiting to be adopted: there, hcoord not relocated,
+/// and no new home yet. With both there nothing is moved and the row says so
+/// (`note`), so a stray old home never blocks an update of the new one.
 fn legacy_home(target: &KitTarget) -> Option<PathBuf> {
+    let legacy = left_legacy_home(target)?;
+    std::fs::symlink_metadata(home_dir(target))
+        .is_err()
+        .then_some(legacy)
+}
+
+/// The old home when hcoord is not relocated and it is still there, whether
+/// or not the new home exists too.
+fn left_legacy_home(target: &KitTarget) -> Option<PathBuf> {
     if target.hcoord_home.is_some() {
         return None;
     }
@@ -177,6 +188,11 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
         Ok(false) => return Observed::Stale("an older hcoord is installed".to_owned()),
         Err(reason) => return Observed::Blocked(reason),
     }
+    // A relocated hcoord is not the account's, so `hcoord` on PATH is not
+    // its to take.
+    if target.hcoord_home.is_some() {
+        return Observed::Current;
+    }
     match link_state(target) {
         Link::Current | Link::Foreign(_) => Observed::Current,
         Link::Missing | Link::Ours => Observed::Stale(format!(
@@ -200,8 +216,8 @@ pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
         0o700,
     )?;
     // A name another program holds is left and reported on the row; hcoord
-    // itself is installed either way.
-    if matches!(link_state(target), Link::Missing | Link::Ours) {
+    // itself is installed either way. A relocated hcoord never takes it.
+    if target.hcoord_home.is_none() && matches!(link_state(target), Link::Missing | Link::Ours) {
         link(target)?;
     }
     Ok(())
@@ -215,15 +231,14 @@ pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
 /// home it reads has moved.
 fn adopt(target: &KitTarget, runtime: &HcoordRuntime, legacy: &Path) -> Result<(), String> {
     let packaged_cli = packaged(target).join("dist").join("hcoord").join("cli.js");
-    let from = legacy.display().to_string();
+    // hcoord derives the old home from the HOME it runs with, which is
+    // `target.home`; no path is passed, so the command moves nothing else.
     let finished = process::run(
         &runtime.program,
         &[
             &packaged_cli.display().to_string(),
             "home",
             "adopt",
-            "--from",
-            &from,
             "--json",
         ],
         &runtime.env,
@@ -252,7 +267,8 @@ fn adopt(target: &KitTarget, runtime: &HcoordRuntime, legacy: &Path) -> Result<(
         ),
     };
     Err(format!(
-        "hcoord could not move {from} to {}: {reason}. The old hcoord keeps running, and the next launch or Reinstall tries again",
+        "hcoord could not move {} to {}: {reason}. The old hcoord keeps running, and the next launch or Reinstall tries again",
+        legacy.display(),
         home_dir(target).display()
     ))
 }
@@ -311,15 +327,26 @@ fn link_state(target: &KitTarget) -> Link {
 }
 
 /// Why `hcoord` on `PATH` is not Hide's, for an installed hcoord row (B14).
-pub(crate) fn link_note(target: &KitTarget) -> Option<String> {
-    match link_state(target) {
-        // The row already shows where hcoord is installed; this says why
-        // `hcoord` on PATH is not that copy.
-        Link::Foreign(reason) => Some(format!(
-            "{reason}, so `hcoord` on PATH does not run this copy"
-        )),
-        Link::Current | Link::Missing | Link::Ours => None,
+/// What an installed hcoord row adds below its location, which the row
+/// already shows: an old home left beside the new one (never merged), and
+/// another program's `hcoord` on PATH.
+pub(crate) fn note(target: &KitTarget) -> Option<String> {
+    let mut notes = Vec::new();
+    if let Some(legacy) = left_legacy_home(target) {
+        notes.push(format!(
+            "{} is still there beside {}; Hide never merges two hcoord homes, so it left both and runs the new one. Move the old one away when nothing in it is needed",
+            legacy.display(),
+            home_dir(target).display()
+        ));
     }
+    if target.hcoord_home.is_none() {
+        if let Link::Foreign(reason) = link_state(target) {
+            notes.push(format!(
+                "{reason}, so `hcoord` on PATH does not run this copy"
+            ));
+        }
+    }
+    (!notes.is_empty()).then(|| notes.join(". "))
 }
 
 fn link(target: &KitTarget) -> Result<(), String> {

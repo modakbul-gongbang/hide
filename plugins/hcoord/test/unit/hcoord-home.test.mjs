@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { adoptLegacyHome } from "../../dist/hcoord/home.js";
 import { daemonLabel, DEFAULT_LABEL } from "../../dist/hcoord/platform.js";
@@ -51,6 +52,7 @@ function legacyHome(t) {
   fs.writeFileSync(path.join(old, "api.sock.lock"), "99999999\n");
   fs.writeFileSync(path.join(old, "api.sock.lock.recovery", "owner"), "99999999\n");
   fs.writeFileSync(path.join(old, ".ledger.json.28834.0676d56c.tmp"), "");
+  fs.writeFileSync(path.join(old, "health.json"), '{"starts":[{"pid":99999999,"at":"2026-10-02T00:00:00Z","readyAt":null,"cleanAt":null}]}');
   return { home, old, target: path.join(home, ".hide", "hcoord") };
 }
 
@@ -80,10 +82,10 @@ test("adopt stops the old daemon, moves the whole home and drops only the junk",
   withoutRelocation(t);
   const { home, old, target } = legacyHome(t);
   const fake = launchd();
-  const adopted = adoptLegacyHome(old, { home, launchd: fake.environment, legacyLabel: LABEL });
+  const adopted = adoptLegacyHome({ home, launchd: fake.environment, legacyLabel: LABEL });
   assert.equal(adopted.moved, true);
   assert.equal(adopted.stoppedLabel, LABEL);
-  assert.deepEqual(adopted.dropped, [".ledger.json.28834.0676d56c.tmp", "api.sock", "api.sock.lock", "api.sock.lock.recovery"]);
+  assert.deepEqual(adopted.dropped, [".ledger.json.28834.0676d56c.tmp", "api.sock", "api.sock.lock", "api.sock.lock.recovery", "health.json"]);
   assert.equal(fs.existsSync(old), false, "no copy stays behind");
   assert.equal(fs.readFileSync(path.join(target, "ledger.json"), "utf8"), '{"schema":"kept"}');
   assert.equal(fs.existsSync(path.join(target, "manual-stop")), true, "a manual stop moves with the home");
@@ -92,7 +94,7 @@ test("adopt stops the old daemon, moves the whole home and drops only the junk",
   assert.equal(fs.statSync(path.join(home, ".hide")).mode & 0o777, 0o700);
   assert.deepEqual(fake.calls.filter((call) => !call.startsWith("print")), [`bootout gui/501/${LABEL}`]);
 
-  const again = adoptLegacyHome(old, { home, launchd: fake.environment, legacyLabel: LABEL });
+  const again = adoptLegacyHome({ home, launchd: fake.environment, legacyLabel: LABEL });
   assert.equal(again.moved, false, "a second run finds nothing to move");
 });
 
@@ -100,7 +102,7 @@ test("adopt with no old daemon loaded moves without asking launchd to stop anyth
   withoutRelocation(t);
   const { home, old, target } = legacyHome(t);
   const fake = launchd({ loaded: false });
-  const adopted = adoptLegacyHome(old, { home, launchd: fake.environment, legacyLabel: LABEL });
+  const adopted = adoptLegacyHome({ home, launchd: fake.environment, legacyLabel: LABEL });
   assert.equal(adopted.moved, true);
   assert.equal(adopted.stoppedLabel, null);
   assert.equal(fs.existsSync(path.join(target, "ledger.json")), true);
@@ -112,7 +114,7 @@ test("an existing new home is never merged: the old home and its daemon stay", (
   const { home, old, target } = legacyHome(t);
   fs.mkdirSync(target, { recursive: true });
   const fake = launchd();
-  assert.throws(() => adoptLegacyHome(old, { home, launchd: fake.environment, legacyLabel: LABEL }), (error) => error.code === "home_conflict" && error.message.includes(old) && error.message.includes(target));
+  assert.throws(() => adoptLegacyHome({ home, launchd: fake.environment, legacyLabel: LABEL }), (error) => error.code === "home_conflict" && error.message.includes(old) && error.message.includes(target));
   assert.equal(fs.readFileSync(path.join(old, "ledger.json"), "utf8"), '{"schema":"kept"}');
   assert.equal(fake.loaded, true);
   assert.deepEqual(fake.calls, []);
@@ -126,11 +128,11 @@ test("a failed rename starts the old daemon again from its untouched plist", (t)
   const fake = launchd();
   const blocker = path.join(home, ".hide", "hcoord");
   fs.symlinkSync(path.join(home, "nowhere"), blocker);
-  assert.throws(() => adoptLegacyHome(old, { home, launchd: fake.environment, legacyLabel: LABEL }), (error) => error.code === "home_conflict");
+  assert.throws(() => adoptLegacyHome({ home, launchd: fake.environment, legacyLabel: LABEL }), (error) => error.code === "home_conflict");
   fs.unlinkSync(blocker);
   // A daemon still holding the old home's lock outside launchd stops the move after the bootout.
   fs.writeFileSync(path.join(old, "api.sock.lock"), `${process.ppid}\n`);
-  assert.throws(() => adoptLegacyHome(old, { home, launchd: fake.environment, legacyLabel: LABEL }), (error) => error.code === "adopt_failed" && /not run by launchd/.test(error.message) && /runs from the old home again/.test(error.message));
+  assert.throws(() => adoptLegacyHome({ home, launchd: fake.environment, legacyLabel: LABEL }), (error) => error.code === "adopt_failed" && /not run by launchd/.test(error.message) && /runs from the old home again/.test(error.message));
   assert.equal(fake.loaded, true, "the old daemon is loaded again");
   assert.deepEqual(fake.calls.filter((call) => !call.startsWith("print")), [`bootout gui/501/${LABEL}`, `bootstrap gui/501 ${path.join(home, "Library", "LaunchAgents", `${LABEL}.plist`)}`]);
   assert.equal(fs.existsSync(path.join(old, "ledger.json")), true);
@@ -140,7 +142,7 @@ test("a daemon that will not stop leaves the old home as it is", (t) => {
   withoutRelocation(t);
   const { home, old, target } = legacyHome(t);
   const fake = launchd({ fail: ["bootout"] });
-  assert.throws(() => adoptLegacyHome(old, { home, launchd: fake.environment, legacyLabel: LABEL }), (error) => error.code === "adopt_failed" && /nothing was moved/.test(error.message));
+  assert.throws(() => adoptLegacyHome({ home, launchd: fake.environment, legacyLabel: LABEL }), (error) => error.code === "adopt_failed" && /nothing was moved/.test(error.message));
   assert.equal(fs.existsSync(path.join(old, "ledger.json")), true);
   assert.equal(fs.existsSync(target), false);
 });
@@ -151,18 +153,33 @@ test("a linked old home and a relocated hcoord are never moved", (t) => {
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   fs.mkdirSync(path.join(home, "elsewhere"));
   fs.symlinkSync(path.join(home, "elsewhere"), path.join(home, ".hcoord"));
-  assert.throws(() => adoptLegacyHome(path.join(home, ".hcoord"), { home, launchd: launchd().environment, legacyLabel: LABEL }), (error) => error.code === "unsafe_home");
+  assert.throws(() => adoptLegacyHome({ home, launchd: launchd().environment, legacyLabel: LABEL }), (error) => error.code === "unsafe_home");
   assert.equal(fs.existsSync(path.join(home, ".hide")), false);
   process.env.HCOORD_HOME = path.join(home, "relocated");
-  assert.throws(() => adoptLegacyHome(path.join(home, ".hcoord"), { home }), (error) => error.code === "relocated");
+  assert.throws(() => adoptLegacyHome({ home }), (error) => error.code === "relocated");
 });
 
 test("an isolated HOME never names the account's label for the old daemon", (t) => {
   withoutRelocation(t);
   const { home, old } = legacyHome(t);
   const fake = launchd();
-  const adopted = adoptLegacyHome(old, { home, launchd: fake.environment });
+  const adopted = adoptLegacyHome({ home, launchd: fake.environment });
   assert.equal(adopted.moved, true);
   assert.equal(adopted.stoppedLabel, null);
   assert.deepEqual(fake.calls, [], "only the account's own ~/.hcoord ran under the plain label");
+});
+
+test("the command moves only its own HOME's ~/.hcoord: --from is refused and no other folder is touched", (t) => {
+  withoutRelocation(t);
+  const { home, old } = legacyHome(t);
+  const documents = path.join(home, "Documents");
+  fs.mkdirSync(documents);
+  fs.writeFileSync(path.join(documents, ".draft.tmp"), "mine");
+  const cli = path.join(path.dirname(new URL(import.meta.url).pathname), "../../dist/hcoord/cli.js");
+  const run = spawnSync(process.execPath, [cli, "home", "adopt", "--from", documents, "--json"], { env: { ...process.env, HOME: home }, encoding: "utf8" });
+  assert.notEqual(run.status, 0);
+  assert.equal(JSON.parse(run.stdout.trim().split("\n").at(-1)).error.code, "invalid_argument");
+  assert.equal(fs.readFileSync(path.join(documents, ".draft.tmp"), "utf8"), "mine");
+  assert.equal(fs.existsSync(path.join(old, "ledger.json")), true);
+  assert.equal(fs.existsSync(path.join(home, ".hide")), false);
 });

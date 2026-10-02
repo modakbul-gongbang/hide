@@ -291,7 +291,7 @@ fn report(
     let (state, reason) = match (failure, observed) {
         (Some(failure), _) => (ComponentState::Failed, Some(failure)),
         (None, Observed::Current) if id == ComponentId::Hcoord => {
-            (ComponentState::Installed, hcoord::link_note(target))
+            (ComponentState::Installed, hcoord::note(target))
         }
         (None, Observed::Current) => (ComponentState::Installed, None),
         (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),

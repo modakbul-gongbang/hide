@@ -7,12 +7,12 @@ Its ledger and outbox stay under `${HCOORD_HOME:-~/.hide/hcoord}`, and the pane-
 ## Where hide puts it
 
 The packaged hide app carries hcoord, and every launch or device connection reconciles it through hide's kit (`hide-kit/src/hcoord.rs`):
-the compiled CLI is copied to `~/.hide/kit/hcoord/`, the command is `~/.hide/hcoord/bin/hcoord`, and `~/.local/bin/hcoord` links to it when that name is free or already hide's, so `hcoord` on `PATH` is hide's.
+the compiled CLI is copied to `~/.hide/kit/hcoord/`, the command is `~/.hide/hcoord/bin/hcoord`, and `~/.local/bin/hcoord` links to it when that name is free or already hide's, so `hcoord` on `PATH` is hide's; a relocated hcoord (`HCOORD_HOME`) never takes that link.
 On this Mac it runs on the Electron runtime inside the app, so it needs no system Node; on a device it runs on a Node 22.12 or newer that the device already has.
 
 A machine that still has hcoord in the old `~/.hcoord` is moved once by the kit: it stops the old daemon, renames the folder to `~/.hide/hcoord` whole (the ledger, letters and a manual stop go with it), drops only the socket, the lock of the dead daemon and the temporary files, and starts the daemon again under the same `com.hcoord.daemon` label.
 If the move fails, the old folder and the old daemon keep running and Settings shows the reason on the hcoord row; the next launch or Reinstall tries again.
-`hcoord home adopt --from <old home> --json` is that step, run by the kit; it refuses when `HCOORD_HOME` is set or when the new home already exists, and never merges two homes.
+`hcoord home adopt --json` is that step, run by the kit; it moves only `~/.hcoord` of the `HOME` it runs with and takes no path, refuses when `HCOORD_HOME` is set or when the new home already exists, and never merges two homes.
 
 To work from this checkout, build and call the compiled CLI directly:
 

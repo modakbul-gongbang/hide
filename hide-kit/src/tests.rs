@@ -120,7 +120,7 @@ impl Fixture {
                 "echo \"$@\" >> \"$HOME/ensure.log\"\n",
                 "if [ \"$1\" = home ]; then\n",
                 "  if [ -e \"$HOME/adopt-fails\" ]; then printf '{\"ok\":false,\"error\":{\"code\":\"adopt_failed\",\"message\":\"pid 9 still runs\"}}\\n'; exit 1; fi\n",
-                "  mv \"$4\" \"$HOME/.hide/hcoord\" && printf '{\"ok\":true,\"value\":{\"moved\":true}}\\n'; exit 0\n",
+                "  mv \"$HOME/.hcoord\" \"$HOME/.hide/hcoord\" && printf '{\"ok\":true,\"value\":{\"moved\":true}}\\n'; exit 0\n",
                 "fi\n",
                 "printf '{\"ok\":true,\"value\":{}}\\n'\n",
             ),
@@ -752,10 +752,7 @@ fn a_recorded_hcoord_in_the_old_home_is_moved_before_the_new_copy_and_linked_on_
     );
     let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
     let calls: Vec<&str> = calls.lines().collect();
-    assert_eq!(
-        calls[0],
-        format!("home adopt --from {} --json", old.display())
-    );
+    assert_eq!(calls[0], "home adopt --json");
     assert_eq!(calls[1], "daemon ensure --json", "{calls:?}");
     // The adopt ran from the build's packaged copy, before the installed one changed.
     assert!(
@@ -837,6 +834,56 @@ fn a_relocated_hcoord_is_never_moved() {
     assert!(relocated.join("bin/hcoord").is_file());
     let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
     assert!(!calls.contains("home adopt"), "{calls}");
+}
+
+/// A relocated hcoord is not the account's: the `hcoord` link on PATH that
+/// leads to the account's own copy stays as it is.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_relocated_hcoord_leaves_the_accounts_hcoord_link_alone() {
+    let mut fixture = Fixture::new();
+    let link = fixture.home().join(".local/bin/hcoord");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    let accounts = fixture.home().join(".hide/hcoord/bin/hcoord");
+    std::os::unix::fs::symlink(&accounts, &link).unwrap();
+    fixture.target.hcoord_home = Some(fixture.root.join("coordinator"));
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    let part = report.component(ComponentId::Hcoord).unwrap();
+    assert_eq!(part.state, ComponentState::Installed, "{report:?}");
+    assert_eq!(part.reason, None);
+    assert_eq!(std::fs::read_link(&link).unwrap(), accounts);
+}
+
+/// An old home left beside the new one (an old copy made it again) is never
+/// merged and never blocks the new one: hcoord is updated and kept running,
+/// and the row names both folders.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_old_home_beside_the_new_one_is_named_and_does_not_block_updates() {
+    let fixture = Fixture::new();
+    apply(&fixture.target, &Scope::Automatic);
+    std::fs::remove_file(fixture.home().join("ensure.log")).unwrap();
+    let old = fixture.home().join(".hcoord");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("ledger.json"), "{\"kept\":true}").unwrap();
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    let part = report.component(ComponentId::Hcoord).unwrap();
+    assert_eq!(part.state, ComponentState::Installed, "{report:?}");
+    let reason = part.reason.as_deref().unwrap();
+    assert!(reason.contains("never merges two hcoord homes"), "{reason}");
+    assert!(reason.contains(&old.display().to_string()), "{reason}");
+    assert_eq!(
+        std::fs::read_to_string(old.join("ledger.json")).unwrap(),
+        "{\"kept\":true}"
+    );
+    assert!(fixture.home().join(".hide/hcoord/bin/hcoord").is_file());
+    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
+    assert!(!calls.contains("home adopt"), "{calls}");
+    assert!(calls.contains("daemon ensure"), "{calls}");
 }
 
 /// `hcoord` on PATH is linked only when the name is free or already Hide's;

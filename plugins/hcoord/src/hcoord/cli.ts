@@ -39,7 +39,7 @@ const duration = (value: string): number => {
   if (!match) throw new HcoordError("invalid_argument", "duration must use s, m, h, or d, for example 5m");
   return Number(match[1]) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 } as Record<string, number>)[match[2]!]!;
 };
-const USAGE = "usage: hcoord status | agent register [--check]/spawn/link/list/show/end | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status | home adopt --from <old home>; hcoord agent spawn --help describes a spawn";
+const USAGE = "usage: hcoord status | agent register [--check]/spawn/link/list/show/end | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status | home adopt; hcoord agent spawn --help describes a spawn";
 const SPAWN_USAGE = `usage: hcoord agent spawn --parent <participant|here> --name <name> --intent <key> [--kind <kind>] [--session <id>] [--machine <name>] [--repo <path> --branch <branch> [--path <path>]] [--no-watch] [--reconcile-pane <pane>] [--resume-start] [--json] [-- <native args>]
 
 Starts a Herdr agent as a child of --parent and records its lineage.
@@ -303,7 +303,10 @@ export async function main(argv: string[]): Promise<number> {
     if (args.words[0] === "agent" && args.words[1] === "spawn") validateSpawnSpec(needed(args, "name"), spawnKind(args), args.tail);
     if (args.words[0] === "version") { print(ok({ hcoordVersion: HCOORD_VERSION, apiVersion: API_VERSION }), json); return 0; }
     // Before anything reads the home: it is the move into it (PRD hide-home-layout D-09).
-    if (args.words[0] === "home" && args.words[1] === "adopt") { print(ok({ ...adoptLegacyHome(needed(args, "from")) }), json); return 0; }
+    if (args.words[0] === "home" && args.words[1] === "adopt") {
+      if (args.flags.has("from")) throw new HcoordError("invalid_argument", "home adopt takes no --from: it moves only this HOME's ~/.hcoord");
+      print(ok({ ...adoptLegacyHome() }), json); return 0;
+    }
     if (args.words[0] === "remote") { const result = await remoteSide(args); process.stdout.write(`${JSON.stringify(result)}\n`); return 0; }
     if (args.words[0] === "config" && args.words[1] === "set" && args.words[2] === "hq") { const result = await setHq(args.words[3]); print(result, json); return 0; }
     const hq = readHq();
