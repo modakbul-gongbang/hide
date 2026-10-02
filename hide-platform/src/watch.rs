@@ -8,7 +8,9 @@
 //! system stopped watching, the waiting paths give way to one
 //! [`Change::Overflow`], which says anything under a watched folder may have
 //! changed. A burst therefore costs a bounded number of changes and is never
-//! silence.
+//! silence. A watcher made with [`Watcher::keeping`] drops the paths its
+//! filter does not keep where the system reports them, so a burst nobody
+//! asked about neither fills the queue nor overflows it.
 //!
 //! macOS (FSEvents) and Linux (inotify) are watched through `notify`, with
 //! its event kinds folded into the one [`Change`]: inotify reports a read as
@@ -40,6 +42,10 @@ pub enum Change {
     Overflow { reason: String, at: Instant },
 }
 
+/// Which changed paths a watcher reports, asked with the path relative to
+/// the watched folder it lies in (empty for the folder itself).
+pub type Keep = fn(&Path) -> bool;
+
 /// Watches folders and reports what changes under them on one queue.
 /// Dropping it stops every watch.
 pub struct Watcher {
@@ -49,8 +55,15 @@ pub struct Watcher {
 impl Watcher {
     /// A watcher with no folder yet, and the queue it reports on.
     pub fn new() -> io::Result<(Self, Changes)> {
+        Self::keeping(|_| true)
+    }
+
+    /// A watcher that reports only the paths `keep` accepts. The filter runs
+    /// on the system's report, before the queue, so it is called for every
+    /// path the system reports and should only look at the path.
+    pub fn keeping(keep: Keep) -> io::Result<(Self, Changes)> {
         let queue = Arc::new(Queue::default());
-        let inner = sys::Inner::new(Arc::clone(&queue))?;
+        let inner = sys::Inner::new(Arc::clone(&queue), keep)?;
         Ok((Self { inner }, Changes { queue }))
     }
 
@@ -123,6 +136,9 @@ impl Queue {
     fn changed(&self, path: PathBuf) {
         let now = Instant::now();
         let mut state = self.lock();
+        // A reader waits only on an empty queue, so only the first change
+        // after one has anyone to wake.
+        let was_empty = state.order.is_empty() && state.overflow.is_none();
         if let Some((_, at)) = state.overflow.as_mut() {
             *at = now;
         } else if let Some(at) = state.waiting.get_mut(&path) {
@@ -136,7 +152,9 @@ impl Queue {
             return;
         }
         drop(state);
-        self.ready.notify_all();
+        if was_empty {
+            self.ready.notify_all();
+        }
     }
 
     fn lost(&self, reason: String) {
@@ -169,7 +187,7 @@ mod sys {
     use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
     use notify::{EventKind, RecursiveMode, Watcher as _};
 
-    use super::Queue;
+    use super::{Keep, Queue};
 
     /// A watched folder as the caller spelled it, and as the system reports
     /// it (FSEvents answers with the real path, `/private/var` for `/var`).
@@ -184,7 +202,7 @@ mod sys {
     }
 
     impl Inner {
-        pub(super) fn new(queue: Arc<Queue>) -> io::Result<Self> {
+        pub(super) fn new(queue: Arc<Queue>, keep: Keep) -> io::Result<Self> {
             let roots = Arc::new(Mutex::new(Vec::<Root>::new()));
             let seen = Arc::clone(&roots);
             let watcher =
@@ -201,7 +219,9 @@ mod sys {
                     }
                     let roots = seen.lock().unwrap_or_else(|error| error.into_inner());
                     for path in event.paths {
-                        queue.changed(as_watched(&roots, path));
+                        if let Some(path) = as_watched(&roots, path, keep) {
+                            queue.changed(path);
+                        }
                     }
                 })
                 .map_err(into_io)?;
@@ -243,17 +263,18 @@ mod sys {
         }
     }
 
-    /// `path` under the spelling of the watched folder it lies in.
-    fn as_watched(roots: &[Root], path: PathBuf) -> PathBuf {
+    /// `path` under the spelling of the watched folder it lies in, when
+    /// `keep` keeps it. A path under no watched folder is reported as is.
+    fn as_watched(roots: &[Root], path: PathBuf, keep: Keep) -> Option<PathBuf> {
         for root in roots {
-            if path.starts_with(&root.watched) {
-                return path;
+            if let Ok(rest) = path.strip_prefix(&root.watched) {
+                return keep(rest).then_some(path);
             }
             if let Ok(rest) = path.strip_prefix(&root.real) {
-                return root.watched.join(rest);
+                return keep(rest).then(|| root.watched.join(rest));
             }
         }
-        path
+        Some(path)
     }
 
     fn into_io(error: notify::Error) -> io::Error {
@@ -297,7 +318,7 @@ mod sys {
         CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects,
     };
 
-    use super::Queue;
+    use super::{Keep, Queue};
     use crate::fs::wide;
 
     /// What a change is: a name, a size or a write. Not access, so a read is
@@ -343,6 +364,7 @@ mod sys {
 
     pub(super) struct Inner {
         queue: Arc<Queue>,
+        keep: Keep,
         watches: HashMap<PathBuf, Watch>,
     }
 
@@ -356,9 +378,10 @@ mod sys {
     }
 
     impl Inner {
-        pub(super) fn new(queue: Arc<Queue>) -> io::Result<Self> {
+        pub(super) fn new(queue: Arc<Queue>, keep: Keep) -> io::Result<Self> {
             Ok(Self {
                 queue,
+                keep,
                 watches: HashMap::new(),
             })
         }
@@ -386,11 +409,19 @@ mod sys {
             let stop = event()?;
             let stop_for_thread = stop.0 as usize;
             let queue = Arc::clone(&self.queue);
+            let keep = self.keep;
             let root = dir.to_path_buf();
             let thread = std::thread::Builder::new()
                 .name("hide-watch".to_owned())
                 .spawn(move || {
-                    read_changes(&folder, &done, stop_for_thread as HANDLE, &root, &queue)
+                    read_changes(
+                        &folder,
+                        &done,
+                        stop_for_thread as HANDLE,
+                        &root,
+                        keep,
+                        &queue,
+                    )
                 })?;
             self.watches.insert(
                 dir.to_path_buf(),
@@ -416,7 +447,14 @@ mod sys {
     /// Reads changes until `stop` is set, putting each on `queue`. A read
     /// that comes back empty, or with `ERROR_NOTIFY_ENUM_DIR`, means the
     /// system's buffer overflowed and its changes are lost.
-    fn read_changes(folder: &Owned, done: &Owned, stop: HANDLE, root: &Path, queue: &Queue) {
+    fn read_changes(
+        folder: &Owned,
+        done: &Owned,
+        stop: HANDLE,
+        root: &Path,
+        keep: Keep,
+        queue: &Queue,
+    ) {
         let mut buffer = vec![0u32; BUFFER_WORDS];
         loop {
             // SAFETY: an all-zero OVERLAPPED is its documented initial state.
@@ -471,7 +509,9 @@ mod sys {
                 continue;
             }
             for name in entries(&buffer, length as usize) {
-                queue.changed(root.join(name));
+                if keep(&name) {
+                    queue.changed(root.join(name));
+                }
             }
         }
     }

@@ -105,7 +105,10 @@ struct GitWatch {
 
 impl GitWatch {
     fn new() -> Self {
-        let watch = match Watcher::new() {
+        // Only Git's facts reach the queue: object writes during a fetch or
+        // a gc are dropped where the system reports them, so they neither
+        // fill the queue nor overflow it into a re-read of every project.
+        let watch = match Watcher::keeping(git_fact_path) {
             Ok(watch) => Some(watch),
             Err(error) => {
                 crate::diagnostic!(serde_json::json!({

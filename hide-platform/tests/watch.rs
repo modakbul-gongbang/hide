@@ -167,3 +167,28 @@ fn only_a_folder_that_exists_can_be_watched() {
         std::io::ErrorKind::NotADirectory
     );
 }
+
+#[test]
+fn a_filtered_watch_reports_only_what_it_keeps_and_a_burst_it_drops_is_not_an_overflow() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut watcher, changes) = Watcher::keeping(|relative| relative.starts_with("refs")).unwrap();
+    watcher.watch(dir.path()).unwrap();
+    let objects = dir.path().join("objects");
+    let refs = dir.path().join("refs");
+    fs::create_dir_all(&objects).unwrap();
+    fs::create_dir_all(&refs).unwrap();
+    drain(&changes);
+    for index in 0..10_000 {
+        fs::write(objects.join(format!("o{index}")), b"x").unwrap();
+    }
+    let dropped = drain(&changes);
+    assert!(
+        dropped.is_empty(),
+        "{} changes outside the filter, first {:?}",
+        dropped.len(),
+        dropped.first()
+    );
+    let head = refs.join("main");
+    fs::write(&head, b"0123").unwrap();
+    expect_path(&changes, &head, "a kept path");
+}
