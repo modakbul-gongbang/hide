@@ -262,6 +262,96 @@ fn a_directory_the_helper_has_not_confirmed_is_shown_as_its_workspace_and_says_w
 
 /// The published session follows the helper: unconfirmed while it is asked
 /// on a worker, grouped when it answers.
+/// PRD cmdk-recent, Risks: a device checkout recorded while its folder is
+/// still unconfirmed is the same record once the helper's facts group it into
+/// its repository, so a rename of the project's id costs the list nothing.
+#[test]
+fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.devices.push(DeviceSnapshot {
+        id: TARGET.to_owned(),
+        label: "Mac mini".to_owned(),
+        kind: "remote".to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        problem: None,
+        ssh_alias: Some(TARGET.to_owned()),
+        herdr_socket_path: None,
+        agent_count: 0,
+        test: None,
+        host: Default::default(),
+        kit: Default::default(),
+    });
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let device = FakeDevice::new();
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: device.clone(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hide-host-helper".to_owned(),
+            },
+            generation: 1,
+        },
+    );
+    let shared = Arc::new(Mutex::new(runtime));
+    shared.lock().unwrap().install_worker_context(
+        Arc::downgrade(&shared),
+        crate::handle::ChangeNotifier::noop(),
+    );
+    let mut raw = session(vec![
+        herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
+        herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),
+    ]);
+    raw.focused_workspace_id = Some(format!("remote:{TARGET}:workspace:w2"));
+    raw.focused_checkout_id = Some(format!("remote:{TARGET}:checkout:w2"));
+
+    device.hold();
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.snapshot.navigator.focused_device_id = Some(TARGET.to_owned());
+        runtime.ingest_remote_session(TARGET, Ok(raw));
+        runtime.sync_workspace_view();
+        let held = &runtime.snapshot.ui_state.recent_checkouts;
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].device_id, TARGET);
+        assert_eq!(held[0].device_name, "Mac mini");
+        assert_eq!(
+            held[0].checkout_id,
+            device_catalog::checkout_id(TARGET, &t.linked)
+        );
+    }
+    device.release();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while shared.lock().unwrap().snapshot.status.remote[0]
+        .catalog
+        .state
+        != "ready"
+    {
+        assert!(Instant::now() < deadline, "the helper's facts never landed");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let mut runtime = shared.lock().unwrap();
+    runtime.sync_workspace_view();
+    let held = &runtime.snapshot.ui_state.recent_checkouts;
+    assert_eq!(held.len(), 1, "the grouped checkout is the same record");
+    assert_eq!(
+        held[0].checkout_id,
+        device_catalog::checkout_id(TARGET, &t.linked)
+    );
+    assert_eq!(held[0].project_name, "main");
+}
+
 #[test]
 fn a_device_session_is_grouped_when_its_helper_answers() {
     let t = tree();
@@ -879,6 +969,17 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         tab("file:here", "checkout:here"),
         tab("file:device", &format!("remote:{TARGET}:checkout:w1")),
     ];
+    let recent = |device: &str, checkout: &str| crate::model::RecentCheckout {
+        device_id: device.to_owned(),
+        checkout_id: checkout.to_owned(),
+        project_name: "p".to_owned(),
+        branch: "main".to_owned(),
+        device_name: device.to_owned(),
+    };
+    runtime.snapshot.ui_state.recent_checkouts = vec![
+        recent(TARGET, &format!("remote:{TARGET}:checkout:w1")),
+        recent("local", "checkout:here"),
+    ];
     runtime.push_recent_closed(ClosedItem::File {
         key: "closed-device".to_owned(),
         device_id: TARGET.to_owned(),
@@ -907,6 +1008,16 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         ["workspace:here"]
     );
     assert!(runtime.snapshot.ui_state.device_expanded_paths.is_empty());
+    assert_eq!(
+        runtime
+            .snapshot
+            .ui_state
+            .recent_checkouts
+            .iter()
+            .map(|held| held.checkout_id.as_str())
+            .collect::<Vec<_>>(),
+        ["checkout:here"]
+    );
     assert_eq!(
         runtime
             .snapshot

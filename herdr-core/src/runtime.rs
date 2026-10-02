@@ -25,6 +25,7 @@ mod operations;
 mod project_sessions;
 mod projects;
 mod pull_requests;
+mod recent_checkouts;
 mod rename;
 mod session;
 pub(crate) mod session_search;

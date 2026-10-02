@@ -542,6 +542,9 @@ impl Runtime {
     /// comparison of the shown tabs and area fronts against what it saw last,
     /// in a few small vectors and with no write.
     pub(super) fn sync_workspace_view(&mut self) {
+        // The recent list follows the front checkout wherever the layout
+        // store exists or not, and writes only when the front moved.
+        self.track_recent_checkouts();
         let Some(store) = self.workspace_views.as_ref() else {
             return;
         };

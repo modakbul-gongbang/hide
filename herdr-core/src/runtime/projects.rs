@@ -1791,6 +1791,15 @@ impl Runtime {
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
         }
+        // The project's checkouts leave the recent list with it; their ids
+        // are read before the catalog drops the rows that name them.
+        let checkout_ids: Vec<String> = self
+            .catalog_workspaces()
+            .filter(|workspace| workspace.id == workspace_id)
+            .flat_map(|workspace| &workspace.checkouts)
+            .map(|checkout| checkout.id.clone())
+            .collect();
+        self.forget_recent_checkouts(|held| checkout_ids.contains(&held.checkout_id));
         if let Some(path) = local_path {
             self.worktree_project_generations.remove(&path);
         }
@@ -2022,7 +2031,17 @@ impl Runtime {
         removal.phase = phase.to_owned();
         removal.message = Some(message);
         let checkout_path = removal.checkout_path.clone();
-        match removal.device_id.clone() {
+        let removal_device = removal.device_id.clone();
+        if phase == "finished" {
+            // The removed checkout leaves the recent list in the frame its
+            // row leaves the catalog.
+            let device = removal_device
+                .clone()
+                .unwrap_or_else(|| workspace::LOCAL_DEVICE_ID.to_owned());
+            let gone = self.catalog_checkout_ids_at(&device, &checkout_path);
+            self.forget_recent_checkouts(|held| gone.contains(&held.checkout_id));
+        }
+        match removal_device {
             Some(device) => {
                 self.request_device_worktrees(&device, true);
             }
