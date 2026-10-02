@@ -88,6 +88,7 @@ Every invocation, including cleanup, must use the same explicit routing environm
 | `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID` | Clear inherited identifiers before launching the fixture |
 | `HERDR_ENV` | Clear inherited nesting marker when starting the standalone reference TUI |
 | `HIDE_STATE_DIR`, `HERDR_BIN_PATH` | A run-owned `hided` state directory and pinned Herdr binary path |
+| `HCOORD_HOME` | A run-owned hcoord home, so the run's daemon gets a launchd label of its own instead of the account's `com.hcoord.daemon` |
 | `HIDE_DESKTOP_USER_DATA_DIR` | A run-owned Electron user-data directory for the desktop app |
 
 `desktop/e2e/fixture.ts` builds exactly this environment and refuses to launch unless `HOME`, `HIDE_STATE_DIR`, `HIDE_DESKTOP_USER_DATA_DIR`, and `HERDR_SOCKET_PATH` all resolve under the run's own temporary directory; `web/e2e/herdr-fixture.ts` does the same for the private Herdr server and clears the inherited `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`/`HERDR_ENV` identifiers.
@@ -97,7 +98,7 @@ The tested session layout stores sessions under `<XDG_CONFIG_HOME>/herdr/session
 The client socket inserts `-client` before `.sock`; allow room for that suffix in the platform's Unix socket path limit.
 Do not repurpose `HOME` or assume a private local socket disables SSH discovery.
 Inspect remote registrations, automatic SSH connection attempts, and remote client state too; an unexpected remote connection is an isolation failure to resolve before interacting.
-SSH devices are registrations kept under the daemon's state directory, so a run-owned `HIDE_STATE_DIR` is what keeps a scenario that does not exercise remote behavior from making an SSH connection attempt.
+SSH devices are registrations kept under the daemon's state directory (the operator's is `~/.hide/state`), so a run-owned `HIDE_STATE_DIR` is what keeps a scenario that does not exercise remote behavior from making an SSH connection attempt.
 Do not edit the operator's SSH configuration or stop remote services to make a local fixture pass.
 
 Save process/socket ownership before launch, prove the private server has zero workspaces before creating fixtures, and verify that the operator server gained no QA connection.
