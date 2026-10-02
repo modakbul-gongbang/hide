@@ -263,18 +263,26 @@ mod sys {
         }
     }
 
-    /// `path` under the spelling of the watched folder it lies in, when
-    /// `keep` keeps it. A path under no watched folder is reported as is.
+    /// `path` under the spelling of a watched folder it lies in whose
+    /// relative path `keep` keeps. Watched folders may nest (a repository's
+    /// Git folder holds its submodules' own), so every one that holds the
+    /// path is asked. A path under no watched folder is reported as is.
     fn as_watched(roots: &[Root], path: PathBuf, keep: Keep) -> Option<PathBuf> {
+        let mut held = false;
         for root in roots {
             if let Ok(rest) = path.strip_prefix(&root.watched) {
-                return keep(rest).then_some(path);
-            }
-            if let Ok(rest) = path.strip_prefix(&root.real) {
-                return keep(rest).then(|| root.watched.join(rest));
+                held = true;
+                if keep(rest) {
+                    return Some(path);
+                }
+            } else if let Ok(rest) = path.strip_prefix(&root.real) {
+                held = true;
+                if keep(rest) {
+                    return Some(root.watched.join(rest));
+                }
             }
         }
-        Some(path)
+        (!held).then_some(path)
     }
 
     fn into_io(error: notify::Error) -> io::Error {

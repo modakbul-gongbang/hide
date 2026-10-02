@@ -197,3 +197,20 @@ fn a_filtered_watch_reports_only_what_it_keeps_and_a_burst_it_drops_is_not_an_ov
     fs::write(&head, b"0123").unwrap();
     expect_path(&changes, &head, "a kept path");
 }
+
+#[test]
+fn a_folder_watched_inside_another_is_filtered_by_its_own_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let outer = dir.path().join("outer");
+    let inner = outer.join("modules").join("inner");
+    fs::create_dir_all(inner.join("refs")).unwrap();
+    // Each folder keeps only `refs` under itself, as the Git watch keeps a
+    // repository's facts and its submodule's.
+    let (mut watcher, changes) = Watcher::keeping(|relative| relative.starts_with("refs")).unwrap();
+    watcher.watch(&outer).unwrap();
+    watcher.watch(&inner).unwrap();
+    drain(&changes);
+    let head = inner.join("refs").join("main");
+    fs::write(&head, b"0123").unwrap();
+    expect_path(&changes, &head, "a kept path of the inner folder");
+}
