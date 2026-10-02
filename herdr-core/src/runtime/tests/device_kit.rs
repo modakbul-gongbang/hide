@@ -99,6 +99,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
             })
             .collect(),
         labels_retirement: Default::default(),
+        legacy_retirement: Default::default(),
     }
 }
 

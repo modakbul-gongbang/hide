@@ -1,17 +1,25 @@
-//! hcoord: the `~/.hcoord/bin/hcoord` command and the daemon it keeps.
+//! hcoord: the `~/.hide/hcoord/bin/hcoord` command, its `hcoord` link on
+//! `PATH`, and the daemon it keeps.
 //!
 //! hcoord is a Node program. The build ships its compiled `dist/` in
 //! `<kit_dir>/hcoord/`; the kit copies that to `~/.hide/kit/hcoord/` (Node
 //! resolves a script's own path through links, and the daemon's LaunchAgent
-//! names that path, so it must outlive the build) and writes a shim that runs
-//! it with the machine's runtime. On this Mac the runtime is the app's own
-//! executable in Node mode, as the desktop host ran it before; on a device it
-//! is a Node the machine already has (D-27).
+//! names that path, so it must outlive the build) and writes a shim in
+//! hcoord's home that runs it with the machine's runtime. On this Mac the
+//! runtime is the app's own executable in Node mode, as the desktop host ran
+//! it before; on a device it is a Node the machine already has (D-27).
+//!
+//! hcoord's home moved from `~/.hcoord` to `~/.hide/hcoord` (PRD
+//! hide-home-layout D-08, D-09). While the old home is there the part reads
+//! as outdated, and its install first asks this build's hcoord to adopt it,
+//! before the copy changes the code the old daemon's LaunchAgent runs; a
+//! relocated hcoord (HCOORD_HOME) is never moved.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use crate::layout;
 use crate::{KitTarget, Observed, payload, process};
 
 /// The oldest Node hcoord runs on (`plugins/hcoord/package.json` engines).
@@ -19,38 +27,68 @@ pub const NODE_MINIMUM: (u64, u64, u64) = (22, 12, 0);
 
 const NODE_PROBE_DEADLINE: Duration = Duration::from_secs(5);
 const ENSURE_DEADLINE: Duration = Duration::from_secs(20);
+/// Adopting the old home waits for launchd to let go of the old daemon,
+/// which launchd gives 20 s before it kills one that ignores SIGTERM.
+const ADOPT_DEADLINE: Duration = Duration::from_secs(60);
+
+/// The name of the link on `PATH` (D-02).
+const LINK_NAME: &str = "hcoord";
 
 /// What runs hcoord's JavaScript on one machine.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HcoordRuntime {
     pub program: PathBuf,
-    /// Variables the shim and the daemon need, such as Electron's Node mode
-    /// or the `herdr` binary hcoord should call.
+    /// Variables the shim and the daemon need, such as Electron's Node mode,
+    /// the `herdr` binary hcoord should call, or hcoord's relocation. The
+    /// kit builds its children's environment from scratch, so a relocation
+    /// dropped here would give an isolated install the account's default
+    /// LaunchAgent label.
     pub env: Vec<(String, String)>,
 }
 
-/// hcoord's own relocation variable (`plugins/hcoord/src/hcoord/store.ts`,
-/// `platform.ts`): every hcoord file and its daemon's LaunchAgent label follow
-/// it. The kit builds its children's environment from scratch, so a
-/// relocation the kit's process was started with is carried to the shim and
-/// the daemon here; dropped, an isolated install would take the account's
-/// default `com.hcoord.daemon` label and replace the account's own daemon.
-const HOME_VARIABLE: &str = "HCOORD_HOME";
-
-/// The hcoord relocation this process was started with, if any; empty means
-/// none, as hcoord reads it.
-pub(crate) fn home_override() -> Option<(String, String)> {
-    std::env::var(HOME_VARIABLE)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(|value| (HOME_VARIABLE.to_owned(), value))
+/// The relocation as the runtime carries it to the shim and the daemon.
+pub(crate) fn relocation_env(relocated: Option<&Path>) -> Option<(String, String)> {
+    relocated.map(|home| {
+        (
+            layout::HCOORD_HOME_VARIABLE.to_owned(),
+            home.display().to_string(),
+        )
+    })
 }
 
-/// The folders under HOME that hold the shim; hcoord's own `~/.hcoord`.
-const SHIM_PARTS: [&str; 2] = [".hcoord", "bin"];
+fn home_dir(target: &KitTarget) -> PathBuf {
+    layout::hcoord_home(&target.home, target.hcoord_home.as_deref())
+}
 
-pub(crate) fn shim_path(home: &Path) -> PathBuf {
-    home.join(SHIM_PARTS[0]).join(SHIM_PARTS[1]).join("hcoord")
+pub(crate) fn shim_path(target: &KitTarget) -> PathBuf {
+    layout::hcoord_command(&home_dir(target))
+}
+
+/// The folders down to the shim's, each checked by `crate::private_dirs`:
+/// from HOME for the default home, so `~/.hide` is checked too.
+fn shim_dirs(target: &KitTarget, create: bool) -> Result<PathBuf, String> {
+    match &target.hcoord_home {
+        None => crate::private_dirs(&target.home, &[layout::HIDE_HOME, "hcoord", "bin"], create),
+        Some(relocated) => {
+            let parent = relocated
+                .parent()
+                .ok_or_else(|| format!("{} has no parent folder", relocated.display()))?;
+            let name = relocated
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| format!("{} is not a folder name", relocated.display()))?;
+            crate::private_dirs(parent, &[name, "bin"], create)
+        }
+    }
+}
+
+/// The old home still waiting to be adopted, when hcoord is not relocated.
+fn legacy_home(target: &KitTarget) -> Option<PathBuf> {
+    if target.hcoord_home.is_some() {
+        return None;
+    }
+    let legacy = layout::legacy_hcoord_home(&target.home);
+    std::fs::symlink_metadata(&legacy).is_ok().then_some(legacy)
 }
 
 fn packaged(target: &KitTarget) -> PathBuf {
@@ -109,12 +147,21 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
             packaged(target).display()
         ));
     }
-    if let Err(reason) = crate::private_dirs(&target.home, &SHIM_PARTS, false)
-        .and_then(|_| crate::record::private_state_dir(&target.home, false))
+    if let Err(reason) =
+        shim_dirs(target, false).and_then(|_| crate::record::private_state_dir(&target.home, false))
     {
         return Observed::Blocked(reason);
     }
-    let path = shim_path(&target.home);
+    // Before the shim: a part the kit recorded and whose new shim is not
+    // there yet would otherwise read as taken away and never move.
+    if let Some(legacy) = legacy_home(target) {
+        return Observed::Stale(format!(
+            "hcoord is still in {}; Hide moves it to {}",
+            legacy.display(),
+            home_dir(target).display()
+        ));
+    }
+    let path = shim_path(target);
     let found = match std::fs::read_to_string(&path) {
         Ok(found) => found,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Observed::Missing,
@@ -126,22 +173,168 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
         return Observed::Stale(format!("{} runs another copy of hcoord", path.display()));
     }
     match payload::is_current(&packaged(target), &copy_home(&target.home)) {
-        Ok(true) => Observed::Current,
-        Ok(false) => Observed::Stale("an older hcoord is installed".to_owned()),
-        Err(reason) => Observed::Blocked(reason),
+        Ok(true) => {}
+        Ok(false) => return Observed::Stale("an older hcoord is installed".to_owned()),
+        Err(reason) => return Observed::Blocked(reason),
+    }
+    match link_state(target) {
+        Link::Current | Link::Foreign(_) => Observed::Current,
+        Link::Missing | Link::Ours => Observed::Stale(format!(
+            "{} does not lead to hcoord yet",
+            link_path(target).display()
+        )),
     }
 }
 
 pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
     let runtime = target.hcoord.as_ref().map_err(Clone::clone)?;
     crate::record::private_state_dir(&target.home, true)?;
+    if let Some(legacy) = legacy_home(target) {
+        adopt(target, runtime, &legacy)?;
+    }
     payload::sync(&packaged(target), &copy_home(&target.home))?;
-    crate::private_dirs(&target.home, &SHIM_PARTS, true)?;
+    shim_dirs(target, true)?;
     crate::write_atomically(
-        &shim_path(&target.home),
+        &shim_path(target),
         shim(&target.home, runtime).as_bytes(),
         0o700,
-    )
+    )?;
+    // A name another program holds is left and reported on the row; hcoord
+    // itself is installed either way.
+    if matches!(link_state(target), Link::Missing | Link::Ours) {
+        link(target)?;
+    }
+    Ok(())
+}
+
+/// Asks this build's packaged hcoord to adopt the old home: it stops the old
+/// daemon, renames the folder whole and drops only the junk, or leaves the
+/// old home and its daemon as they were (`plugins/hcoord/src/hcoord/home.ts`).
+/// The packaged copy runs, not the installed one: the installed copy is the
+/// code the old daemon's LaunchAgent runs, and it must not change until the
+/// home it reads has moved.
+fn adopt(target: &KitTarget, runtime: &HcoordRuntime, legacy: &Path) -> Result<(), String> {
+    let packaged_cli = packaged(target).join("dist").join("hcoord").join("cli.js");
+    let from = legacy.display().to_string();
+    let finished = process::run(
+        &runtime.program,
+        &[
+            &packaged_cli.display().to_string(),
+            "home",
+            "adopt",
+            "--from",
+            &from,
+            "--json",
+        ],
+        &runtime.env,
+        &target.home,
+        ADOPT_DEADLINE,
+        &target.stop,
+    )?;
+    let parsed: Option<serde_json::Value> = finished
+        .stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .and_then(|line| serde_json::from_str(line).ok());
+    let reason = match parsed {
+        Some(value) if value["ok"] == true => return Ok(()),
+        Some(value) => value["error"]["message"]
+            .as_str()
+            .unwrap_or("no reason given")
+            .to_owned(),
+        None => format!(
+            "exit {}: {}",
+            finished
+                .code
+                .map_or("by signal".to_owned(), |code| code.to_string()),
+            finished.last_error_line()
+        ),
+    };
+    Err(format!(
+        "hcoord could not move {from} to {}: {reason}. The old hcoord keeps running, and the next launch or Reinstall tries again",
+        home_dir(target).display()
+    ))
+}
+
+pub(crate) fn link_path(target: &KitTarget) -> PathBuf {
+    target.cli_dir.join(LINK_NAME)
+}
+
+enum Link {
+    Current,
+    Missing,
+    /// Hide's link to an older place: the old home's shim or anywhere under
+    /// `~/.hide`.
+    Ours,
+    /// Another program's file or link; the sentence says what is there.
+    Foreign(String),
+}
+
+fn link_state(target: &KitTarget) -> Link {
+    let path = link_path(target);
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Link::Missing,
+        Err(error) => {
+            return Link::Foreign(format!(
+                "{} could not be inspected: {error}",
+                path.display()
+            ));
+        }
+    };
+    if !metadata.file_type().is_symlink() {
+        return Link::Foreign(format!(
+            "{} is another program's file; Hide left it",
+            path.display()
+        ));
+    }
+    match std::fs::read_link(&path) {
+        Ok(destination) if destination == shim_path(target) => Link::Current,
+        Ok(destination)
+            if !destination
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+                && (destination
+                    == layout::hcoord_command(&layout::legacy_hcoord_home(&target.home))
+                    || destination.starts_with(layout::hide_home(&target.home))) =>
+        {
+            Link::Ours
+        }
+        Ok(destination) => Link::Foreign(format!(
+            "{} already points at {}; Hide left it",
+            path.display(),
+            destination.display()
+        )),
+        Err(error) => Link::Foreign(format!("{} could not be read: {error}", path.display())),
+    }
+}
+
+/// Why `hcoord` on `PATH` is not Hide's, for an installed hcoord row (B14).
+pub(crate) fn link_note(target: &KitTarget) -> Option<String> {
+    match link_state(target) {
+        Link::Foreign(reason) => Some(format!(
+            "Installed at {}, but {reason}, so `hcoord` on PATH runs that instead",
+            shim_path(target).display()
+        )),
+        Link::Current | Link::Missing | Link::Ours => None,
+    }
+}
+
+fn link(target: &KitTarget) -> Result<(), String> {
+    let path = link_path(target);
+    std::fs::create_dir_all(&target.cli_dir)
+        .map_err(|error| format!("{} could not be created: {error}", target.cli_dir.display()))?;
+    let temporary = target
+        .cli_dir
+        .join(format!(".{LINK_NAME}.hide-kit-{}", std::process::id()));
+    let _ = std::fs::remove_file(&temporary);
+    std::os::unix::fs::symlink(shim_path(target), &temporary)
+        .and_then(|()| std::fs::rename(&temporary, &path))
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            format!("{} could not be linked: {error}", path.display())
+        })
 }
 
 /// Asks this build's hcoord to converge its daemon, as the desktop host did
@@ -221,18 +414,24 @@ fn stable_spelling(chosen: PathBuf, links: &[PathBuf]) -> PathBuf {
 }
 
 /// The Node a device runs hcoord with: the one an existing hcoord shim
-/// already names (the operator's choice), then the first on `PATH`, then the
-/// usual install folders; each must answer a version of at least
+/// already names (the operator's choice), in hcoord's home or else in the
+/// old `~/.hcoord` it has not moved from yet, then the first on `PATH`, then
+/// the usual install folders; each must answer a version of at least
 /// [`NODE_MINIMUM`] within five seconds. The one found is named by a stable
 /// link when one leads to it ([`stable_spelling`]).
-pub fn find_node(home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
+pub fn find_node(home: &Path, hcoord_home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
-    if let Some(named) = std::fs::read_to_string(shim_path(home))
-        .ok()
-        .and_then(|shim| program_in_shim(&shim))
-        .filter(|program| program.file_name().is_some_and(|name| name == "node"))
-    {
-        candidates.push(named);
+    for shim in [
+        layout::hcoord_command(hcoord_home),
+        layout::hcoord_command(&layout::legacy_hcoord_home(home)),
+    ] {
+        if let Some(named) = std::fs::read_to_string(shim)
+            .ok()
+            .and_then(|shim| program_in_shim(&shim))
+            .filter(|program| program.file_name().is_some_and(|name| name == "node"))
+        {
+            candidates.push(named);
+        }
     }
     if let Some(path) = std::env::var_os("PATH") {
         candidates.extend(std::env::split_paths(&path).map(|folder| folder.join("node")));
@@ -338,7 +537,7 @@ mod tests {
     }
 
     fn shim_naming(home: &Path, program: &Path) {
-        let shim = shim_path(home);
+        let shim = layout::hcoord_command(&layout::default_hcoord_home(home));
         std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
         std::fs::write(
             &shim,
@@ -364,10 +563,17 @@ mod tests {
         std::fs::create_dir_all(link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&versioned, &link).unwrap();
         shim_naming(home.path(), &versioned);
-        assert_eq!(find_node(home.path(), &stop), Ok(link.clone()));
+        let hcoord_home = layout::default_hcoord_home(home.path());
+        assert_eq!(
+            find_node(home.path(), &hcoord_home, &stop),
+            Ok(link.clone())
+        );
         // The rewritten shim is a fixed point: the next pass keeps it.
         shim_naming(home.path(), &link);
-        assert_eq!(find_node(home.path(), &stop), Ok(link.clone()));
+        assert_eq!(
+            find_node(home.path(), &hcoord_home, &stop),
+            Ok(link.clone())
+        );
 
         // A stable link is kept as spelled, never swapped for an earlier
         // stable link that reaches the same file.
@@ -382,7 +588,42 @@ mod tests {
         let chosen = other.path().join("tools/node/bin/node");
         fake_node(&chosen);
         shim_naming(other.path(), &chosen);
-        assert_eq!(find_node(other.path(), &stop), Ok(chosen));
+        assert_eq!(
+            find_node(
+                other.path(),
+                &layout::default_hcoord_home(other.path()),
+                &stop
+            ),
+            Ok(chosen)
+        );
+    }
+
+    /// A device that has not moved hcoord yet keeps the Node its old shim
+    /// named, so the move does not swap the operator's Node for another.
+    #[test]
+    fn the_old_homes_shim_still_names_the_node() {
+        let stop = AtomicBool::new(false);
+        let home = tempfile::tempdir().unwrap();
+        let chosen = home.path().join("tools/node/bin/node");
+        fake_node(&chosen);
+        let old = layout::hcoord_command(&layout::legacy_hcoord_home(home.path()));
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(
+            &old,
+            format!(
+                "#!/bin/sh\nexec '{}' '/x/cli.js' \"$@\"\n",
+                chosen.display()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            find_node(
+                home.path(),
+                &layout::default_hcoord_home(home.path()),
+                &stop
+            ),
+            Ok(chosen)
+        );
     }
 
     #[test]

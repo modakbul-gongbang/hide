@@ -1298,6 +1298,7 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
                 location: None,
             }],
             labels_retirement: Default::default(),
+            legacy_retirement: Default::default(),
         },
     );
     assert_eq!(descendants(&runtime), vec![child]);
@@ -1403,6 +1404,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
                 location: None,
             }],
             labels_retirement: Default::default(),
+            legacy_retirement: Default::default(),
         },
     );
     let after = children(&runtime);

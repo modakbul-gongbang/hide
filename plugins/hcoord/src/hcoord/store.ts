@@ -3,11 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { emptyLedger, HcoordError, MAX_LEDGER_BYTES, SCHEMA, type Ledger } from "./model";
 
-/** HCOORD_HOME relocates every hcoord file, so an isolated install never touches ~/.hcoord. */
+/** hcoord's home when nothing relocates it: inside hide's own folder, since hide installs and runs it. */
+export function defaultDataDir(home = os.homedir()): string { return path.join(home, ".hide", "hcoord"); }
+/** HCOORD_HOME relocates every hcoord file, so an isolated install never touches ~/.hide/hcoord. */
 export function dataDir(home = os.homedir()): string {
   const override = process.env["HCOORD_HOME"];
-  return override !== undefined && override !== "" ? path.resolve(override) : path.join(home, ".hcoord");
+  return override !== undefined && override !== "" ? path.resolve(override) : defaultDataDir(home);
 }
+/** The account's own home from the user database, which a HOME override in a test does not change. */
+export function accountHome(): string { return os.userInfo().homedir; }
 export function ledgerPath(home = os.homedir()): string { return path.join(dataDir(home), "ledger.json"); }
 export function socketPath(home = os.homedir()): string {
   if (process.platform === "win32") return `\\\\.\\pipe\\hcoord-${os.userInfo().username}`;

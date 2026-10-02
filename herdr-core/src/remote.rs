@@ -1121,7 +1121,7 @@ impl RemoteReadCommand {
     fn command_line(&self) -> RemoteResult<String> {
         match self {
             Self::MachineIdentity => {
-                Ok("\"$HOME/.hcoord/bin/hcoord\" remote identity --json".to_owned())
+                Ok("\"$HOME/.hide/hcoord/bin/hcoord\" remote identity --json".to_owned())
             }
             Self::WorkspacePane {
                 helper_path,
@@ -4701,7 +4701,7 @@ mod tests {
             .expect("machine identity command");
         assert_eq!(
             command,
-            "\"$HOME/.hcoord/bin/hcoord\" remote identity --json"
+            "\"$HOME/.hide/hcoord/bin/hcoord\" remote identity --json"
         );
 
         let identity = parse_machine_identity(

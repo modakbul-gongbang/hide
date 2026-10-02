@@ -19,7 +19,7 @@ function remoteAgent(fake, host) {
   return {
     env,
     json(...args) { const result = spawnSync(process.execPath, [CLI, ...args, "--json"], { env, encoding: "utf8" }); return JSON.parse(result.stdout); },
-    outbox: () => { const dir = path.join(env.HOME, ".hcoord", "outbox"); return fs.existsSync(dir) ? fs.readdirSync(dir).filter((name) => name.endsWith(".json")) : []; },
+    outbox: () => { const dir = path.join(env.HCOORD_HOME, "outbox"); return fs.existsSync(dir) ? fs.readdirSync(dir).filter((name) => name.endsWith(".json")) : []; },
   };
 }
 
@@ -63,11 +63,11 @@ test("a saved Herdr machine name registers a remote agent with the existing comm
   const worker = coordinator.ok("agent", "register", "--machine", "mini", "--session", "s-worker", "--instance", "i-worker", "--pane", "w1:p1", "--name", "worker", "--parent", parent.id);
   assert.deepEqual([worker.machine, worker.hostScope, worker.pane], ["mini", "default", "w1:p1"]);
   assert.ok(fake.calls("mini").some((argv) => argv.join(" ") === "agent get w1:p1"), "the pane was confirmed on the remote Herdr server");
-  assert.ok(fake.sshCommands("mini").some((command) => /^HCOORD_HOME="\$HOME\/\.hcoord" exec "\$HOME\/\.hcoord"\/bin\/hcoord remote 'hello' '--hq' '[^']+' --json$/.test(command)));
+  assert.ok(fake.sshCommands("mini").some((command) => /^HCOORD_HOME="\$HOME\/\.hide\/hcoord" exec "\$HOME\/\.hide\/hcoord"\/bin\/hcoord remote 'hello' '--hq' '[^']+' --json$/.test(command)));
   const digest = (session) => createHash("sha256").update(session, "utf8").digest("hex");
   assert.deepEqual(fake.pane("mini", "w1:p1").tokens, { parent_pane: "parent-pane", parent_machine: worker.lineage.parentMachine, child_session: digest("s-worker"), parent_session: digest("s-parent") });
-  assert.equal(JSON.parse(fs.readFileSync(path.join(fake.home("mini"), ".hcoord", "hq.json"), "utf8")).hq, os.hostname());
-  assert.equal(fs.existsSync(path.join(fake.home("mini"), ".hcoord", "ledger.json")), false, "the remote keeps no conversation record");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(fake.home("mini"), ".hide", "hcoord", "hq.json"), "utf8")).hq, os.hostname());
+  assert.equal(fs.existsSync(path.join(fake.home("mini"), ".hide", "hcoord", "ledger.json")), false, "the remote keeps no conversation record");
 });
 
 test("remote registration refuses unknown machines, failed SSH authentication, missing remote hcoord, and version skew", async (t) => {
@@ -79,9 +79,9 @@ test("remote registration refuses unknown machines, failed SSH authentication, m
   assert.equal(register("mini").error.code, "auth_failed");
   assert.match(register("mini").error.message, /hcoord stores no credentials/);
   fake.flag("mini", "auth-denied", false);
-  fs.rmSync(path.join(fake.home("mini"), ".hcoord", "bin", "hcoord"));
+  fs.rmSync(path.join(fake.home("mini"), ".hide", "hcoord", "bin", "hcoord"));
   assert.equal(register("mini").error.code, "remote_not_installed");
-  fs.writeFileSync(path.join(fake.home("mini"), ".hcoord", "bin", "hcoord"), `#!/bin/sh\necho '{"ok":true,"value":{"protocol":99}}'\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(fake.home("mini"), ".hide", "hcoord", "bin", "hcoord"), `#!/bin/sh\necho '{"ok":true,"value":{"protocol":99}}'\n`, { mode: 0o755 });
   const skewed = register("mini");
   assert.equal(skewed.error.code, "version_mismatch");
   assert.match(skewed.error.message, /remote protocol 99; this HQ speaks 1/);
@@ -169,7 +169,7 @@ test("while the HQ cannot reach a machine, remote writes still succeed, its agen
 test("a remote hcoord with another protocol is refused at collection and shown to the human", async (t) => {
   const { fake, coordinator, parent } = await setup(t);
   coordinator.ok("agent", "register", "--machine", "mini", "--session", "s-worker", "--instance", "i-worker", "--pane", "w1:p1", "--name", "worker", "--parent", parent.id);
-  fs.writeFileSync(path.join(fake.home("mini"), ".hcoord", "bin", "hcoord"), `#!/bin/sh\necho '{"ok":true,"value":{"protocol":2,"letters":[]}}'\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(fake.home("mini"), ".hide", "hcoord", "bin", "hcoord"), `#!/bin/sh\necho '{"ok":true,"value":{"protocol":2,"letters":[]}}'\n`, { mode: 0o755 });
   const problem = await until(() => coordinator.ok("inbox").find((item) => item.kind === "machine_problem"), "the refusal reaches the inbox");
   assert.deepEqual([problem.machine, problem.code], ["mini", "version_mismatch"]);
   assert.match(problem.reason, /remote protocol 2; this HQ speaks 1/);

@@ -121,15 +121,15 @@ export function requireRemoteHerdr(machine: string): SavedMachine {
 const quote = (value: string): string => `'${value.split("'").join(`'\\''`)}'`;
 
 /**
- * The shell command a remote runs for one hcoord remote subcommand. The
- * installer writes <data dir>/bin/hcoord with an absolute node path, so the
+ * The shell command a remote runs for one hcoord remote subcommand. hide's
+ * kit writes <data dir>/bin/hcoord with an absolute node path, so the
  * command needs no login PATH (a non-login SSH shell on the measured mini had
  * only /usr/bin:/bin). HCOORD_REMOTE_HOME relocates the remote data dir for
  * an isolated install.
  */
 function remoteShell(argv: string[]): string {
   const override = process.env["HCOORD_REMOTE_HOME"];
-  const dir = override !== undefined && override !== "" ? quote(override) : `"$HOME/.hcoord"`;
+  const dir = override !== undefined && override !== "" ? quote(override) : `"$HOME/.hide/hcoord"`;
   const divider = argv.indexOf("--");
   const before = divider < 0 ? argv : argv.slice(0, divider);
   const tail = divider < 0 ? [] : argv.slice(divider + 1);
@@ -174,7 +174,7 @@ export function remoteOutcome(machine: string, raw: Raw): Record<string, unknown
     throw new HcoordError("machine_unreachable", `SSH to ${machine} failed: ${text || "no diagnostic"}`);
   }
   if (raw.status === null) throw new HcoordError("machine_unreachable", `SSH to ${machine} did not finish in time`);
-  if (raw.status === 127 || (/no such file|not found/i.test(text) && raw.stdout.trim() === "")) throw new HcoordError("remote_not_installed", `hcoord is not installed on ${machine}; run the repository installer there (scripts/install-local-skills.mjs)`);
+  if (raw.status === 127 || (/no such file|not found/i.test(text) && raw.stdout.trim() === "")) throw new HcoordError("remote_not_installed", `hcoord is not installed on ${machine}; add it as a device in hide (Settings > Devices), which installs hcoord there`);
   if (raw.status === 126) throw new HcoordError("permission_denied", `the remote hcoord on ${machine} is not executable: ${text}`);
   let parsed: { ok?: boolean; value?: Record<string, unknown>; error?: { code?: string; message?: string } };
   try { parsed = JSON.parse(raw.stdout.trim().split("\n").at(-1) ?? ""); }

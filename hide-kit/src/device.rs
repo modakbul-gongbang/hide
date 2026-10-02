@@ -26,24 +26,30 @@ pub fn device_target(
     stop: Arc<AtomicBool>,
 ) -> KitTarget {
     let herdr_bin = find_herdr(home);
-    let hcoord = find_node(home, &stop).map(|program| HcoordRuntime {
+    let relocated = crate::layout::hcoord_home_override();
+    let hcoord_home = crate::layout::hcoord_home(home, relocated.as_deref());
+    let hcoord = find_node(home, &hcoord_home, &stop).map(|program| HcoordRuntime {
         program,
         // hcoord calls `herdr` for lineage; a daemon started from a
         // non-login SSH shell would not find the one the operator uses.
         env: herdr_bin
             .iter()
             .map(|herdr| ("HERDR_BIN_PATH".to_owned(), herdr.display().to_string()))
-            .chain(crate::hcoord::home_override())
+            .chain(crate::hcoord::relocation_env(relocated.as_deref()))
             .collect(),
     });
     KitTarget {
         home: home.to_path_buf(),
         kit_dir: root.join(CURRENT),
         cli_dir: cli_dir.to_path_buf(),
-        owned_roots: vec![root.to_path_buf()],
+        // The old layout's root too, so its `hide` link is re-pointed rather
+        // than left as the operator's (D-13).
+        owned_roots: vec![root.to_path_buf(), crate::layout::legacy_helper_root(home)],
         herdr_socket: herdr_socket.to_path_buf(),
         herdr_bin,
         hcoord,
+        hcoord_home: relocated,
+        legacy: crate::legacy::device(home, root),
         stop,
     }
 }

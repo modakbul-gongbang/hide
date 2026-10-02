@@ -17,6 +17,11 @@ const FORMAT: u32 = 1;
 pub(crate) struct Record {
     format: u32,
     installed: BTreeSet<String>,
+    /// One-time retirements of older layouts this machine has finished, so a
+    /// later pass does not ask again (PRD hide-home-layout D-14). A build
+    /// that does not know the field ignores it.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    retired: BTreeSet<String>,
 }
 
 impl Record {
@@ -26,6 +31,14 @@ impl Record {
 
     pub(crate) fn insert(&mut self, id: ComponentId) {
         self.installed.insert(id.code().to_owned());
+    }
+
+    pub(crate) fn has_retired(&self, what: &str) -> bool {
+        self.retired.contains(what)
+    }
+
+    pub(crate) fn mark_retired(&mut self, what: &str) {
+        self.retired.insert(what.to_owned());
     }
 }
 
@@ -78,6 +91,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
     let record = Record {
         format: FORMAT,
         installed: record.installed.clone(),
+        retired: record.retired.clone(),
     };
     let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
     bytes.push(b'\n');

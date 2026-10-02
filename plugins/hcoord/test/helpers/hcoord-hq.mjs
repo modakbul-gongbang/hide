@@ -11,7 +11,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** One isolated HQ: a fake Herdr, a HOME, and a daemon the fake stops before it removes that HOME. */
 export function hq(fake, host = "local", extraEnv = {}) {
   const env = fake.env(host, extraEnv);
-  const dir = path.join(env.HOME, ".hcoord");
+  const dir = env.HCOORD_HOME;
   let daemon = null;
   const api = {
     env, dir,
