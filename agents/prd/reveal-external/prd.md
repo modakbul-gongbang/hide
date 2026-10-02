@@ -4,7 +4,7 @@ status: "ready"
 human_approval: "pending"
 review_profile: "standard"
 review_rationale: "네 메뉴의 항목과 데스크톱 호스트가 OS 파일 관리자에 경로를 넘기는 기존 IPC 경로를 바꾸는 일반 UI 변경이며, 실행 없이 선택만 하는 showItemInFolder를 그대로 쓰므로 데이터나 권한 경계는 바뀌지 않는다."
-source_intake: "current conversation (GitHub issue #324 + agents/runs/reveal-external/HANDOFF.md)"
+source_intake: "current conversation"
 created_at: "2026-10-02"
 updated_at: "2026-10-02"
 ---
