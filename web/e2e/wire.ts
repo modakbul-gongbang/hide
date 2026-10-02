@@ -143,9 +143,10 @@ export async function showExplorer(page: Page): Promise<void> {
 
 /**
  * What must not move when a row changes state (PRD sidebar-readability B2,
- * B4): the row's height, where the row after it starts, and the left edge of
- * each named part (the title, the time). Rounded to the device pixel, since a
- * sub-pixel difference is not a visible move.
+ * B4): the row's height, where the row after it starts, and the edge each
+ * named part is anchored at: the left edge of the title, the right edge of
+ * the elapsed time, whose text grows as the seconds count. Rounded to the
+ * device pixel, since a sub-pixel difference is not a visible move.
  */
 export async function rowGeometry(row: Locator, next: Locator, parts: Locator[]): Promise<number[]> {
   const box = await row.boundingBox();
@@ -155,7 +156,8 @@ export async function rowGeometry(row: Locator, next: Locator, parts: Locator[])
   for (const part of parts) {
     const partBox = await part.boundingBox();
     if (!partBox) throw new Error("a measured part is not on screen");
-    xs.push(Math.round(partBox.x));
+    const rightAnchored = (await part.getAttribute("data-agent-elapsed")) !== null;
+    xs.push(Math.round(rightAnchored ? partBox.x + partBox.width : partBox.x));
   }
   return [Math.round(box.height), Math.round(after.y), ...xs];
 }
