@@ -190,10 +190,35 @@ pub(crate) fn ensure(target: &KitTarget) -> Result<(), String> {
     }
 }
 
+/// The links a package manager keeps pointing at whichever Node it installed
+/// last, unlike the versioned folder it installs into
+/// (`/opt/homebrew/Cellar/node/<version>`), which an upgrade deletes.
+fn stable_links(home: &Path) -> [PathBuf; 3] {
+    [
+        PathBuf::from("/opt/homebrew/bin/node"),
+        PathBuf::from("/usr/local/bin/node"),
+        home.join(".local/bin/node"),
+    ]
+}
+
+/// `chosen` spelled by a stable link that resolves to the same file, so the
+/// shim keeps working after the package manager upgrades that Node; a Node
+/// no stable link leads to is kept as it is.
+fn stable_spelling(chosen: PathBuf, home: &Path) -> PathBuf {
+    let Ok(real) = chosen.canonicalize() else {
+        return chosen;
+    };
+    stable_links(home)
+        .into_iter()
+        .find(|link| link.canonicalize().is_ok_and(|target| target == real))
+        .unwrap_or(chosen)
+}
+
 /// The Node a device runs hcoord with: the one an existing hcoord shim
 /// already names (the operator's choice), then the first on `PATH`, then the
 /// usual install folders; each must answer a version of at least
-/// [`NODE_MINIMUM`] within five seconds.
+/// [`NODE_MINIMUM`] within five seconds. The one found is named by a stable
+/// link when one leads to it ([`stable_spelling`]).
 pub fn find_node(home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     if let Some(named) = std::fs::read_to_string(shim_path(home))
@@ -206,11 +231,7 @@ pub fn find_node(home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("PATH") {
         candidates.extend(std::env::split_paths(&path).map(|folder| folder.join("node")));
     }
-    candidates.extend([
-        PathBuf::from("/opt/homebrew/bin/node"),
-        PathBuf::from("/usr/local/bin/node"),
-        home.join(".local/bin/node"),
-    ]);
+    candidates.extend(stable_links(home));
     let mut seen = Vec::new();
     let mut too_old = None;
     for candidate in candidates {
@@ -229,7 +250,9 @@ pub fn find_node(home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
             continue;
         };
         match parse_node_version(&finished.stdout) {
-            Some(version) if version >= NODE_MINIMUM => return Ok(candidate),
+            Some(version) if version >= NODE_MINIMUM => {
+                return Ok(stable_spelling(candidate, home));
+            }
             Some((major, minor, patch)) => {
                 too_old.get_or_insert(format!("{major}.{minor}.{patch}"));
             }
@@ -299,6 +322,49 @@ mod tests {
                 "{os}"
             );
         }
+    }
+
+    fn fake_node(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "#!/bin/sh\necho v26.7.0\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn shim_naming(home: &Path, program: &Path) {
+        let shim = shim_path(home);
+        std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
+        std::fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\nexec '{}' '/x/cli.js' \"$@\"\n",
+                program.display()
+            ),
+        )
+        .unwrap();
+    }
+
+    /// A shim naming the versioned folder a package manager installed Node
+    /// into is rewritten to the link that keeps leading to Node after an
+    /// upgrade deletes that folder; a Node no such link leads to stays named.
+    #[test]
+    fn a_node_reached_through_a_stable_link_is_named_by_that_link() {
+        let stop = AtomicBool::new(false);
+
+        let home = tempfile::tempdir().unwrap();
+        let versioned = home.path().join("Cellar/node/26.7.0/bin/node");
+        fake_node(&versioned);
+        let link = home.path().join(".local/bin/node");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&versioned, &link).unwrap();
+        shim_naming(home.path(), &versioned);
+        assert_eq!(find_node(home.path(), &stop), Ok(link));
+
+        let other = tempfile::tempdir().unwrap();
+        let chosen = other.path().join("tools/node/bin/node");
+        fake_node(&chosen);
+        shim_naming(other.path(), &chosen);
+        assert_eq!(find_node(other.path(), &stop), Ok(chosen));
     }
 
     #[test]
