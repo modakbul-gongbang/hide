@@ -945,7 +945,7 @@ pub fn check_new_branch(repository_root: &Path, branch: &str) -> HostResult<()> 
 /// The real path of an existing directory, or `None`; how the core confirms
 /// that the folder Herdr says it created is there and is the one it listed.
 pub fn directory(path: &Path) -> Option<String> {
-    let real = std::fs::canonicalize(path).ok()?;
+    let real = hide_platform::fs::identity::canonical(path).ok()?;
     real.is_dir().then(|| real.to_string_lossy().into_owned())
 }
 
@@ -1556,12 +1556,15 @@ mod ignored_repository_tests {
         std::fs::remove_dir_all(deep.join(".git")).unwrap();
 
         // A folder that cannot be read refuses rather than passing unseen.
-        use std::os::unix::fs::PermissionsExt;
-        let sealed = repo.join("build/src/sealed");
-        std::fs::create_dir_all(&sealed).unwrap();
-        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let refused = ignored_repository(repo);
-        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(refused.unwrap_err().contains("could not confirm"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let sealed = repo.join("build/src/sealed");
+            std::fs::create_dir_all(&sealed).unwrap();
+            std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let refused = ignored_repository(repo);
+            std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(refused.unwrap_err().contains("could not confirm"));
+        }
     }
 }

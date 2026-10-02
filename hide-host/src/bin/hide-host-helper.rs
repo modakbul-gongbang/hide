@@ -18,6 +18,9 @@ fn main() -> ExitCode {
                 }
             }
         }
+        // The pane bootstrap commands stand on a Unix socket (see
+        // `hide_host::workspace_bridge`).
+        #[cfg(unix)]
         (Some("workspace-bridge"), None) => {
             let input = BufReader::new(io::stdin());
             match hide_host::workspace_bridge::serve(input, io::stdout()) {
@@ -28,6 +31,7 @@ fn main() -> ExitCode {
                 }
             }
         }
+        #[cfg(unix)]
         (Some("pane-inspect"), Some(socket)) => {
             let Some(pane_id) = arguments.next() else {
                 eprintln!("usage: hide-host-helper pane-inspect <socket> <pane-id>");

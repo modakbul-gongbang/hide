@@ -38,7 +38,7 @@ impl Root {
             .map_err(|error| HostError::io(&error, "The checkout folder could not be opened"))?;
         let identity = identity_of(&dir)
             .map_err(|error| HostError::io(&error, "The checkout folder could not be inspected"))?;
-        let real_path = std::fs::canonicalize(path)
+        let real_path = hide_platform::fs::identity::canonical(path)
             .map_err(|error| HostError::io(&error, "The checkout folder could not be resolved"))?;
         Ok(Self {
             path: path.to_path_buf(),
@@ -79,23 +79,19 @@ impl Root {
 }
 
 pub fn identity_of(dir: &Dir) -> std::io::Result<RootIdentity> {
-    let metadata = dir.dir_metadata()?;
-    #[cfg(unix)]
-    {
-        use cap_std::fs::MetadataExt;
-        Ok(RootIdentity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        Err(std::io::Error::new(
+    let id = hide_platform::fs::identity::file_id_of(dir)?;
+    // The wire carries a 64-bit inode. NTFS and every Unix filesystem fit; a
+    // 128-bit file id (ReFS) is refused rather than cut short.
+    let inode = u64::try_from(id.index()).map_err(|_| {
+        std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "directory identity is unavailable on this platform",
-        ))
-    }
+            "this volume's directory identity does not fit the wire",
+        )
+    })?;
+    Ok(RootIdentity {
+        device: id.volume(),
+        inode,
+    })
 }
 
 /// A path inside a root, as a caller spells it: `/`-separated components, no

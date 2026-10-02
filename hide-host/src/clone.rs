@@ -330,7 +330,7 @@ pub fn clone_repository(
     if !status.success() {
         return Err(classify(&tail, status.code()));
     }
-    rename_no_replace(&staging.0, &target).map_err(|error| {
+    hide_platform::fs::atomic::rename_no_replace_path(&staging.0, &target).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             CloneFailure::TargetExists(target.clone())
         } else {
@@ -474,54 +474,6 @@ pub fn redact(line: &str) -> String {
     }
     out.push_str(rest);
     out
-}
-
-/// Moves the finished clone to its name, refusing to replace anything that
-/// appeared there meanwhile, even an empty folder `rename` would replace.
-fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        let from = CString::new(from.as_os_str().as_bytes())?;
-        let to = CString::new(to.as_os_str().as_bytes())?;
-        // SAFETY: both are NUL-terminated paths that outlive the call.
-        let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error())
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        let from = CString::new(from.as_os_str().as_bytes())?;
-        let to = CString::new(to.as_os_str().as_bytes())?;
-        // SAFETY: both are NUL-terminated paths that outlive the call.
-        let result = unsafe {
-            libc::renameat2(
-                libc::AT_FDCWD,
-                from.as_ptr(),
-                libc::AT_FDCWD,
-                to.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error())
-        }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        if to.symlink_metadata().is_ok() {
-            return Err(std::io::ErrorKind::AlreadyExists.into());
-        }
-        std::fs::rename(from, to)
-    }
 }
 
 #[cfg(test)]

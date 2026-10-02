@@ -24,13 +24,13 @@ pub struct Registrable {
 }
 
 pub fn check(path: &Path, home: &Path) -> HostResult<Registrable> {
-    let home = home.canonicalize().map_err(|error| {
+    let home = hide_platform::fs::identity::canonical(home).map_err(|error| {
         HostError::new(
             ErrorCode::Io,
             format!("The home folder {} cannot be read: {error}", home.display()),
         )
     })?;
-    let real = path.canonicalize().map_err(|_| {
+    let real = hide_platform::fs::identity::canonical(path).map_err(|_| {
         HostError::new(
             ErrorCode::NotFound,
             format!("{} does not exist", path.display()),

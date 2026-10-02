@@ -3,15 +3,15 @@
 //! the system it runs on. hided and the workspace bridge on a device ask the
 //! same questions through here.
 
-use std::os::fd::AsFd;
 use std::path::PathBuf;
 
-use hide_platform::{ipc, process};
+use hide_platform::process;
 
 /// The pid of the process at the other end of `stream`, when the system
 /// reports it.
-pub fn peer_pid(stream: &impl AsFd) -> Option<i32> {
-    ipc::peer_pid_of_fd(stream)
+#[cfg(unix)]
+pub fn peer_pid(stream: &impl std::os::fd::AsFd) -> Option<i32> {
+    hide_platform::ipc::peer_pid_of_fd(stream)
         .ok()
         .and_then(|pid| i32::try_from(pid).ok())
 }

@@ -256,7 +256,7 @@ fn a_sweep_keeps_names_no_removal_made_and_never_follows_a_linked_trash() {
     let victim = elsewhere.join("1-2-victim");
     std::fs::create_dir_all(&victim).unwrap();
     std::fs::write(victim.join("keep"), "x").unwrap();
-    std::os::unix::fs::symlink(&elsewhere, &trash).unwrap();
+    hide_platform::fs::link::create_link(&elsewhere, &trash).unwrap();
     hide_host::worktrees::sweep_trash(&trash);
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(victim.join("keep").exists(), "a linked trash was followed");

@@ -175,23 +175,18 @@ fn expand(path: &str, home: &Path) -> HostResult<PathBuf> {
 /// renamed over it, so the name never leads nowhere in between.
 fn point_current(root: &Path, version: &str) -> HostResult<()> {
     let current = root.join(hide_kit::CURRENT);
-    if std::fs::read_link(&current).is_ok_and(|target| target == Path::new(version)) {
+    if hide_platform::fs::link::is_link_to(&current, Path::new(version)) {
         return Ok(());
     }
-    let staged = root.join(format!(".{}-{}", hide_kit::CURRENT, std::process::id()));
-    let _ = std::fs::remove_file(&staged);
-    std::os::unix::fs::symlink(version, &staged)
-        .and_then(|()| std::fs::rename(&staged, &current))
-        .map_err(|error| {
-            let _ = std::fs::remove_file(&staged);
-            HostError::new(
-                ErrorCode::Io,
-                format!(
-                    "{} could not be pointed at {version}: {error}",
-                    current.display()
-                ),
-            )
-        })
+    hide_platform::fs::link::replace_link(Path::new(version), &current).map_err(|error| {
+        HostError::new(
+            ErrorCode::Io,
+            format!(
+                "{} could not be pointed at {version}: {error}",
+                current.display()
+            ),
+        )
+    })
 }
 
 /// The build folders under `root` other than `keep`: only names the core's
@@ -234,7 +229,7 @@ fn remove_root(root: &Path) -> hide_kit::RemoveOutcome {
     }
     let current = root.join(hide_kit::CURRENT);
     if std::fs::symlink_metadata(&current).is_ok_and(|meta| meta.file_type().is_symlink())
-        && let Err(error) = std::fs::remove_file(&current)
+        && let Err(error) = hide_platform::fs::link::remove_link(&current)
     {
         failures.push(format!("{} stayed: {error}", current.display()));
     }
@@ -299,15 +294,19 @@ mod tests {
         let older = placed(dir.path(), "aaaaaaaaaaaaaaaa");
         let placement = placed(dir.path(), "bbbbbbbbbbbbbbbb");
         std::fs::write(placement.root.join("notes.txt"), b"mine").unwrap();
-        std::os::unix::fs::symlink(&older.version, placement.root.join("current")).unwrap();
+        hide_platform::fs::link::create_link(
+            Path::new(&older.version),
+            &placement.root.join("current"),
+        )
+        .unwrap();
 
         point_current(&placement.root, &placement.version).unwrap();
         remove_other_builds(&placement.root, &placement.version);
 
-        assert_eq!(
-            std::fs::read_link(placement.root.join("current")).unwrap(),
-            PathBuf::from("bbbbbbbbbbbbbbbb")
-        );
+        assert!(hide_platform::fs::link::is_link_to(
+            &placement.root.join("current"),
+            Path::new("bbbbbbbbbbbbbbbb")
+        ));
         assert!(!placement.root.join(&older.version).exists());
         assert!(placement.root.join("current/hide-host-helper").is_file());
         // Only build folders are Hide's to remove.
