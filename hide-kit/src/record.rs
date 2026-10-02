@@ -31,7 +31,7 @@ impl Record {
 
 /// The folders under HOME that hold the kit's state and its copy of
 /// hcoord.
-pub(crate) const STATE_PARTS: [&str; 2] = [".hide", "kit"];
+pub(crate) const STATE_PARTS: [&str; 2] = [crate::layout::HIDE_HOME, "kit"];
 
 pub fn kit_state_dir(home: &Path) -> PathBuf {
     home.join(STATE_PARTS[0]).join(STATE_PARTS[1])

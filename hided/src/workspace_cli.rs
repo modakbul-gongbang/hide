@@ -86,7 +86,7 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
     let bridge_dir = env
         .workspace_bridge_dir
         .clone()
-        .unwrap_or_else(|| env.home.join(".local/state/hide/workspace-bridges"));
+        .unwrap_or_else(|| hide_kit::layout::workspace_bridges(&env.state_dir));
     let metadata = match fs::symlink_metadata(&bridge_dir) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),

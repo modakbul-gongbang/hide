@@ -23,6 +23,7 @@ mod device;
 mod hcoord;
 mod hooks;
 mod labels;
+pub mod layout;
 mod local;
 mod payload;
 pub mod process;

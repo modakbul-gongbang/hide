@@ -252,3 +252,171 @@ fn two_connects_at_once_leave_one_daemon() {
     let _ = isolated(&cargo_cli, &home, &state).arg("stop").status();
     assert!(wait_gone(pids[0] as i32));
 }
+
+/// `isolated` without a state folder: the CLI resolves its default under the
+/// private HOME, which is what the installed app does.
+fn default_state(program: &Path, home: &Path) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("HOME", home)
+        .env("HIDE_TAILSCALE_BIN", home.join("no-tailscale"))
+        .stdin(Stdio::null());
+    command
+}
+
+/// The first connect of a build with `~/.hide` stops the daemon running from
+/// the legacy `~/.local/state/hide` (one this test started there), renames
+/// the folder whole, and starts one daemon from `~/.hide/state`; a second
+/// connect moves nothing (PRD hide-home-layout B1-B4).
+#[test]
+fn the_first_connect_moves_the_legacy_state_folder_and_its_daemon_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let legacy = home.join(".local/state/hide");
+    let moved = home.join(".hide/state");
+    std::fs::create_dir_all(&home).unwrap();
+    let cli = Path::new(env!("CARGO_BIN_EXE_hided")).with_file_name("hide");
+    let _stop = StopOnDrop {
+        cli: &cli,
+        home: &home,
+        state: &moved,
+    };
+    let _stop_legacy = StopOnDrop {
+        cli: &cli,
+        home: &home,
+        state: &legacy,
+    };
+    // An older build's daemon, as it ran: from the legacy folder, with the
+    // operator's state beside it.
+    let old = connect(&cli, &home, &legacy)["pid"].as_i64().unwrap() as i32;
+    std::fs::write(legacy.join("operator-file.txt"), "kept").unwrap();
+
+    let output = default_state(&cli, &home)
+        .arg("connect")
+        .output()
+        .expect("hide connect runs");
+    let line: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(output.status.success(), "{line}");
+    let new = line["pid"].as_i64().unwrap() as i32;
+
+    assert_ne!(new, old);
+    assert!(wait_gone(old), "the legacy folder's daemon is stopped");
+    assert!(!legacy.exists(), "no copy is left in the legacy folder");
+    assert_eq!(
+        std::fs::read_to_string(moved.join("operator-file.txt")).unwrap(),
+        "kept"
+    );
+    assert!(
+        moved.join("host-id").is_file(),
+        "the host identity moved with it"
+    );
+    assert_eq!(state_pid(&moved), i64::from(new));
+    let status = default_state(&cli, &home)
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["pid"], i64::from(new), "{status}");
+
+    let again = default_state(&cli, &home).arg("connect").output().unwrap();
+    let again: Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(again["pid"], i64::from(new), "{again}");
+    assert!(!legacy.exists(), "a later connect makes no legacy folder");
+    let _ = isolated(&cli, &home, &moved).arg("stop").status();
+    assert!(wait_gone(new));
+}
+
+/// A state folder named by HIDE_STATE_DIR or XDG_STATE_HOME is used as it
+/// is: a legacy folder beside it is not moved and nothing is made under
+/// `~/.hide` (B6, B7).
+#[test]
+fn a_relocated_state_folder_moves_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let legacy = home.join(".local/state/hide");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::write(legacy.join("core-state.json"), "{}").unwrap();
+    let cli = Path::new(env!("CARGO_BIN_EXE_hided")).with_file_name("hide");
+
+    let state = dir.path().join("state");
+    let _stop = StopOnDrop {
+        cli: &cli,
+        home: &home,
+        state: &state,
+    };
+    let pid = connect(&cli, &home, &state)["pid"].as_i64().unwrap() as i32;
+    assert!(legacy.join("core-state.json").is_file());
+    assert!(
+        !home.join(".hide").exists(),
+        "an isolated daemon writes nothing under ~/.hide"
+    );
+    let _ = isolated(&cli, &home, &state).arg("stop").status();
+    assert!(wait_gone(pid));
+
+    let xdg = dir.path().join("xdg");
+    let xdg_state = xdg.join("hide");
+    let _stop_xdg = StopOnDrop {
+        cli: &cli,
+        home: &home,
+        state: &xdg_state,
+    };
+    let output = default_state(&cli, &home)
+        .env("XDG_STATE_HOME", &xdg)
+        .arg("connect")
+        .output()
+        .unwrap();
+    let line: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(output.status.success(), "{line}");
+    assert_eq!(state_pid(&xdg_state), line["pid"].as_i64().unwrap());
+    assert!(legacy.join("core-state.json").is_file());
+    assert!(!home.join(".hide").exists());
+    let _ = isolated(&cli, &home, &xdg_state).arg("stop").status();
+    assert!(wait_gone(line["pid"].as_i64().unwrap() as i32));
+}
+
+/// With both folders present the new one is used, the legacy one is left
+/// whole, and the daemon's log names both (B5).
+#[test]
+fn with_both_folders_the_new_one_is_used_and_the_old_one_logged() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let legacy = home.join(".local/state/hide");
+    let moved = home.join(".hide/state");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::create_dir_all(&moved).unwrap();
+    std::fs::write(legacy.join("core-state.json"), "{\"old\":true}").unwrap();
+    let cli = Path::new(env!("CARGO_BIN_EXE_hided")).with_file_name("hide");
+    let _stop = StopOnDrop {
+        cli: &cli,
+        home: &home,
+        state: &moved,
+    };
+    let output = default_state(&cli, &home).arg("connect").output().unwrap();
+    let line: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(output.status.success(), "{line}");
+    assert_eq!(state_pid(&moved), line["pid"].as_i64().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(legacy.join("core-state.json")).unwrap(),
+        "{\"old\":true}"
+    );
+    let log = moved.join("Logs/core.jsonl");
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut text = String::new();
+    while Instant::now() < until {
+        text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.contains("state.legacy_left") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let entry = text
+        .lines()
+        .find(|line| line.contains("state.legacy_left"))
+        .unwrap_or_else(|| panic!("no legacy_left diagnostic in {text}"));
+    assert!(entry.contains(&legacy.display().to_string()), "{entry}");
+    assert!(entry.contains(&moved.display().to_string()), "{entry}");
+    let _ = isolated(&cli, &home, &moved).arg("stop").status();
+    assert!(wait_gone(line["pid"].as_i64().unwrap() as i32));
+}

@@ -41,6 +41,8 @@ pub(crate) struct LabelServices {
     pub(crate) store: Arc<LabelStore>,
     pub(crate) analyzer: Arc<LabelAnalyzer>,
     home: Option<PathBuf>,
+    /// The daemon's state folder, which holds the device generator locks.
+    state_dir: Option<PathBuf>,
 }
 
 impl LabelServices {
@@ -63,6 +65,7 @@ impl LabelServices {
             store,
             analyzer: Arc::new(analyzer),
             home,
+            state_dir: state_dir.map(Path::to_path_buf),
         })
     }
 
@@ -99,9 +102,9 @@ impl LabelServices {
             WorkerConfig {
                 target: format!("device:{device_id}"),
                 lock_path: self
-                    .home
+                    .state_dir
                     .as_deref()
-                    .map(|home| generator::device_lock_path(home, device_id)),
+                    .map(|state_dir| generator::device_lock_path(state_dir, device_id)),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
