@@ -1,0 +1,399 @@
+//! Which file a name leads to, and whether two names lead to the same one.
+//!
+//! A path is a spelling: `/tmp` and `/private/tmp`, a link and its target, and
+//! on a volume that ignores case `Readme` and `README` all name one file. What
+//! identifies the file is the pair a filesystem keeps for it, which [`FileId`]
+//! carries. [`canonical`] gives the spelling to show and to compare as text.
+
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use super::Handle;
+
+/// The identity a filesystem keeps for a file: the volume it lives on and its
+/// number there. Two names are one file exactly when their ids are equal, and
+/// the id survives a rename.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FileId {
+    volume: u64,
+    index: u128,
+}
+
+impl FileId {
+    pub(crate) fn new(volume: u64, index: u128) -> Self {
+        Self { volume, index }
+    }
+
+    /// The volume number: a device on Unix, a serial number on Windows.
+    pub fn volume(&self) -> u64 {
+        self.volume
+    }
+
+    /// The file's number on its volume: an inode on Unix, a 128-bit file id on
+    /// Windows.
+    pub fn index(&self) -> u128 {
+        self.index
+    }
+}
+
+/// The id of the file `path` leads to, links followed.
+pub fn file_id(path: &Path) -> io::Result<FileId> {
+    sys::id_of_path(path, true)
+}
+
+/// The id of the entry `path` names, a link's own and not its target's.
+pub fn file_id_nofollow(path: &Path) -> io::Result<FileId> {
+    sys::id_of_path(path, false)
+}
+
+/// The id of the entry `name` in the open folder `dir`, a link's own and not
+/// its target's. On Unix the folder handle resolves the name, so a folder
+/// renamed away from its path cannot redirect it; Windows has no such call
+/// and resolves the folder's present path first.
+pub fn entry_id(dir: &impl Handle, name: &std::ffi::OsStr) -> io::Result<FileId> {
+    sys::entry_id(dir, name)
+}
+
+/// The id of an open file or folder.
+pub fn file_id_of(handle: &impl Handle) -> io::Result<FileId> {
+    sys::id_of_handle(handle)
+}
+
+/// How many names the open file has. A file with more than one is shared
+/// with another name that a replacement of this one would separate from it.
+pub fn link_count(handle: &impl Handle) -> io::Result<u64> {
+    sys::link_count(handle)
+}
+
+/// Whether the two paths lead to one file.
+pub fn same_file(left: &Path, right: &Path) -> io::Result<bool> {
+    Ok(file_id(left)? == file_id(right)?)
+}
+
+/// The path with every link followed and every spelling made the filesystem's
+/// own, so two paths to one place compare equal as text. On Windows the
+/// `\\?\` prefix the system adds is removed whenever the path means the same
+/// without it.
+pub fn canonical(path: &Path) -> io::Result<PathBuf> {
+    sys::canonical(path)
+}
+
+/// Whether `folder` tells `Name` from `name`. It is a property of the folder
+/// and not of the system: a Mac or a Windows volume may be either, and
+/// Windows can make one folder case sensitive.
+///
+/// An entry the folder already holds, with its case swapped, answers it
+/// without writing anything: the swapped name leads to the same entry on a
+/// folder that ignores case and to nothing (or to another entry) on one that
+/// does not. A folder with no entry that has a cased letter in its name is
+/// answered by making a file in it and looking it up under a swapped name,
+/// which needs the folder to be writable.
+pub fn case_sensitive(folder: &Path) -> io::Result<bool> {
+    for entry in fs::read_dir(folder)?.take(PROBE_ENTRIES) {
+        let name = entry?.file_name();
+        let Some(swapped) = name.to_str().and_then(swap_case) else {
+            continue;
+        };
+        return match file_id_nofollow(&folder.join(&swapped)) {
+            Ok(found) => Ok(found != file_id_nofollow(&folder.join(&name))?),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
+        };
+    }
+    probe_case(folder)
+}
+
+/// How many entries are looked at for one with a cased name before the folder
+/// is probed by writing (rule 15: a folder of ten thousand digits is not
+/// walked).
+const PROBE_ENTRIES: usize = 64;
+
+/// `name` with every letter's case swapped, or `None` when it has no letter
+/// that has a case.
+fn swap_case(name: &str) -> Option<String> {
+    let swapped: String = name
+        .chars()
+        .flat_map(|letter| {
+            if letter.is_lowercase() {
+                letter.to_uppercase().collect::<Vec<_>>()
+            } else if letter.is_uppercase() {
+                letter.to_lowercase().collect::<Vec<_>>()
+            } else {
+                vec![letter]
+            }
+        })
+        .collect();
+    (swapped != name).then_some(swapped)
+}
+
+fn probe_case(folder: &Path) -> io::Result<bool> {
+    let name = super::temporary_name(std::ffi::OsStr::new("CaseProbe"), "Hide");
+    let probe = folder.join(&name);
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)?;
+    let swapped = swap_case(&name.to_string_lossy()).unwrap_or_default();
+    let found = fs::symlink_metadata(folder.join(swapped));
+    let _ = fs::remove_file(&probe);
+    match found {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+/// `\\?\C:\a` as `C:\a` and `\\?\UNC\host\share\a` as `\\host\share\a`, when
+/// the shorter spelling means the same path: it fits the classic length limit
+/// and has no component Win32 would rewrite. Anything else is `None` and keeps
+/// the prefix. It is text only, so it is checked on every system.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn strip_verbatim(path: &str) -> Option<String> {
+    const CLASSIC_LIMIT: usize = 259;
+    let (stripped, unc) = if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        (rest, true)
+    } else {
+        let rest = path.strip_prefix(r"\\?\")?;
+        let mut letters = rest.chars();
+        let drive = letters.next()?;
+        if !drive.is_ascii_alphabetic()
+            || letters.next() != Some(':')
+            || letters.next() != Some('\\')
+        {
+            return None;
+        }
+        (rest, false)
+    };
+    let rewritten = |component: &str| {
+        component.is_empty()
+            || component == "."
+            || component == ".."
+            || component.ends_with([' ', '.'])
+            || component.contains('/')
+            || reserved_device(component)
+    };
+    let body = if unc { stripped } else { &stripped[3..] };
+    if body.split('\\').any(rewritten) && !body.is_empty() {
+        return None;
+    }
+    let short = if unc {
+        format!(r"\\{stripped}")
+    } else {
+        stripped.to_owned()
+    };
+    (short.len() <= CLASSIC_LIMIT).then_some(short)
+}
+
+/// Whether Win32 would read the component as a device (`CON`, `NUL`, `COM1`,
+/// ...), with or without an extension.
+fn reserved_device(component: &str) -> bool {
+    let stem = component.split('.').next().unwrap_or_default();
+    let upper = stem.trim_end().to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|prefix| {
+        upper.strip_prefix(prefix).is_some_and(|digit| {
+            matches!(digit, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+                || matches!(digit, "¹" | "²" | "³")
+        })
+    })
+}
+
+#[cfg(unix)]
+mod sys {
+    use std::fs;
+    use std::io;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::{Path, PathBuf};
+
+    use super::{FileId, Handle};
+
+    fn id(metadata: &fs::Metadata) -> FileId {
+        FileId::new(metadata.dev(), u128::from(metadata.ino()))
+    }
+
+    pub(super) fn id_of_path(path: &Path, follow: bool) -> io::Result<FileId> {
+        let metadata = if follow {
+            fs::metadata(path)?
+        } else {
+            fs::symlink_metadata(path)?
+        };
+        Ok(id(&metadata))
+    }
+
+    fn metadata_of(handle: &impl Handle) -> io::Result<fs::Metadata> {
+        crate::fs::duplicate(handle)?.metadata()
+    }
+
+    pub(super) fn id_of_handle(handle: &impl Handle) -> io::Result<FileId> {
+        Ok(id(&metadata_of(handle)?))
+    }
+
+    pub(super) fn link_count(handle: &impl Handle) -> io::Result<u64> {
+        Ok(metadata_of(handle)?.nlink())
+    }
+
+    pub(super) fn entry_id(dir: &impl Handle, name: &std::ffi::OsStr) -> io::Result<FileId> {
+        use std::mem::MaybeUninit;
+        use std::os::fd::AsRawFd;
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(name.as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a name holds a NUL"))?;
+        let mut found = MaybeUninit::<libc::stat>::zeroed();
+        // SAFETY: the descriptor is an open folder borrowed for the call, the
+        // name is NUL-terminated, and `found` is a writable `stat`.
+        let result = unsafe {
+            libc::fstatat(
+                dir.as_fd().as_raw_fd(),
+                name.as_ptr(),
+                found.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the call succeeded and filled the structure.
+        let found = unsafe { found.assume_init() };
+        // The device is `i32` on macOS and `u64` on Linux; `as` gives the
+        // same number the standard library's `dev()` does on each.
+        #[allow(clippy::unnecessary_cast)]
+        let device = found.st_dev as u64;
+        Ok(FileId::new(device, u128::from(found.st_ino)))
+    }
+
+    pub(super) fn canonical(path: &Path) -> io::Result<PathBuf> {
+        fs::canonicalize(path)
+    }
+}
+
+#[cfg(windows)]
+mod sys {
+    use std::fs;
+    use std::io;
+    use std::mem::MaybeUninit;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::{Path, PathBuf};
+
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo,
+        GetFileInformationByHandle, GetFileInformationByHandleEx,
+    };
+
+    use super::{FileId, Handle};
+
+    /// A handle that asks no access, which is all identity needs and which
+    /// no other open file can refuse.
+    fn open_for_query(path: &Path, follow: bool) -> io::Result<fs::File> {
+        let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
+        if !follow {
+            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+        }
+        fs::OpenOptions::new()
+            .access_mode(0)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(flags)
+            .open(path)
+    }
+
+    pub(super) fn id_of_path(path: &Path, follow: bool) -> io::Result<FileId> {
+        id_of_handle(&open_for_query(path, follow)?)
+    }
+
+    pub(super) fn id_of_handle(handle: &impl Handle) -> io::Result<FileId> {
+        let raw = handle.as_handle().as_raw_handle();
+        let mut info = MaybeUninit::<FILE_ID_INFO>::zeroed();
+        // SAFETY: `raw` is an open handle borrowed for the call, and `info` is
+        // a writable FILE_ID_INFO of the size passed.
+        let done = unsafe {
+            GetFileInformationByHandleEx(
+                raw,
+                FileIdInfo,
+                info.as_mut_ptr().cast(),
+                size_of::<FILE_ID_INFO>() as u32,
+            )
+        };
+        if done == 0 {
+            // FAT, exFAT and old network shares keep no 128-bit id; the
+            // 64-bit one is the same file's identity on those volumes.
+            return id_of_handle_classic(raw);
+        }
+        // SAFETY: the call succeeded and filled the structure.
+        let info = unsafe { info.assume_init() };
+        Ok(FileId::new(
+            info.VolumeSerialNumber,
+            u128::from_le_bytes(info.FileId.Identifier),
+        ))
+    }
+
+    fn id_of_handle_classic(raw: HANDLE) -> io::Result<FileId> {
+        let mut info = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
+        // SAFETY: `raw` is an open handle borrowed by the caller and `info` is
+        // a writable structure of the size the call expects.
+        if unsafe { GetFileInformationByHandle(raw, info.as_mut_ptr()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the call succeeded and filled the structure.
+        let info = unsafe { info.assume_init() };
+        Ok(FileId::new(
+            u64::from(info.dwVolumeSerialNumber),
+            (u128::from(info.nFileIndexHigh) << 32) | u128::from(info.nFileIndexLow),
+        ))
+    }
+
+    pub(super) fn entry_id(dir: &impl Handle, name: &std::ffi::OsStr) -> io::Result<FileId> {
+        id_of_path(&crate::fs::path_of(dir)?.join(name), false)
+    }
+
+    pub(super) fn link_count(handle: &impl Handle) -> io::Result<u64> {
+        let raw = handle.as_handle().as_raw_handle();
+        let mut info = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
+        // SAFETY: as in `id_of_handle`.
+        if unsafe { GetFileInformationByHandle(raw, info.as_mut_ptr()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the call succeeded and filled the structure.
+        Ok(u64::from(unsafe { info.assume_init() }.nNumberOfLinks))
+    }
+
+    pub(super) fn canonical(path: &Path) -> io::Result<PathBuf> {
+        let real = fs::canonicalize(path)?;
+        Ok(real
+            .to_str()
+            .and_then(super::strip_verbatim)
+            .map_or(real, PathBuf::from))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_verbatim_prefix_is_stripped_only_where_the_short_form_means_the_same() {
+        assert_eq!(strip_verbatim(r"\\?\C:\a\b").as_deref(), Some(r"C:\a\b"));
+        assert_eq!(
+            strip_verbatim(r"\\?\UNC\host\share\a").as_deref(),
+            Some(r"\\host\share\a")
+        );
+        assert_eq!(strip_verbatim(r"C:\a"), None);
+        assert_eq!(strip_verbatim(r"\\?\Volume{1234}\a"), None);
+        assert_eq!(strip_verbatim(r"\\?\C:\a\NUL"), None);
+        assert_eq!(strip_verbatim(r"\\?\C:\a\com1.txt"), None);
+        assert_eq!(strip_verbatim(r"\\?\C:\a\trailing."), None);
+        assert_eq!(strip_verbatim(r"\\?\C:\a\..\b"), None);
+        let long = format!(r"\\?\C:\{}", "a".repeat(300));
+        assert_eq!(strip_verbatim(&long), None);
+    }
+
+    #[test]
+    fn a_swapped_name_exists_only_for_a_name_with_a_cased_letter() {
+        assert_eq!(swap_case("Readme.md").as_deref(), Some("rEADME.MD"));
+        assert_eq!(swap_case("1234"), None);
+    }
+}
