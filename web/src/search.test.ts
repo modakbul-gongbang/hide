@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHILD, RICH } from "./gallery/cmdkSceneData";
-import { filterEntries, fuzzyScore, groupEntries, numberQuery, searchEntries, type SearchEntry } from "./search";
+import { filterEntries, fuzzyScore, groupEntries, numberQuery, recentEntries, searchEntries, type SearchEntry } from "./search";
 import type { SnapshotRest } from "./snapshot";
 
 describe("fuzzy score", () => {
@@ -217,5 +217,60 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
 
   it("finds an agent by where it works", () => {
     expect(found("sandbox").includes(`agent:${CHILD.pane_id}`)).toBe(true);
+  });
+});
+
+// PRD cmdk-recent: the Recent rows are the core's recent checkouts, read
+// against the catalogs ⌘K holds. A record is `device:checkout`.
+describe("recent entries (PRD cmdk-recent)", () => {
+  const record = (device_id: string, checkout_id: string, project_name = "fixture", branch = "main", device_name = device_id) => ({ device_id, checkout_id, project_name, branch, device_name });
+  const withRecent = (records: ReturnType<typeof record>[], base: SnapshotRest = TWO_DEVICES) => ({ ...base, ui_state: { recent_checkouts: records } }) as unknown as SnapshotRest;
+  const ids = (entries: SearchEntry[]) => entries.map((entry) => entry.checkoutId);
+
+  it("lists the record's checkouts newest first, as the checkout rows, under Recent (B1, B2)", () => {
+    const entries = recentEntries(withRecent([record("mini", "remote:mini:checkout:web"), record("local", "c1")]), new Set());
+    expect(ids(entries)).toEqual(["remote:mini:checkout:web", "c1"]);
+    expect(entries.every((entry) => entry.group.label === "Recent" && entry.kind === "checkout")).toBe(true);
+    // Branch over project, the device's chip only off the device in front.
+    expect(entries[0]).toMatchObject({ title: "main", subtitle: "web", chip: { label: "mini", local: false } });
+    expect(entries[1]).toMatchObject({ title: "main", subtitle: "fixture", chip: undefined });
+    expect(entries.some((entry) => entry.dimmed)).toBe(false);
+  });
+
+  it("leaves out the checkouts already shown and fills the five from the rest of the record (B4)", () => {
+    const many = Array.from({ length: 8 }, (_, index) => record("local", `gone-${index}`));
+    // Records the catalog does not list are not drawn; only the live ones count toward the five.
+    expect(recentEntries(withRecent([record("local", "c1"), ...many]), new Set()).map((entry) => entry.checkoutId)).toEqual(["c1"]);
+    expect(recentEntries(withRecent([record("local", "c1"), record("mini", "remote:mini:checkout:web")]), new Set(["c1"])).map((entry) => entry.checkoutId)).toEqual(["remote:mini:checkout:web"]);
+  });
+
+  it("shows at most five", () => {
+    const base = structuredClone(TWO_DEVICES) as unknown as { navigator: { workspaces: { checkouts: { id: string }[] }[] } };
+    const template = base.navigator.workspaces[0]!.checkouts[0]!;
+    base.navigator.workspaces[0]!.checkouts = Array.from({ length: 8 }, (_, index) => ({ ...template, id: `c${index}` }));
+    const rest = withRecent(Array.from({ length: 8 }, (_, index) => record("local", `c${index}`)), base as unknown as SnapshotRest);
+    expect(ids(recentEntries(rest, new Set(["c0"])))).toEqual(["c1", "c2", "c3", "c4", "c5"]);
+  });
+
+  it("draws a checkout of a device that is not connected dimmed, from the names the record kept (B9)", () => {
+    const entries = recentEntries(withRecent([record("build-box", "remote:build-box:checkout:api", "api", "release", "build-box")]), new Set());
+    expect(entries).toEqual([expect.objectContaining({ title: "release", subtitle: "api", dimmed: true, deviceId: "build-box", chip: { label: "build-box", local: false } })]);
+    expect(entries[0]?.workspaceId).toBeUndefined();
+  });
+
+  it("is the live row again once the device is connected, and drops a checkout its connected catalog no longer lists (B9, B10)", () => {
+    const connected = withRecent([record("build-box", "remote:build-box:checkout:api")], {
+      ...TWO_DEVICES,
+      status: { remote: [{ target_id: "build-box", state: "connected", session: { agents: [], workspaces: [{ id: "remote:build-box:workspace:api", label: "api", path: "/srv/api", device_id: "build-box", inactive_checkouts: { expanded: false, checkout_ids: [] }, checkouts: [{ id: "remote:build-box:checkout:api", workspace_id: "remote:build-box:workspace:api", label: "main", branch: "main", path: "/srv/api", tabs: [] }] }] } }] },
+    } as unknown as SnapshotRest);
+    const live = recentEntries(connected, new Set());
+    expect(live).toEqual([expect.objectContaining({ title: "main", subtitle: "api", workspaceId: "remote:build-box:workspace:api" })]);
+    expect(live[0]?.dimmed).toBeUndefined();
+    expect(recentEntries(withRecent([record("local", "deleted")]), new Set())).toEqual([]);
+  });
+
+  it("has no rows without a record, or for a device that was removed", () => {
+    expect(recentEntries(REST, new Set())).toEqual([]);
+    expect(recentEntries(withRecent([record("removed-device", "x")]), new Set())).toEqual([]);
   });
 });
