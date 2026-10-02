@@ -17,7 +17,7 @@ test.describe.configure({ timeout: 150_000 });
 // A title within the core's 30 characters that is still wider than a row,
 // also where no Korean font is installed (the Linux runner draws Hangul as
 // narrow boxes): its Latin half carries the width.
-const LONG_TITLE = "행 높이 고정 WIDE TITLE MUST CUT";
+const LONG_TITLE = "행 높이 WIDE TITLE MUST CUT HERE";
 const QUESTION = "PR 병합 전 검증을 다시 돌려도 될까요?";
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
