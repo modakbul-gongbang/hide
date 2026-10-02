@@ -115,6 +115,11 @@ That stage inherits the Project-scope-only management contract and the provenanc
 
 The shell holds no authority, but the core does not hand all of it to Herdr either.
 Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns the focused project and checkout, each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
+The core also owns the checkouts last brought to the front (`ui_state.recent_checkouts`, ⌘K's Recent, PRD cmdk-recent): ten records of device id, checkout id and the project, branch and device names a dimmed row is drawn from.
+One pass at the head of `sync_workspace_view` (`runtime/recent_checkouts.rs`) records a front change on whatever path caused it, compares borrowed strings with the head of the list and writes nothing when the front is unchanged, and saves through the coalesced off-lock UI-state save.
+It stores no project id, because a device project's id changes when the helper's facts group it, and the checkout id (`device_catalog::checkout_id`, the folder's) does not; `catalog.checkout_ids_renamed` migrates only ids an older build saved under a Herdr-workspace key, which this list never held.
+A record leaves with an unregistered project, a removed worktree or a removed device, never because a catalog is empty or still resolving, since that would empty the list on every restart; the shell leaves out a record a connected catalog does not list.
+`recent_visible_tabs` is a different thing, the tab-keyed attach window.
 The core also owns which Claude and Codex panes show their conversation ledger in place of the terminal (`ui_state.conversation_pane_ids`): a pane opens on its terminal, enters the set only through `toggle_conversation`, and leaves it with the pane, so a refresh never turns a pane back into a conversation the operator did not ask for.
 A core-owned value changes on the event that asked for it and Herdr is told afterwards, so the canvas and the focus ring never wait for a round trip.
 Selecting a pane first moves the core-owned project, checkout and visible tab to the context that owns that pane, then sends one `pane.focus` request to Herdr; splitting that user action into project, tab and pane requests would expose intermediate frames and make partial refusal possible.

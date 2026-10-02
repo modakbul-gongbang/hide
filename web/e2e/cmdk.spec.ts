@@ -9,7 +9,9 @@
 //   agent connected to the agent in front, `#273` finding the issue and the
 //   pull request numbered so, and the explicit GitHub search row with its
 //   working, failed and empty answers, never run while typing (B2, B12, B16-B20);
-// - ⌘P: ⌘↵ opens the highlighted file beside the area in use (B23).
+// - ⌘P: ⌘↵ opens the highlighted file beside the area in use (B23);
+// - Recent (PRD cmdk-recent): the checkouts last brought to the front, under
+//   Related, kept across a daemon restart and shown alone on Settings.
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -17,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace } from "./wire";
+import { countSent, enterWorkspace, registerFolder, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -242,10 +244,15 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     // its pull request, then the agent in front. ⌘K read the project once if
     // nothing had, so the issue and the pull request arrive after the open.
     await openSearch(page);
-    await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Related"]);
+    // Recent follows Related with the other checkout of the project, which was in front before (PRD cmdk-recent B1, B4).
+    await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Related", "Recent"]);
     await expect
       .poll(() => rowIds(page), { timeout: 30_000 })
-      .toEqual([expect.stringMatching(/^issue:/), expect.stringMatching(/^checkout:/), expect.stringMatching(/^pr:.*:180$/), `agent:${agent}`]);
+      .toEqual([expect.stringMatching(/^issue:/), expect.stringMatching(/^checkout:/), expect.stringMatching(/^pr:.*:180$/), `agent:${agent}`, expect.stringMatching(/^checkout:/)]);
+    await expect(page.locator('[data-palette-group="recent"] [data-palette-row]')).toHaveCount(1);
+    // The checkout in front is Related's row, so Recent's row is a different checkout, never the same one twice (B4).
+    const [related, recent] = [await page.locator('[data-palette-row^="checkout:"]').nth(0).getAttribute("data-palette-row"), await page.locator('[data-palette-group="recent"] [data-palette-row]').getAttribute("data-palette-row")];
+    expect(recent).not.toBe(related);
     await expect(rows(page).first()).toContainText("팔레트 이동 이슈");
     await expect(page.locator('[data-palette-row^="pr:"]')).toContainText("⌘K를 이동 팔레트로");
     await expect(page.locator('[data-palette-row^="pr:"]')).toContainText("Open");
@@ -378,6 +385,91 @@ test("⌘P then ⌘↵ opens the highlighted file beside the area in use, and �
     expect(last.get("file_open")).toMatchObject({ beside: true, preview: false });
     await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
     await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(2);
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+test("⌘K lists the checkouts last brought to the front under Recent, keeps them across a restart, shows them alone on Settings, and goes back to one", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    daemon = await startHided(herdr, "cmdk-recent");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    const fixture = await page.locator("[data-project] [data-checkout]").first().getAttribute("data-checkout");
+    expect(fixture).toBeTruthy();
+
+    // B6: a second project's checkout brought to the front goes to the top of the list.
+    await registerFolder(page, daemon, `${daemon.home}/projects/alpha`);
+    await expect(page.locator("[data-project]")).toHaveCount(2, { timeout: 20_000 });
+    await page.locator("[data-project]", { hasText: "alpha" }).locator("[data-checkout]").first().click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+
+    // B1, B4: Recent follows Related and holds the checkout left behind, not the one in front.
+    await openSearch(page);
+    await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Related", "Recent"]);
+    const recent = page.locator('[data-palette-group="recent"] [data-palette-row]');
+    await expect(recent).toHaveCount(1);
+    await expect(recent).toHaveAttribute("data-palette-row", `checkout:${fixture}`);
+    await expect(recent.locator("[data-palette-enter]")).toBeAttached();
+    await screenshot(page, "cmdk-recent-related");
+
+    // B11: a typed query hides Recent, and clearing it brings it back.
+    await page.keyboard.type("alp");
+    await expect(page.locator('[data-palette-group="recent"]')).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+KeyA");
+    await page.keyboard.press("Backspace");
+    await expect(recent).toHaveCount(1);
+    await page.keyboard.press("Escape");
+
+    // B7: the list is on disk, so the first ⌘K after a restart still has it; B5: on Settings it stands alone.
+    // B9: a record of a device that cannot be reached stays, dimmed; the test registers one whose address does not resolve.
+    daemon = await daemon.restart((stateDir) => {
+      const file = path.join(stateDir, "core-state.json");
+      const stored = JSON.parse(fs.readFileSync(file, "utf8")) as { device_registrations: unknown[]; recent_checkouts: unknown[] };
+      stored.device_registrations.push({ id: "ghost", label: "ghost-box", ssh_alias: "hide-e2e-unreachable.invalid", herdr_socket_path: null, host_consent: null });
+      stored.recent_checkouts.push({ device_id: "ghost", checkout_id: "remote:ghost:checkout:abc", project_name: "api", branch: "release", device_name: "ghost-box" });
+      fs.writeFileSync(file, JSON.stringify(stored));
+    });
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
+    await page.keyboard.press("Alt+Comma");
+    await expect(page.locator("[data-settings]")).toBeVisible();
+    await page.keyboard.press("Meta+KeyK");
+    await expect(input(page)).toBeFocused();
+    await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Recent"]);
+    await expect(page.locator('[data-palette-group="recent"] [data-palette-row]')).toHaveCount(3);
+    const ghost = page.locator('[data-palette-row="checkout:remote:ghost:checkout:abc"]');
+    await expect(ghost).toHaveAttribute("data-palette-dim", "true");
+    await expect(ghost).toContainText("release");
+    await expect(ghost).toContainText("ghost-box");
+    await expect(ghost.locator("[data-palette-enter]")).toHaveCount(0);
+    await screenshot(page, "cmdk-recent-settings");
+
+    // B12: the first highlight is the first row, and the arrows, Home and End stop on the dimmed row too.
+    const first = page.locator('[data-palette-group="recent"] [data-palette-row]').first();
+    await expect(first).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await expect(ghost).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("ArrowUp");
+    await expect(ghost).toHaveAttribute("aria-selected", "false");
+    await page.keyboard.press("End");
+    await expect(ghost).toHaveAttribute("aria-selected", "true");
+    // B9: Enter on the dimmed row changes nothing, closes nothing and says nothing.
+    await expect(page.locator("[data-palette-action]")).toHaveCount(0);
+    await page.keyboard.press("Enter");
+    await expect(input(page)).toBeVisible();
+    await expect(ghost).toHaveAttribute("aria-selected", "true");
+
+    // B3: a Recent row opens that checkout.
+    await page.locator(`[data-palette-row="checkout:${fixture}"]`).click();
+    await expect(input(page)).toHaveCount(0);
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    await expect(page.locator(`[data-checkout="${fixture}"]`)).toBeVisible();
   } finally {
     daemon?.stop();
     herdr.stop();

@@ -2333,6 +2333,34 @@ pub struct UiStateSnapshot {
     /// field that did would resend the navigator to every client.
     #[serde(default, skip_serializing)]
     pub agent_sleep: crate::agent_sleep::AgentSleepStore,
+    /// The checkouts last brought to the front, newest first, at most
+    /// `RECENT_CHECKOUT_LIMIT` (PRD cmdk-recent D-05, D-08, D-09). ⌘K reads
+    /// the first five it can show; the rest are there so the exclusions of
+    /// the front checkout and of Related still leave five. Absent in a store
+    /// written before it existed, which loads empty.
+    #[serde(default)]
+    pub recent_checkouts: Vec<RecentCheckout>,
+}
+
+/// The most checkouts the recent list keeps; the oldest leave first.
+pub const RECENT_CHECKOUT_LIMIT: usize = 10;
+
+/// One entry of the recent list: the ids that open the checkout and the
+/// facts that draw its row while its device has no catalog to read them from.
+///
+/// No project id is kept: a device project's id changes when its facts
+/// resolve, and a checkout id already names the project it is in on this
+/// machine, so the shell finds the project from the checkout in the live
+/// catalog. The names are the ones the checkout had when it was last in
+/// front; a connected device's row is drawn from its catalog instead.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RecentCheckout {
+    pub device_id: String,
+    pub checkout_id: String,
+    pub project_name: String,
+    /// The checkout's branch, else its label.
+    pub branch: String,
+    pub device_name: String,
 }
 
 /// One pane's read mark: the state the operator was looking at the last time
@@ -2701,6 +2729,7 @@ impl Default for UiStateSnapshot {
             issue_settings: IssueSettingsSnapshot::default(),
             agent_start: AgentStartChoice::default(),
             agent_sleep: crate::agent_sleep::AgentSleepStore::default(),
+            recent_checkouts: Vec::new(),
         }
     }
 }

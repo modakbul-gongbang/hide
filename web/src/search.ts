@@ -5,7 +5,7 @@
 // ranking happens in hided, beside the walk.
 
 import { checkoutPlaces } from "./navigation";
-import { frontDeviceId, localDeviceId } from "./devices";
+import { deviceConnected, frontDeviceId, localDeviceId } from "./devices";
 import { projectsOf } from "./remote";
 import type { AgentRow, Checkout, Device, GithubSearchResult, PullRequest, SnapshotRest, Task, Workspace } from "./snapshot";
 
@@ -23,6 +23,10 @@ const COMMANDS_GROUP: SearchGroup = { id: "commands", label: "Commands" };
 export const GITHUB_GROUP: SearchGroup = { id: "github", label: "GitHub" };
 /** The Related list's own header; an entry in it keeps its kind's group for search. */
 export const RELATED_GROUP: SearchGroup = { id: "related", label: "Related" };
+/** The empty query's second header: the checkouts last brought to the front (PRD cmdk-recent). */
+export const RECENT_GROUP: SearchGroup = { id: "recent", label: "Recent" };
+/** How many Recent rows ⌘K shows; the core keeps ten so the exclusions still leave five. */
+export const RECENT_SHOWN = 5;
 
 type EntryKind = "agent" | "project" | "checkout" | "device" | "issue" | "pr" | "command";
 
@@ -73,6 +77,8 @@ export type SearchEntry = {
   command?: "start_agent";
   /** A GitHub search result: its row is opened on GitHub, never in Hide. */
   external?: boolean;
+  /** A Recent row of a device that is not connected: drawn dimmed, found by arrows, and ↵ does nothing (PRD cmdk-recent D-11). */
+  dimmed?: boolean;
 };
 
 /** The fuzzy score of `query` against `candidate`, the same scorer hided's
@@ -196,6 +202,51 @@ export function checkoutEntry(scope: SearchDevice, workspace: Workspace, checkou
     workspace,
     checkout,
   };
+}
+
+/**
+ * ⌘K's Recent rows (PRD cmdk-recent B1-B5, B9, B10): the core's recent
+ * checkouts, newest first, without the ones in `shown` (the checkout in front
+ * and every checkout Related lists), at most `RECENT_SHOWN`. A checkout of a
+ * connected device is its live row, so a rename or a new branch reads as it is
+ * now; one a connected catalog no longer lists is gone and is not drawn; one
+ * of a device that is not connected is a dimmed row drawn from the names the
+ * record kept, because that device has no catalog to read.
+ */
+export function recentEntries(rest: SnapshotRest | null, shown: ReadonlySet<string>): SearchEntry[] {
+  const records = rest?.ui_state?.recent_checkouts;
+  if (!rest || !records?.length) return [];
+  const front = frontDeviceId(rest);
+  const scopes = searchDevices(rest);
+  const entries: SearchEntry[] = [];
+  for (const record of records) {
+    if (entries.length === RECENT_SHOWN) break;
+    if (shown.has(record.checkout_id)) continue;
+    const scope = scopes.find((candidate) => candidate.device.id === record.device_id);
+    if (!scope) continue;
+    if (!deviceConnected(rest, scope.device.id)) {
+      entries.push({
+        id: `checkout:${record.checkout_id}`,
+        title: record.branch,
+        subtitle: record.project_name,
+        kind: "checkout",
+        group: RECENT_GROUP,
+        deviceId: record.device_id,
+        checkoutId: record.checkout_id,
+        chip: record.device_id === front ? undefined : { label: record.device_name, local: scope.device.kind !== "remote" },
+        dimmed: true,
+      });
+      continue;
+    }
+    for (const workspace of scope.workspaces) {
+      const checkout = workspace.checkouts.find((candidate) => candidate.id === record.checkout_id);
+      if (checkout) {
+        entries.push({ ...checkoutEntry(scope, workspace, checkout, front, true), group: RECENT_GROUP });
+        break;
+      }
+    }
+  }
+  return entries;
 }
 
 const CI_STATUS: Partial<Record<NonNullable<PullRequest["checks"]>, EntryStatus>> = {

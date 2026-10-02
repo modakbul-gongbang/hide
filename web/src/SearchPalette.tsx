@@ -7,7 +7,7 @@ import { DeviceChip } from "./components/device-chip";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
 import { frontTarget, relationRows, relationsOf, type Relations } from "./relations";
-import { filterEntries, githubEntries, groupEntries, GITHUB_GROUP, RELATED_GROUP, searchEntries, type SearchEntry, type SearchSection, type Tone } from "./search";
+import { filterEntries, githubEntries, groupEntries, recentEntries, GITHUB_GROUP, RECENT_GROUP, RELATED_GROUP, searchEntries, type SearchEntry, type SearchSection, type Tone } from "./search";
 import { detailOf, type Detail } from "./searchDetail";
 import { githubRow, hasGithubProject, ownAnswer, projectRead, projectToRead, startsSearch, type GithubRow, type ProjectRead } from "./searchGithub";
 import { frontCheckout } from "./snapshot";
@@ -105,19 +105,28 @@ export function SearchPalette({ actions }: { actions: Actions }) {
   }, [entries, trimmed, answer]);
 
   const relatedRows = useMemo(() => (trimmed || !related ? [] : relationRows(related)), [trimmed, related]);
-  const listed: SearchEntry[] = trimmed ? sections.flatMap((section) => section.entries) : relatedRows;
+  // Recent follows Related on the empty query and leaves out the checkouts already on screen: the one in front and every one Related lists (PRD cmdk-recent B4).
+  const recentRows = useMemo(() => {
+    if (trimmed) return [];
+    const shown = new Set(relatedRows.flatMap((entry) => (entry.kind === "checkout" && entry.checkoutId ? [entry.checkoutId] : [])));
+    if (front.checkout) shown.add(front.checkout.id);
+    return recentEntries(rest, shown);
+  }, [trimmed, rest, relatedRows, front]);
+  const listed: SearchEntry[] = trimmed ? sections.flatMap((section) => section.entries) : [...relatedRows, ...recentRows];
   const ids = [...listed.map((entry) => entry.id), ...(showGithub ? [GITHUB_ROW_ID] : [])];
   // A surviving highlight stays; a retired one moves to the first row (B25).
   const selected = ids.includes(highlighted) ? highlighted : (ids[0] ?? "");
   const selectedEntry = listed.find((entry) => entry.id === selected) ?? null;
 
-  const collapsed = !trimmed && relatedRows.length === 0;
+  const collapsed = !trimmed && listed.length === 0;
   const detailVisible = !collapsed && showsDetail(width);
   const now = Date.now();
 
   const activate = (entry: SearchEntry) => {
     // The agent in front is where the operator already is; the detail says so (B21).
     if (entry.tag === "here") return;
+    // A Recent row of a device that is not connected is dimmed and does nothing, and says nothing (PRD cmdk-recent B9).
+    if (entry.dimmed) return;
     close();
     switch (entry.kind) {
       case "command":
@@ -199,11 +208,22 @@ export function SearchPalette({ actions }: { actions: Actions }) {
                     {showGithub ? <GithubSearchRow row={row} onSelect={() => onSelect(GITHUB_ROW_ID)} /> : null}
                   </>
                 ) : (
-                  <CommandGroup heading={RELATED_GROUP.label} data-palette-group={RELATED_GROUP.id}>
-                    {relatedRows.map((entry) => (
-                      <SearchRow key={entry.id} entry={entry} read={reads(entry)} onSelect={() => onSelect(entry.id)} />
-                    ))}
-                  </CommandGroup>
+                  <>
+                    {relatedRows.length > 0 ? (
+                      <CommandGroup heading={RELATED_GROUP.label} data-palette-group={RELATED_GROUP.id}>
+                        {relatedRows.map((entry) => (
+                          <SearchRow key={entry.id} entry={entry} read={reads(entry)} onSelect={() => onSelect(entry.id)} />
+                        ))}
+                      </CommandGroup>
+                    ) : null}
+                    {recentRows.length > 0 ? (
+                      <CommandGroup heading={RECENT_GROUP.label} data-palette-group={RECENT_GROUP.id}>
+                        {recentRows.map((entry) => (
+                          <SearchRow key={entry.id} entry={entry} read={reads(entry)} onSelect={() => onSelect(entry.id)} />
+                        ))}
+                      </CommandGroup>
+                    ) : null}
+                  </>
                 )}
               </CommandList>
               {detailVisible ? <DetailPane detail={detail} entry={selectedEntry} githubRow={selected === GITHUB_ROW_ID ? row : null} query={trimmed} /> : null}
@@ -243,7 +263,7 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
   const depth = entry.depth ?? 0;
   return (
     <CommandItem asChild value={entry.id} onSelect={onSelect}>
-      <button type="button" data-palette-row={entry.id} data-palette-depth={depth} className="group/palette-row w-full text-left" style={depth > 0 ? { paddingLeft: `calc(var(--spacing-sm) + ${depth} * var(--spacing-lg))` } : undefined}>
+      <button type="button" data-palette-row={entry.id} data-palette-depth={depth} data-palette-dim={entry.dimmed ? "true" : undefined} className={`group/palette-row w-full text-left ${entry.dimmed ? "opacity-(--opacity-dimmed)" : ""}`} style={depth > 0 ? { paddingLeft: `calc(var(--spacing-sm) + ${depth} * var(--spacing-lg))` } : undefined}>
         <EntryIcon entry={entry} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-xs">
@@ -265,9 +285,11 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
           </span>
         ) : null}
         {entry.ci ? <StatusText status={entry.ci} /> : entry.status ? <StatusText status={entry.status} /> : null}
-        <span aria-hidden="true" data-palette-enter="true" className="invisible shrink-0 text-caption text-muted-foreground group-data-[selected=true]/palette-row:visible">
-          ↵
-        </span>
+        {entry.dimmed ? null : (
+          <span aria-hidden="true" data-palette-enter="true" className="invisible shrink-0 text-caption text-muted-foreground group-data-[selected=true]/palette-row:visible">
+            ↵
+          </span>
+        )}
       </button>
     </CommandItem>
   );
@@ -355,7 +377,7 @@ function DetailPane({ detail, entry, githubRow: row, query }: { detail: Detail |
         ) : null}
         {detail.relations ? <RelationBlock relations={detail.relations} on={entry.id} /> : null}
       </div>
-      <ActionLine text={here ? "지금 보고 있는 에이전트" : detail.action} key_={!here} />
+      {detail.action ? <ActionLine text={here ? "지금 보고 있는 에이전트" : detail.action} key_={!here} /> : null}
     </aside>
   );
 }

@@ -79,6 +79,8 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
       };
     }
     case "checkout": {
+      // A Recent row of a device that is not connected: the names the record kept and nothing else, and ↵ does nothing, so no action is offered.
+      if (entry.dimmed) return { ...base, kind: "Checkout", title: `${entry.subtitle} › ${entry.title}`, tags: [entry.title, device].filter((text): text is string => Boolean(text)), facts: [], action: "" };
       const checkout = entry.checkout;
       const files = checkout?.changed_file_count ?? 0;
       const ahead = checkout?.ahead ?? 0;
