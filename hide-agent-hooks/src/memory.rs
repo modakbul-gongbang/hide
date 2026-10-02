@@ -207,7 +207,8 @@ pub fn project_memory_output_until(
 }
 
 fn canonical_path_context(project: &hide_project::ProjectIdentity, cwd: &Path) -> PathBuf {
-    let canonical = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let canonical =
+        hide_platform::fs::identity::canonical(cwd).unwrap_or_else(|_| cwd.to_path_buf());
     canonical
         .strip_prefix(&project.checkout_root)
         .map(|relative| project.root.join(relative))
