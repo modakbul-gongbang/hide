@@ -12,10 +12,8 @@
 //! connection. Both hold the same Workspace commands for the same checkout.
 
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -25,11 +23,11 @@ use std::time::{Duration, Instant};
 use herdr_core::remote::RusshRemoteClient;
 use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
 use hide_herdr_client::{LocalSocketConnector, request_with_connector};
-use hide_host::pane_peer::{descends_from, peer_pid, process_cwd, process_start};
+use hide_host::pane_peer::{descends_from, process_cwd, process_start};
+use hide_platform::fs::private;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::net::UnixListener;
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::Notify;
 
 use crate::core::CoreHandle;
 use crate::state_file::new_token;
@@ -43,7 +41,9 @@ pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a re
 pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(unix)]
 const MAX_BOOTSTRAPS: usize = 8;
+#[cfg(unix)]
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How a capability was bound to its caller, and what its validation rechecks.
@@ -174,9 +174,8 @@ impl Registry {
         {
             return Err("pane capability directory is not a directory".to_owned());
         }
-        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-            .map_err(|error| error.to_string())?;
+        private::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        private::restrict_to_owner(&directory).map_err(|error| error.to_string())?;
         // A daemon restart invalidates every earlier token. Remove the old
         // references before the new daemon accepts a caller.
         for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
@@ -229,12 +228,7 @@ impl Registry {
             return Err("capability_limit");
         }
         let token = new_token();
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|_| "reference_unavailable")?;
+        let mut file = private::create_new_file(&path).map_err(|_| "reference_unavailable")?;
         let bytes = serde_json::to_vec(&Reference {
             token: token.clone(),
             port,
@@ -529,6 +523,8 @@ pub struct Attestation {
 /// pane failure, including a Herdr socket hided never had, hands the caller
 /// to the checkout fallback, whose reason is the bootstrap's answer when it
 /// fails too. Returns the pane reason alongside a checkout-bound attestation.
+// Only the Unix bootstrap socket serves it (`serve`); its tests run everywhere.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn attest_bootstrap(
     peer: i32,
     request: &BootstrapRequest,
@@ -708,13 +704,23 @@ fn inspect_pane(
     })
 }
 
-pub fn bind(state_dir: &Path) -> Result<(UnixListener, PathBuf), String> {
+/// The listener a pane's process asks for a capability on: a Unix socket,
+/// whose kernel reports the caller's pid. Windows has none yet: hided does
+/// not listen locally there until the named-pipe listener holds under
+/// connect-and-drop (#315), so nothing can construct one.
+#[cfg(unix)]
+pub type BootstrapListener = tokio::net::UnixListener;
+#[cfg(windows)]
+pub enum BootstrapListener {}
+
+#[cfg(unix)]
+pub fn bind(state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
     // A random private leaf keeps the Unix path short even for a long state
     // directory, and cannot be pre-created by another /tmp user.
     let directory = (0..8)
         .find_map(|_| {
             let candidate = Path::new("/tmp").join(format!("hide-pane-{}", &new_token()[..24]));
-            match fs::DirBuilder::new().mode(0o700).create(&candidate) {
+            match private::create_dir(&candidate) {
                 Ok(()) => Some(Ok(candidate)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
                 Err(error) => Some(Err(error.to_string())),
@@ -723,19 +729,15 @@ pub fn bind(state_dir: &Path) -> Result<(UnixListener, PathBuf), String> {
         .unwrap_or_else(|| Err("pane bootstrap directory collision limit".to_owned()))?;
     let path = directory.join("b.sock");
     let result = (|| {
-        let listener = UnixListener::bind(&path).map_err(|error| error.to_string())?;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
+        let listener = BootstrapListener::bind(&path).map_err(|error| error.to_string())?;
+        private::restrict_to_owner(&path).map_err(|error| error.to_string())?;
         let record = bootstrap_socket_record(state_dir);
         let staging = record.with_extension(format!("{}.tmp", &new_token()[..16]));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&staging)
-            .map_err(|error| error.to_string())?;
+        let mut file = private::create_new_file(&staging).map_err(|error| error.to_string())?;
         let published = (|| {
-            file.write_all(path.as_os_str().as_bytes())
+            // The path is ASCII: `/tmp`, a hex leaf and the socket name.
+            let text = path.to_str().ok_or("pane bootstrap path is not text")?;
+            file.write_all(text.as_bytes())
                 .map_err(|error| error.to_string())?;
             file.sync_all().map_err(|error| error.to_string())?;
             fs::rename(&staging, &record).map_err(|error| error.to_string())
@@ -753,51 +755,70 @@ pub fn bind(state_dir: &Path) -> Result<(UnixListener, PathBuf), String> {
     result
 }
 
+#[cfg(windows)]
+pub fn bind(_state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
+    Err("the pane bootstrap socket is not available on Windows yet (#315)".to_owned())
+}
+
 pub fn bootstrap_socket_record(state_dir: &Path) -> PathBuf {
     state_dir.join("pane-capabilities/bootstrap-socket")
 }
 
+/// The bootstrap socket the running daemon published, trusted only when the
+/// record and the folder the socket sits in are this account's own and
+/// private.
 pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(bootstrap_socket_record(state_dir))
-        .map_err(|_| "hide_unavailable".to_owned())?;
+    let record = bootstrap_socket_record(state_dir);
+    let file = private::open_own_file(&record, false).map_err(|_| "hide_unavailable".to_owned())?;
     let metadata = file.metadata().map_err(|_| "hide_unavailable".to_owned())?;
-    if !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.permissions().mode() & 0o077 != 0
-        || metadata.len() > 100
-    {
+    if !private::is_private(&record).unwrap_or(false) || metadata.len() > 100 {
         return Err("invalid_bootstrap_socket_record".to_owned());
     }
     let mut bytes = Vec::new();
     file.take(100)
         .read_to_end(&mut bytes)
         .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
-    let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+    let path = PathBuf::from(
+        String::from_utf8(bytes).map_err(|_| "invalid_bootstrap_socket_record".to_owned())?,
+    );
     let directory = path.parent().ok_or("invalid_bootstrap_socket_record")?;
     let metadata = fs::symlink_metadata(directory)
         .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
     if !path.is_absolute()
         || !metadata.is_dir()
         || metadata.file_type().is_symlink()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.permissions().mode() & 0o077 != 0
+        || !private::owned_by_current_user(directory).unwrap_or(false)
+        || !private::is_private(directory).unwrap_or(false)
     {
         return Err("invalid_bootstrap_socket_record".to_owned());
     }
     Ok(path)
 }
 
+#[cfg(windows)]
 pub async fn serve(
-    listener: UnixListener,
+    listener: BootstrapListener,
+    _registry: Arc<Registry>,
+    _core: Arc<CoreHandle>,
+    _herdr_socket: Option<PathBuf>,
+    _port: u16,
+    _shutdown: Arc<Notify>,
+) {
+    match listener {}
+}
+
+#[cfg(unix)]
+pub async fn serve(
+    listener: BootstrapListener,
     registry: Arc<Registry>,
     core: Arc<CoreHandle>,
     herdr_socket: Option<PathBuf>,
     port: u16,
     shutdown: Arc<Notify>,
 ) {
+    use hide_host::pane_peer::peer_pid;
+    use std::io::{BufRead, BufReader};
+    use tokio::sync::Semaphore;
     let limit = Arc::new(Semaphore::new(MAX_BOOTSTRAPS));
     let mut sweep = tokio::time::interval(Duration::from_secs(5));
     loop {
@@ -882,22 +903,16 @@ pub async fn serve(
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn long_state_directory_keeps_a_short_private_bootstrap_socket() {
         let directory = tempfile::tempdir().unwrap();
         let state_dir = directory.path().join("long-state-segment/".repeat(12));
         fs::create_dir_all(state_dir.join("pane-capabilities")).unwrap();
         let (listener, socket) = bind(&state_dir).unwrap();
-        assert!(socket.as_os_str().as_bytes().len() < 100);
+        assert!(socket.as_os_str().len() < 100);
         assert_eq!(socket, bootstrap_socket_path(&state_dir).unwrap());
-        assert_eq!(
-            fs::metadata(socket.parent().unwrap())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
+        assert!(private::is_private(socket.parent().unwrap()).unwrap());
         drop(listener);
         fs::remove_file(&socket).unwrap();
         fs::remove_dir(socket.parent().unwrap()).unwrap();
@@ -930,10 +945,7 @@ mod tests {
         };
         let nonce = "0123456789abcdef0123456789abcdef";
         let path = registry.issue(&attestation, nonce, 12345, None).unwrap().0;
-        assert_eq!(
-            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
+        assert!(private::is_private(&path).unwrap());
         let reference: Reference = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(registry.get(&reference.token).is_some());
         registry.revoke_all();

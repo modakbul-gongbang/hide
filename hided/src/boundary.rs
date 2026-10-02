@@ -76,87 +76,16 @@ fn open_nonblocking(path: &Path, _directory: bool) -> io::Result<fs::File> {
     fs::File::open(path)
 }
 
-#[cfg(unix)]
-type RootIdentity = (u64, u64);
-#[cfg(windows)]
-type RootIdentity = (u32, u64);
-#[cfg(not(any(unix, windows)))]
-type RootIdentity = ();
+/// The filesystem's identity of a registered root, pinned at registration.
+type RootIdentity = hide_platform::fs::identity::FileId;
 
-#[cfg(unix)]
-fn root_identity(metadata: &fs::Metadata) -> Option<RootIdentity> {
-    use std::os::unix::fs::MetadataExt;
-    Some((metadata.dev(), metadata.ino()))
+fn root_identity(opened: &fs::File) -> Option<RootIdentity> {
+    hide_platform::fs::identity::file_id_of(opened).ok()
 }
 
-#[cfg(windows)]
-fn root_identity(metadata: &fs::Metadata) -> Option<RootIdentity> {
-    use std::os::windows::fs::MetadataExt;
-    metadata.volume_serial_number().zip(metadata.file_index())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn root_identity(_metadata: &fs::Metadata) -> Option<RootIdentity> {
-    None
-}
-
-#[cfg(target_os = "macos")]
+/// The path the open root or file is at now.
 fn opened_file_path(file: &fs::File) -> io::Result<PathBuf> {
-    use std::ffi::CStr;
-    use std::os::fd::AsRawFd;
-    let mut path = [0i8; libc::PATH_MAX as usize];
-    // SAFETY: the buffer is writable for PATH_MAX bytes and the descriptor
-    // remains owned by `file` for this call.
-    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, path.as_mut_ptr()) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: F_GETPATH writes a NUL-terminated path on success.
-    let bytes = unsafe { CStr::from_ptr(path.as_ptr()) }.to_bytes();
-    use std::os::unix::ffi::OsStrExt;
-    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
-}
-
-#[cfg(target_os = "linux")]
-fn opened_file_path(file: &fs::File) -> io::Result<PathBuf> {
-    use std::os::fd::AsRawFd;
-    let path = fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
-    if path.to_string_lossy().ends_with(" (deleted)") {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "opened file was removed",
-        ));
-    }
-    Ok(path)
-}
-
-#[cfg(windows)]
-fn opened_file_path(file: &fs::File) -> io::Result<PathBuf> {
-    use std::os::windows::io::AsRawHandle;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetFinalPathNameByHandleW(
-            handle: *mut std::ffi::c_void,
-            path: *mut u16,
-            length: u32,
-            flags: u32,
-        ) -> u32;
-    }
-    // SAFETY: the OS handle remains owned by `file` and the second call uses
-    // a buffer sized by the first. A changed length is treated as failure.
-    let handle = file.as_raw_handle();
-    let length = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
-    if length == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let mut path = vec![0u16; length as usize + 1];
-    let written =
-        unsafe { GetFinalPathNameByHandleW(handle, path.as_mut_ptr(), path.len() as u32, 0) };
-    if written == 0 || written > length {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(PathBuf::from(String::from_utf16_lossy(
-        &path[..written as usize],
-    )))
+    hide_platform::fs::identity::path_of(file)
 }
 
 /// Why a path was not answered or forwarded.
@@ -278,8 +207,7 @@ fn open_under_root(root: &RegisteredRoot, path: &Path, directory: bool) -> io::R
     use std::os::unix::ffi::OsStrExt;
 
     let anchor = open_nonblocking(&root.source.path, true)?;
-    if root_identity(&anchor.metadata()?) != Some(root.identity)
-        || opened_file_path(&anchor)? != root.real_path
+    if root_identity(&anchor) != Some(root.identity) || opened_file_path(&anchor)? != root.real_path
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -308,8 +236,7 @@ fn open_under_root(root: &RegisteredRoot, path: &Path, directory: bool) -> io::R
 #[cfg(windows)]
 fn open_under_root(root: &RegisteredRoot, path: &Path, directory: bool) -> io::Result<fs::File> {
     let anchor = open_nonblocking(&root.source.path, true)?;
-    if root_identity(&anchor.metadata()?) != Some(root.identity)
-        || opened_file_path(&anchor)? != root.real_path
+    if root_identity(&anchor) != Some(root.identity) || opened_file_path(&anchor)? != root.real_path
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -420,11 +347,10 @@ impl Boundary {
                 } else {
                     let opened = open_nonblocking(&root.path, true).ok()?;
                     let real_path = opened_file_path(&opened).ok()?;
-                    let metadata = opened.metadata().ok()?;
-                    if !metadata.is_dir() {
+                    if !opened.metadata().ok()?.is_dir() {
                         return None;
                     }
-                    (real_path, root_identity(&metadata)?)
+                    (real_path, root_identity(&opened)?)
                 };
                 Some(RegisteredRoot {
                     source: root,
@@ -510,10 +436,7 @@ impl Boundary {
             return false;
         };
         opened_file_path(&opened).ok().as_deref() == Some(root.real_path.as_path())
-            && opened
-                .metadata()
-                .ok()
-                .is_some_and(|metadata| root_identity(&metadata) == Some(root.identity))
+            && root_identity(&opened) == Some(root.identity)
     }
 
     /// Clone verified root handles for the core's actual file workers.
@@ -1858,16 +1781,9 @@ mod windows_boundary_tests {
         let (_, opened) = boundary
             .open_directory(&root, &root.display().to_string())
             .unwrap();
-        let mut names = Vec::new();
-        for_each_opened_directory_name(&opened, |name| {
-            names.push(name);
-            true
-        })
-        .unwrap();
-        assert!(names.contains(&OsString::from("inside.txt")));
         assert_eq!(
-            root_identity(&opened.metadata().unwrap()),
-            root_identity(&open_nonblocking(&root, true).unwrap().metadata().unwrap())
+            root_identity(&opened),
+            root_identity(&open_nonblocking(&root, true).unwrap())
         );
         assert!(
             fs::rename(&root, home.join("moved")).is_err(),

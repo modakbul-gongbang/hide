@@ -3,8 +3,8 @@
 use std::io;
 use std::process::{Child, Command, Stdio};
 
+#[cfg(unix)]
 use hide_platform::process::{self, OwnedChild};
-
 #[cfg(unix)]
 use std::ffi::{OsStr, OsString};
 #[cfg(unix)]

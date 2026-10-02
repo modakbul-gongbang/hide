@@ -12,14 +12,19 @@ use crate::spawn::{handoff_default_opener, spawn_opener};
 
 const MAX_IN_FLIGHT_OPENERS: usize = 4;
 const MAX_OPENS_PER_MINUTE: usize = 12;
+#[cfg(unix)]
 const OPENER_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct OpenHandler {
     configured: Option<PathBuf>,
+    // Only the Unix supervisor of an explicit helper uses these two; Windows
+    // refuses an explicit helper at boot (`HIDE_OPEN_COMMAND`).
+    #[cfg_attr(not(unix), allow(dead_code))]
     supervisor_exe: PathBuf,
     slots: Arc<Semaphore>,
     recent: Arc<Mutex<VecDeque<Instant>>>,
+    #[cfg_attr(not(unix), allow(dead_code))]
     shutdown: Arc<Notify>,
 }
 

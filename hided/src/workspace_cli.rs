@@ -1,10 +1,8 @@
 //! Pane-scoped Workspace CLI transport. Bootstrap attests the caller over a
-//! local Unix socket; commands and results use hided's authenticated `/ws`.
+//! local socket; commands and results use hided's authenticated `/ws`.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -15,11 +13,15 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::ORIGIN;
 
+use hide_platform::fs::private;
+use hide_platform::ipc::LocalStream;
+
 use crate::env::Env;
 use crate::pane_auth::Reference;
 use crate::state_file::SCHEMA_VERSION;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(unix)]
 const REMOTE_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// An auto-bootstrapped direct CLI owns its reference even if transport fails.
@@ -52,7 +54,7 @@ pub fn bootstrap(env: &Env, one_shot: bool) -> Result<PathBuf, String> {
 
 fn bootstrap_local(env: &Env, request: &Value) -> Result<PathBuf, String> {
     let socket = crate::pane_auth::bootstrap_socket_path(&env.state_dir)?;
-    let mut stream = UnixStream::connect(socket).map_err(|_| "hide_unavailable".to_owned())?;
+    let mut stream = LocalStream::connect(&socket).map_err(|_| "hide_unavailable".to_owned())?;
     stream
         .set_read_timeout(Some(TIMEOUT))
         .map_err(|_| "hide_unavailable".to_owned())?;
@@ -63,7 +65,7 @@ fn bootstrap_local(env: &Env, request: &Value) -> Result<PathBuf, String> {
     read_bootstrap_answer(&mut stream)
 }
 
-fn read_bootstrap_answer(stream: &mut UnixStream) -> Result<PathBuf, String> {
+fn read_bootstrap_answer(stream: &mut impl Read) -> Result<PathBuf, String> {
     let mut line = String::new();
     BufReader::new(stream)
         .take(4096)
@@ -82,7 +84,17 @@ fn read_bootstrap_answer(stream: &mut UnixStream) -> Result<PathBuf, String> {
         .ok_or_else(|| "reference_unavailable".to_owned())
 }
 
+/// A device's workspace bridge listens on a Unix socket
+/// (`hide_host::workspace_bridge`), so a Windows device has none to find.
+#[cfg(windows)]
+fn bootstrap_remote(_env: &Env, _request: &Value) -> Result<Option<PathBuf>, String> {
+    Ok(None)
+}
+
+#[cfg(unix)]
 fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, String> {
+    use std::os::unix::fs::FileTypeExt;
+    use std::os::unix::net::UnixStream;
     let bridge_dir = env
         .workspace_bridge_dir
         .clone()
@@ -94,8 +106,8 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
     };
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.permissions().mode() & 0o077 != 0
+        || !private::owned_by_current_user(&bridge_dir).unwrap_or(false)
+        || !private::is_private(&bridge_dir).unwrap_or(false)
     {
         return Err("bridge_unavailable".to_owned());
     }
@@ -116,7 +128,9 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
         let Ok(metadata) = fs::symlink_metadata(&socket) else {
             continue;
         };
-        if !metadata.file_type().is_socket() || metadata.uid() != unsafe { libc::geteuid() } {
+        if !metadata.file_type().is_socket()
+            || !private::owned_by_current_user(&socket).unwrap_or(false)
+        {
             continue;
         }
         let Ok(mut stream) = UnixStream::connect(&socket) else {
@@ -158,21 +172,14 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
     if !path.is_absolute() {
         return Err("invalid_reference".to_owned());
     }
-    // Verify the opened inode, so replacing the path with a symlink between
-    // metadata and read cannot make this helper read an unrelated file.
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|_| "credential_expired".to_owned())?;
+    // The opened file is this account's own regular file and never what a
+    // link at the path leads to, so replacing the path with a link between a
+    // check and the read cannot make this helper read an unrelated file.
+    let file = private::open_own_file(path, false).map_err(|_| "credential_expired".to_owned())?;
     let metadata = file
         .metadata()
         .map_err(|_| "credential_expired".to_owned())?;
-    if !metadata.file_type().is_file()
-        || metadata.permissions().mode() & 0o077 != 0
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.len() > 4096
-    {
+    if !private::is_private(path).unwrap_or(false) || metadata.len() > 4096 {
         return Err("invalid_reference".to_owned());
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
@@ -335,20 +342,12 @@ async fn claim(socket: &mut WorkspaceSocket, path: &Path) -> Result<(), String> 
         _ => return Err("credential_expired".to_owned()),
     }
     let marker = path.with_extension("claimed");
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&marker)
-    {
+    match private::create_new_file(&marker) {
         Ok(_) => Ok(()),
         Err(error)
             if error.kind() == std::io::ErrorKind::AlreadyExists
-                && fs::symlink_metadata(&marker).is_ok_and(|metadata| {
-                    metadata.file_type().is_file()
-                        && metadata.uid() == unsafe { libc::geteuid() }
-                        && metadata.permissions().mode() & 0o077 == 0
-                }) =>
+                && private::open_own_file(&marker, false).is_ok()
+                && private::is_private(&marker).unwrap_or(false) =>
         {
             Ok(())
         }
@@ -359,11 +358,13 @@ async fn claim(socket: &mut WorkspaceSocket, path: &Path) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::{PermissionsExt, symlink};
     use std::sync::mpsc;
 
+    // Mode bits widen the file for the refusal.
+    #[cfg(unix)]
     #[test]
     fn reference_reader_refuses_symlink_and_open_permissions() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("reference.json");
         fs::write(&path, br#"{"token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","port":12345,"origin_port":12345}"#).unwrap();

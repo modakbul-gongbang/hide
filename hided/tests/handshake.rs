@@ -1,3 +1,9 @@
+//! The daemon end to end: its state file, the WebSocket handshake, the
+//! registration and Explorer lines, against a running hided.
+// A daemon starts only where it can listen for panes locally, which Windows
+// cannot yet (#315).
+#![cfg(unix)]
+
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -84,12 +90,10 @@ async fn health_and_unknown_http_do_not_dispatch() {
 }
 
 #[tokio::test]
-async fn state_file_mode_is_600() {
+async fn state_file_is_private() {
     let (dir, running) = start().await;
     let path = state_file::state_path(dir.path());
-    let mode = std::fs::metadata(path).unwrap().permissions();
-    use std::os::unix::fs::PermissionsExt;
-    assert_eq!(mode.mode() & 0o777, 0o600);
+    assert!(hide_platform::fs::private::is_private(&path).unwrap());
     running.stop();
 }
 

@@ -7,9 +7,8 @@
 //! holds only a hash of its credential: a relay transport reads the same
 //! phones (PRD D-01).
 
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
@@ -150,22 +149,12 @@ pub fn write<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::other("store path has no parent"))?;
     fs::create_dir_all(directory)?;
-    let temporary = directory.join(format!(
-        ".{}.tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("mobile")
-    ));
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&temporary)?;
-    file.write_all(&serde_json::to_vec_pretty(value)?)?;
-    file.sync_all()?;
-    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
-    fs::rename(&temporary, path)
+    hide_platform::fs::atomic::write_file(
+        path,
+        &serde_json::to_vec_pretty(value)?,
+        hide_platform::fs::Access::Private,
+    )
+    .map(|_| ())
 }
 
 /// Writes a store file and reports a failure as a diagnostic; the caller
@@ -205,8 +194,7 @@ mod tests {
             }],
         };
         write(&path, &file).unwrap();
-        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        assert!(hide_platform::fs::private::is_private(&path).unwrap());
         let back: PhonesFile = read(&path);
         assert_eq!(back.phones, file.phones);
     }

@@ -44,59 +44,14 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// owner of every value the daemon stores (PRD S5.5 B35); `None` when the
 /// system will not say, which the page shows as unavailable rather than a guess.
 fn host_name() -> Option<String> {
-    #[cfg(unix)]
-    {
-        let mut buffer = [0u8; 256];
-        // SAFETY: the buffer outlives the call and its length is passed with it.
-        let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
-        if result != 0 {
-            return None;
-        }
-        let end = buffer
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(buffer.len());
-        let name = String::from_utf8_lossy(&buffer[..end]).trim().to_owned();
-        (!name.is_empty()).then_some(name)
-    }
-    #[cfg(not(unix))]
-    {
-        std::env::var("COMPUTERNAME")
-            .ok()
-            .filter(|name| !name.is_empty())
-    }
+    hide_platform::host::name().ok()
 }
 
 /// Reads the operating system identity before the core is placed behind its
 /// runtime mutex. Failure is explicit in the diagnostic and leaves
 /// cross-device lineage unresolved rather than guessing from a host name.
 fn machine_id() -> Option<String> {
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("/usr/sbin/ioreg")
-        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| {
-            let text = String::from_utf8_lossy(&output.stdout);
-            text.lines().find_map(|line| {
-                let (_, value) = line.split_once("IOPlatformUUID")?;
-                value
-                    .split('"')
-                    .nth(1)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned)
-            })
-        });
-    #[cfg(target_os = "linux")]
-    let result = std::fs::read_to_string("/etc/machine-id")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    let result = None;
-    result
+    hide_platform::host::machine_id().ok()
 }
 
 fn find_ui_dir() -> Option<std::path::PathBuf> {
@@ -179,20 +134,46 @@ pub async fn run_daemon(env: Env) -> Result<(), String> {
     Ok(())
 }
 
-/// Waits for the daemon's own shutdown (idle) or for SIGTERM/SIGINT, which
-/// `hide stop` sends, and turns either into the same graceful stop.
+/// Waits for the daemon's own shutdown (idle) or for a stop request, and
+/// turns either into the same graceful stop.
 async fn wait_shutdown_or_signal(running: &RunningDaemon) {
-    use tokio::signal::unix::{SignalKind, signal};
-    let terminate = signal(SignalKind::terminate());
-    let interrupt = signal(SignalKind::interrupt());
-    let (Ok(mut terminate), Ok(mut interrupt)) = (terminate, interrupt) else {
-        wait_shutdown(running).await;
-        return;
-    };
     tokio::select! {
         _ = running.shutdown.notified() => {}
-        _ = terminate.recv() => running.shutdown.notify_waiters(),
-        _ = interrupt.recv() => running.shutdown.notify_waiters(),
+        () = stop_requested() => running.shutdown.notify_waiters(),
+    }
+}
+
+/// Returns when the process is asked to stop: SIGTERM, which `hide stop`
+/// sends, or SIGINT on Unix; Ctrl+C, Ctrl+Break or the console closing on
+/// Windows. Where a handler cannot be installed it never returns, and the
+/// daemon stops only on its own shutdown.
+#[cfg(unix)]
+async fn stop_requested() {
+    use tokio::signal::unix::{SignalKind, signal};
+    let (Ok(mut terminate), Ok(mut interrupt)) = (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::interrupt()),
+    ) else {
+        return std::future::pending().await;
+    };
+    tokio::select! {
+        _ = terminate.recv() => {}
+        _ = interrupt.recv() => {}
+    }
+}
+
+#[cfg(windows)]
+async fn stop_requested() {
+    use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close};
+    let (Ok(mut interrupt), Ok(mut break_key), Ok(mut close)) =
+        (ctrl_c(), ctrl_break(), ctrl_close())
+    else {
+        return std::future::pending().await;
+    };
+    tokio::select! {
+        _ = interrupt.recv() => {}
+        _ = break_key.recv() => {}
+        _ = close.recv() => {}
     }
 }
 
@@ -274,13 +255,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         ),
         // The removed native app's state at its release path, read once for the pane
         // chords the operator set there (desktop PRD follow-up, user decision
-        // 2026-09-26). It follows HOME, so an isolated run reads its own.
-        shortcut_import_path: Some(
+        // 2026-09-26). It follows HOME, so an isolated run reads its own. The
+        // app only ever ran on macOS.
+        shortcut_import_path: cfg!(target_os = "macos").then(|| {
             env.home
                 .join("Library/Application Support/hide/state.json")
                 .display()
-                .to_string(),
-        ),
+                .to_string()
+        }),
         local_issues_path: Some(
             env.state_dir
                 .join("local-issues.json")
