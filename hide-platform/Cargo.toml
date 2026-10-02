@@ -14,6 +14,7 @@ interprocess = "=2.4.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
+notify = "=8.2.0"
 
 [target.'cfg(windows)'.dependencies]
 junction = "=2.1.0"
