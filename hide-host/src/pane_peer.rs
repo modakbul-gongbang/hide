@@ -1,104 +1,37 @@
-//! OS process identity used by the pane bootstrap on either side of SSH.
+//! The pane bootstrap's words for process identity (an `i32` pid, a start as
+//! an optional number) over `hide-platform`, which answers each question for
+//! the system it runs on. hided and the workspace bridge on a device ask the
+//! same questions through here.
 
-use std::os::fd::AsRawFd;
+use std::os::fd::AsFd;
+use std::path::PathBuf;
 
-const MAX_PARENT_HOPS: usize = 32;
+use hide_platform::{ipc, process};
 
-#[cfg(target_os = "macos")]
-pub fn peer_pid(stream: &impl AsRawFd) -> Option<i32> {
-    let mut pid: libc::pid_t = 0;
-    let mut size = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-    // SAFETY: the output pointers refer to initialized stack values and the
-    // fd remains owned by the stream for this call.
-    let result = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERPID,
-            (&mut pid as *mut libc::pid_t).cast(),
-            &mut size,
-        )
-    };
-    (result == 0 && size as usize == std::mem::size_of::<libc::pid_t>() && pid > 0).then_some(pid)
+/// The pid of the process at the other end of `stream`, when the system
+/// reports it.
+pub fn peer_pid(stream: &impl AsFd) -> Option<i32> {
+    ipc::peer_pid_of_fd(stream)
+        .ok()
+        .and_then(|pid| i32::try_from(pid).ok())
 }
 
-#[cfg(target_os = "linux")]
-pub fn peer_pid(stream: &impl AsRawFd) -> Option<i32> {
-    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    // SAFETY: the output pointers refer to writable values of their declared sizes.
-    let result = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&mut credentials as *mut libc::ucred).cast(),
-            &mut size,
-        )
-    };
-    (result == 0 && size as usize == std::mem::size_of::<libc::ucred>() && credentials.pid > 0)
-        .then_some(credentials.pid)
-}
-
-pub fn descends_from(mut pid: i32, shell_pid: i32) -> bool {
-    for _ in 0..MAX_PARENT_HOPS {
-        if pid == shell_pid {
-            return true;
-        }
-        if pid <= 1 {
-            return false;
-        }
-        let Some(parent) = parent_pid(pid) else {
-            return false;
-        };
-        if parent == pid {
-            return false;
-        }
-        pid = parent;
+/// Whether `pid` is `shell_pid` or one of its descendants.
+pub fn descends_from(pid: i32, shell_pid: i32) -> bool {
+    match (u32::try_from(pid), u32::try_from(shell_pid)) {
+        (Ok(pid), Ok(shell)) => process::descends_from(pid, shell),
+        _ => false,
     }
-    false
 }
 
-#[cfg(target_os = "macos")]
-fn process_info(pid: i32) -> Option<libc::proc_bsdinfo> {
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    // SAFETY: the buffer is valid and read only after a complete result.
-    let written = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&mut info as *mut libc::proc_bsdinfo).cast(),
-            std::mem::size_of::<libc::proc_bsdinfo>() as i32,
-        )
-    };
-    (written as usize == std::mem::size_of::<libc::proc_bsdinfo>()).then_some(info)
-}
-
-#[cfg(target_os = "macos")]
-fn parent_pid(pid: i32) -> Option<i32> {
-    process_info(pid).map(|info| info.pbi_ppid as i32)
-}
-
-#[cfg(target_os = "macos")]
+/// When `pid` started, comparable only with another start of the same
+/// system; `None` once the process is gone.
 pub fn process_start(pid: i32) -> Option<u64> {
-    process_info(pid).map(|info| info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
+    process::start_time(u32::try_from(pid).ok()?).ok()
 }
 
-#[cfg(target_os = "linux")]
-fn proc_fields(pid: i32) -> Option<String> {
-    std::fs::read_to_string(format!("/proc/{pid}/stat"))
-        .ok()?
-        .rsplit_once(") ")
-        .map(|(_, fields)| fields.to_owned())
-}
-
-#[cfg(target_os = "linux")]
-fn parent_pid(pid: i32) -> Option<i32> {
-    proc_fields(pid)?.split_whitespace().nth(1)?.parse().ok()
-}
-
-#[cfg(target_os = "linux")]
-pub fn process_start(pid: i32) -> Option<u64> {
-    proc_fields(pid)?.split_whitespace().nth(19)?.parse().ok()
+/// The peer's current directory as the system reports it, or `None` when the
+/// process is gone or refuses inspection.
+pub fn process_cwd(pid: i32) -> Option<PathBuf> {
+    process::cwd_of(u32::try_from(pid).ok()?).ok()
 }

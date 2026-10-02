@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -26,6 +25,7 @@ use std::time::{Duration, Instant};
 use herdr_core::remote::RusshRemoteClient;
 use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
 use hide_herdr_client::{LocalSocketConnector, request_with_connector};
+use hide_host::pane_peer::{descends_from, peer_pid, process_cwd, process_start};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::UnixListener;
@@ -43,7 +43,6 @@ pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a re
 pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
-const MAX_PARENT_HOPS: usize = 32;
 const MAX_BOOTSTRAPS: usize = 8;
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -709,133 +708,6 @@ fn inspect_pane(
     })
 }
 
-#[cfg(target_os = "macos")]
-pub fn peer_pid(stream: &impl AsRawFd) -> Option<i32> {
-    let mut pid: libc::pid_t = 0;
-    let mut size = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-    // SAFETY: both output pointers refer to initialized stack values of the
-    // declared sizes, and the fd remains owned by `stream` for this call.
-    let result = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERPID,
-            (&mut pid as *mut libc::pid_t).cast(),
-            &mut size,
-        )
-    };
-    (result == 0 && size as usize == std::mem::size_of::<libc::pid_t>() && pid > 0).then_some(pid)
-}
-
-#[cfg(target_os = "linux")]
-pub fn peer_pid(stream: &impl AsRawFd) -> Option<i32> {
-    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    // SAFETY: `credentials` and `size` are writable for their declared sizes.
-    let result = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&mut credentials as *mut libc::ucred).cast(),
-            &mut size,
-        )
-    };
-    (result == 0 && size as usize == std::mem::size_of::<libc::ucred>() && credentials.pid > 0)
-        .then_some(credentials.pid)
-}
-
-pub fn descends_from(mut pid: i32, shell_pid: i32) -> bool {
-    for _ in 0..MAX_PARENT_HOPS {
-        if pid == shell_pid {
-            return true;
-        }
-        if pid <= 1 {
-            return false;
-        }
-        let Some(parent) = parent_pid(pid) else {
-            return false;
-        };
-        if parent == pid {
-            return false;
-        }
-        pid = parent;
-    }
-    false
-}
-
-#[cfg(target_os = "macos")]
-fn parent_pid(pid: i32) -> Option<i32> {
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    // SAFETY: the buffer is valid for its declared size and only read after
-    // `proc_pidinfo` confirms it filled the complete structure.
-    let written = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&mut info as *mut libc::proc_bsdinfo).cast(),
-            std::mem::size_of::<libc::proc_bsdinfo>() as i32,
-        )
-    };
-    (written as usize == std::mem::size_of::<libc::proc_bsdinfo>()).then_some(info.pbi_ppid as i32)
-}
-
-/// The peer's current directory as the kernel reports it, or `None` when the
-/// process is gone or refuses inspection.
-#[cfg(target_os = "macos")]
-fn process_cwd(pid: i32) -> Option<PathBuf> {
-    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of::<libc::proc_vnodepathinfo>();
-    // SAFETY: the buffer is valid for its declared size and only read after
-    // `proc_pidinfo` confirms it filled the complete structure.
-    let written = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDVNODEPATHINFO,
-            0,
-            (&mut info as *mut libc::proc_vnodepathinfo).cast(),
-            size as i32,
-        )
-    };
-    if written as usize != size {
-        return None;
-    }
-    // libc declares the MAXPATHLEN buffer as 32 rows of 32 for old compilers;
-    // the path is the NUL-terminated prefix of the flattened bytes.
-    let bytes: Vec<u8> = info
-        .pvi_cdir
-        .vip_path
-        .iter()
-        .flatten()
-        .map(|&byte| byte as u8)
-        .take_while(|&byte| byte != 0)
-        .collect();
-    (!bytes.is_empty()).then(|| PathBuf::from(std::ffi::OsString::from_vec(bytes)))
-}
-
-#[cfg(target_os = "linux")]
-fn process_cwd(pid: i32) -> Option<PathBuf> {
-    fs::read_link(format!("/proc/{pid}/cwd")).ok()
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn process_start(pid: i32) -> Option<u64> {
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    // SAFETY: the buffer remains valid and is read only after a full result.
-    let written = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&mut info as *mut libc::proc_bsdinfo).cast(),
-            std::mem::size_of::<libc::proc_bsdinfo>() as i32,
-        )
-    };
-    (written as usize == std::mem::size_of::<libc::proc_bsdinfo>())
-        .then_some((info.pbi_start_tvsec as u64) * 1_000_000 + info.pbi_start_tvusec as u64)
-}
-
 pub fn bind(state_dir: &Path) -> Result<(UnixListener, PathBuf), String> {
     // A random private leaf keeps the Unix path short even for a long state
     // directory, and cannot be pre-created by another /tmp user.
@@ -1004,28 +876,6 @@ pub async fn serve(
             }
         });
     }
-}
-
-#[cfg(target_os = "linux")]
-fn parent_pid(pid: i32) -> Option<i32> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    stat.rsplit_once(") ")?
-        .1
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn process_start(pid: i32) -> Option<u64> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    stat.rsplit_once(") ")?
-        .1
-        .split_whitespace()
-        .nth(19)?
-        .parse()
-        .ok()
 }
 
 #[cfg(test)]
