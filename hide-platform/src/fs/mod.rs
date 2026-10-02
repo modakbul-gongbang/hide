@@ -14,6 +14,7 @@ pub mod link;
 pub mod lock;
 pub mod permissions;
 pub mod private;
+pub mod space;
 
 /// A borrowed open file or folder.
 #[cfg(unix)]
@@ -42,6 +43,35 @@ pub fn open_dir(path: &std::path::Path) -> std::io::Result<std::fs::File> {
         ));
     }
     Ok(folder)
+}
+
+/// Opens `path` for reading only when the name itself is a regular file. A
+/// link at the name is not followed (an error on Unix, `InvalidInput` on
+/// Windows, which opens the link as itself), and a folder, a pipe or a device
+/// neither blocks the open nor is accepted (`InvalidInput`).
+pub fn open_regular(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT, and FILE_FLAG_BACKUP_SEMANTICS so a
+        // folder opens and is refused below like anything else.
+        options.custom_flags(0x0020_0000 | 0x0200_0000);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the path is not a regular file",
+        ));
+    }
+    Ok(file)
 }
 
 /// The open file or folder behind `handle` as a `File`, through a duplicate
@@ -102,6 +132,30 @@ pub(crate) fn path_of(dir: &impl Handle) -> std::io::Result<std::path::PathBuf> 
         }
         buffer.resize(length, 0);
     }
+}
+
+/// A handle to `path` that asks no access, which is all identity and size
+/// need and which no other open file can refuse. With `follow` false a link
+/// at the name is opened as itself.
+#[cfg(windows)]
+pub(crate) fn open_for_query(
+    path: &std::path::Path,
+    follow: bool,
+) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
+    if !follow {
+        flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+    }
+    std::fs::OpenOptions::new()
+        .access_mode(0)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(flags)
+        .open(path)
 }
 
 /// `path` as the NUL-terminated wide string Windows calls take.

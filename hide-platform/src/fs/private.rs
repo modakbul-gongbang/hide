@@ -29,6 +29,23 @@ pub fn open_or_create_file(path: &Path) -> io::Result<fs::File> {
     sys::open_file(path, false)
 }
 
+/// Opens the account's own file `path` for reading, and for writing too when
+/// `create` asks for it to be made, private, if it is not there. The name
+/// itself is opened, never what a link at it leads to, and only a regular
+/// file the current account owns is accepted (`PermissionDenied` otherwise):
+/// the file may sit in a folder other accounts write, where a planted link
+/// would have its target written or read, or a planted pipe would block.
+pub fn open_own_file(path: &Path, create: bool) -> io::Result<fs::File> {
+    let file = sys::open_own(path, create)?;
+    if !file.metadata()?.is_file() || !handle_owned_by_current_user(&file)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "the file is not the account's own regular file",
+        ));
+    }
+    Ok(file)
+}
+
 /// Makes an existing file or folder private: 0700 for a folder or a file its
 /// owner can run, 0600 for any other file, on Unix. A folder's children made
 /// after this are private too on Windows, which inherits the list; Unix has no
@@ -86,6 +103,17 @@ mod sys {
         options.open(path)
     }
 
+    pub(super) fn open_own(path: &Path, create: bool) -> io::Result<fs::File> {
+        let mut options = fs::OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        if create {
+            options.write(true).create(true).truncate(false).mode(0o600);
+        }
+        options.open(path)
+    }
+
     pub(super) fn restrict_to_owner(path: &Path) -> io::Result<()> {
         let metadata = fs::metadata(path)?;
         // A file that ran for its owner still does.
@@ -129,7 +157,8 @@ mod sys {
 
     use widestring::U16CString;
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_SUCCESS, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
+        CloseHandle, ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+        LocalFree,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -145,8 +174,9 @@ mod sys {
         TokenOwner, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_ALWAYS,
+        CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        OPEN_ALWAYS, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -335,16 +365,59 @@ mod sys {
 
     pub(super) fn open_file(path: &Path, new: bool) -> io::Result<fs::File> {
         let descriptor = private_descriptor(false)?;
+        create_file(
+            path,
+            GENERIC_WRITE,
+            Some(&descriptor),
+            if new { CREATE_NEW } else { OPEN_ALWAYS },
+            FILE_ATTRIBUTE_NORMAL,
+        )
+    }
+
+    pub(super) fn open_own(path: &Path, create: bool) -> io::Result<fs::File> {
+        // A link at the name is opened as itself, and refused by the caller
+        // as a file that is not regular.
+        if create {
+            let descriptor = private_descriptor(false)?;
+            create_file(
+                path,
+                GENERIC_READ | GENERIC_WRITE,
+                Some(&descriptor),
+                OPEN_ALWAYS,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+            )
+        } else {
+            create_file(
+                path,
+                GENERIC_READ,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+            )
+        }
+    }
+
+    /// `CreateFileW`, sharing everything, with the private descriptor for a
+    /// file it makes.
+    fn create_file(
+        path: &Path,
+        access: u32,
+        descriptor: Option<&Descriptor>,
+        disposition: u32,
+        flags: u32,
+    ) -> io::Result<fs::File> {
         let name = wide(path)?;
-        // SAFETY: `name` is NUL-terminated and the attributes outlive the call.
+        let attributes = descriptor.map_or(null(), |descriptor| &descriptor.attributes);
+        // SAFETY: `name` is NUL-terminated and the attributes, when given,
+        // outlive the call.
         let handle = unsafe {
             CreateFileW(
                 name.as_ptr(),
-                GENERIC_WRITE,
+                access,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                &descriptor.attributes,
-                if new { CREATE_NEW } else { OPEN_ALWAYS },
-                FILE_ATTRIBUTE_NORMAL,
+                attributes,
+                disposition,
+                flags,
                 null_mut(),
             )
         };

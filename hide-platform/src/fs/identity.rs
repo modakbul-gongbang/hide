@@ -66,6 +66,23 @@ pub fn link_count(handle: &impl Handle) -> io::Result<u64> {
     sys::link_count(handle)
 }
 
+/// What a file looks like now, to tell whether it changed between two looks:
+/// its length, when its contents were last written and when anything about
+/// it last changed. Equal stamps mean no change the filesystem recorded came
+/// between them; the change time catches a write whose author set the write
+/// time back.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Stamp {
+    len: u64,
+    written: (i64, i64),
+    changed: (i64, i64),
+}
+
+/// The stamp of an open file.
+pub fn stamp_of(handle: &impl Handle) -> io::Result<Stamp> {
+    sys::stamp_of(handle)
+}
+
 /// Whether the two paths lead to one file.
 pub fn same_file(left: &Path, right: &Path) -> io::Result<bool> {
     Ok(file_id(left)? == file_id(right)?)
@@ -208,7 +225,7 @@ mod sys {
     use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
 
-    use super::{FileId, Handle};
+    use super::{FileId, Handle, Stamp};
 
     fn id(metadata: &fs::Metadata) -> FileId {
         FileId::new(metadata.dev(), u128::from(metadata.ino()))
@@ -233,6 +250,15 @@ mod sys {
 
     pub(super) fn link_count(handle: &impl Handle) -> io::Result<u64> {
         Ok(metadata_of(handle)?.nlink())
+    }
+
+    pub(super) fn stamp_of(handle: &impl Handle) -> io::Result<Stamp> {
+        let metadata = metadata_of(handle)?;
+        Ok(Stamp {
+            len: metadata.len(),
+            written: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
     }
 
     pub(super) fn entry_id(dir: &impl Handle, name: &std::ffi::OsStr) -> io::Result<FileId> {
@@ -274,35 +300,19 @@ mod sys {
     use std::fs;
     use std::io;
     use std::mem::MaybeUninit;
-    use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::{Path, PathBuf};
 
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo,
-        GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FILE_ID_INFO, FileBasicInfo, FileIdInfo,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, GetFileSizeEx,
     };
 
-    use super::{FileId, Handle};
-
-    /// A handle that asks no access, which is all identity needs and which
-    /// no other open file can refuse.
-    fn open_for_query(path: &Path, follow: bool) -> io::Result<fs::File> {
-        let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
-        if !follow {
-            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
-        }
-        fs::OpenOptions::new()
-            .access_mode(0)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(flags)
-            .open(path)
-    }
+    use super::{FileId, Handle, Stamp};
 
     pub(super) fn id_of_path(path: &Path, follow: bool) -> io::Result<FileId> {
-        id_of_handle(&open_for_query(path, follow)?)
+        id_of_handle(&crate::fs::open_for_query(path, follow)?)
     }
 
     pub(super) fn id_of_handle(handle: &impl Handle) -> io::Result<FileId> {
@@ -359,6 +369,37 @@ mod sys {
         }
         // SAFETY: the call succeeded and filled the structure.
         Ok(u64::from(unsafe { info.assume_init() }.nNumberOfLinks))
+    }
+
+    pub(super) fn stamp_of(handle: &impl Handle) -> io::Result<Stamp> {
+        let raw = handle.as_handle().as_raw_handle();
+        let mut info = MaybeUninit::<FILE_BASIC_INFO>::zeroed();
+        // SAFETY: `raw` is an open handle borrowed for the call, and `info` is
+        // a writable FILE_BASIC_INFO of the size passed.
+        if unsafe {
+            GetFileInformationByHandleEx(
+                raw,
+                FileBasicInfo,
+                info.as_mut_ptr().cast(),
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the call succeeded and filled the structure.
+        let info = unsafe { info.assume_init() };
+        let mut length = 0i64;
+        // SAFETY: as above, with a writable i64.
+        if unsafe { GetFileSizeEx(raw, &mut length) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Stamp {
+            len: u64::try_from(length).unwrap_or(0),
+            // Windows keeps both times in 100 ns units in one number.
+            written: (info.LastWriteTime, 0),
+            changed: (info.ChangeTime, 0),
+        })
     }
 
     pub(super) fn canonical(path: &Path) -> io::Result<PathBuf> {
