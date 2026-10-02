@@ -1,5 +1,5 @@
-//! The one way the kit runs another program: in its own process group, with
-//! a deadline, and killed with its whole group when the deadline passes or
+//! The one way the kit runs another program: as an owned child that leads its
+//! own tree, with a deadline, and killed with its whole tree when the deadline passes or
 //! the caller stops waiting (engineering rule 14; practice `process.md`).
 //!
 //! Every child the kit starts (`herdr plugin uninstall`, `node --version`,
@@ -9,12 +9,13 @@
 //! grow the daemon (rule 15).
 
 use std::io::Read;
-use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use hide_platform::process::OwnedChild;
 
 /// The most output kept from one stream; the rest is read and dropped.
 const OUTPUT_CAP: usize = 64 * 1024;
@@ -70,37 +71,26 @@ pub fn run(
         )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
+        .stderr(Stdio::piped());
     for (key, value) in env {
         command.env(key, value);
     }
     let name = program.display().to_string();
-    let mut child = command
-        .spawn()
+    let mut child = OwnedChild::spawn(&mut command)
         .map_err(|error| format!("{name} could not start: {error}"))?;
-    let pid = child.id() as libc::pid_t;
-    let stdout = child.stdout.take().map(drain);
-    let stderr = child.stderr.take().map(drain);
+    let stdout = child.take_stdout().map(drain);
+    let stderr = child.take_stderr().map(drain);
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
             Ok(None) if stop.load(Ordering::Relaxed) => {
-                // SAFETY: as below, the group is the one this call made.
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
+                let _ = child.kill_tree();
                 let _ = child.wait();
                 break Err(format!("{name} was stopped because Hide is quitting"));
             }
             Ok(None) if started.elapsed() >= deadline => {
-                // SAFETY: the group id is the child's own pid, set by
-                // `process_group(0)`; signalling it reaches only processes
-                // this call started.
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
+                let _ = child.kill_tree();
                 let _ = child.wait();
                 break Err(format!(
                     "{name} did not finish within {} seconds and was stopped",
@@ -109,9 +99,7 @@ pub fn run(
             }
             Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(error) => {
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
+                let _ = child.kill_tree();
                 let _ = child.wait();
                 break Err(format!("{name} could not be waited on: {error}"));
             }
@@ -127,9 +115,7 @@ pub fn run(
     let status = status?;
     // A grandchild left in the group after a normal exit is ended too; the
     // kit's children never mean to leave anything behind.
-    unsafe {
-        libc::kill(-pid, libc::SIGKILL);
-    }
+    let _ = child.kill_tree();
     Ok(Finished {
         code: status.code(),
         stdout,

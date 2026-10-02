@@ -1221,6 +1221,7 @@ version = "0.1.0"
 dependencies = [
  "hide-agent-hooks",
  "hide-herdr-client",
+ "hide-platform",
  "libc",
  "serde",
  "serde_json",
