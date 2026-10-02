@@ -37,6 +37,8 @@ const PAGES: Record<string, string> = {
   // A sign-in popup reports to the page that opened it and closes itself.
   "/popup.html": '<!doctype html><meta charset="utf-8"><title>Popup</title><script>window.opener.postMessage("signed-in", "*"); window.close();</script>',
   "/stay.html": '<!doctype html><meta charset="utf-8"><title>Stay</title><h1>Stay</h1>',
+  // A title long enough that a tab's hint wraps over several lines.
+  "/long.html": '<!doctype html><meta charset="utf-8"><title>Quarterly report draft with every section, appendix and reviewer note the team asked for</title><body style="background:lavender"><h1>Long</h1>',
 };
 /** Answers with a server-side redirect to another app's link, the way a sign-in hands back to a native app. */
 const APP_REDIRECT = "/to-app";
@@ -408,6 +410,95 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   } finally {
     await browser.close();
   }
+});
+
+test("browser: a shell layer never has a page drawn over it, and a page tab's hint opens clear of the page", async () => {
+  ({ app } = await launch(run.env));
+  await fitWindow(app, WINDOW);
+  const page = await app.firstWindow();
+  await enterWorkspace(page, "fixture");
+  const url = `${origin}/long.html`;
+  const title = "Quarterly report draft";
+  expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true });
+  const a = await displayIdOf(page, title);
+  const shown = async () => (await viewOf(url)).visible;
+  await expect.poll(shown).toBe(true);
+  await expectOnSlot(page, url, a);
+  const still = page.locator(`[data-browser-still="${a}"]`);
+  /** The still's colour at its centre, where the fixture page shows only its background. */
+  const stillCentre = () =>
+    still.evaluate(async (image: HTMLImageElement) => {
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      const [r, g, b] = context.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+      return `rgb(${r}, ${g}, ${b})`;
+    });
+
+  // A page tab sits at the window's top edge, so its hint has no room above
+  // and opens beside the page rather than over it; the page stays live.
+  const slot = await slotBounds(page, a);
+  await tab(page, title).hover();
+  const hint = page.locator('[data-slot="tooltip-content"]');
+  await expect(hint).toBeVisible();
+  await expect(hint).toContainText(url);
+  const box = (await hint.boundingBox())!;
+  const meets = box.x < slot.x + slot.width && slot.x < box.x + box.width && box.y < slot.y + slot.height && slot.y < box.y + box.height;
+  expect.soft(meets, `hint ${JSON.stringify(box)} meets page ${JSON.stringify(slot)}`).toBe(false);
+  expect.soft(await shown(), "a hint does not freeze the page").toBe(true);
+  await windowShot("browser-tab-hint-clear");
+  await page.mouse.move(slot.x + slot.width / 2, slot.y + slot.height / 2);
+  await expect(hint).toHaveCount(0);
+
+  // The page repaints, and the host's capture is slowed: the palette's first
+  // frames find the page already hidden, a still stands in at once, and the
+  // still turns to what the page shows now when the capture arrives.
+  await page.waitForTimeout(1_500);
+  await inPage(url, "document.body.style.background = 'rgb(255, 0, 0)'");
+  await app.evaluate(({ BrowserWindow }, target) => {
+    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === target) as unknown as { webContents: Electron.WebContents & { __capture?: unknown } };
+    const contents = child.webContents;
+    const original = contents.capturePage.bind(contents);
+    contents.__capture = contents.capturePage;
+    contents.capturePage = ((...args: Parameters<Electron.WebContents["capturePage"]>) => original(...args).then((image) => new Promise((resolve) => setTimeout(() => resolve(image), 1_500)))) as Electron.WebContents["capturePage"];
+  }, url);
+  await page.keyboard.press("Meta+KeyK");
+  const palette = page.locator("[data-palette-input]");
+  await expect(palette).toBeVisible();
+  await expect.soft.poll(shown, { message: "the page hides with the palette's first frames, before any capture returns", timeout: 700 }).toBe(false);
+  await expect.soft(still, "the cached still stands in at once").toBeVisible({ timeout: 700 });
+  await expect.soft.poll(stillCentre, { message: "the still shows the page as it is now", timeout: 10_000 }).toBe("rgb(255, 0, 0)");
+  await windowShot("browser-palette-fresh-still");
+  await page.keyboard.press("Escape");
+  await expect(palette).toHaveCount(0);
+  await expect.poll(shown).toBe(true);
+  await expect(page.locator("[data-browser-still]")).toHaveCount(0);
+  await app.evaluate(({ BrowserWindow }, target) => {
+    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === target) as unknown as { webContents: Electron.WebContents & { __capture?: Electron.WebContents["capturePage"] } };
+    child.webContents.capturePage = child.webContents.__capture!;
+  }, url);
+
+  // A window too narrow for the tools beside the View areas floats them over
+  // the areas: the page under them gives way to its still until they close,
+  // and the keyboard goes back to the toggle that opened them.
+  await fitWindow(app, { width: 720, height: WINDOW.height });
+  await expectOnSlot(page, url, a);
+  const toggle = page.locator('[data-tools-toggle="off"]');
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  const tools = page.locator('[data-tools-overlay="true"]');
+  await expect(tools).toBeVisible();
+  await expect.soft.poll(shown, { message: "the Tools overlay hides the page under it" }).toBe(false);
+  await expect.soft(still).toBeVisible();
+  await windowShot("browser-tools-overlay-frozen");
+  await page.keyboard.press("Escape");
+  await expect(tools).toHaveCount(0);
+  await expect.poll(shown).toBe(true);
+  await expect(page.locator("[data-browser-still]")).toHaveCount(0);
+  await expect(page.locator("[data-tools-toggle]")).toBeFocused();
 });
 
 test("browser: waiting for a hidden page does not take the operator's keyboard target", async () => {
