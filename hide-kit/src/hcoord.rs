@@ -140,7 +140,7 @@ pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
     crate::write_atomically(
         &shim_path(&target.home),
         shim(&target.home, runtime).as_bytes(),
-        0o700,
+        hide_platform::fs::Access::PrivateExecutable,
     )
 }
 
@@ -330,6 +330,8 @@ mod tests {
         }
     }
 
+    // A stand-in Node is a shell script, so these run where `/bin/sh` does.
+    #[cfg(unix)]
     fn fake_node(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -337,6 +339,7 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    #[cfg(unix)]
     fn shim_naming(home: &Path, program: &Path) {
         let shim = shim_path(home);
         std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
@@ -353,6 +356,7 @@ mod tests {
     /// A shim naming the versioned folder a package manager installed Node
     /// into is rewritten to the link that keeps leading to Node after an
     /// upgrade deletes that folder; a Node no such link leads to stays named.
+    #[cfg(unix)]
     #[test]
     fn a_node_reached_through_a_stable_link_is_named_by_that_link() {
         let stop = AtomicBool::new(false);
