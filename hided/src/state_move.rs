@@ -14,7 +14,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 /// What the move did.
@@ -61,6 +61,7 @@ pub fn move_legacy(
     if std::fs::symlink_metadata(target).is_ok() {
         return Ok(Moved::LeftBehind);
     }
+    not_shared(legacy)?;
     let parent = target
         .parent()
         .ok_or_else(|| format!("{} has no parent folder", target.display()))?;
@@ -91,6 +92,10 @@ pub fn move_legacy(
             target.display()
         )
     })?;
+    // The folder keeps its old mode through the rename; it holds the
+    // daemon's token, so it becomes as private as a new one.
+    std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("{} could not be made private: {error}", target.display()))?;
     Ok(Moved::Moved { stopped_pid })
 }
 
@@ -110,23 +115,28 @@ pub fn log_left_behind(legacy: Option<&Path>, state_dir: &Path) {
 }
 
 /// Whether `path` is a real folder this account owns. A link or another
-/// account's folder is not moved, whatever it leads to; one another account
-/// can write to is refused, since its state file names the pid that `stop`
-/// signals.
+/// account's folder is not moved, whatever it leads to.
 fn own_folder(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata)
-            if metadata.is_dir() && metadata.uid() == euid() && metadata.mode() & 0o022 != 0 =>
-        {
-            Err(format!(
-                "{} can be written by other accounts, so Hide does not move it",
-                path.display()
-            ))
-        }
         Ok(metadata) => Ok(metadata.is_dir() && metadata.uid() == euid()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!("{} could not be read: {error}", path.display())),
     }
+}
+
+/// Refuses a legacy folder another account can write to before anything in
+/// it is read: its state file names the pid that `stop` signals.
+fn not_shared(legacy: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(legacy)
+        .map_err(|error| format!("{} could not be read: {error}", legacy.display()))?;
+    if metadata.mode() & 0o022 != 0 {
+        return Err(format!(
+            "{} can be written by other accounts, so Hide does not move it; run `chmod go-w {}` and connect again",
+            legacy.display(),
+            legacy.display()
+        ));
+    }
+    Ok(())
 }
 
 /// `~/.hide`, made 0700 when missing; an existing one must be a real folder
@@ -232,6 +242,8 @@ mod tests {
         );
         let mode = std::fs::metadata(home.path().join(".hide")).unwrap().mode() & 0o777;
         assert_eq!(mode, 0o700);
+        let mode = std::fs::metadata(&target).unwrap().mode() & 0o777;
+        assert_eq!(mode, 0o700, "the moved folder is made private");
         let again = move_legacy(&legacy, &target, |_| panic!("nothing to stop")).unwrap();
         assert_eq!(again, Moved::Nothing);
         assert!(
@@ -283,7 +295,14 @@ mod tests {
         let target = home.path().join(".hide/state");
         let error = move_legacy(&legacy, &target, |_| panic!("nothing is signalled")).unwrap_err();
         assert!(error.contains("other accounts"), "{error}");
+        assert!(error.contains("chmod go-w"), "{error}");
         assert!(legacy.join("core-state.json").is_file());
+        // Beside an existing new folder it is only left, as any old folder is.
+        std::fs::create_dir_all(&target).unwrap();
+        assert_eq!(
+            move_legacy(&legacy, &target, |_| panic!("nothing is signalled")).unwrap(),
+            Moved::LeftBehind
+        );
     }
 
     #[test]
