@@ -3,6 +3,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use herdr_core::workspace_control::{Action, Edge};
+use hide_platform::process;
 
 use crate::env::{self, Env};
 use crate::spawn::spawn_owned;
@@ -814,29 +815,30 @@ fn stop(env: &Env) -> Result<(), String> {
 /// stop, which ends its AI requests and provider processes, then SIGKILL.
 /// An error only when it is still alive after that.
 fn stop_daemon(env: &Env, state: &DaemonState) -> Result<(), String> {
-    // A damaged state's pid names no daemon (`send_signal` refuses it), so
-    // the state is only cleared.
-    if send_signal(state.pid, 0).is_err_and(|error| error.kind() == io::ErrorKind::InvalidInput) {
+    // A damaged state's pid names no daemon (the platform layer refuses it),
+    // so the state is only cleared.
+    let asked = process::terminate(state.pid);
+    if asked.is_err_and(|error| error.kind() == io::ErrorKind::InvalidInput) {
         state_file::forget_daemon(&env.state_dir, state.pid);
         return Ok(());
     }
-    let _ = send_signal(state.pid, libc::SIGTERM);
     for _ in 0..50 {
-        if !pid_alive(state.pid) {
+        if !process::is_alive(state.pid) {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    if pid_alive(state.pid) {
-        let _ = send_signal(state.pid, libc::SIGKILL);
+    if process::is_alive(state.pid) {
+        // The daemon leads its own group, so its provider processes go too.
+        let _ = process::kill_tree(state.pid);
         for _ in 0..20 {
-            if !pid_alive(state.pid) {
+            if !process::is_alive(state.pid) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-    if pid_alive(state.pid) {
+    if process::is_alive(state.pid) {
         return Err(format!(
             "the running hided (pid {}) did not stop",
             state.pid
@@ -937,7 +939,7 @@ fn healthy_state(env: &Env) -> Option<DaemonState> {
 /// `hide connect` must never signal.
 fn healthy_daemon(env: &Env) -> Option<(DaemonState, serde_json::Value)> {
     let state = state_file::read_state(&env.state_dir).ok().flatten()?;
-    if !pid_alive(state.pid) {
+    if !process::is_alive(state.pid) {
         return None;
     }
     let health = health_json(state.port).ok()?;
@@ -969,42 +971,9 @@ fn open_browser(state: &DaemonState) -> Result<(), String> {
     Ok(())
 }
 
-fn pid_alive(pid: u32) -> bool {
-    send_signal(pid, 0).is_ok()
-}
-
-/// Signals one process. A pid of 0 or 1, or one past `i32::MAX`, would
-/// reach this process group, launchd or every process this user owns, and
-/// names no daemon; a damaged state cannot make it one.
-fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
-    let pid = i32::try_from(pid)
-        .ok()
-        .filter(|pid| *pid > 1)
-        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-    let result = unsafe { libc::kill(pid, signal) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn no_signal_reaches_a_pid_that_names_no_daemon() {
-        for pid in [0, 1, u32::MAX, i32::MAX as u32 + 1] {
-            assert_eq!(
-                send_signal(pid, 0).unwrap_err().kind(),
-                io::ErrorKind::InvalidInput,
-                "pid {pid}"
-            );
-            assert!(!pid_alive(pid));
-        }
-        assert!(pid_alive(std::process::id()));
-    }
 
     #[test]
     fn parse_serve_keep_alive() {
