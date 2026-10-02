@@ -514,8 +514,8 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
     // the bar again, so a resize costs a style write, not a render per pixel.
     // Both land before paint, so the frame never shows tabs overflowing.
     const apply = (next: ReturnType<typeof measure>, render: (update: () => void) => void) => {
-      list.style.setProperty("--tab-selected-width", `${next.selected.width}px`);
-      list.style.setProperty("--tab-other-width", `${next.others.width}px`);
+      const widths = { "--tab-selected-width": `${next.selected.width}px`, "--tab-other-width": `${next.others.width}px` };
+      for (const [name, value] of Object.entries(widths)) list.style.setProperty(name, value);
       render(() => setFits((drawn) => (drawn.selected === next.selected.fit && drawn.others === next.others.fit ? drawn : { selected: next.selected.fit, others: next.others.fit })));
     };
     apply(measure(), (update) => update());
