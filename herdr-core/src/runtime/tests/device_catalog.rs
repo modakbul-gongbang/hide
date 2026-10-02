@@ -260,8 +260,6 @@ fn a_directory_the_helper_has_not_confirmed_is_shown_as_its_workspace_and_says_w
     assert_eq!(state.refused[0].path, t.other);
 }
 
-/// The published session follows the helper: unconfirmed while it is asked
-/// on a worker, grouped when it answers.
 /// PRD cmdk-recent, Risks: a device checkout recorded while its folder is
 /// still unconfirmed is the same record once the helper's facts group it into
 /// its repository, so a rename of the project's id costs the list nothing.
@@ -352,6 +350,8 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
     assert_eq!(held[0].project_name, "main");
 }
 
+/// The published session follows the helper: unconfirmed while it is asked
+/// on a worker, grouped when it answers.
 #[test]
 fn a_device_session_is_grouped_when_its_helper_answers() {
     let t = tree();

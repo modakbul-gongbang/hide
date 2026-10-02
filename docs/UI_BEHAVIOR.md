@@ -1091,11 +1091,11 @@ It leaves out the checkout in front and every checkout Related already lists, an
 The core keeps the record (`ui_state.recent_checkouts`, ten checkouts, newest first, saved with the rest of the UI state and so still there after a restart): a checkout is recorded whenever it comes to the front by any path (the sidebar, ⌥1-9, ⌘K, Herdr's own focus, a device's focus), moves to the top if it is already there, and the oldest leaves past ten.
 A device's Home is never recorded.
 Choosing a Recent row opens that checkout, bringing its device forward when it is on another one.
-A checkout of a connected device is that device's live row; one a connected catalog no longer lists is not drawn, and the core drops the record of a project unregistered, a worktree removed or a device removed.
+A checkout of a connected device is that device's live row; one a connected catalog no longer lists is not drawn, and the core drops the record of a project unregistered, a worktree removed through Hide or a device removed (a worktree deleted outside Hide only stops being drawn, and its record ages out of the ten).
 A checkout of a device that is not connected stays as a dimmed row drawn from the names the record kept (the branch, the project and the device's name): arrows pass over it, its detail names the checkout and offers nothing, and Enter does nothing and says nothing.
 Its row is the live one again when the device reconnects.
 A typed query hides Recent and searches as before, and recency does not rank results.
-Recent does not hold pull requests, issues or agents; ⌃Tab stays the agent pane cycle and Recent is the way back to a checkout.
+Recent does not hold pull requests, issues or agents; ⌃Tab stays the agent pane cycle and Recent is the way back to a checkout. Unlike Recent Panels and Recent Projects, which the page holds for the session, it is the core's saved record and is still there after a restart.
 On a screen with nothing in front, such as Settings, the palette shows Recent alone; with no record and nothing in front it is the input alone with the placeholder `이름이나 #번호를 입력하세요`.
 
 ### The detail

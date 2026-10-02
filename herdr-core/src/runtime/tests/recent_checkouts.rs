@@ -214,7 +214,7 @@ fn removing_a_project_or_a_worktree_drops_its_records() {
     assert_eq!(recent(&runtime), ["c-gamma"]);
 }
 
-/// A refused removal leaves the checkout, so it leaves its record.
+/// A refused removal leaves the checkout in place, so its record stays.
 #[test]
 fn a_failed_worktree_removal_keeps_the_record() {
     let mut runtime = runtime_with(&["alpha"]);
@@ -236,4 +236,44 @@ fn a_failed_worktree_removal_keeps_the_record() {
     });
     assert!(runtime.ingest_worktree_removal_result(1, Err("dirty".into())));
     assert_eq!(recent(&runtime), ["c-alpha"]);
+}
+
+/// B10: a device project unregistered while the device is not connected has
+/// no catalog rows to name its checkouts, but its folder's checkout is named
+/// by the registration, so that record goes.
+#[test]
+fn unregistering_a_project_of_a_disconnected_device_drops_its_folder_checkout() {
+    let mut runtime = runtime();
+    let project = "remote:mini:project:p1";
+    runtime
+        .snapshot
+        .ui_state
+        .workspace_registrations
+        .push(crate::model::WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: project.to_owned(),
+            label: "api".to_owned(),
+            path: "/srv/api".to_owned(),
+            device_id: "mini".to_owned(),
+            pinned: false,
+            home: false,
+        });
+    let record = |checkout: String| RecentCheckout {
+        device_id: "mini".to_owned(),
+        checkout_id: checkout,
+        project_name: "api".to_owned(),
+        branch: "main".to_owned(),
+        device_name: "mini".to_owned(),
+    };
+    runtime.snapshot.ui_state.recent_checkouts = vec![
+        record(crate::device_catalog::checkout_id("mini", "/srv/api")),
+        record(crate::device_catalog::checkout_id("mini", "/srv/other")),
+    ];
+
+    assert!(runtime.retire_workspace_registration(project));
+
+    assert_eq!(
+        recent(&runtime),
+        [crate::device_catalog::checkout_id("mini", "/srv/other")]
+    );
 }

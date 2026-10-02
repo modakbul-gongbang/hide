@@ -1767,7 +1767,7 @@ impl Runtime {
 
     /// Drops the registration and its row. Files, worktrees and Herdr
     /// workspaces are never touched here.
-    fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
+    pub(super) fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
         let local_path = self
             .snapshot
             .navigator
@@ -1783,6 +1783,13 @@ impl Runtime {
             .find(|registration| registration.id == workspace_id)
             .map(|registration| registration.device_id.clone())
             .filter(|device| device != workspace::LOCAL_DEVICE_ID);
+        let registered = self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .find(|registration| registration.id == workspace_id)
+            .map(|registration| (registration.device_id.clone(), registration.path.clone()));
         let before = self.snapshot.ui_state.workspace_registrations.len();
         self.snapshot
             .ui_state
@@ -1792,13 +1799,20 @@ impl Runtime {
             return false;
         }
         // The project's checkouts leave the recent list with it; their ids
-        // are read before the catalog drops the rows that name them.
-        let checkout_ids: Vec<String> = self
+        // are read before the catalog drops the rows that name them. A
+        // device that is not connected has no rows to read, so the
+        // registered folder's own checkout is named by its folder as well.
+        let mut checkout_ids: Vec<String> = self
             .catalog_workspaces()
             .filter(|workspace| workspace.id == workspace_id)
             .flat_map(|workspace| &workspace.checkouts)
             .map(|checkout| checkout.id.clone())
             .collect();
+        if let Some((device_id, path)) =
+            registered.filter(|(device, _)| device != workspace::LOCAL_DEVICE_ID)
+        {
+            checkout_ids.push(crate::device_catalog::checkout_id(&device_id, &path));
+        }
         self.forget_recent_checkouts(|held| checkout_ids.contains(&held.checkout_id));
         if let Some(path) = local_path {
             self.worktree_project_generations.remove(&path);

@@ -386,7 +386,7 @@ test("⌘P then ⌘↵ opens the highlighted file beside the area in use, and �
   }
 });
 
-test("⌘K lists the checkouts last brought to the front under Recent, keeps them across a restart, shows them alone on Settings, and goes back with Enter", async ({ page }) => {
+test("⌘K lists the checkouts last brought to the front under Recent, keeps them across a restart, shows them alone on Settings, and goes back to one", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -444,15 +444,23 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
     await expect(ghost.locator("[data-palette-enter]")).toHaveCount(0);
     await screenshot(page, "cmdk-recent-settings");
 
-    // B9, B12: arrows pass over the dimmed row, and Enter on it changes nothing and closes nothing.
-    await ghost.hover();
+    // B12: the first highlight is the first row, and the arrows, Home and End stop on the dimmed row too.
+    const first = page.locator('[data-palette-group="recent"] [data-palette-row]').first();
+    await expect(first).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
     await expect(ghost).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("ArrowUp");
+    await expect(ghost).toHaveAttribute("aria-selected", "false");
+    await page.keyboard.press("End");
+    await expect(ghost).toHaveAttribute("aria-selected", "true");
+    // B9: Enter on the dimmed row changes nothing, closes nothing and says nothing.
     await expect(page.locator("[data-palette-action]")).toHaveCount(0);
     await page.keyboard.press("Enter");
     await expect(input(page)).toBeVisible();
     await expect(ghost).toHaveAttribute("aria-selected", "true");
 
-    // B3: Enter on a Recent row opens that checkout.
+    // B3: a Recent row opens that checkout.
     await page.locator(`[data-palette-row="checkout:${fixture}"]`).click();
     await expect(input(page)).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();

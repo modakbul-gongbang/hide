@@ -263,7 +263,7 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
   const depth = entry.depth ?? 0;
   return (
     <CommandItem asChild value={entry.id} onSelect={onSelect}>
-      <button type="button" data-palette-row={entry.id} data-palette-depth={depth} data-palette-dim={entry.dimmed ? "true" : undefined} aria-disabled={entry.dimmed ? true : undefined} className={`group/palette-row w-full text-left ${entry.dimmed ? "opacity-(--opacity-dimmed)" : ""}`} style={depth > 0 ? { paddingLeft: `calc(var(--spacing-sm) + ${depth} * var(--spacing-lg))` } : undefined}>
+      <button type="button" data-palette-row={entry.id} data-palette-depth={depth} data-palette-dim={entry.dimmed ? "true" : undefined} className={`group/palette-row w-full text-left ${entry.dimmed ? "opacity-(--opacity-dimmed)" : ""}`} style={depth > 0 ? { paddingLeft: `calc(var(--spacing-sm) + ${depth} * var(--spacing-lg))` } : undefined}>
         <EntryIcon entry={entry} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-xs">
