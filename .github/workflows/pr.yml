@@ -252,7 +252,9 @@ jobs:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hide and hided for the desktop app
-        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+        # hide-agent-hooks and hide-host-helper too: the home-layout spec
+        # stages every binary the packaged app carries.
+        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided -p hide-agent-hooks -p hide-host'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build the web shell

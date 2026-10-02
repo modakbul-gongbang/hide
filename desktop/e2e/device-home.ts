@@ -147,7 +147,11 @@ export function stageBuild(root: string): string {
   const place = (source: string, target: string) => {
     try { fs.linkSync(source, target); } catch { fs.copyFileSync(source, target); fs.chmodSync(target, 0o755); }
   };
-  for (const name of ["hided", "hide", "hide-agent-hooks", "hide-host-helper"]) place(path.join(debug, name), path.join(build, name));
+  for (const name of ["hided", "hide", "hide-agent-hooks", "hide-host-helper"]) {
+    const binary = path.join(debug, name);
+    if (!fs.existsSync(binary)) throw new Error(`${binary} is missing: run \`cargo build -p hided -p hide-agent-hooks -p hide-host\``);
+    place(binary, path.join(build, name));
+  }
   fs.cpSync(hcoord, path.join(build, "hcoord", "dist"), { recursive: true });
   return build;
 }
