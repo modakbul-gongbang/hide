@@ -258,6 +258,10 @@ jobs:
       - name: Build the web shell
         # The desktop app serves web/dist through the hided it starts.
         run: pnpm --dir web build
+      - name: Build hcoord
+        # The staged app carries plugins/hcoord/dist, which the kit installs
+        # at ~/.hide/hcoord; the home-layout spec stages it like a package.
+        run: pnpm --dir plugins/hcoord build
       - name: Install Playwright Chromium
         # The browser spec opens a page in Chromium beside the Electron app.
         run: pnpm --dir desktop exec playwright install chromium
