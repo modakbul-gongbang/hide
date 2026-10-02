@@ -344,7 +344,7 @@ A Windows pipe has no read or write timeout, so a read with a timeout looks at t
 A Windows pipe has no write timeout at all, and says `Unsupported` where a Unix socket keeps one; `hide-herdr-client` treats that one answer as no timeout, because a request is one line that fits the pipe's buffer and never blocks.
 A Windows connect waits at most two seconds for a pipe whose instances are all busy (`TimedOut`; the default would wait for ever), and `bind` reads that answer as a live listener; `bind` also removes only a socket (Unix) or the marker file (Windows) and refuses anything else at the path.
 A blocked read is freed by `ShutdownHandle` from any thread on every system: `shutdown(2)` on Unix, `CancelIoEx` on Windows.
-`hide-herdr-client`'s `LocalSocketConnector` and its `ApiStream` for `LocalStream` are the only users so far; the other local sockets (`hided` pane auth and workspace bridge, the supervisor channel, the label plugin's wake socket) and the process, file and watch concerns move into the crate one slice at a time.
+`hide-herdr-client`'s `LocalSocketConnector` and its `ApiStream` for `LocalStream` are the only users so far; the other local sockets (`hided` pane auth and workspace bridge, the supervisor channel) and the process, file and watch concerns move into the crate one slice at a time.
 `hide-platform/tests/` and `hide-herdr-client/tests/real_herdr.rs` (the client against the pinned Herdr, ignored unless `HIDE_E2E_HERDR_BIN` names the binary) are where a change to the transport is proved; the subscription's reader is the high-frequency path, and on Unix it is the same blocking `read` as before.
 
 ## The bundled Herdr runtime
