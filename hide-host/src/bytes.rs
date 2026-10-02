@@ -79,26 +79,40 @@ pub fn read(dir: &Dir, relative: &Path, offset: u64, length: u64) -> HostResult<
     file.seek(SeekFrom::Start(start))
         .map_err(|error| failed(&error))?;
     let mut bytes = Vec::with_capacity(wanted as usize);
-    file.take(wanted)
+    file.by_ref()
+        .take(wanted)
         .read_to_end(&mut bytes)
         .map_err(|error| failed(&error))?;
     Ok(Range {
         total,
         offset: start,
         data: base64::engine::general_purpose::STANDARD.encode(&bytes),
-        file: stamp(&metadata),
+        file: stamp(&file, &metadata).map_err(|error| failed(&error))?,
     })
 }
 
-#[cfg(unix)]
-fn stamp(metadata: &std::fs::Metadata) -> FileStamp {
-    use std::os::unix::fs::MetadataExt;
-    FileStamp {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-        modified_ns: i128::from(metadata.mtime()) * 1_000_000_000
-            + i128::from(metadata.mtime_nsec()),
-    }
+/// Which file this is and when it last changed, so a later read can tell
+/// that another file now stands at the path.
+fn stamp(file: &std::fs::File, metadata: &std::fs::Metadata) -> std::io::Result<FileStamp> {
+    use std::time::UNIX_EPOCH;
+    let id = hide_platform::fs::identity::file_id_of(file)?;
+    // The wire carries a 64-bit inode; a 128-bit file id (ReFS) is refused
+    // rather than cut short.
+    let inode = u64::try_from(id.index()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "this volume's file identity does not fit the wire",
+        )
+    })?;
+    let modified_ns = match metadata.modified()?.duration_since(UNIX_EPOCH) {
+        Ok(after) => after.as_nanos() as i128,
+        Err(before) => -(before.duration().as_nanos() as i128),
+    };
+    Ok(FileStamp {
+        device: id.volume(),
+        inode,
+        modified_ns,
+    })
 }
 
 #[cfg(test)]

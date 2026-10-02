@@ -317,43 +317,27 @@ const LOCK_DEADLINE: Duration = Duration::from_secs(90);
 /// One kit at a time changes an account's files. Two registrations of one
 /// machine connect together at launch, and a Mac that is also another Mac's
 /// device runs its own kit beside the device's; their copies, hook files and
-/// hcoord daemon would otherwise interleave. The lock is `flock` on a file in
-/// the kit's private folder, so it ends with the process that held it.
+/// hcoord daemon would otherwise interleave. The lock is an advisory lock on a
+/// file in the kit's private folder, so it ends with the process that held it.
 pub(crate) struct AccountLock {
-    _file: std::fs::File,
+    _lock: hide_platform::fs::lock::Lock,
 }
 
 pub(crate) fn lock_account(target: &KitTarget) -> Result<AccountLock, String> {
-    use std::os::fd::AsRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
+    use hide_platform::fs::lock::{Mode, Waited, lock_file};
     let path = record::private_state_dir(&target.home, true)?.join(".lock");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .open(&path)
+    let file = hide_platform::fs::private::open_or_create_file(&path)
         .map_err(|error| format!("{} could not be opened: {error}", path.display()))?;
-    let started = std::time::Instant::now();
-    loop {
-        // SAFETY: the descriptor belongs to `file`, which outlives the call.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-            return Ok(AccountLock { _file: file });
-        }
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::EWOULDBLOCK) {
-            return Err(format!("{} could not be locked: {error}", path.display()));
-        }
-        if target.stop.load(Ordering::Relaxed) {
-            return Err("Hide is quitting".to_owned());
-        }
-        if started.elapsed() >= LOCK_DEADLINE {
-            return Err(format!(
-                "another Hide was still changing this account's kit after {} seconds",
-                LOCK_DEADLINE.as_secs()
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(50));
+    match lock_file(file, Mode::Exclusive, LOCK_DEADLINE, &|| {
+        target.stop.load(Ordering::Relaxed)
+    }) {
+        Ok(Waited::Locked(lock)) => Ok(AccountLock { _lock: lock }),
+        Ok(Waited::Cancelled) => Err("Hide is quitting".to_owned()),
+        Ok(Waited::TimedOut) => Err(format!(
+            "another Hide was still changing this account's kit after {} seconds",
+            LOCK_DEADLINE.as_secs()
+        )),
+        Err(error) => Err(format!("{} could not be locked: {error}", path.display())),
     }
 }
 
@@ -538,14 +522,12 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
 /// than trusted. With `create`, a missing folder is made 0700; without it, a
 /// missing folder ends the check, since nothing below it can be there yet.
 pub(crate) fn private_dirs(base: &Path, parts: &[&str], create: bool) -> Result<PathBuf, String> {
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    let account = unsafe { libc::geteuid() };
+    use hide_platform::fs::private;
     let mut folder = base.to_path_buf();
     for part in parts {
         folder.push(part);
         if create {
-            match std::fs::DirBuilder::new().mode(0o700).create(&folder) {
+            match private::create_dir(&folder) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(error) => {
@@ -566,7 +548,10 @@ pub(crate) fn private_dirs(base: &Path, parts: &[&str], create: bool) -> Result<
         if !metadata.is_dir() {
             return Err(format!("{} is not a folder", folder.display()));
         }
-        if metadata.uid() != account || metadata.mode() & 0o022 != 0 {
+        let trusted = private::owned_by_current_user(&folder)
+            .and_then(|owned| Ok(owned && !private::others_can_modify(&folder)?))
+            .map_err(|error| format!("{} could not be checked: {error}", folder.display()))?;
+        if !trusted {
             return Err(format!(
                 "{} can be changed by another account, so Hide keeps nothing it runs there",
                 folder.display()
@@ -578,37 +563,23 @@ pub(crate) fn private_dirs(base: &Path, parts: &[&str], create: bool) -> Result<
 
 /// Replaces `path` with `contents` through a temporary file beside it, so a
 /// failure part way leaves the old file whole.
-pub(crate) fn write_atomically(path: &Path, contents: &[u8], mode: u32) -> Result<(), String> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
+pub(crate) fn write_atomically(
+    path: &Path,
+    contents: &[u8],
+    access: hide_platform::fs::Access,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("{} has no parent folder", path.display()))?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
-    let temporary = parent.join(format!(
-        ".{}.hide-kit-{}",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("file"),
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&temporary);
-    let written = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(mode)
-            .open(&temporary)?;
-        file.write_all(contents)?;
-        file.sync_all()?;
-        std::fs::rename(&temporary, path)
-    })();
-    written.map_err(|error| {
-        let _ = std::fs::remove_file(&temporary);
-        format!("{} could not be written: {error}", path.display())
-    })
+    hide_platform::fs::atomic::write_file(path, contents, access)
+        .map(drop)
+        .map_err(|error| format!("{} could not be written: {error}", path.display()))
 }
 
-#[cfg(test)]
+// The suite drives the kit against a stand-in Herdr on a Unix socket and with
+// shell scripts for the programs it installs, so it runs where those do; the
+// Windows kit is tested with the device helper that installs it there.
+#[cfg(all(test, unix))]
 mod tests;

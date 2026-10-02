@@ -10,7 +10,7 @@
 //! - installing twice converges instead of duplicating (PRD B25).
 
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::ErrorKind;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -412,19 +412,13 @@ fn event_array_mut<'a>(
 /// dotfile manager makes it, is written where the link leads, so the link
 /// stays the operator's.
 fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let failure = |detail: String| InstallFailure::NotWritable {
         path: path.display().to_string(),
         detail,
     };
-    let target = match fs::canonicalize(path) {
+    let target = match hide_platform::fs::identity::canonical(path) {
         Ok(real) => real,
         Err(error) if error.kind() == ErrorKind::NotFound => path.to_path_buf(),
-        Err(error) => return Err(failure(error.to_string())),
-    };
-    let mode = match fs::metadata(&target) {
-        Ok(metadata) => metadata.permissions().mode() & 0o7777,
-        Err(error) if error.kind() == ErrorKind::NotFound => 0o600,
         Err(error) => return Err(failure(error.to_string())),
     };
     let parent = target
@@ -434,30 +428,13 @@ fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
     let mut serialized =
         serde_json::to_string_pretty(document).map_err(|error| failure(error.to_string()))?;
     serialized.push('\n');
-    let temporary = parent.join(format!(
-        ".{}.hide-{}",
-        target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("settings"),
-        std::process::id()
-    ));
-    let _ = fs::remove_file(&temporary);
-    let written = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        file.write_all(serialized.as_bytes())?;
-        file.set_permissions(fs::Permissions::from_mode(mode))?;
-        file.sync_all()?;
-        fs::rename(&temporary, &target)
-    })();
-    written.map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        failure(error.to_string())
-    })
+    hide_platform::fs::atomic::write_file(
+        &target,
+        serialized.as_bytes(),
+        hide_platform::fs::Access::KeepOrPrivate,
+    )
+    .map(drop)
+    .map_err(|error| failure(error.to_string()))
 }
 
 #[cfg(test)]
@@ -732,7 +709,8 @@ mod tests {
     }
 
     /// The command as `/bin/sh -c` runs it, which is how both runtimes run a
-    /// command hook.
+    /// command hook on Unix.
+    #[cfg(unix)]
     fn run_hook_command(command: &str) -> std::process::ExitStatus {
         std::process::Command::new("/bin/sh")
             .arg("-c")
@@ -742,6 +720,9 @@ mod tests {
             .unwrap()
     }
 
+    /// The guard is shell syntax and the helper here is a shell script, so
+    /// this runs where `/bin/sh` does.
+    #[cfg(unix)]
     #[test]
     fn a_hook_whose_helper_is_gone_succeeds_and_one_that_is_there_runs() {
         let fixture = Fixture::new("guard");
@@ -782,21 +763,41 @@ mod tests {
     }
 
     /// A settings file can hold tokens, and a dotfile manager can own it as
-    /// a link: installing and removing keep its mode and its link.
+    /// a link: installing and removing keep its permissions and its link.
     #[test]
-    fn installing_and_removing_keep_the_files_mode_and_its_link() {
-        use std::os::unix::fs::PermissionsExt;
+    fn installing_and_removing_keep_the_files_permissions_and_its_link() {
+        use hide_platform::fs::link;
+        use hide_platform::fs::permissions::Permissions;
+        let kept = |path: &Path| Permissions::of(&fs::File::open(path).unwrap()).unwrap();
         let fixture = Fixture::new("mode-link");
         let claude = AgentRuntime::ClaudeCode.config_path(fixture.home());
         fixture.write(AgentRuntime::ClaudeCode, OCCUPIED);
-        fs::set_permissions(&claude, fs::Permissions::from_mode(0o600)).unwrap();
         let dotfiles = fixture.home().join("dotfiles");
         fs::create_dir_all(&dotfiles).unwrap();
         let real = dotfiles.join("hooks.json");
         fs::write(&real, OCCUPIED).unwrap();
-        fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).unwrap();
+        // The permissions that matter are the mode bits, and only Unix has
+        // them; elsewhere the files keep what the system gave them.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&claude, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).unwrap();
+        }
         let codex = AgentRuntime::Codex.config_path(fixture.home());
-        std::os::unix::fs::symlink(&real, &codex).unwrap();
+        match link::create_link(&real, &codex) {
+            Ok(()) => {}
+            // A Windows account with neither the privilege nor Developer
+            // Mode cannot make the link this test needs.
+            Err(error) if link::needs_privilege(&error) => return,
+            Err(error) => panic!("{error}"),
+        }
+        let (claude_before, real_before) = (kept(&claude), kept(&real));
+        #[cfg(unix)]
+        {
+            assert_eq!(claude_before.unix_mode(), Some(0o600));
+            assert_eq!(real_before.unix_mode(), Some(0o640));
+        }
 
         for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
             assert!(
@@ -805,16 +806,9 @@ mod tests {
                     .changed
             );
         }
-        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&claude), 0o600);
-        assert!(
-            fs::symlink_metadata(&codex)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
-        assert_eq!(fs::read_link(&codex).unwrap(), real);
-        assert_eq!(mode(&real), 0o640);
+        assert_eq!(kept(&claude), claude_before);
+        assert!(link::is_link_to(&codex, &real));
+        assert_eq!(kept(&real), real_before);
         assert!(
             fs::read_to_string(&real)
                 .unwrap()
@@ -824,13 +818,8 @@ mod tests {
         for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
             remove(runtime, fixture.home()).unwrap();
         }
-        assert_eq!(mode(&claude), 0o600);
-        assert!(
-            fs::symlink_metadata(&codex)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
+        assert_eq!(kept(&claude), claude_before);
+        assert!(link::is_link_to(&codex, &real));
         assert_eq!(
             fixture.read(AgentRuntime::Codex),
             serde_json::from_str::<Value>(OCCUPIED).unwrap()

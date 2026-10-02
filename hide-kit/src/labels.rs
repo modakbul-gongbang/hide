@@ -19,6 +19,8 @@ use hide_herdr_client::wire::success_response::{InstalledPluginInfo, PluginSourc
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use hide_platform::process as platform;
+
 use crate::{KitTarget, process};
 
 pub const LABELS_PLUGIN_ID: &str = "hide.agent-context-labels";
@@ -214,7 +216,7 @@ fn uninstall_managed(target: &KitTarget, plugin_id: &str) -> Result<(), String> 
 /// the lock it holds rather than by its executable, which a swap renames to
 /// `.old-<pid>` and a GitHub install keeps elsewhere; the lock is under the
 /// target's home, so a test home never reaches the operator's watcher.
-fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<i32>, String> {
+fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<u32>, String> {
     if !lock.exists() || !lock_is_held(lock)? {
         return Ok(Vec::new());
     }
@@ -233,26 +235,27 @@ fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<i32>, String> {
         &target.stop,
     )
     .map_err(|reason| format!("the labels watcher could not be found: {reason}"))?;
-    let pids: Vec<i32> = finished
+    let pids: Vec<u32> = finished
         .stdout
         .lines()
         .filter_map(|line| line.trim().parse().ok())
-        .filter(|pid| *pid > 1 && *pid != std::process::id() as i32)
+        .filter(|pid| *pid > 1 && *pid != std::process::id())
         .collect();
     if pids.is_empty() {
         return Err("the labels watcher holds its lock but lsof named no process".to_owned());
     }
     for pid in &pids {
-        // SAFETY: kill with a pid and a signal number has no memory effects.
-        unsafe { libc::kill(*pid, libc::SIGTERM) };
+        // A holder that is already gone is the answer wanted.
+        let _ = platform::terminate(*pid);
     }
     let started = Instant::now();
-    while pids.iter().any(|pid| alive(*pid)) && started.elapsed() < WATCHER_EXIT_DEADLINE {
+    while pids.iter().any(|pid| platform::is_alive(*pid))
+        && started.elapsed() < WATCHER_EXIT_DEADLINE
+    {
         std::thread::sleep(Duration::from_millis(50));
     }
-    for pid in pids.iter().filter(|pid| alive(**pid)) {
-        // SAFETY: as above.
-        unsafe { libc::kill(*pid, libc::SIGKILL) };
+    for pid in pids.iter().filter(|pid| platform::is_alive(**pid)) {
+        let _ = platform::kill_tree(*pid);
     }
     // Stopped means the lock is free, whatever the signals answered: a pid
     // that survived, or a holder lsof did not name, keeps it.
@@ -273,25 +276,16 @@ fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<i32>, String> {
 /// Whether some process holds the watcher's exclusive lock: taking it for a
 /// moment answers without asking lsof on the ordinary pass where none runs.
 fn lock_is_held(lock: &Path) -> Result<bool, String> {
-    use std::os::fd::AsRawFd;
+    use hide_platform::fs::lock::{Mode, Waited, lock_file};
     let file = std::fs::File::open(lock)
         .map_err(|error| format!("the watcher lock could not be opened: {}", error.kind()))?;
-    // SAFETY: flock on a descriptor `file` owns; dropping `file` releases it.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-        return Ok(false);
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-        Ok(true)
-    } else {
-        Err(format!(
+    // Dropping the lock a free file hands back releases it again.
+    match lock_file(file, Mode::Exclusive, Duration::ZERO, &|| false) {
+        Ok(Waited::Locked(_)) => Ok(false),
+        Ok(Waited::TimedOut | Waited::Cancelled) => Ok(true),
+        Err(error) => Err(format!(
             "the watcher lock could not be checked: {}",
             error.kind()
-        ))
+        )),
     }
-}
-
-fn alive(pid: i32) -> bool {
-    // SAFETY: signal 0 only checks that the process exists.
-    unsafe { libc::kill(pid, 0) == 0 }
 }

@@ -14,6 +14,7 @@ path = "src/bin/hide-agent-hooks.rs"
 [dependencies]
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-memory = { path = "../hide-memory" }
+hide-platform = { path = "../hide-platform" }
 hide-project = { path = "../hide-project" }
 serde = { version = "=1.0.229", features = ["derive"] }
 # `preserve_order` keeps the operator's own keys in the order their editor

@@ -10,7 +10,6 @@
 //! the operator has nothing to do about it, so it goes to the log (design
 //! principle 13).
 
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use crate::{KitTarget, Retirement};
@@ -45,8 +44,9 @@ pub(crate) fn retire(target: &KitTarget) -> Retirement {
 /// Whether `path` is a real folder this account owns: `Ok(None)` when it is
 /// not there, an error sentence when it is something else.
 fn own_folder(path: &Path) -> Result<Option<()>, String> {
+    let owned = || hide_platform::fs::private::owned_by_current_user(path).unwrap_or(false);
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() && metadata.uid() == euid() => Ok(Some(())),
+        Ok(metadata) if metadata.is_dir() && owned() => Ok(Some(())),
         Ok(_) => Err(format!(
             "{} is not a folder of this account, so Hide left it",
             path.display()
@@ -168,11 +168,6 @@ fn still_named(target: &KitTarget, root: &Path) -> Option<String> {
 /// of the build digest.
 pub fn is_build_name(name: &str) -> bool {
     name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn euid() -> u32 {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    unsafe { libc::geteuid() }
 }
 
 /// What this Mac's kit pass retires: the folders the labels plugin era left

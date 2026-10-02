@@ -190,8 +190,9 @@ fn inside_agent_root(home: &Path, agent: Agent, located: &Path) -> Result<PathBu
         Agent::Codex => home.join(".codex/sessions"),
     };
     let outside = || "label_session_outside_roots".to_owned();
-    let root = std::fs::canonicalize(root).map_err(|_| outside())?;
-    let path = std::fs::canonicalize(located).map_err(|_| "session_file_missing".to_owned())?;
+    let root = hide_platform::fs::identity::canonical(&root).map_err(|_| outside())?;
+    let path = hide_platform::fs::identity::canonical(located)
+        .map_err(|_| "session_file_missing".to_owned())?;
     if path.starts_with(&root) && path != root {
         Ok(path)
     } else {
@@ -376,7 +377,13 @@ mod tests {
         )
         .unwrap();
         let link = transcript_path(root.path(), "s1.jsonl");
-        std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+        match hide_platform::fs::link::create_link(&elsewhere, &link) {
+            Ok(()) => {}
+            // A Windows account with neither the privilege nor Developer
+            // Mode cannot make the link this test needs.
+            Err(error) if hide_platform::fs::link::needs_privilege(&error) => return,
+            Err(error) => panic!("{error}"),
+        }
 
         assert_eq!(
             read(root.path(), &request(&link, None)).unwrap_err(),

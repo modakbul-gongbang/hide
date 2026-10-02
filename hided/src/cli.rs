@@ -4,6 +4,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use herdr_core::workspace_control::{Action, Edge};
+use hide_platform::process;
 
 use crate::env::{self, Env};
 use crate::spawn::spawn_owned;
@@ -842,33 +843,51 @@ fn stop(env: &Env) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether `state`'s pid is still the daemon that recorded it. A pid another
+/// process has reused (another account's, or a later daemon's) is not: it
+/// reads as gone and is never signalled. A state with no recorded start comes
+/// from an earlier build and is judged by liveness alone.
+fn still_the_daemon(state: &DaemonState) -> bool {
+    match state.pid_started {
+        Some(recorded) => process::start_time(state.pid).is_ok_and(|now| now == recorded),
+        None => process::is_alive(state.pid),
+    }
+}
+
 /// Ends the daemon `state` names: SIGTERM and five seconds for its graceful
 /// stop, which ends its AI requests and provider processes, then SIGKILL.
 /// An error only when it is still alive after that.
 fn stop_daemon(state_dir: &Path, state: &DaemonState) -> Result<(), String> {
-    // A damaged state's pid names no daemon (`send_signal` refuses it), so
-    // the state is only cleared.
-    if send_signal(state.pid, 0).is_err_and(|error| error.kind() == io::ErrorKind::InvalidInput) {
+    // A pid that is gone, or is another process now, has nothing to stop:
+    // only the state is cleared.
+    if !still_the_daemon(state) {
         state_file::forget_daemon(state_dir, state.pid);
         return Ok(());
     }
-    let _ = send_signal(state.pid, libc::SIGTERM);
+    // A damaged state's pid names no daemon (the platform layer refuses it),
+    // so the state is only cleared.
+    let asked = process::terminate(state.pid);
+    if asked.is_err_and(|error| error.kind() == io::ErrorKind::InvalidInput) {
+        state_file::forget_daemon(state_dir, state.pid);
+        return Ok(());
+    }
     for _ in 0..50 {
-        if !pid_alive(state.pid) {
+        if !still_the_daemon(state) {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    if pid_alive(state.pid) {
-        let _ = send_signal(state.pid, libc::SIGKILL);
+    if still_the_daemon(state) {
+        // The daemon leads its own group, so its provider processes go too.
+        let _ = process::kill_tree(state.pid);
         for _ in 0..20 {
-            if !pid_alive(state.pid) {
+            if !still_the_daemon(state) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-    if pid_alive(state.pid) {
+    if still_the_daemon(state) {
         return Err(format!(
             "the running hided (pid {}) did not stop",
             state.pid
@@ -973,7 +992,7 @@ fn healthy_daemon(env: &Env) -> Option<(DaemonState, serde_json::Value)> {
 
 fn healthy_daemon_in(state_dir: &Path) -> Option<(DaemonState, serde_json::Value)> {
     let state = state_file::read_state(state_dir).ok().flatten()?;
-    if !pid_alive(state.pid) {
+    if !still_the_daemon(&state) {
         return None;
     }
     let health = health_json(state.port).ok()?;
@@ -1005,41 +1024,52 @@ fn open_browser(state: &DaemonState) -> Result<(), String> {
     Ok(())
 }
 
-fn pid_alive(pid: u32) -> bool {
-    send_signal(pid, 0).is_ok()
-}
-
-/// Signals one process. A pid of 0 or 1, or one past `i32::MAX`, would
-/// reach this process group, launchd or every process this user owns, and
-/// names no daemon; a damaged state cannot make it one.
-fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
-    let pid = i32::try_from(pid)
-        .ok()
-        .filter(|pid| *pid > 1)
-        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-    let result = unsafe { libc::kill(pid, signal) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn no_signal_reaches_a_pid_that_names_no_daemon() {
-        for pid in [0, 1, u32::MAX, i32::MAX as u32 + 1] {
-            assert_eq!(
-                send_signal(pid, 0).unwrap_err().kind(),
-                io::ErrorKind::InvalidInput,
-                "pid {pid}"
-            );
-            assert!(!pid_alive(pid));
+    fn recorded(pid: u32, pid_started: Option<u64>) -> DaemonState {
+        DaemonState {
+            pid,
+            port: 7001,
+            token: "abc".into(),
+            socket: None,
+            started_at: "now".into(),
+            pid_started,
         }
-        assert!(pid_alive(std::process::id()));
+    }
+
+    #[test]
+    fn a_pid_reused_by_another_process_reads_as_gone_and_is_not_signalled() {
+        // A live process stands in for the stranger that now holds the pid:
+        // the state recorded a different start for it.
+        let mut stranger = Command::new("sleep").arg("30").spawn().unwrap();
+        let real_start = process::start_time(stranger.id()).unwrap();
+        let replaced = recorded(stranger.id(), Some(real_start.wrapping_add(1)));
+        assert!(!still_the_daemon(&replaced));
+
+        let dir = tempfile::tempdir().unwrap();
+        state_file::write_state(dir.path(), &replaced).unwrap();
+        stop_daemon(dir.path(), &replaced).unwrap();
+        assert!(
+            stranger.try_wait().unwrap().is_none(),
+            "the process that reused the pid was signalled"
+        );
+        assert!(
+            state_file::read_state(dir.path()).unwrap().is_none(),
+            "the stale state is cleared"
+        );
+
+        // The same process under the start the state recorded is the daemon.
+        assert!(still_the_daemon(&recorded(stranger.id(), Some(real_start))));
+        let _ = stranger.kill();
+        let _ = stranger.wait();
+    }
+
+    #[test]
+    fn a_state_with_no_recorded_start_is_judged_by_liveness() {
+        assert!(still_the_daemon(&recorded(std::process::id(), None)));
+        assert!(!still_the_daemon(&recorded(0, None)));
     }
 
     #[test]
@@ -1079,6 +1109,7 @@ mod tests {
             token: "abc".into(),
             socket: None,
             started_at: "now".into(),
+            pid_started: None,
         };
         assert_eq!(
             attached_json(&state, "ok"),

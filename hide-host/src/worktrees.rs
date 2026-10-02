@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use hide_platform::process::OwnedChild;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
@@ -790,10 +791,10 @@ impl WithinDeadline for Command {
 /// Runs `command` to completion, or kills it at `deadline` and answers
 /// `None`. Both pipes are drained on their own threads the whole time, so a
 /// child whose output outgrows the pipe buffer is never left blocked on a
-/// write nobody reads. The child leads its own process group and the deadline
-/// stops the whole group, so a hook, filter or fsmonitor Git started cannot
-/// keep a pipe open past it; a descendant that left the group is waited for
-/// only a moment and then left behind with its pipe.
+/// write nobody reads. The child is an owned child that leads its own tree and
+/// the deadline stops the whole tree, so a hook, filter or fsmonitor Git
+/// started cannot keep a pipe open past it; a descendant that left the tree is
+/// waited for only a moment and then left behind with its pipe.
 pub fn output_within(
     command: &mut Command,
     deadline: Duration,
@@ -802,16 +803,12 @@ pub fn output_within(
     use std::process::Stdio;
     use std::sync::mpsc;
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = OwnedChild::spawn(
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )?;
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
@@ -825,14 +822,12 @@ pub fn output_within(
     };
     let stdout = drain(
         child
-            .stdout
-            .take()
+            .take_stdout()
             .map(|p| Box::new(p) as Box<dyn Read + Send>),
     );
     let stderr = drain(
         child
-            .stderr
-            .take()
+            .take_stderr()
             .map(|p| Box::new(p) as Box<dyn Read + Send>),
     );
     let started = std::time::Instant::now();
@@ -841,7 +836,7 @@ pub fn output_within(
             break Some(status);
         }
         if started.elapsed() >= deadline {
-            kill_group(&mut child)?;
+            child.kill_tree()?;
             child.wait()?;
             break None;
         }
@@ -860,7 +855,7 @@ pub fn output_within(
     let (Some(status), Some(stdout), Some(stderr)) = (status, stdout, stderr) else {
         // The deadline path has already stopped the group.
         if status.is_some() {
-            let _ = kill_group(&mut child);
+            let _ = child.kill_tree();
         }
         return Ok(None);
     };
@@ -869,34 +864,6 @@ pub fn output_within(
         stdout,
         stderr,
     }))
-}
-
-/// Stops `child` and every process in its group, which it leads when it was
-/// spawned by [`output_within`] or the diff reader.
-pub(crate) fn kill_group(child: &mut std::process::Child) -> std::io::Result<()> {
-    if stop_group(child.id()) {
-        return Ok(());
-    }
-    child.kill()
-}
-
-/// Sends SIGKILL to the process group `leader` leads; whether one was there.
-/// A group id is not reused while its leader is unreaped or any member lives,
-/// so this reaches only what that child started, even after the child itself
-/// has ended; once every member has left, the id could name a later group,
-/// which needs the process ids to wrap within the one second a held pipe is
-/// waited for.
-pub(crate) fn stop_group(leader: u32) -> bool {
-    #[cfg(unix)]
-    {
-        // SAFETY: killpg only sends a signal.
-        unsafe { libc::killpg(leader as libc::pid_t, libc::SIGKILL) == 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = leader;
-        false
-    }
 }
 
 // --- creation --------------------------------------------------------------
@@ -978,7 +945,7 @@ pub fn check_new_branch(repository_root: &Path, branch: &str) -> HostResult<()> 
 /// The real path of an existing directory, or `None`; how the core confirms
 /// that the folder Herdr says it created is there and is the one it listed.
 pub fn directory(path: &Path) -> Option<String> {
-    let real = std::fs::canonicalize(path).ok()?;
+    let real = hide_platform::fs::identity::canonical(path).ok()?;
     real.is_dir().then(|| real.to_string_lossy().into_owned())
 }
 
@@ -1589,12 +1556,15 @@ mod ignored_repository_tests {
         std::fs::remove_dir_all(deep.join(".git")).unwrap();
 
         // A folder that cannot be read refuses rather than passing unseen.
-        use std::os::unix::fs::PermissionsExt;
-        let sealed = repo.join("build/src/sealed");
-        std::fs::create_dir_all(&sealed).unwrap();
-        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let refused = ignored_repository(repo);
-        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(refused.unwrap_err().contains("could not confirm"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let sealed = repo.join("build/src/sealed");
+            std::fs::create_dir_all(&sealed).unwrap();
+            std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let refused = ignored_repository(repo);
+            std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(refused.unwrap_err().contains("could not confirm"));
+        }
     }
 }

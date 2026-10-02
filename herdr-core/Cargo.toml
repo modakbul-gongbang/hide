@@ -15,6 +15,7 @@ hide-ai = { path = "../hide-ai" }
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-host = { path = "../hide-host" }
 hide-memory = { path = "../hide-memory" }
+hide-platform = { path = "../hide-platform" }
 hide-project = { path = "../hide-project" }
 hide-session = { path = "../hide-session" }
 base64 = "=0.23.1"
@@ -37,7 +38,6 @@ unicode-normalization = "=0.1.25"
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
-hide-platform = { path = "../hide-platform" }
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 hide-host = { path = "../hide-host", features = ["call-log"] }
 

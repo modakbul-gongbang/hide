@@ -1166,6 +1166,7 @@ version = "0.1.0"
 dependencies = [
  "hide-herdr-client",
  "hide-memory",
+ "hide-platform",
  "hide-project",
  "libc",
  "rusqlite",
@@ -1178,6 +1179,7 @@ dependencies = [
 name = "hide-ai"
 version = "0.1.0"
 dependencies = [
+ "hide-platform",
  "jsonschema",
  "libc",
  "serde",
@@ -1204,6 +1206,7 @@ dependencies = [
  "cap-std",
  "hide-herdr-client",
  "hide-kit",
+ "hide-platform",
  "hide-project",
  "hide-session",
  "ignore",
@@ -1221,7 +1224,7 @@ version = "0.1.0"
 dependencies = [
  "hide-agent-hooks",
  "hide-herdr-client",
- "libc",
+ "hide-platform",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1249,6 +1252,7 @@ name = "hide-platform"
 version = "0.1.0"
 dependencies = [
  "interprocess",
+ "junction",
  "libc",
  "tempfile",
  "widestring",
@@ -1269,6 +1273,7 @@ name = "hide-session"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hide-platform",
  "hide-project",
  "libc",
  "rusqlite",
@@ -1292,6 +1297,7 @@ dependencies = [
  "hide-herdr-client",
  "hide-host",
  "hide-kit",
+ "hide-platform",
  "hide-session",
  "http-body-util",
  "hyper",
@@ -1632,6 +1638,16 @@ dependencies = [
  "num-traits",
  "serde_json",
  "zmij",
+]
+
+[[package]]
+name = "junction"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cde48f36530cbd91b65f050101e6c056d6eb743cea2a8f0f19beef69c6742ff8"
+dependencies = [
+ "scopeguard",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

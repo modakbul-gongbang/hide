@@ -18,9 +18,11 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+use hide_platform::process::OwnedChild;
 
 /// How long a clone may go without Git printing anything before it is ended
 /// as stalled. Git reports progress at least once a second while data
@@ -272,16 +274,12 @@ pub fn clone_repository(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let child = command
-        .spawn()
+    // Dropping `run` on any path that did not see Git end stops Git's whole
+    // tree and reaps it; a finished clone releases it, so a background `gc`
+    // Git left running is not ended with it.
+    let mut run = OwnedChild::spawn(&mut command)
         .map_err(|error| CloneFailure::Io(format!("Git could not be started: {error}")))?;
-    let mut run = Run(child);
-    let lines = read_lines(run.0.stderr.take());
+    let lines = read_lines(run.take_stderr());
     let mut tail: Vec<String> = Vec::new();
     let mut last: Option<CloneProgress> = None;
     let mut heard = Instant::now();
@@ -311,7 +309,7 @@ pub fn clone_repository(
         if heard.elapsed() >= stall_limit {
             return Err(CloneFailure::Stalled(stall_limit));
         }
-        match run.0.try_wait() {
+        match run.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {}
             Err(error) => {
@@ -328,11 +326,11 @@ pub fn clone_repository(
         }
         tail.push(line);
     }
-    run.finished();
+    run.release();
     if !status.success() {
         return Err(classify(&tail, status.code()));
     }
-    rename_no_replace(&staging.0, &target).map_err(|error| {
+    hide_platform::fs::atomic::rename_no_replace_path(&staging.0, &target).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             CloneFailure::TargetExists(target.clone())
         } else {
@@ -341,23 +339,6 @@ pub fn clone_repository(
     })?;
     std::mem::forget(staging);
     Ok(target)
-}
-
-/// The running Git. Dropping it on any path that did not see Git end stops
-/// Git's whole process group and reaps it.
-struct Run(Child);
-
-impl Run {
-    fn finished(self) {
-        std::mem::forget(self);
-    }
-}
-
-impl Drop for Run {
-    fn drop(&mut self) {
-        let _ = crate::worktrees::kill_group(&mut self.0);
-        let _ = self.0.wait();
-    }
 }
 
 /// The folder Git writes into; removed on drop unless the clone moved it into
@@ -493,54 +474,6 @@ pub fn redact(line: &str) -> String {
     }
     out.push_str(rest);
     out
-}
-
-/// Moves the finished clone to its name, refusing to replace anything that
-/// appeared there meanwhile, even an empty folder `rename` would replace.
-fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        let from = CString::new(from.as_os_str().as_bytes())?;
-        let to = CString::new(to.as_os_str().as_bytes())?;
-        // SAFETY: both are NUL-terminated paths that outlive the call.
-        let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error())
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        let from = CString::new(from.as_os_str().as_bytes())?;
-        let to = CString::new(to.as_os_str().as_bytes())?;
-        // SAFETY: both are NUL-terminated paths that outlive the call.
-        let result = unsafe {
-            libc::renameat2(
-                libc::AT_FDCWD,
-                from.as_ptr(),
-                libc::AT_FDCWD,
-                to.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error())
-        }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        if to.symlink_metadata().is_ok() {
-            return Err(std::io::ErrorKind::AlreadyExists.into());
-        }
-        std::fs::rename(from, to)
-    }
 }
 
 #[cfg(test)]

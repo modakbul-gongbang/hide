@@ -14,7 +14,7 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -25,6 +25,8 @@ use serde_json::{Value, json};
 
 use crate::codex_home::{self, CodexHome};
 use crate::log::AiLogEvent;
+use hide_platform::process::{self as platform, OwnedChild};
+
 use crate::process::{self, ProcessMeasurement};
 use crate::{
     AiBackend, AiError, AiLogSink, AiRequest, AiResponse, AiUsage, Availability, CancelToken,
@@ -113,7 +115,7 @@ enum Line {
 }
 
 struct Session {
-    child: Child,
+    child: OwnedChild,
     /// Held in an `Option` so shutdown can close the pipe (its EOF is the
     /// app-server's own shutdown signal) while the child is still owned.
     stdin: Option<ChildStdin>,
@@ -594,16 +596,14 @@ impl Session {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut child = process::spawn(&mut command).map_err(|error| {
+        let mut child = OwnedChild::spawn(&mut command).map_err(|error| {
             AiError::ProviderUnavailable(format!("app_server_spawn_failed:{}", error.kind()))
         })?;
         let stdin = child
-            .stdin
-            .take()
+            .take_stdin()
             .ok_or_else(|| AiError::ProviderUnavailable("app_server_no_stdin".to_owned()))?;
         let stdout = child
-            .stdout
-            .take()
+            .take_stdout()
             .ok_or_else(|| AiError::ProviderUnavailable("app_server_no_stdout".to_owned()))?;
         let (sender, incoming) = mpsc::channel();
         std::thread::spawn(move || {
@@ -805,15 +805,20 @@ impl Session {
         // 1. stdin EOF: the app-server's own graceful shutdown.
         self.stdin = None;
         if self.wait_for_exit(SHUTDOWN_GRACE) {
+            // Whatever the wrapper left in its group goes too: a helper that
+            // outlived its parent is the leak the process cap exists for.
+            let _ = self.child.kill_tree();
             return;
         }
-        // 2. SIGTERM.
-        signal(pid, term_signal());
+        // 2. SIGTERM (an immediate end where the system has no polite one).
+        let _ = platform::terminate(pid);
         if self.wait_for_exit(SHUTDOWN_GRACE) {
+            let _ = self.child.kill_tree();
             return;
         }
-        // 3. SIGKILL, and reap so no zombie is left.
-        let _ = self.child.kill();
+        // 3. SIGKILL for the wrapper and everything it started, and reap so
+        // no zombie is left.
+        let _ = self.child.kill_tree();
         let _ = self.child.wait();
     }
 
@@ -841,27 +846,6 @@ impl Drop for Session {
         self.terminate();
     }
 }
-
-#[cfg(unix)]
-fn term_signal() -> i32 {
-    libc::SIGTERM
-}
-
-#[cfg(not(unix))]
-fn term_signal() -> i32 {
-    15
-}
-
-#[cfg(unix)]
-fn signal(pid: u32, sig: i32) {
-    // SAFETY: `kill` with a pid we started and a plain signal number.
-    unsafe {
-        libc::kill(pid as libc::pid_t, sig);
-    }
-}
-
-#[cfg(not(unix))]
-fn signal(_pid: u32, _sig: i32) {}
 
 /// Shared by every backend that starts a user-installed CLI, and by the core
 /// before it asks Herdr to start one in a pane.

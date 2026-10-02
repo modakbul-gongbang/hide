@@ -28,9 +28,11 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::{Duration, Instant};
+
+use hide_platform::process::OwnedChild;
 
 use serde_json::Value;
 
@@ -397,11 +399,12 @@ fn run(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    // Every child in the crate is started through the one spawn helper.
+    // Every child in the crate is started through the one spawn helper, and
+    // ending it ends whatever it started.
     let mut child =
-        crate::process::spawn(&mut command).map_err(|error| RunError::Spawn(error.kind()))?;
+        OwnedChild::spawn(&mut command).map_err(|error| RunError::Spawn(error.kind()))?;
 
-    let Some(mut stdout) = child.stdout.take() else {
+    let Some(mut stdout) = child.take_stdout() else {
         kill(&mut child);
         return Err(RunError::NoPipe("stdout"));
     };
@@ -413,7 +416,7 @@ fn run(
     });
 
     if let Some(text) = stdin_text {
-        let Some(mut stdin) = child.stdin.take() else {
+        let Some(mut stdin) = child.take_stdin() else {
             kill(&mut child);
             return Err(RunError::NoPipe("stdin"));
         };
@@ -467,7 +470,7 @@ fn run(
 
 /// The exit status of a child that has already closed stdout, or `None` when
 /// it had to be killed to stop waiting for it.
-fn wait_briefly(child: &mut Child) -> Option<i32> {
+fn wait_briefly(child: &mut OwnedChild) -> Option<i32> {
     let until = Instant::now() + EXIT_GRACE;
     loop {
         match child.try_wait() {
@@ -484,10 +487,10 @@ fn wait_briefly(child: &mut Child) -> Option<i32> {
     }
 }
 
-fn kill(child: &mut Child) {
-    // A print-mode child holds no state worth draining, so killing it is
-    // always safe.
-    let _ = child.kill();
+fn kill(child: &mut OwnedChild) {
+    // A print-mode child holds no state worth draining, so killing it and
+    // what it started is always safe.
+    let _ = child.kill_tree();
     let _ = child.wait();
 }
 

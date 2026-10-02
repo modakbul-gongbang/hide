@@ -4,9 +4,9 @@
 //! daemon owns the capability and answers over this exec channel.
 
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -14,6 +14,7 @@ use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use hide_herdr_client::{LocalSocketConnector, request_with_connector};
+use hide_platform::fs::private;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -110,11 +111,11 @@ fn validate_dir(path: &Path) -> io::Result<()> {
         ));
     }
     fs::create_dir_all(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    private::restrict_to_owner(path)?;
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
-        || metadata.uid() != unsafe { libc::geteuid() }
+        || !private::owned_by_current_user(path)?
     {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -278,12 +279,7 @@ fn serve_client(
             return Ok(path.clone());
         }
         let path = dir.join(format!("{}.json", request.nonce));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|_| "reference_unavailable")?;
+        let mut file = private::create_new_file(&path).map_err(|_| "reference_unavailable")?;
         if write!(
             file,
             "{}",

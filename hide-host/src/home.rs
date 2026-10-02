@@ -16,9 +16,10 @@
 //! reads the marker the one before it wrote.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use hide_platform::fs::lock::{self, Mode, Waited};
+use hide_platform::fs::{Access, atomic, identity, link, private};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
@@ -152,8 +153,8 @@ pub fn sync(user_home: &Path, projects: &[String]) -> HostResult<HomeSynced> {
             continue;
         }
         let entry = home_path.join(name);
-        if is_link_to(&entry, recorded) {
-            std::fs::remove_file(&entry).map_err(|error| {
+        if link::is_link_to(&entry, Path::new(recorded)) {
+            link::remove_link(&entry).map_err(|error| {
                 io_error(&error, format!("The link {name} could not be removed"))
             })?;
             let reason = if is_directory(Path::new(recorded)) {
@@ -183,8 +184,13 @@ pub fn sync(user_home: &Path, projects: &[String]) -> HostResult<HomeSynced> {
             Err(error) => {
                 return Err(io_error(&error, format!("{name} could not be read")));
             }
-            Ok(_) if is_link_to(&entry, &target_text) && recorded.is_some() => Action::Keep,
-            Ok(_) if recorded.is_some_and(|recorded| is_link_to(&entry, recorded)) => {
+            Ok(_) if link::is_link_to(&entry, Path::new(&target_text)) && recorded.is_some() => {
+                Action::Keep
+            }
+            Ok(_)
+                if recorded
+                    .is_some_and(|recorded| link::is_link_to(&entry, Path::new(recorded))) =>
+            {
                 Action::Replace
             }
             Ok(_) => Action::Taken,
@@ -210,7 +216,7 @@ pub fn sync(user_home: &Path, projects: &[String]) -> HostResult<HomeSynced> {
             Action::Keep => Ok(()),
             Action::Create => make_link(target, &entry, name),
             Action::Replace => {
-                std::fs::remove_file(&entry).map_err(|error| {
+                link::remove_link(&entry).map_err(|error| {
                     io_error(&error, format!("The link {name} could not be replaced"))
                 })?;
                 make_link(target, &entry, name)
@@ -240,8 +246,7 @@ pub fn sync(user_home: &Path, projects: &[String]) -> HostResult<HomeSynced> {
         write_marker(&home_path, &written)?;
     }
 
-    let home = home_path
-        .canonicalize()
+    let home = identity::canonical(&home_path)
         .map_err(|error| io_error(&error, "Hide's Home cannot be read"))?;
     let links = next
         .into_iter()
@@ -408,17 +413,19 @@ fn create_home(user_home: &Path, home_path: &Path) -> HostResult<()> {
         .tempdir_in(user_home)
         .map_err(|error| io_error(&error, "~/hide could not be created"))?;
     // Owner-only: the marker and AGENTS.md name every project of the account.
-    owner_only(staging.path(), 0o700)?;
+    private::restrict_to_owner(staging.path())
+        .map_err(|error| io_error(&error, "~/hide could not be prepared"))?;
     write_marker(staging.path(), &Marker::empty())?;
-    // A rename onto an empty folder would replace it; check the name is free
-    // as late as possible.
-    if std::fs::symlink_metadata(home_path).is_ok() {
-        return Err(not_home());
-    }
+    // A plain rename onto an empty folder would replace it; the rename that
+    // refuses to replace leaves no moment between the check and the move.
     let staged = staging.keep();
-    std::fs::rename(&staged, home_path).map_err(|error| {
+    atomic::rename_no_replace_path(&staged, home_path).map_err(|error| {
         let _ = std::fs::remove_dir_all(&staged);
-        io_error(&error, "~/hide could not be created")
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            not_home()
+        } else {
+            io_error(&error, "~/hide could not be created")
+        }
     })
 }
 
@@ -434,29 +441,9 @@ fn write_marker(home: &Path, marker: &Marker) -> HostResult<()> {
 
 /// Writes `name` in `dir` whole or not at all, owner-only.
 fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> HostResult<()> {
-    let what = format!("~/hide/{name} could not be written");
-    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(|error| io_error(&error, &what))?;
-    file.write_all(bytes)
-        .and_then(|()| file.flush())
-        .map_err(|error| io_error(&error, &what))?;
-    owner_only(file.path(), 0o600)?;
-    file.persist(dir.join(name))
-        .map_err(|error| io_error(&error.error, &what))?;
-    Ok(())
-}
-
-fn owner_only(path: &Path, mode: u32) -> HostResult<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-            .map_err(|error| io_error(&error, "~/hide could not be prepared"))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, mode);
-        Ok(())
-    }
+    atomic::write_file(&dir.join(name), bytes, Access::Private)
+        .map(drop)
+        .map_err(|error| io_error(&error, format!("~/hide/{name} could not be written")))
 }
 
 /// `CLAUDE.md` links to `AGENTS.md` unless something is there already, which
@@ -476,73 +463,32 @@ fn link_claude_file(home: &Path) -> HostResult<()> {
 /// rather than stacking helper threads behind it.
 const SYNC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// An exclusive `flock` on the account's home folder, released when dropped
-/// (closing the descriptor ends the lock).
-struct SyncLock(#[allow(dead_code)] std::fs::File);
+/// An exclusive lock on the account's home folder, released when dropped
+/// (and when the process ends).
+struct SyncLock(#[allow(dead_code)] lock::Lock);
 
 impl SyncLock {
     fn take(user_home: &Path) -> HostResult<Self> {
         Self::take_within(user_home, SYNC_LOCK_WAIT)
     }
 
-    #[cfg(unix)]
     fn take_within(user_home: &Path, wait: std::time::Duration) -> HostResult<Self> {
-        use std::os::fd::AsRawFd;
-        let folder = std::fs::File::open(user_home)
+        let folder = hide_platform::fs::open_dir(user_home)
             .map_err(|error| io_error(&error, "The home folder could not be opened"))?;
-        let deadline = std::time::Instant::now() + wait;
-        loop {
-            // flock only reads the descriptor, which `folder` keeps open for the call.
-            if unsafe { libc::flock(folder.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-                return Ok(Self(folder));
-            }
-            let error = std::io::Error::last_os_error();
-            match error.kind() {
-                std::io::ErrorKind::Interrupted => {}
-                std::io::ErrorKind::WouldBlock if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                std::io::ErrorKind::WouldBlock => {
-                    return Err(HostError::new(
-                        ErrorCode::Busy,
-                        "Another sync of Hide's Home is still running; try again",
-                    ));
-                }
-                _ => return Err(io_error(&error, "Hide's Home could not be locked")),
-            }
+        match lock::lock_dir(&folder, Mode::Exclusive, wait, &|| false) {
+            Ok(Waited::Locked(held)) => Ok(Self(held)),
+            Ok(Waited::TimedOut | Waited::Cancelled) => Err(HostError::new(
+                ErrorCode::Busy,
+                "Another sync of Hide's Home is still running; try again",
+            )),
+            Err(error) => Err(io_error(&error, "Hide's Home could not be locked")),
         }
-    }
-
-    #[cfg(not(unix))]
-    fn take_within(user_home: &Path, _wait: std::time::Duration) -> HostResult<Self> {
-        let folder = std::fs::File::open(user_home)
-            .map_err(|error| io_error(&error, "The home folder could not be opened"))?;
-        Ok(Self(folder))
     }
 }
 
 fn make_link(target: &Path, entry: &Path, name: &str) -> HostResult<()> {
-    symlink(target, entry)
+    link::create_link(target, entry)
         .map_err(|error| io_error(&error, format!("The link {name} could not be made")))
-}
-
-#[cfg(unix)]
-fn symlink(target: &Path, entry: &Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(target, entry)
-}
-
-#[cfg(not(unix))]
-fn symlink(_target: &Path, _entry: &Path) -> std::io::Result<()> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "links are not supported on this platform",
-    ))
-}
-
-/// Whether `entry` is itself a symlink to exactly `target`.
-fn is_link_to(entry: &Path, target: &str) -> bool {
-    std::fs::symlink_metadata(entry).is_ok_and(|metadata| metadata.file_type().is_symlink())
-        && std::fs::read_link(entry).is_ok_and(|link| link == Path::new(target))
 }
 
 /// A directory now, following links.
@@ -573,10 +519,9 @@ fn agents_text(links: &[HomeLink]) -> String {
     text
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::fd::AsRawFd;
     use std::time::Duration;
 
     /// A holder that never lets go is reported as busy within the wait,
@@ -584,8 +529,9 @@ mod tests {
     #[test]
     fn a_sync_lock_held_elsewhere_is_busy_after_the_wait() {
         let dir = tempfile::tempdir().unwrap();
-        let holder = std::fs::File::open(dir.path()).unwrap();
-        assert_eq!(unsafe { libc::flock(holder.as_raw_fd(), libc::LOCK_EX) }, 0);
+        let folder = hide_platform::fs::open_dir(dir.path()).unwrap();
+        let holder = lock::lock_dir(&folder, Mode::Exclusive, Duration::ZERO, &|| false).unwrap();
+        assert!(matches!(holder, Waited::Locked(_)));
         let started = std::time::Instant::now();
         let Err(error) = SyncLock::take_within(dir.path(), Duration::from_millis(300)) else {
             panic!("the lock was taken while another descriptor held it");

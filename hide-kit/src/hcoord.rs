@@ -225,7 +225,7 @@ pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
     crate::write_atomically(
         &shim_path(target),
         shim(&target.home, runtime).as_bytes(),
-        0o700,
+        hide_platform::fs::Access::PrivateExecutable,
     )?;
     // A name another program holds is left and reported on the row; hcoord
     // itself is installed either way. A relocated hcoord never takes it.
@@ -338,7 +338,6 @@ fn link_state(target: &KitTarget) -> Link {
     }
 }
 
-/// Why `hcoord` on `PATH` is not Hide's, for an installed hcoord row (B14).
 /// What an installed hcoord row adds below its location, which the row
 /// already shows: an old home left beside the new one (never merged), and
 /// another program's `hcoord` on PATH.
@@ -365,16 +364,8 @@ fn link(target: &KitTarget) -> Result<(), String> {
     let path = link_path(target);
     std::fs::create_dir_all(&target.cli_dir)
         .map_err(|error| format!("{} could not be created: {error}", target.cli_dir.display()))?;
-    let temporary = target
-        .cli_dir
-        .join(format!(".{LINK_NAME}.hide-kit-{}", std::process::id()));
-    let _ = std::fs::remove_file(&temporary);
-    std::os::unix::fs::symlink(shim_path(target), &temporary)
-        .and_then(|()| std::fs::rename(&temporary, &path))
-        .map_err(|error| {
-            let _ = std::fs::remove_file(&temporary);
-            format!("{} could not be linked: {error}", path.display())
-        })
+    hide_platform::fs::link::replace_link(&shim_path(target), &path)
+        .map_err(|error| format!("{} could not be linked: {error}", path.display()))
 }
 
 /// Asks this build's hcoord to converge its daemon, as the desktop host did
@@ -569,6 +560,8 @@ mod tests {
         }
     }
 
+    // A stand-in Node is a shell script, so these run where `/bin/sh` does.
+    #[cfg(unix)]
     fn fake_node(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -576,6 +569,7 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    #[cfg(unix)]
     fn shim_naming(home: &Path, program: &Path) {
         let shim = layout::hcoord_command(&layout::default_hcoord_home(home));
         std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
@@ -592,6 +586,7 @@ mod tests {
     /// A shim naming the versioned folder a package manager installed Node
     /// into is rewritten to the link that keeps leading to Node after an
     /// upgrade deletes that folder; a Node no such link leads to stays named.
+    #[cfg(unix)]
     #[test]
     fn a_node_reached_through_a_stable_link_is_named_by_that_link() {
         let stop = AtomicBool::new(false);

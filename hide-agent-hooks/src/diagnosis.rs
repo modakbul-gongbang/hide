@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use hide_platform::process::OwnedChild;
 use serde::{Deserialize, Serialize};
 
 use crate::install::{HookStatus, InstallFailure, status};
@@ -378,21 +379,22 @@ fn resolve_runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathBuf>
 }
 
 fn version_output(binary: &Path, timeout: Duration) -> Option<String> {
-    let mut child = Command::new(binary)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+    let mut child = OwnedChild::spawn(
+        Command::new(binary)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .ok()?;
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
                 let mut output = String::new();
-                child.stdout.take()?.read_to_string(&mut output).ok()?;
+                child.take_stdout()?.read_to_string(&mut output).ok()?;
                 if output.trim().is_empty() {
-                    child.stderr.take()?.read_to_string(&mut output).ok()?;
+                    child.take_stderr()?.read_to_string(&mut output).ok()?;
                 }
                 return status.success().then(|| output.trim().to_owned());
             }
@@ -400,7 +402,7 @@ fn version_output(binary: &Path, timeout: Duration) -> Option<String> {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok(None) | Err(_) => {
-                let _ = child.kill();
+                let _ = child.kill_tree();
                 let _ = child.wait();
                 return None;
             }

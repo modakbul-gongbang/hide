@@ -45,14 +45,7 @@ impl SearchIndex {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         if !path.exists() {
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            options.open(path).map_err(|e| e.to_string())?;
+            hide_platform::fs::private::create_new_file(path).map_err(|e| e.to_string())?;
         }
         let db = Connection::open(path).map_err(|e| e.to_string())?;
         db.busy_timeout(Duration::from_millis(100))
