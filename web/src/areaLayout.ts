@@ -272,13 +272,68 @@ export function revealedScroll(scroll: number, viewport: number, offset: number,
 }
 
 /**
- * Whether a tab strip draws `count` tabs as marks rather than titles (the Pen
- * library's `Component / Adaptive Work Tab`): titled tabs share `room` alike
- * and give up their titles only once an equal share would fall below
- * `titleMin`, the way a browser's tabs do.
+ * How a tab draws its contents in its slot: `titled` with the title at full
+ * padding, `compact` with narrow padding and a truncated title (an unselected
+ * one without its close control), `marks` with its marks alone (a selected
+ * one adding its close control).
  */
-export function iconTabs(room: number, count: number, titleMin: number): boolean {
-  return count > 0 && room / count < titleMin;
+export type TabFit = "titled" | "compact" | "marks";
+export type TabSlotFit = { width: number; fit: TabFit };
+/** The width and fit of the selected tab and of every other tab in one strip. */
+export type TabStripFit = { selected: TabSlotFit; others: TabSlotFit };
+
+/** The pixel sizes the strip's rules read, each from its design token. */
+export type TabStripSizes = {
+  /** `--size-tab-preferred`: what every tab asks for. */
+  preferred: number;
+  /** `--size-tab-title-min`: the narrowest a full titled tab is. */
+  titleMin: number;
+  /** `--size-tab-icon-identity`: a tab's marks alone. */
+  icon: number;
+  /** `--size-control-sm`: the close control. */
+  control: number;
+};
+
+/**
+ * How an Agent tab strip shares `room` among `count` tabs, the way a browser's
+ * tabs do: in three continuous stages, so the bar is used to its end and the
+ * selected tab keeps its title longest.
+ *
+ * 1. While an equal share holds the title minimum, every tab takes
+ *    `min(preferred, share)` with its title.
+ * 2. Below that the selected tab keeps the title minimum and the others split
+ *    what is left, shrinking alike to the icon identity: compact while they
+ *    still hold the marks and one control's worth of title, marks below.
+ * 3. Once every other tab is a mark, the selected tab gives up the rest:
+ *    compact with its close control while it holds the marks, two controls
+ *    and so one control's worth of title, then marks with its close control,
+ *    and the strip scrolls only once even those overflow.
+ *
+ * The same room and count always give the same answer, whichever way the
+ * room changed. With no tab of this strip selected (a delegated canvas shows
+ * instead) every tab follows the others' rule on an equal share.
+ */
+export function tabStripFit(room: number, count: number, hasSelected: boolean, sizes: TabStripSizes): TabStripFit {
+  const { preferred, titleMin, icon, control } = sizes;
+  const other = (width: number): TabSlotFit => {
+    if (width >= titleMin) return { width: Math.min(preferred, width), fit: "titled" };
+    if (width >= icon + control) return { width, fit: "compact" };
+    return { width: Math.max(icon, width), fit: "marks" };
+  };
+  const share = count > 0 ? room / count : preferred;
+  if (share >= titleMin || !hasSelected) {
+    const slot = other(share);
+    return { selected: slot, others: slot };
+  }
+  const rest = count - 1;
+  if (room >= titleMin + rest * icon) {
+    return { selected: { width: titleMin, fit: "titled" }, others: other((room - titleMin) / rest) };
+  }
+  const selected = room - rest * icon;
+  return {
+    selected: selected >= icon + 2 * control ? { width: selected, fit: "compact" } : { width: icon + control, fit: "marks" },
+    others: { width: icon, fit: "marks" },
+  };
 }
 
 export type Eligibility = { ok: true } | { ok: false; reason: string };
