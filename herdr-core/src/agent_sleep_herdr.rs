@@ -16,6 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use hide_herdr_client::{ApiConnector, ApiError, request_with_connector};
+use hide_platform::process;
 
 use crate::agent_sleep::WakeMode;
 use crate::agent_start::StartError;
@@ -82,16 +83,9 @@ pub(crate) fn end_agent(
     if foreground == shell {
         return Err("the pane's shell already holds the terminal".into());
     }
-    let target = i32::try_from(foreground)
-        .map_err(|_| format!("foreground process group {foreground} is out of range"))?;
-    // SAFETY: kill(2) takes plain integers; a negative pid addresses the
-    // process group Herdr reported as the pane's foreground.
-    if unsafe { libc::kill(-target, libc::SIGTERM) } != 0 {
-        return Err(format!(
-            "SIGTERM to process group {foreground} failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
+    // The group Herdr reported as the pane's foreground gets SIGTERM.
+    process::terminate_group(foreground)
+        .map_err(|error| format!("ending process group {foreground} failed: {error}"))?;
     let deadline = Instant::now() + END_TIMEOUT;
     loop {
         thread::sleep(END_POLL_INTERVAL);
@@ -247,7 +241,6 @@ pub(crate) fn spawn_wake(context: LiveContext, request: WakeRequest) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::process::CommandExt;
     use std::process::Command;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -272,18 +265,10 @@ mod tests {
         }})
     }
 
-    fn alive(pid: i32) -> bool {
-        // SAFETY: signal 0 only asks whether the process exists.
-        unsafe { libc::kill(pid, 0) == 0 }
-    }
-
     #[test]
     fn ending_signals_the_foreground_group_and_waits_for_the_shell() {
-        let mut child = Command::new("/bin/sleep")
-            .arg("60")
-            .process_group(0)
-            .spawn()
-            .expect("sleep starts");
+        let mut child =
+            process::OwnedChild::spawn(Command::new("/bin/sleep").arg("60")).expect("sleep starts");
         let pid = child.id();
         let exited = Arc::new(AtomicBool::new(false));
         let seen = Arc::clone(&exited);
@@ -293,7 +278,7 @@ mod tests {
                 // The shell (this test process stands in for it) takes the
                 // terminal back only once the agent's group is really gone.
                 let shell = std::process::id();
-                let gone = !alive(pid as i32) || seen.load(Ordering::SeqCst);
+                let gone = !process::is_alive(pid) || seen.load(Ordering::SeqCst);
                 process_info(shell, if gone { shell } else { pid })
             }
             other => panic!("unexpected {other}"),
@@ -304,7 +289,7 @@ mod tests {
         });
         assert_eq!(end_agent(&herdr.connector(), "w1:p1", "claude"), Ok(7));
         reaper.join().expect("reaped");
-        assert!(!alive(pid as i32));
+        assert!(!process::is_alive(pid));
     }
 
     #[test]

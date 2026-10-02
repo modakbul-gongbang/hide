@@ -6,3 +6,4 @@
 //! observe and runs unchanged on all three systems.
 
 pub mod ipc;
+pub mod process;

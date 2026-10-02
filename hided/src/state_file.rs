@@ -15,6 +15,12 @@ pub struct DaemonState {
     pub token: String,
     pub socket: Option<String>,
     pub started_at: String,
+    /// When the daemon's process started, as the platform layer reports it,
+    /// written with the pid so a later reader can tell the daemon from
+    /// another process that reused the pid. A state written by an earlier
+    /// build has none, and its pid is judged by liveness alone.
+    #[serde(default)]
+    pub pid_started: Option<u64>,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {
@@ -185,6 +191,7 @@ mod tests {
                 token: "aa".into(),
                 socket: None,
                 started_at: "now".into(),
+                pid_started: None,
             },
         )
         .unwrap();

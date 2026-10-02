@@ -11,6 +11,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use hide_platform::process::OwnedChild;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
@@ -702,7 +703,7 @@ fn bounded(path: String, text: Result<(String, bool), String>) -> Diff {
 /// Waits for `child` without holding its lock between checks, so the
 /// watchdog can take it to stop the child meanwhile.
 fn wait_unlocked(
-    child: &std::sync::Mutex<std::process::Child>,
+    child: &std::sync::Mutex<OwnedChild>,
 ) -> std::io::Result<std::process::ExitStatus> {
     loop {
         if let Some(status) = child
@@ -724,7 +725,7 @@ struct Watchdog {
 
 impl Watchdog {
     fn start(
-        child: std::sync::Arc<std::sync::Mutex<std::process::Child>>,
+        child: std::sync::Arc<std::sync::Mutex<OwnedChild>>,
         deadline: std::time::Duration,
     ) -> Self {
         let (finished, finished_rx) = std::sync::mpsc::channel::<()>();
@@ -736,16 +737,11 @@ impl Watchdog {
             let mut child = child
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            // The group goes even when git itself has ended, because
-            // something it started may still hold its output open.
-            // Signalled before it is reaped, so its unreaped leader still
-            // holds the group id the signal names.
-            let group = crate::worktrees::stop_group(child.id());
-            let running = matches!(child.try_wait(), Ok(None));
-            if running && !group {
-                let _ = child.kill();
-            }
-            running || group
+            // The tree goes even when git itself has ended, because
+            // something it started may still hold its output open. Whether
+            // anything was still running is what the caller reports; a kill
+            // that failed is retried by the owner's drop.
+            child.kill_tree().unwrap_or(false)
         });
         Self { finished, thread }
     }
@@ -774,20 +770,13 @@ fn git_diff_text(
         Some(input) => Stdio::from(input),
         None => Stdio::null(),
     });
-    // Its own group, so a textconv or external diff it starts is stopped
-    // with it and cannot hold the output open past the deadline.
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    // An owned child leads its own tree, so a textconv or external diff it
+    // starts is stopped with it and cannot hold the output open past the
+    // deadline.
+    let mut child = OwnedChild::spawn(command.stdout(Stdio::piped()).stderr(Stdio::piped()))
         .map_err(|error| format!("git could not be run: {error}"))?;
-    let mut stdout = child.stdout.take().expect("piped Git stdout");
-    let mut stderr = child.stderr.take().expect("piped Git stderr");
+    let mut stdout = child.take_stdout().expect("piped Git stdout");
+    let mut stderr = child.take_stderr().expect("piped Git stderr");
     // A diff that has not finished by the deadline is stopped, which closes
     // its output and ends the read below (D-15).
     let child = std::sync::Arc::new(std::sync::Mutex::new(child));
@@ -796,11 +785,10 @@ fn git_diff_text(
         crate::worktrees::GIT_DEADLINE,
     );
     let kill = || {
-        let _ = crate::worktrees::kill_group(
-            &mut child
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
-        );
+        let _ = child
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .kill_tree();
     };
     let stderr_reader = std::thread::spawn(move || {
         let mut kept = Vec::new();
@@ -867,10 +855,7 @@ mod tests {
     /// finished first is left alone.
     #[test]
     fn a_child_past_its_deadline_is_stopped() {
-        let slow = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
+        let slow = OwnedChild::spawn(std::process::Command::new("sleep").arg("30")).unwrap();
         let slow = std::sync::Arc::new(std::sync::Mutex::new(slow));
         let watchdog = Watchdog::start(
             std::sync::Arc::clone(&slow),
@@ -882,7 +867,7 @@ mod tests {
         assert!(!status.success());
         assert!(watchdog.finish());
 
-        let quick = std::process::Command::new("true").spawn().unwrap();
+        let quick = OwnedChild::spawn(&mut std::process::Command::new("true")).unwrap();
         let quick = std::sync::Arc::new(std::sync::Mutex::new(quick));
         let watchdog = Watchdog::start(
             std::sync::Arc::clone(&quick),

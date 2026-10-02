@@ -295,6 +295,60 @@ fn clear_leftover(path: &Path) -> io::Result<()> {
     }
 }
 
+/// The pid of the process at the other end of a connected Unix socket that
+/// this crate does not own (the pane bootstrap and the workspace bridge still
+/// accept on std listeners). `Unsupported` where the system does not report it.
+#[cfg(target_os = "macos")]
+pub fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
+    use std::os::fd::AsRawFd;
+    let mut pid: libc::pid_t = 0;
+    let mut size = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    // SAFETY: the output pointers refer to initialized stack values and the
+    // descriptor stays owned by `socket` for the whole call.
+    let result = unsafe {
+        libc::getsockopt(
+            socket.as_fd().as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&mut pid as *mut libc::pid_t).cast(),
+            &mut size,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    u32::try_from(pid)
+        .ok()
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
+}
+
+#[cfg(target_os = "linux")]
+pub fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: an all-zero `ucred` is a valid value.
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: the output pointers are writable for their declared sizes and
+    // the descriptor stays owned by `socket` for the whole call.
+    let result = unsafe {
+        libc::getsockopt(
+            socket.as_fd().as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut credentials as *mut libc::ucred).cast(),
+            &mut size,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    u32::try_from(credentials.pid)
+        .ok()
+        .filter(|pid| *pid > 0)
+        .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
+}
+
 fn already_answers(path: &Path) -> io::Error {
     io::Error::new(
         io::ErrorKind::AddrInUse,
@@ -409,39 +463,9 @@ mod sys {
         let _ = socket.inner().shutdown(Shutdown::Both);
     }
 
-    #[cfg(target_os = "macos")]
     pub(super) fn peer_pid(shared: &Shared) -> io::Result<u32> {
         let RawStream::UdSocket(socket) = &shared.raw;
-        let mut pid: libc::pid_t = 0;
-        let mut size = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-        // SAFETY: the output pointers refer to initialized stack values and
-        // the descriptor stays owned by the stream for the whole call.
-        let result = unsafe {
-            libc::getsockopt(
-                socket.inner().as_raw_fd(),
-                libc::SOL_LOCAL,
-                libc::LOCAL_PEERPID,
-                (&mut pid as *mut libc::pid_t).cast(),
-                &mut size,
-            )
-        };
-        if result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        u32::try_from(pid)
-            .ok()
-            .filter(|pid| *pid > 0)
-            .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub(super) fn peer_pid(shared: &Shared) -> io::Result<u32> {
-        shared
-            .raw
-            .peer_creds()?
-            .pid()
-            .and_then(|pid| u32::try_from(pid).ok())
-            .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
+        peer_pid_of_fd(socket.inner())
     }
 
     pub(super) fn pair() -> io::Result<(LocalStream, LocalStream)> {

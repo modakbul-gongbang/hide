@@ -214,12 +214,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "0".into());
+    let pid = std::process::id();
     let state = DaemonState {
-        pid: std::process::id(),
+        pid,
         port,
         token: token.clone(),
         socket: env.herdr_socket_path.clone(),
         started_at,
+        pid_started: hide_platform::process::start_time(pid).ok(),
     };
     write_state(&env.state_dir, &state).map_err(|error| error.to_string())?;
     match env.herdr_bin_path.as_ref() {

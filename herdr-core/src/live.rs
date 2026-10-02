@@ -2,9 +2,8 @@
 //! lives in `session_sync` and uses the sequenced socket event stream.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 #[cfg(test)]
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::{Sender, TryRecvError, channel};
@@ -43,6 +42,7 @@ use hide_herdr_client::{
 };
 #[cfg(test)]
 use hide_herdr_client::{HERDR_PROTOCOL_REVISION, request};
+use hide_platform::process::OwnedChild;
 
 #[path = "worktree_cleanup.rs"]
 pub(crate) mod cleanup;
@@ -2528,13 +2528,11 @@ fn register_fork_lineage_with_binary(
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
-    let mut child = command
-        .spawn()
+        .stderr(Stdio::piped());
+    let mut child = OwnedChild::spawn(&mut command)
         .map_err(|error| format!("{} could not run: {error}", binary.display()))?;
-    let stdout = child.stdout.take().expect("hcoord stdout is piped");
-    let stderr = child.stderr.take().expect("hcoord stderr is piped");
+    let stdout = child.take_stdout().expect("hcoord stdout is piped");
+    let stderr = child.take_stderr().expect("hcoord stderr is piped");
     let stdout = thread::spawn(move || drain_capped(stdout, HCOORD_LINK_OUTPUT_BYTES));
     let stderr = thread::spawn(move || drain_capped(stderr, HCOORD_LINK_OUTPUT_BYTES));
     let started = Instant::now();
@@ -2548,12 +2546,9 @@ fn register_fork_lineage_with_binary(
                     _ => format!("hcoord timed out after {} ms", timeout.as_millis()),
                 };
                 // The shim can exec a runtime that starts helpers. Kill the
-                // invocation's process group so no descendant can retain a
-                // pipe and keep this worker alive past its deadline.
-                unsafe {
-                    libc::kill(-(child.id() as i32), libc::SIGKILL);
-                }
-                let _ = child.kill();
+                // invocation's whole tree so no descendant can retain a pipe
+                // and keep this worker alive past its deadline.
+                let _ = child.kill_tree();
                 let _ = child.wait();
                 break Err(reason);
             }
@@ -3207,7 +3202,7 @@ pub struct TerminalSession {
 }
 
 enum TerminalSessionCleanup {
-    Local(Child),
+    Local(OwnedChild),
     Remote(Box<dyn FnOnce() + Send>),
 }
 
@@ -3336,7 +3331,7 @@ impl TerminalSession {
         } else {
             command.stdin(Stdio::null());
         }
-        let mut child = command.spawn().map_err(|error| {
+        let mut child = OwnedChild::spawn(&mut command).map_err(|error| {
             format!(
                 "herdr terminal session {} could not be spawned: {error}",
                 mode.as_str()
@@ -3344,8 +3339,7 @@ impl TerminalSession {
         })?;
         let writer = if mode == TerminalSessionMode::Control {
             let stdin = child
-                .stdin
-                .take()
+                .take_stdin()
                 .ok_or_else(|| "terminal control stdin was not piped".to_owned())?;
             Some(spawn_terminal_control_writer(
                 context.runtime.clone(),
@@ -3358,8 +3352,7 @@ impl TerminalSession {
             None
         };
         let reader = child
-            .stdout
-            .take()
+            .take_stdout()
             .ok_or_else(|| "terminal session stdout was not piped".to_owned())?;
 
         Ok(Self {
@@ -3767,7 +3760,7 @@ impl Drop for TerminalSession {
     }
 }
 
-fn reap_local_terminal_child(child: &mut Child, pane_id: &str) {
+fn reap_local_terminal_child(child: &mut OwnedChild, pane_id: &str) {
     for _ in 0..20 {
         match child.try_wait() {
             Ok(Some(_)) => return,
@@ -3783,7 +3776,7 @@ fn reap_local_terminal_child(child: &mut Child, pane_id: &str) {
             }
         }
     }
-    if let Err(error) = child.kill() {
+    if let Err(error) = child.kill_tree() {
         crate::diagnostic!(json!({
             "component": "terminal_session",
             "kind": "terminal.session_kill_failed",
@@ -3990,13 +3983,12 @@ mod tests {
             started.elapsed() < Duration::from_secs(5),
             "the fork worker must settle promptly"
         );
-        let pid: i32 = std::fs::read_to_string(pid_path)
+        let pid: u32 = std::fs::read_to_string(pid_path)
             .expect("fixture recorded its process id")
             .parse()
             .expect("fixture process id is numeric");
-        assert_eq!(
-            unsafe { libc::kill(pid, 0) },
-            -1,
+        assert!(
+            !hide_platform::process::is_alive(pid),
             "the timed-out hcoord process must not survive"
         );
     }

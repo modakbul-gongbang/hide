@@ -12,13 +12,12 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use hide_platform::process::OwnedChild;
 use serde::Deserialize;
 
 use crate::model::{
@@ -1641,9 +1640,7 @@ fn run_gh(
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    #[cfg(unix)]
-    command.process_group(0);
-    let mut child = command.spawn().map_err(|error| GhFailure {
+    let mut child = OwnedChild::spawn(&mut command).map_err(|error| GhFailure {
         category: if error.kind() == std::io::ErrorKind::NotFound {
             "not installed"
         } else {
@@ -1653,8 +1650,8 @@ fn run_gh(
     })?;
     // Drain both pipes while waiting, otherwise a large PR list fills stdout
     // and the child cannot exit before the timeout.
-    let mut stdout = child.stdout.take().expect("piped stdout");
-    let mut stderr = child.stderr.take().expect("piped stderr");
+    let mut stdout = child.take_stdout().expect("piped stdout");
+    let mut stderr = child.take_stderr().expect("piped stderr");
     let out = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         stdout.read_to_end(&mut bytes).map(|_| bytes)
@@ -1675,13 +1672,9 @@ fn run_gh(
                     Err(error) => format!("gh wait failed: {error}"),
                     _ => format!("gh timed out after {} ms", timeout.as_millis()),
                 };
-                // Kill only the group this invocation created, including helpers
+                // Kill only the tree this invocation created, including helpers
                 // retaining the pipe handles, so draining cannot outlive the deadline.
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(-(child.id() as i32), libc::SIGKILL);
-                }
-                let _ = child.kill();
+                let _ = child.kill_tree();
                 let _ = child.wait();
                 break Err(GhFailure::network(reason));
             }
@@ -2115,14 +2108,13 @@ esac"#,
         assert_eq!(failure.category, "network or rate limit");
         assert!(failure.reason.contains("timed out"));
         assert!(started.elapsed() < Duration::from_secs(5));
-        let pid: i32 = std::fs::read_to_string(fixture.root.join("pid"))
+        let pid: u32 = std::fs::read_to_string(fixture.root.join("pid"))
             .unwrap()
             .trim()
             .parse()
             .unwrap();
-        assert_eq!(
-            unsafe { libc::kill(pid, 0) },
-            -1,
+        assert!(
+            !hide_platform::process::is_alive(pid),
             "the gh child has been reaped"
         );
         assert!(!fixture.root.join("survived").exists());
