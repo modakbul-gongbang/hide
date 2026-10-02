@@ -104,7 +104,8 @@ pub(crate) fn reopen_dir_for_io(dir: &impl Handle) -> std::io::Result<std::fs::F
     Ok(std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
 }
 
-/// The path the open folder is at now.
+/// The path the open file or folder is at now, as the system spells it
+/// (with the `\\?\` prefix).
 #[cfg(windows)]
 pub(crate) fn path_of(dir: &impl Handle) -> std::io::Result<std::path::PathBuf> {
     use std::os::windows::ffi::OsStringExt;
@@ -125,7 +126,9 @@ pub(crate) fn path_of(dir: &impl Handle) -> std::io::Result<std::path::PathBuf> 
         if length == 0 {
             return Err(std::io::Error::last_os_error());
         }
-        if length <= buffer.len() {
+        // On success the count excludes the terminating NUL, so it is less
+        // than the buffer; a count as large is the size the path needs.
+        if length < buffer.len() {
             return Ok(std::path::PathBuf::from(std::ffi::OsString::from_wide(
                 &buffer[..length],
             )));

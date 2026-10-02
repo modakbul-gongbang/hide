@@ -18,6 +18,27 @@ pub fn create_dir(path: &Path) -> io::Result<()> {
     sys::create_dir(path)
 }
 
+/// Makes the folder `path` and any missing folder above it, each private, the
+/// way `fs::create_dir_all` makes them open. A folder that is already there
+/// is left as it is, so the caller checks one it did not make before
+/// trusting it.
+pub fn create_dir_all(path: &Path) -> io::Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        create_dir_all(parent)?;
+    }
+    match sys::create_dir(path) {
+        // Another process made it between the look and the make.
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        made => made,
+    }
+}
+
 /// Makes the file `path`, private and open for writing. It must not exist.
 pub fn create_new_file(path: &Path) -> io::Result<fs::File> {
     sys::open_file(path, true)

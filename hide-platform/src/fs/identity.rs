@@ -96,6 +96,13 @@ pub fn canonical(path: &Path) -> io::Result<PathBuf> {
     sys::canonical(path)
 }
 
+/// The path the open file or folder is at now, spelled as [`canonical`]
+/// spells it: after a rename it is the new path. A file that was removed
+/// while open has none on Linux (`NotFound`).
+pub fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
+    sys::path_of(handle)
+}
+
 /// Whether `folder` tells `Name` from `name`. It is a property of the folder
 /// and not of the system: a Mac or a Windows volume may be either, and
 /// Windows can make one folder case sensitive.
@@ -293,6 +300,42 @@ mod sys {
     pub(super) fn canonical(path: &Path) -> io::Result<PathBuf> {
         fs::canonicalize(path)
     }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
+        use std::ffi::CStr;
+        use std::os::fd::AsRawFd;
+        use std::os::unix::ffi::OsStrExt;
+        let mut path = [0 as libc::c_char; libc::PATH_MAX as usize];
+        // SAFETY: the buffer is writable for PATH_MAX bytes, which F_GETPATH
+        // needs, and the descriptor is borrowed for the call.
+        if unsafe {
+            libc::fcntl(
+                handle.as_fd().as_raw_fd(),
+                libc::F_GETPATH,
+                path.as_mut_ptr(),
+            )
+        } == -1
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: F_GETPATH wrote a NUL-terminated path.
+        let bytes = unsafe { CStr::from_ptr(path.as_ptr()) }.to_bytes();
+        Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
+        use std::os::fd::AsRawFd;
+        let path = fs::read_link(format!("/proc/self/fd/{}", handle.as_fd().as_raw_fd()))?;
+        if path.to_string_lossy().ends_with(" (deleted)") {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the open file was removed",
+            ));
+        }
+        Ok(path)
+    }
 }
 
 #[cfg(windows)]
@@ -403,11 +446,18 @@ mod sys {
     }
 
     pub(super) fn canonical(path: &Path) -> io::Result<PathBuf> {
-        let real = fs::canonicalize(path)?;
-        Ok(real
-            .to_str()
+        Ok(short(fs::canonicalize(path)?))
+    }
+
+    pub(super) fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
+        Ok(short(crate::fs::path_of(handle)?))
+    }
+
+    /// The path without the `\\?\` prefix wherever it means the same.
+    fn short(real: PathBuf) -> PathBuf {
+        real.to_str()
             .and_then(super::strip_verbatim)
-            .map_or(real, PathBuf::from))
+            .map_or(real, PathBuf::from)
     }
 }
 

@@ -98,6 +98,28 @@ fn a_private_folder_is_the_current_accounts_alone() {
 }
 
 #[test]
+fn private_folders_are_made_down_to_the_last_and_an_existing_one_is_left_alone() {
+    let outer = folder();
+    let deep = outer.path().join("state").join("hide").join("attachments");
+    private::create_dir_all(&deep).unwrap();
+    for made in [
+        outer.path().join("state"),
+        outer.path().join("state").join("hide"),
+        deep.clone(),
+    ] {
+        assert!(private::is_private(&made).unwrap(), "{}", made.display());
+    }
+    private::create_dir_all(&deep).unwrap();
+    let shared = outer.path().join("shared");
+    fs::create_dir(&shared).unwrap();
+    widen(&shared, false);
+    private::create_dir_all(&shared).unwrap();
+    assert!(!private::is_private(&shared).unwrap());
+    fs::write(outer.path().join("file"), "").unwrap();
+    assert!(private::create_dir_all(&outer.path().join("file")).is_err());
+}
+
+#[test]
 fn a_private_file_is_the_current_accounts_alone_and_is_not_made_twice() {
     let outer = folder();
     let made = outer.path().join("secret");
@@ -1073,4 +1095,29 @@ fn the_volume_a_folder_is_on_has_room_and_a_missing_one_has_no_answer() {
     let outer = folder();
     assert!(space::free_bytes(outer.path()).unwrap() > 0);
     assert!(space::free_bytes(&outer.path().join("missing")).is_err());
+}
+
+#[test]
+fn an_open_file_knows_the_path_it_is_at_even_after_a_rename() {
+    let outer = folder();
+    let first = outer.path().join("first.txt");
+    fs::write(&first, "contents").unwrap();
+    let file = File::open(&first).unwrap();
+    assert_eq!(
+        identity::path_of(&file).unwrap(),
+        identity::canonical(&first).unwrap()
+    );
+    let folder_handle = hide_platform::fs::open_dir(outer.path()).unwrap();
+    assert_eq!(
+        identity::path_of(&folder_handle).unwrap(),
+        identity::canonical(outer.path()).unwrap()
+    );
+    let second = outer.path().join("second.txt");
+    // Windows renames an open file only when it was opened sharing delete,
+    // which `File::open` does.
+    fs::rename(&first, &second).unwrap();
+    assert_eq!(
+        identity::path_of(&file).unwrap(),
+        identity::canonical(&second).unwrap()
+    );
 }

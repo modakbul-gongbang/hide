@@ -33,9 +33,38 @@ use std::path::{Path, PathBuf};
 /// The variable that names the account's home folder.
 pub const HOME_VARIABLE: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
 
+/// Every variable this module reads, so a caller that keeps a registry of the
+/// variables it depends on can check it holds these.
+pub const VARIABLES: &[&str] = &[
+    HOME_VARIABLE,
+    "XDG_STATE_HOME",
+    "LOCALAPPDATA",
+    "XDG_CONFIG_HOME",
+    "APPDATA",
+    "PATH",
+    "PATHEXT",
+    "SHELL",
+    "ComSpec",
+    "ProgramFiles",
+];
+
+/// How a caller with its own record of the environment (a registry that
+/// validates at start, a test) hands it to the `_from` functions: the value
+/// of a variable, `None` when it is unset.
+pub type Variables<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+
+fn process(name: &str) -> Option<OsString> {
+    std::env::var_os(name)
+}
+
 /// The account's home folder.
 pub fn home_dir() -> io::Result<PathBuf> {
-    absolute_variable(HOME_VARIABLE)
+    home_dir_from(&process)
+}
+
+/// [`home_dir`] from the caller's variables.
+pub fn home_dir_from(variables: Variables) -> io::Result<PathBuf> {
+    absolute_variable(variables, HOME_VARIABLE)
 }
 
 /// The folder applications keep the account's state in on this system:
@@ -43,14 +72,21 @@ pub fn home_dir() -> io::Result<PathBuf> {
 /// `~/.local/state` on Linux, `%LOCALAPPDATA%` on Windows. A caller keeps its
 /// own folder inside it.
 pub fn state_dir() -> io::Result<PathBuf> {
+    state_dir_from(&process)
+}
+
+/// [`state_dir`] from the caller's variables.
+pub fn state_dir_from(variables: Variables) -> io::Result<PathBuf> {
     if cfg!(target_os = "macos") {
-        Ok(home_dir()?.join("Library").join("Application Support"))
+        Ok(home_dir_from(variables)?
+            .join("Library")
+            .join("Application Support"))
     } else if cfg!(windows) {
-        absolute_variable("LOCALAPPDATA")
+        absolute_variable(variables, "LOCALAPPDATA")
     } else {
-        match nonempty_variable("XDG_STATE_HOME") {
-            Some(_) => absolute_variable("XDG_STATE_HOME"),
-            None => Ok(home_dir()?.join(".local").join("state")),
+        match nonempty_variable(variables, "XDG_STATE_HOME") {
+            Some(_) => absolute_variable(variables, "XDG_STATE_HOME"),
+            None => Ok(home_dir_from(variables)?.join(".local").join("state")),
         }
     }
 }
@@ -62,23 +98,31 @@ pub fn state_dir() -> io::Result<PathBuf> {
 /// (whose socket is a named pipe of that name). `HERDR_SOCKET_PATH` and a
 /// named session are the caller's to apply before asking.
 pub fn herdr_socket_default() -> io::Result<PathBuf> {
-    Ok(herdr_config_dir()?.join("herdr.sock"))
+    herdr_socket_default_from(&process)
+}
+
+/// [`herdr_socket_default`] from the caller's variables.
+pub fn herdr_socket_default_from(variables: Variables) -> io::Result<PathBuf> {
+    Ok(herdr_config_dir(variables)?.join("herdr.sock"))
 }
 
 /// Herdr's config folder, resolved in Herdr's own order (`config::io` of the
 /// pinned release); where Herdr would fall back to a temporary folder, this
 /// says there is none.
-fn herdr_config_dir() -> io::Result<PathBuf> {
-    if std::env::var_os("XDG_CONFIG_HOME").is_some() {
-        return Ok(absolute_variable("XDG_CONFIG_HOME")?.join("herdr"));
+fn herdr_config_dir(variables: Variables) -> io::Result<PathBuf> {
+    if variables("XDG_CONFIG_HOME").is_some() {
+        return Ok(absolute_variable(variables, "XDG_CONFIG_HOME")?.join("herdr"));
     }
     if cfg!(windows) {
-        if std::env::var_os("APPDATA").is_some() {
-            return Ok(absolute_variable("APPDATA")?.join("herdr"));
+        if variables("APPDATA").is_some() {
+            return Ok(absolute_variable(variables, "APPDATA")?.join("herdr"));
         }
-        return Ok(home_dir()?.join("AppData").join("Roaming").join("herdr"));
+        return Ok(home_dir_from(variables)?
+            .join("AppData")
+            .join("Roaming")
+            .join("herdr"));
     }
-    Ok(home_dir()?.join(".config").join("herdr"))
+    Ok(home_dir_from(variables)?.join(".config").join("herdr"))
 }
 
 /// The search path this process finds programs on (`PATH`). The desktop app
@@ -124,7 +168,7 @@ fn is_program(candidate: &Path) -> bool {
 /// The shell the account runs commands in by default: `$SHELL` on macOS and
 /// Linux, `%ComSpec%` (cmd.exe) on Windows.
 pub fn default_shell() -> io::Result<PathBuf> {
-    absolute_variable(if cfg!(windows) { "ComSpec" } else { "SHELL" })
+    absolute_variable(&process, if cfg!(windows) { "ComSpec" } else { "SHELL" })
 }
 
 /// Moves the file or folder at `path` to the system's Trash (the Recycle
@@ -167,7 +211,7 @@ pub fn tailscale_cli() -> io::Result<PathBuf> {
             "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
         ))
     } else if cfg!(windows) {
-        Ok(absolute_variable("ProgramFiles")?
+        Ok(absolute_variable(&process, "ProgramFiles")?
             .join("Tailscale")
             .join("tailscale.exe"))
     } else {
@@ -206,14 +250,14 @@ pub fn machine_id() -> io::Result<String> {
     Ok(id.to_owned())
 }
 
-fn nonempty_variable(name: &str) -> Option<OsString> {
-    std::env::var_os(name).filter(|value| !value.is_empty())
+fn nonempty_variable(variables: Variables, name: &str) -> Option<OsString> {
+    variables(name).filter(|value| !value.is_empty())
 }
 
 /// The variable `name` as an absolute path: `NotFound` when it is unset or
 /// empty, `InvalidInput` when it names a relative path.
-fn absolute_variable(name: &str) -> io::Result<PathBuf> {
-    let value = nonempty_variable(name)
+fn absolute_variable(variables: Variables, name: &str) -> io::Result<PathBuf> {
+    let value = nonempty_variable(variables, name)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("{name} is not set")))?;
     let path = PathBuf::from(value);
     if !path.is_absolute() {

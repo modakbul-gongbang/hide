@@ -164,3 +164,74 @@ fn trashing_a_missing_file_fails() {
     let folder = tempfile::tempdir().unwrap();
     assert!(host::trash(&folder.path().join("missing")).is_err());
 }
+
+/// A record of the environment holding only `pairs`.
+fn variables(pairs: Vec<(&'static str, PathBuf)>) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+    move |name| {
+        pairs
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.clone().into_os_string())
+    }
+}
+
+#[test]
+fn herdrs_default_socket_is_resolved_in_herdrs_own_order() {
+    let base = std::env::temp_dir();
+    let home = base.join("example-home");
+    let roaming = base.join("example-roaming");
+    let config = base.join("example-config");
+    let socket = |folder: PathBuf| folder.join("herdr").join("herdr.sock");
+
+    let home_only = variables(vec![(host::HOME_VARIABLE, home.clone())]);
+    let expected = if cfg!(windows) {
+        socket(home.join("AppData").join("Roaming"))
+    } else {
+        socket(home.join(".config"))
+    };
+    assert_eq!(
+        host::herdr_socket_default_from(&home_only).unwrap(),
+        expected
+    );
+
+    let with_appdata = variables(vec![
+        (host::HOME_VARIABLE, home.clone()),
+        ("APPDATA", roaming.clone()),
+    ]);
+    let expected = if cfg!(windows) {
+        socket(roaming.clone())
+    } else {
+        socket(home.join(".config"))
+    };
+    assert_eq!(
+        host::herdr_socket_default_from(&with_appdata).unwrap(),
+        expected
+    );
+
+    let with_config = variables(vec![
+        (host::HOME_VARIABLE, home.clone()),
+        ("APPDATA", roaming),
+        ("XDG_CONFIG_HOME", config.clone()),
+    ]);
+    assert_eq!(
+        host::herdr_socket_default_from(&with_config).unwrap(),
+        socket(config)
+    );
+
+    let relative = variables(vec![
+        (host::HOME_VARIABLE, home),
+        ("XDG_CONFIG_HOME", PathBuf::from("relative")),
+    ]);
+    assert_eq!(
+        host::herdr_socket_default_from(&relative)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        host::herdr_socket_default_from(&variables(Vec::new()))
+            .unwrap_err()
+            .kind(),
+        ErrorKind::NotFound
+    );
+}
