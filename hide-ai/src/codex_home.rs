@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use hide_platform::process::is_alive as pid_alive;
+
 use crate::log::AiLogEvent;
 use crate::{AiError, AiLogSink, ProviderId};
 
@@ -190,25 +192,6 @@ fn is_own_directory(path: &Path) -> bool {
 #[cfg(not(unix))]
 fn is_own_directory(_path: &Path) -> bool {
     false
-}
-
-/// Whether any process has this pid. `EPERM` means one exists that belongs to
-/// someone else, which is alive for this purpose.
-#[cfg(unix)]
-fn pid_alive(pid: u32) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return true;
-    };
-    // SAFETY: signal 0 performs the existence and permission check only.
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        return true;
-    }
-    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-}
-
-#[cfg(not(unix))]
-fn pid_alive(_pid: u32) -> bool {
-    true
 }
 
 /// The bytes a home holds, for the log line. Symlinks are counted as
