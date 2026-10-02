@@ -114,9 +114,9 @@ test("a root waiting on its child, the badge's child list, and the progress line
     // cut on one line; the pointer and the keyboard move neither row, the
     // child's request keeps its one line, and the unfolded chevron waits in
     // a slot kept at rest until the pointer or the keyboard reaches the row.
-    // The core reads the session again on a state change it sees: the turn
-    // has to be seen working before it ends, or working and idle land in one
-    // snapshot and nothing changed.
+    // The turn is seen working before it ends: the core reads the session
+    // again on a state change it observes, and the child's mark shows Working
+    // only once the worker has seen it (Linux CI once ended it unseen).
     continueFixtureTranscript(herdr, childSession, { task: LONG_TITLE, reply: QUESTION, question: true });
     await setFixtureLifecycle(herdr, child, "working");
     await expect(childRow.locator('[data-agent-status-mark="Working"]')).toBeVisible({ timeout: 20_000 });
