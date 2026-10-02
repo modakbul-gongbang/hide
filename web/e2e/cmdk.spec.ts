@@ -250,6 +250,9 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
       .poll(() => rowIds(page), { timeout: 30_000 })
       .toEqual([expect.stringMatching(/^issue:/), expect.stringMatching(/^checkout:/), expect.stringMatching(/^pr:.*:180$/), `agent:${agent}`, expect.stringMatching(/^checkout:/)]);
     await expect(page.locator('[data-palette-group="recent"] [data-palette-row]')).toHaveCount(1);
+    // The checkout in front is Related's row, so Recent's row is a different checkout, never the same one twice (B4).
+    const [related, recent] = [await page.locator('[data-palette-row^="checkout:"]').nth(0).getAttribute("data-palette-row"), await page.locator('[data-palette-group="recent"] [data-palette-row]').getAttribute("data-palette-row")];
+    expect(recent).not.toBe(related);
     await expect(rows(page).first()).toContainText("팔레트 이동 이슈");
     await expect(page.locator('[data-palette-row^="pr:"]')).toContainText("⌘K를 이동 팔레트로");
     await expect(page.locator('[data-palette-row^="pr:"]')).toContainText("Open");
