@@ -14,8 +14,10 @@ import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflo
 
 test.describe.configure({ timeout: 150_000 });
 
-// The longest title the core keeps (30 characters), still wider than a row.
-const LONG_TITLE = "사이드바 가독성과 행 높이 고정 확인용 긴 작업 제목";
+// A title within the core's 30 characters that is still wider than a row,
+// also where no Korean font is installed (the Linux runner draws Hangul as
+// narrow boxes): its Latin half carries the width.
+const LONG_TITLE = "행 높이 고정 WIDE TITLE MUST CUT";
 const QUESTION = "PR 병합 전 검증을 다시 돌려도 될까요?";
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
