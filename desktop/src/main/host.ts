@@ -192,7 +192,7 @@ export class DesktopHost {
         }
         shell.showItemInFolder(target.path);
         this.log.event("reveal.shown", { kind: target.kind });
-      });
+      }).catch(() => this.log.event("reveal.failed", {}));
     });
   }
 

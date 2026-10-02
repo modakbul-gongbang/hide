@@ -149,7 +149,7 @@ test("reveal: Explorer, History, a View tab and a sidebar row hand the item to t
 
   // The sidebar's project row: the same item, which reveals the project's folder.
   await page.locator('[data-sidebar-mode="projects"]').click();
-  const projectRow = page.locator("[data-project-menu]").first();
+  const projectRow = page.locator("[data-project-menu]").filter({ has: page.getByRole("button", { name: /^fixture,/ }) }).first();
   await expect(projectRow).toBeVisible({ timeout: 20_000 });
   await projectRow.click({ button: "right" });
   menu = page.locator('[role="menu"]').filter({ has: page.locator('[data-menu-item="reveal_external"]') });
