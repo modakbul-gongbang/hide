@@ -839,7 +839,10 @@ fn an_entry_of_an_open_folder_has_the_id_of_its_name_and_a_link_has_its_own() {
     fs::write(outer.path().join("a.txt"), "x").unwrap();
     let dir = open_dir(outer.path());
     let file = identity::entry_id(&dir, OsStr::new("a.txt")).unwrap();
-    assert_eq!(file, identity::file_id(&outer.path().join("a.txt")).unwrap());
+    assert_eq!(
+        file,
+        identity::file_id(&outer.path().join("a.txt")).unwrap()
+    );
     link::create_link(Path::new("target"), &outer.path().join("alias")).unwrap();
     let alias = identity::entry_id(&dir, OsStr::new("alias")).unwrap();
     assert_eq!(
@@ -854,7 +857,10 @@ fn an_entry_of_an_open_folder_has_the_id_of_its_name_and_a_link_has_its_own() {
     fs::rename(outer.path().join("a.txt"), outer.path().join("old.txt")).unwrap();
     fs::write(outer.path().join("a.txt"), "y").unwrap();
     assert_ne!(identity::entry_id(&dir, OsStr::new("a.txt")).unwrap(), file);
-    assert_eq!(identity::entry_id(&dir, OsStr::new("old.txt")).unwrap(), file);
+    assert_eq!(
+        identity::entry_id(&dir, OsStr::new("old.txt")).unwrap(),
+        file
+    );
     assert_eq!(
         identity::entry_id(&dir, OsStr::new("absent"))
             .unwrap_err()
