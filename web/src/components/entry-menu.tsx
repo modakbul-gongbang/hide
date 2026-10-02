@@ -5,7 +5,7 @@
 // reason, never hidden behind an action that would fail.
 
 import { DropdownMenu as MenuPrimitive } from "radix-ui";
-import { Fragment, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from "./ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
@@ -64,7 +64,6 @@ export function EntryContextMenu<Id extends string>({
   onSelect,
   children,
   className,
-  style,
   onCloseAutoFocus,
   asChild = false,
   disabled = false,
@@ -75,7 +74,6 @@ export function EntryContextMenu<Id extends string>({
   onSelect: (id: Id) => void;
   children: ReactNode;
   className?: string;
-  style?: CSSProperties;
   onCloseAutoFocus?: (event: Event) => void;
   asChild?: boolean;
   disabled?: boolean;
@@ -92,7 +90,7 @@ export function EntryContextMenu<Id extends string>({
         if (!open) setEntries([]);
       }}
     >
-      <ContextMenuTrigger asChild={asChild} disabled={disabled} className={cn("relative", className)} style={style} {...data}>
+      <ContextMenuTrigger asChild={asChild} disabled={disabled} className={cn("relative", className)} {...data}>
         {children}
       </ContextMenuTrigger>
       {entries.length ? (

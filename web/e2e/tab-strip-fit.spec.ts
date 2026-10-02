@@ -45,8 +45,8 @@ async function strip(page: Page): Promise<Strip> {
     const tabs = [...list.querySelectorAll<HTMLElement>("[role=tab]")];
     const selected = tabs.find((tab) => tab.getAttribute("aria-selected") === "true")?.getBoundingClientRect();
     return {
-      room: zone.clientWidth - newTab.offsetWidth,
-      scrolls: list.scrollWidth > list.clientWidth + 1,
+      room: Math.floor(zone.getBoundingClientRect().width - newTab.getBoundingClientRect().width),
+      scrolls: list.scrollWidth > list.clientWidth,
       selectedInView: !!selected && selected.left >= bounds.left - 1 && selected.right <= bounds.right + 1,
       tabs: tabs.map((tab) => ({
         selected: tab.getAttribute("aria-selected") === "true",
@@ -99,7 +99,7 @@ test("Agent tabs shrink in stages, the selected one keeping its title longest, a
         expect(tab.close).toBe(want.others[1] === "titled");
       }
       const total = want.selected[0] + unselected.length * want.others[0];
-      expect(drawn.scrolls).toBe(total > drawn.room + 1);
+      expect(drawn.scrolls).toBe(total > drawn.room + 0.01);
       expect(drawn.selectedInView).toBe(true);
       const stage = drawn.scrolls ? "scroll"
         : want.others[1] === "titled" ? "titled"
@@ -132,5 +132,19 @@ test("Agent tabs shrink in stages, the selected one keeping its title longest, a
     const after = await strip(page);
     expect(after.tabs[target]!.width).toBeCloseTo(TITLE_MIN, 0);
     expect(after.tabs.filter((tab) => !tab.selected).every((tab) => Math.abs(tab.width - before.tabs[target]!.width) < 1)).toBe(true);
+
+    // Once even marks overflow, the selected tab stays in sight: after it is
+    // chosen at the strip's far end, and after the strip narrows further.
+    const scrolling = widths.find((width) => narrowing.get(width)!.stage === "scroll")!;
+    await check(scrolling);
+    await tabs.last().click();
+    await expect(tabs.last()).toHaveAttribute("aria-selected", "true");
+    await settle();
+    expect((await strip(page)).selectedInView).toBe(true);
+    await page.setViewportSize({ width: widths.at(-1)!, height: 900 });
+    await settle();
+    const narrowest = await strip(page);
+    expect(narrowest.scrolls).toBe(true);
+    expect(narrowest.selectedInView).toBe(true);
   } finally { daemon?.stop(); herdr.stop(); }
 });
