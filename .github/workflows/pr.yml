@@ -14,9 +14,9 @@
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
 # checks and the whole web end-to-end, dealt out to six shards by
 # `web-e2e.yml`. `nightly.yml` runs the whole web end-to-end on macOS, so the
-# move costs no macOS coverage, only its delay. One Windows job, `windows
-# check`, compiles the workspace for Windows and runs the suites whose
-# behaviour differs there (issue #293).
+# move costs no macOS coverage, only its delay. On Windows, `windows check`
+# compiles the workspace and runs the daemon's and the app's suites there,
+# beside the OS contract's Windows leg (issue #293).
 #
 # Every job and every long step has a timeout a few times its usual length
 # (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that

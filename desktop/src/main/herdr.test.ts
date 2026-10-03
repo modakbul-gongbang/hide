@@ -1,12 +1,11 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { executableFile } from "./spawn";
 import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type ServerStatus } from "./herdr";
 import type { ChildResult } from "./spawn";
 
 describe("chooseHerdr", () => {
   const packaged = { bundledDir: "/A/Contents/Resources", herdrBinPath: null, herdrPaneId: null };
-  const bundled = path.join("/A/Contents/Resources", executableFile("herdr"));
+  const bundled = path.join("/A/Contents/Resources", process.platform === "win32" ? "herdr.exe" : "herdr");
 
   it("hands a packaged app's children its bundled herdr when nothing names one", () => {
     expect(chooseHerdr(packaged)).toEqual({ path: bundled, source: "bundled", replacedPaneValue: null });

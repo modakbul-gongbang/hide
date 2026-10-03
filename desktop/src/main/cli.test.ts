@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  CLI_FILE,
   HAS_LOGIN_SHELL,
   loginPathCommand,
   parseConnect,
@@ -31,6 +30,8 @@ const result = (stdout: string, extra: Partial<ChildResult> = {}): ChildResult =
   ...extra,
 });
 
+/** The CLI's file name, spelled here rather than taken from the product so a wrong name fails. */
+const CLI_FILE = process.platform === "win32" ? "hide.exe" : "hide";
 /**
  * A path the resolver builds, written in POSIX for the reader and spelled
  * the way this system's `path.join` spells it, with the CLI's file name for
@@ -185,8 +186,11 @@ describe("the hide CLI's answers", () => {
     expect(parseLoginPath("no marks")).toBeNull();
   });
 
-  // Windows has no login shell, and the host never asks one there.
-  it.runIf(HAS_LOGIN_SHELL)("asks a real login shell for its PATH", async () => {
+  it("asks a login shell only where there is one: every system but Windows", () => {
+    expect(HAS_LOGIN_SHELL).toBe(process.platform !== "win32");
+  });
+
+  it.runIf(process.platform !== "win32")("asks a real login shell for its PATH", async () => {
     const command = loginPathCommand("/bin/sh");
     const answer = await new ChildRunner().run(command.file, command.args, 10_000);
     expect(parseLoginPath(answer.stdout)).toBeTruthy();

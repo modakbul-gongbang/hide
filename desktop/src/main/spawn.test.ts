@@ -1,3 +1,5 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { ChildRunner, startDetached } from "./spawn";
@@ -41,22 +43,31 @@ describe("the child runner", () => {
 });
 
 describe("a detached start", () => {
-  it("leaves a child that leads its own process group", async () => {
-    const started = await startDetached(node, script("setTimeout(() => {}, 30_000)"), handed({}));
-    if (!("pid" in started)) throw new Error(started.spawnError);
+  it("leaves a child that outlives the process that started it, in a group of its own", async () => {
+    // A starter process runs `startDetached` and exits, as the app does when
+    // it quits; on Windows Node ends every child it did not detach when it
+    // exits, so the server surviving the starter is the detached start.
+    const module = pathToFileURL(path.join(__dirname, "spawn.ts")).href;
+    const starter = `import(${JSON.stringify(module)}).then(async (m) => {
+      const started = await m.startDetached(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], process.env);
+      process.stdout.write(String(started.pid ?? started.spawnError));
+    })`;
+    const result = await new ChildRunner().run(node, ["--experimental-strip-types", "--no-warnings", "-e", starter], 10_000, handed({}));
+    const pid = Number(result.stdout);
+    expect(Number.isInteger(pid), result.stdout + result.stderr).toBe(true);
     try {
-      // Windows starts a detached child in a new process group too
-      // (`CREATE_NEW_PROCESS_GROUP`), but no tool there reads a process's
-      // group back, so the group is read where `ps` can: macOS `ps` reports
-      // no session id, so the new session shows as a group the child leads.
+      expect(result.code).toBe(0);
+      expect(() => process.kill(pid, 0)).not.toThrow();
+      // macOS `ps` reports no session id, so the new session shows as a
+      // group the child leads. Windows starts it in a new process group too
+      // (`CREATE_NEW_PROCESS_GROUP`), but nothing there reads a group back.
       if (process.platform !== "win32") {
-        const group = (pid: number) => Number(spawnSync("/bin/ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim());
-        expect(group(started.pid)).toBe(started.pid);
-        expect(group(process.pid)).not.toBe(started.pid);
+        const group = (each: number) => Number(spawnSync("/bin/ps", ["-o", "pgid=", "-p", String(each)], { encoding: "utf8" }).stdout.trim());
+        expect(group(pid)).toBe(pid);
+        expect(group(process.pid)).not.toBe(pid);
       }
-      expect(() => process.kill(started.pid, 0)).not.toThrow();
     } finally {
-      process.kill(started.pid, "SIGKILL");
+      process.kill(pid, "SIGKILL");
     }
   });
 

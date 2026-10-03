@@ -70,9 +70,9 @@ export class ChildRunner {
     });
   }
 
-  /** Ends the child in flight, on quit. */
+  /** Ends the child in flight, on quit. A child whose start failed has nothing to end. */
   stop(): void {
-    this.current?.kill("SIGKILL");
+    if (this.current?.pid !== undefined) this.current.kill("SIGKILL");
   }
 }
 
