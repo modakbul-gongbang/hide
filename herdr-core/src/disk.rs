@@ -261,7 +261,7 @@ fn measure_root(
     // Reject alias roots rather than following a symlink outside the
     // declared measurement boundary. Descendant links count their own
     // allocated blocks and are never traversed.
-    if std::fs::canonicalize(root).is_ok_and(|canonical| canonical != *root) {
+    if hide_platform::fs::identity::canonical(root).is_ok_and(|canonical| canonical != *root) {
         failure = Some(Failure::new(
             "alias",
             "The measurement root is an alias. Refresh with the canonical checkout path.",

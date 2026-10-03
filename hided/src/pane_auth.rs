@@ -576,9 +576,10 @@ pub fn attest_checkout(
         return Err("invalid_nonce");
     }
     let cwd = process_cwd(peer).ok_or("caller_unavailable")?;
-    let canonical = fs::canonicalize(cwd).map_err(|_| "caller_unavailable")?;
-    let path = canonical.to_str().ok_or("caller_unavailable")?;
-    let caller_id = checkout_caller_id(nonce, path);
+    let canonical =
+        hide_platform::fs::identity::canonical(&cwd).map_err(|_| "caller_unavailable")?;
+    let path = hide_platform::path::to_wire(&canonical).map_err(|_| "caller_unavailable")?;
+    let caller_id = checkout_caller_id(nonce, &path);
     let context = core
         .workspace_query("local", &caller_id, Query::Info)
         .map_err(|refusal| refusal.reason)?

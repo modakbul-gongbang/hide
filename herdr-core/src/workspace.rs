@@ -12,6 +12,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use hide_platform::fs::identity;
+use hide_platform::path;
+
 use crate::git_dir::{self, Repository};
 use crate::model::{
     CheckoutPurposeOrigin, CheckoutPurposeSnapshot, CheckoutSnapshot, DeviceRegistration,
@@ -97,7 +100,7 @@ pub fn registration(
         primary_checkout_id: None,
         id: workspace_id_for_path(&path),
         label,
-        path: path.to_string_lossy().into_owned(),
+        path: path::to_wire_lossy(&path),
         device_id: if device_id.trim().is_empty() {
             LOCAL_DEVICE_ID.to_owned()
         } else {
@@ -111,14 +114,14 @@ pub fn registration(
 pub fn workspace_id_for_path(path: &Path) -> String {
     format!(
         "workspace:{:016x}",
-        fnv1a(path.to_string_lossy().as_bytes())
+        fnv1a(path::to_wire_lossy(path).as_bytes())
     )
 }
 
 pub fn checkout_id_for_path(workspace_id: &str, path: &Path) -> String {
     format!(
         "{workspace_id}:checkout:{:016x}",
-        fnv1a(path.to_string_lossy().as_bytes())
+        fnv1a(path::to_wire_lossy(path).as_bytes())
     )
 }
 
@@ -466,7 +469,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     tasks: Default::default(),
                     id: workspace_id.clone(),
                     label: name.clone(),
-                    path: project_path.to_string_lossy().into_owned(),
+                    path: path::to_wire_lossy(&project_path),
                     remote_target_id: None,
                     expanded: true,
                     device_id: LOCAL_DEVICE_ID.to_owned(),
@@ -799,7 +802,7 @@ fn inspect(
         tasks: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),
-        path: normalized.to_string_lossy().into_owned(),
+        path: path::to_wire_lossy(&normalized),
         remote_target_id: (device_id != LOCAL_DEVICE_ID).then(|| device_id.to_owned()),
         expanded: true,
         device_id: device_id.to_owned(),
@@ -858,7 +861,7 @@ fn checkout(
         id: checkout_id_for_path(workspace_id, path),
         workspace_id: workspace_id.to_owned(),
         label: label.to_owned(),
-        path: path.to_string_lossy().into_owned(),
+        path: path::to_wire_lossy(path),
         branch,
         purpose,
         is_worktree,
@@ -910,10 +913,10 @@ fn normalized_path(path: &Path) -> Result<PathBuf, String> {
         return Err("workspace path must not be empty".to_owned());
     }
     if path.exists() {
-        fs::canonicalize(path)
+        identity::canonical(path)
             .map_err(|error| format!("workspace path could not be resolved: {error}"))
     } else if let Some(parent) = path.parent().filter(|parent| parent.exists()) {
-        let canonical_parent = fs::canonicalize(parent)
+        let canonical_parent = identity::canonical(parent)
             .map_err(|error| format!("workspace parent could not be resolved: {error}"))?;
         Ok(canonical_parent.join(path.file_name().unwrap_or_default()))
     } else {
@@ -922,9 +925,7 @@ fn normalized_path(path: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn normalized_for_comparison(path: &Path) -> String {
-    normalized_path(path)
-        .unwrap_or_else(|_| path.to_path_buf())
-        .to_string_lossy()
+    path::to_wire_lossy(&normalized_path(path).unwrap_or_else(|_| path.to_path_buf()))
         .trim_end_matches('/')
         .to_owned()
 }

@@ -986,7 +986,9 @@ fn a_device_explorer_change_runs_on_its_host_and_the_open_tab_follows_it() {
     assert!(f.root.join("b.txt").is_file() && !f.root.join("a.txt").exists());
     let tab_id = Runtime::file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
     assert_eq!(
-        f.shared.lock().unwrap().document_places[&tab_id].relative,
+        f.shared.lock().unwrap().document_places[&tab_id]
+            .relative
+            .as_str(),
         "b.txt"
     );
     f.dispatch(
@@ -1033,7 +1035,12 @@ fn a_device_folder_replaced_after_it_was_listed_takes_no_change_or_open() {
         path: root_text.clone(),
         identity: None,
     };
-    let rename = files::ExplorerOperation::rename(&root, &root.join("a.txt"), "b.txt").unwrap();
+    let rename = files::ExplorerOperation::rename(
+        &root_text,
+        &root.join("a.txt").to_string_lossy(),
+        "b.txt",
+    )
+    .unwrap();
     assert!(files::apply_explorer_operation(device.as_ref(), &place, &rename).is_err());
     assert!(root.join("a.txt").is_file(), "the new folder is untouched");
 

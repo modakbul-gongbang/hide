@@ -201,7 +201,7 @@ fn relative_asset(base: &str, reference: &str, kind: Asset) -> Option<String> {
         }
     }
     let path = parts.join("/");
-    hide_host::relative_path(&path).ok()?;
+    hide_platform::path::RelPath::parse(&path).ok()?;
     let ext = Path::new(&path).extension()?.to_str()?.to_ascii_lowercase();
     let valid = match kind {
         Asset::Css => ext == "css",

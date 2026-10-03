@@ -252,16 +252,14 @@ impl Runtime {
         if device_id == workspace::LOCAL_DEVICE_ID
             && let Some(roots) = self.file_roots.as_ref()
         {
-            let (path, identity) =
-                roots
-                    .pinned_root(Path::new(&checkout.path))
-                    .ok_or_else(|| {
-                        "The checkout is not one this daemon has opened, so nothing was read"
-                            .to_owned()
-                    })?;
+            let not_opened =
+                || "The checkout is not one this daemon has opened, so nothing was read".to_owned();
+            let native =
+                hide_platform::path::from_wire(&checkout.path).map_err(|_| not_opened())?;
+            let (path, identity) = roots.pinned_root(&native).ok_or_else(not_opened)?;
             return Ok(DocumentRoot {
                 device_id,
-                path: path.to_string_lossy().into_owned(),
+                path: hide_platform::path::to_wire(&path).map_err(|_| not_opened())?,
                 identity: Some(identity),
             });
         }
@@ -825,7 +823,7 @@ impl Runtime {
             "component": "documents",
             "kind": "file.save_started",
             "device": place.device_id,
-            "path": place.relative,
+            "path": place.relative.as_str(),
         }));
         let request = SaveRequest {
             contents,
@@ -881,7 +879,8 @@ impl Runtime {
             }
             None => None,
         };
-        let path = format!("{}/{}", request.place.root.path, request.place.relative);
+        let path =
+            hide_platform::path::wire_join(&request.place.root.path, &request.place.relative);
         let Some(document) = self.editor_documents.get_mut(tab_id).map(Edited::edit) else {
             self.document_saves.remove(tab_id);
             self.push_diagnostic(

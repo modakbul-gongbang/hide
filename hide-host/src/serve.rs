@@ -312,10 +312,8 @@ pub fn handle(call: Call) -> HostResult<Value> {
             diffs,
         } => {
             let root = open_root(&root)?;
-            let scope_path = relative_path(&scope)?;
             to_value(git::changes(
                 &root,
-                &scope_path,
                 &git::ChangesQuery {
                     scope,
                     selected,

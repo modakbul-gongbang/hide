@@ -102,9 +102,38 @@ pub(crate) fn cleanup_usage_paths(value: Value) -> Result<Vec<Option<String>>, S
         if cwd.is_none() && foreground.is_none() {
             paths.push(None);
         }
-        paths.extend(cwd.into_iter().chain(foreground).map(Some));
+        paths.extend(
+            cwd.into_iter()
+                .chain(foreground)
+                .map(|path| Some(herdr_path(path))),
+        );
     }
     Ok(paths)
+}
+
+/// A path Herdr reported, in the wire spelling (`hide_platform::path`).
+/// Herdr spells a path as its own system does, so on this machine that is
+/// the native spelling and this is the one place it becomes the wire's. A
+/// path a device's Herdr reported is that device's: no system reads
+/// another's spelling as absolute (`C:\\x` is not absolute on macOS, nor
+/// `/x` on Windows), so it is left as it came; a Windows device's Herdr
+/// seen from a Mac is not spelled yet (docs/ARCHITECTURE.md, The platform
+/// layer).
+fn herdr_path(path: String) -> String {
+    match hide_platform::path::to_wire(std::path::Path::new(&path)) {
+        Ok(wire) => wire,
+        Err(_) => path,
+    }
+}
+
+/// A wire spelling sent to Herdr as its own system spells it, the way back
+/// of [`herdr_path`]: on this machine the native path, and a device's path
+/// as it came.
+fn herdr_param(path: &str) -> String {
+    match hide_platform::path::from_wire(path) {
+        Ok(native) => native.to_string_lossy().into_owned(),
+        Err(_) => path.to_owned(),
+    }
 }
 
 fn decode_snapshot_response(value: Value) -> Result<res::SessionSnapshot, SessionFetchError> {
@@ -218,8 +247,8 @@ macro_rules! record_conversions {
                 Self {
                     repo_key: v.repo_key,
                     repo_name: v.repo_name,
-                    repo_root: v.repo_root,
-                    checkout_path: v.checkout_path,
+                    repo_root: herdr_path(v.repo_root),
+                    checkout_path: herdr_path(v.checkout_path),
                     is_linked_worktree: v.is_linked_worktree,
                 }
             }
@@ -242,7 +271,7 @@ macro_rules! record_conversions {
                     agent_status: v.agent_status.to_string(),
                     workspace_id: v.workspace_id,
                     tab_id: v.tab_id,
-                    cwd: v.cwd,
+                    cwd: v.cwd.map(herdr_path),
                     tokens: v
                         .tokens
                         .into_iter()
@@ -397,7 +426,7 @@ impl From<res::AgentInfo> for ProjectedAgent {
             name: v.name,
             workspace_id: v.workspace_id,
             tab_id: v.tab_id,
-            cwd: v.cwd,
+            cwd: v.cwd.map(herdr_path),
             agent: v.agent,
             agent_status: Some(v.agent_status.to_string()),
             agent_session: v.agent_session.map(|s| SessionAgentSessionPayload {
@@ -668,7 +697,7 @@ pub(crate) fn workspace_create_with_env_params(
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<Value, String> {
     params(req::WorkspaceCreateParams {
-        cwd: Some(cwd.into()),
+        cwd: Some(herdr_param(cwd)),
         label: Some(label.into()),
         focus: true,
         env: env.into_iter().collect(),
@@ -737,10 +766,10 @@ pub(crate) fn workspace_issue_params(
 pub(crate) fn worktree_open_params(path: &str, repository_root: &str) -> Result<Value, String> {
     params(req::WorktreeOpenParams {
         branch: None,
-        cwd: Some(repository_root.into()),
+        cwd: Some(herdr_param(repository_root)),
         focus: true,
         label: None,
-        path: Some(path.into()),
+        path: Some(herdr_param(path)),
         trust_repository: None,
         workspace_id: None,
     })
@@ -943,7 +972,7 @@ pub(crate) fn tab_create_with_env_params(
 ) -> Result<Value, String> {
     params(req::TabCreateParams {
         workspace_id: Some(workspace.into()),
-        cwd: Some(cwd.into()),
+        cwd: Some(herdr_param(cwd)),
         label: Some(label.into()),
         focus: true,
         env: env.into_iter().collect(),
@@ -956,7 +985,7 @@ pub(crate) fn replacement_tab_params(
 ) -> Result<Value, String> {
     params(req::TabCreateParams {
         workspace_id: Some(workspace.into()),
-        cwd: Some(cwd.into()),
+        cwd: Some(herdr_param(cwd)),
         label: None,
         focus: false,
         env: env.into_iter().collect(),
@@ -971,7 +1000,7 @@ pub(crate) fn worktree_create_params(
     params(req::WorktreeCreateParams {
         base: base.map(str::to_owned),
         branch: Some(branch.to_owned()),
-        cwd: Some(cwd.to_owned()),
+        cwd: Some(herdr_param(cwd)),
         focus,
         label: None,
         // Herdr owns the default checkout location. Hide must never restate it.
@@ -983,7 +1012,7 @@ pub(crate) fn worktree_create_params(
 }
 pub(crate) fn worktree_list_params(cwd: &str) -> Result<Value, String> {
     params(req::WorktreeListParams {
-        cwd: Some(cwd.to_owned()),
+        cwd: Some(herdr_param(cwd)),
         // Listing must not implicitly trust a repository on the user's behalf.
         trust_repository: None,
         workspace_id: None,
@@ -1016,7 +1045,7 @@ pub(crate) fn pane_split_params(
             crate::live::PaneSplitDirection::Right => req::SplitDirection::Right,
             crate::live::PaneSplitDirection::Down => req::SplitDirection::Down,
         },
-        cwd: cwd.filter(|v| !v.trim().is_empty()).map(Into::into),
+        cwd: cwd.filter(|v| !v.trim().is_empty()).map(herdr_param),
         focus: true,
         env: Default::default(),
         ratio: None,
@@ -1038,7 +1067,7 @@ pub(crate) fn pane_split_with_ratio_params(
             ClosedSplitDirection::Right => req::SplitDirection::Right,
             ClosedSplitDirection::Down => req::SplitDirection::Down,
         },
-        cwd: Some(cwd.into()),
+        cwd: Some(herdr_param(cwd)),
         focus: true,
         env: env.into_iter().collect(),
         ratio: Some(ratio),
@@ -1094,7 +1123,7 @@ pub(crate) fn fork_split_params(parent_pane_id: &str, cwd: Option<&str>) -> Resu
     params(req::PaneSplitParams {
         target_pane_id: Some(parent_pane_id.into()),
         direction: req::SplitDirection::Right,
-        cwd: cwd.filter(|v| !v.trim().is_empty()).map(Into::into),
+        cwd: cwd.filter(|v| !v.trim().is_empty()).map(herdr_param),
         focus: false,
         env: Default::default(),
         ratio: None,
@@ -1114,7 +1143,7 @@ fn request_layout_node(node: &ClosedLayoutNode) -> req::LayoutNode {
         } => req::LayoutNode::Pane {
             pane_id: pane_id.clone(),
             label: label.clone(),
-            cwd: cwd.clone(),
+            cwd: cwd.as_deref().map(herdr_param),
             command: command.clone(),
             env: env.clone().into_iter().collect(),
         },
@@ -1146,7 +1175,7 @@ fn response_layout_node(node: res::LayoutNode) -> ClosedLayoutNode {
         } => ClosedLayoutNode::Pane {
             pane_id,
             label,
-            cwd,
+            cwd: cwd.map(herdr_path),
             command,
             env: env.into_iter().collect(),
         },
@@ -1453,7 +1482,7 @@ pub(crate) fn created_worktree(value: Value) -> Result<CreatedWorktree, String> 
         } => Ok(CreatedWorktree {
             workspace_id: nonempty_id(workspace.workspace_id, missing)?,
             pane_id: nonempty_id(root_pane.pane_id, missing)?,
-            path: nonempty_id(worktree.path, missing)?,
+            path: herdr_path(nonempty_id(worktree.path, missing)?),
             branch: worktree.branch,
         }),
         _ => Err(missing.into()),
@@ -1466,7 +1495,7 @@ pub(crate) fn listed_worktree_path(value: Value, branch: &str) -> Result<Option<
         res::ResponseResult::WorktreeList { worktrees, .. } => Ok(worktrees
             .into_iter()
             .find(|row| row.branch.as_deref() == Some(branch))
-            .map(|row| row.path)),
+            .map(|row| herdr_path(row.path))),
         _ => Err(missing.into()),
     }
 }

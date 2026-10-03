@@ -2768,12 +2768,12 @@ impl Runtime {
             Event::FileCreate(payload) => {
                 // The created file opens into a display, so a Workspace at its
                 // display cap refuses the create before anything is made.
-                let created = Path::new(&payload.parent).join(&payload.name);
+                let created = format!("{}/{}", payload.parent.trim_end_matches('/'), payload.name);
                 if self.separate_view_areas()
                     && let Some(key) = self.front_workspace_key()
                     && !self.admit_view_open(
                         &key,
-                        &created.to_string_lossy(),
+                        &created,
                         crate::view_layout::DisplayKind::File,
                         None,
                         false,
@@ -2787,7 +2787,7 @@ impl Runtime {
                         files::ExplorerOperation::create(
                             files::ExplorerOperationKind::FileCreate,
                             root,
-                            Path::new(&payload.parent),
+                            &payload.parent,
                             &payload.name,
                         )
                     },
@@ -2801,7 +2801,7 @@ impl Runtime {
                     files::ExplorerOperation::create(
                         files::ExplorerOperationKind::DirCreate,
                         root,
-                        Path::new(&payload.parent),
+                        &payload.parent,
                         &payload.name,
                     )
                 },
@@ -2810,20 +2810,14 @@ impl Runtime {
                 payload.device_id.as_deref(),
             ),
             Event::PathRename(payload) => self.start_explorer_operation(
-                |root| {
-                    files::ExplorerOperation::rename(root, Path::new(&payload.path), &payload.name)
-                },
+                |root| files::ExplorerOperation::rename(root, &payload.path, &payload.name),
                 &payload.root,
                 &payload.path,
                 payload.device_id.as_deref(),
             ),
             Event::PathMove(payload) => self.start_explorer_operation(
                 |root| {
-                    files::ExplorerOperation::move_into(
-                        root,
-                        Path::new(&payload.path),
-                        Path::new(&payload.destination),
-                    )
+                    files::ExplorerOperation::move_into(root, &payload.path, &payload.destination)
                 },
                 &payload.root,
                 &payload.path,
@@ -2833,8 +2827,8 @@ impl Runtime {
                 |root| {
                     files::ExplorerOperation::trash(
                         root,
-                        Path::new(&payload.path),
-                        Path::new(&payload.select_after),
+                        &payload.path,
+                        &payload.select_after,
                         payload.inode,
                     )
                 },

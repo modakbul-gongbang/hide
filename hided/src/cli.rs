@@ -423,13 +423,12 @@ fn absolute_caller_path(path: &str) -> Result<String, String> {
             .parent()
             .ok_or_else(|| "path_unavailable".to_owned())?;
     }
-    let mut resolved = ancestor
-        .canonicalize()
+    let mut resolved = hide_platform::fs::identity::canonical(ancestor)
         .map_err(|_| "path_unavailable".to_owned())?;
     for component in missing.into_iter().rev() {
         resolved.push(component);
     }
-    Ok(resolved.to_string_lossy().into_owned())
+    hide_platform::path::to_wire(&resolved).map_err(|_| "path_unavailable".to_owned())
 }
 
 fn workspace_action_refusal<T>(request_id: &str, reason: &str) -> Result<T, String> {

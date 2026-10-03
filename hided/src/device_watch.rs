@@ -143,13 +143,9 @@ fn pointer_token(key: &str) -> String {
 
 /// A folder's path relative to the checkout root, as the helper names it.
 fn relative(root: &str, folder: &str) -> Option<String> {
-    if folder == root {
-        return Some(String::new());
-    }
-    folder
-        .strip_prefix(root.trim_end_matches('/'))
-        .and_then(|rest| rest.strip_prefix('/'))
-        .map(str::to_owned)
+    hide_platform::path::wire_relative(root, folder)
+        .ok()
+        .map(hide_platform::path::RelPath::into_string)
 }
 
 fn frame(device_id: &str, path: &str) -> String {

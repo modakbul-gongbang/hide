@@ -11,6 +11,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use hide_platform::path::RelPath;
 use hide_platform::process::OwnedChild;
 use serde::{Deserialize, Serialize};
 
@@ -138,8 +139,10 @@ impl FileStatus {
 /// repository, a root that is not the repository's top level, a scope that
 /// is not a real folder of the checkout, and a failed Git read are errors,
 /// never an empty answer, so a failure is not shown as a clean tree.
-pub fn changes(root: &Root, scope: &Path, query: &ChangesQuery) -> HostResult<Changes> {
-    require_real_folder(root, scope)?;
+pub fn changes(root: &Root, query: &ChangesQuery) -> HostResult<Changes> {
+    let native_scope = crate::root::relative_path(&query.scope)?;
+    let scope = &RelPath::parse(&query.scope).expect("relative_path parsed the scope");
+    require_real_folder(root, &native_scope)?;
     let git = GitDirectory::of(root);
     let toplevel = git_line(git, &["rev-parse", "--show-toplevel"]).map_err(|_| {
         HostError::new(
@@ -418,12 +421,16 @@ fn read_committed(
 /// Keeps the entries under `scope`, relative to it. Git's rename source can
 /// cross the boundary, so an inbound rename is an addition and an outbound
 /// rename is a deletion from the scope's perspective, with unknown counts.
-fn scope_entries(entries: Vec<ChangedFile>, scope: &Path) -> Vec<ChangedFile> {
+fn scope_entries(entries: Vec<ChangedFile>, scope: &RelPath) -> Vec<ChangedFile> {
+    // Git spells a path below the top level with `/` on every system, which
+    // is the wire's relative spelling, and marks an untracked folder it does
+    // not enter (a nested repository) with a trailing `/`, which the entry
+    // does not keep.
     let within = |path: &str| {
-        Path::new(path)
+        RelPath::parse(path.strip_suffix('/').unwrap_or(path))
+            .ok()?
             .strip_prefix(scope)
-            .ok()
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(RelPath::into_string)
     };
     let mut scoped = Vec::new();
     for mut entry in entries {
@@ -581,24 +588,34 @@ fn apply_line_counts(entries: &mut [ChangedFile], counts: &str) {
 
 /// The pathspecs for an entry's diff, relative to the root: the scope's view
 /// of the file, so a rename source outside the scope is never named.
-fn pathspecs(scope: &Path, entry: &ChangedFile) -> (String, String) {
-    let current = scope.join(&entry.path).to_string_lossy().into_owned();
+fn pathspecs(scope: &RelPath, entry: &ChangedFile) -> (String, String) {
+    let below = |path: &str| {
+        if scope.is_root() {
+            path.to_owned()
+        } else {
+            format!("{scope}/{path}")
+        }
+    };
+    let current = below(&entry.path);
     let previous = entry
         .previous
-        .as_ref()
-        .map(|path| scope.join(path).to_string_lossy().into_owned())
+        .as_deref()
+        .map(below)
         .unwrap_or_else(|| current.clone());
     (previous, current)
 }
 
 /// The working tree against `HEAD`. An untracked file has no index side, so
 /// it is compared with an empty file, read through the root's handle.
-fn working_diff(git: GitDirectory<'_>, root: &Root, scope: &Path, entry: &ChangedFile) -> Diff {
+fn working_diff(git: GitDirectory<'_>, root: &Root, scope: &RelPath, entry: &ChangedFile) -> Diff {
     let (previous, current) = pathspecs(scope, entry);
     let text = match entry.status {
-        FileStatus::Untracked => root
-            .dir()
-            .open(&current)
+        FileStatus::Untracked => crate::root::relative_path(&current)
+            .and_then(|native| {
+                root.dir()
+                    .open(native)
+                    .map_err(|error| HostError::io(&error, "The selected file could not be read"))
+            })
             .map_err(|_| "The selected file could not be read".to_owned())
             .and_then(|file| {
                 let file = file.into_std();
@@ -655,7 +672,7 @@ fn name_untracked(text: String, path: &str) -> String {
 /// `base_ref` is the ref the read resolved the base to.
 fn committed_diff(
     git: GitDirectory<'_>,
-    scope: &Path,
+    scope: &RelPath,
     entry: &ChangedFile,
     base_ref: &str,
 ) -> Diff {

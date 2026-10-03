@@ -265,8 +265,8 @@ fn registered_owner(path: &str, label: &str) -> OwnerOpen {
     match hide_project::facts(Path::new(path)) {
         Ok(facts) if facts.kind == hide_project::ProjectKind::Git => OwnerOpen::for_checkout(
             crate::workspace::LOCAL_DEVICE_ID,
-            &facts.checkout_root.to_string_lossy(),
-            &facts.root.to_string_lossy(),
+            &hide_platform::path::to_wire_lossy(&facts.checkout_root),
+            &hide_platform::path::to_wire_lossy(&facts.root),
             true,
             label,
         ),

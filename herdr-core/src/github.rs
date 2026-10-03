@@ -199,7 +199,7 @@ fn read_root(
     let Some(main) = main_worktree(root) else {
         return GithubProjectSnapshot::default();
     };
-    let root_path = main.to_string_lossy().into_owned();
+    let root_path = hide_platform::path::to_wire_lossy(&main);
     let project = match authentication {
         Err(reason) => GithubProjectSnapshot {
             root_path,

@@ -178,6 +178,13 @@ fn probe_case(folder: &Path) -> io::Result<bool> {
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn strip_verbatim(path: &str) -> Option<String> {
     const CLASSIC_LIMIT: usize = 259;
+    short_verbatim(path).filter(|short| short.len() <= CLASSIC_LIMIT)
+}
+
+/// [`strip_verbatim`] at any length: the spelling Win32 reads as the same
+/// path once its own long-path handling adds the prefix back, which is what
+/// the wire spelling (`crate::path`) needs; `None` where it would not.
+pub(crate) fn short_verbatim(path: &str) -> Option<String> {
     let (stripped, unc) = if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
         (rest, true)
     } else {
@@ -192,24 +199,25 @@ pub(crate) fn strip_verbatim(path: &str) -> Option<String> {
         }
         (rest, false)
     };
-    let rewritten = |component: &str| {
-        component.is_empty()
-            || component == "."
-            || component == ".."
-            || component.ends_with([' ', '.'])
-            || component.contains('/')
-            || reserved_device(component)
-    };
     let body = if unc { stripped } else { &stripped[3..] };
-    if body.split('\\').any(rewritten) && !body.is_empty() {
+    if body.split('\\').any(|component| {
+        component.is_empty() || component == "." || component == ".." || win32_rewrites(component)
+    }) && !body.is_empty()
+    {
         return None;
     }
-    let short = if unc {
+    Some(if unc {
         format!(r"\\{stripped}")
     } else {
         stripped.to_owned()
-    };
-    (short.len() <= CLASSIC_LIMIT).then_some(short)
+    })
+}
+
+/// Whether Win32 would read a name as something other than itself outside a
+/// `\\?\` path: a trailing space or dot it drops, a device name, or a `/` it
+/// takes as a separator.
+pub(crate) fn win32_rewrites(component: &str) -> bool {
+    component.ends_with([' ', '.']) || component.contains('/') || reserved_device(component)
 }
 
 /// Whether Win32 would read the component as a device (`CON`, `NUL`, `COM1`,

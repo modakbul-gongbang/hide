@@ -233,11 +233,12 @@ pub fn index_root(
         channel.pin(root, None);
     }
     result.map(|mut walked: hide_host::index::Walked| {
-        // As for a listing: only relative paths inside the root, and no more
-        // of them than the walk cap.
+        // As for a listing: only relative paths inside the root, in the
+        // wire's spelling whatever system the device runs, and no more of
+        // them than the walk cap.
         walked
             .paths
-            .retain(|path| hide_host::relative_path(path).is_ok());
+            .retain(|path| hide_platform::path::RelPath::parse(path).is_ok());
         if walked.paths.len() > hide_host::index::INDEX_CAP {
             walked.paths.truncate(hide_host::index::INDEX_CAP);
             walked.truncated = true;

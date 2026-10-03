@@ -95,7 +95,13 @@ pub fn walk(root_dir: &Dir, root: &Path) -> Walked {
                     truncated = true;
                     break 'walk;
                 }
-                paths.push(relative.to_string_lossy().into_owned());
+                // The wire spells it with `/` on every system; a name the
+                // wire cannot carry (not UTF-8) could not be opened from the
+                // palette, so it is left out. It is not a truncation: the
+                // walk did not stop.
+                if let Ok(relative) = hide_platform::path::RelPath::from_native(&relative) {
+                    paths.push(relative.into_string());
+                }
             }
         }
     }

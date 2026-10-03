@@ -45,7 +45,7 @@ fn query(scope: &str, selected: Option<&str>, committed: bool, base: Option<&str
 }
 
 fn read(root: &Root, query: &ChangesQuery) -> hide_host::HostResult<hide_host::git::Changes> {
-    changes(root, Path::new(&query.scope), query)
+    changes(root, query)
 }
 
 #[test]
@@ -247,6 +247,27 @@ fn a_checkout_replaced_after_it_was_opened_is_never_read() {
     })
     .unwrap_err();
     assert_eq!(refused.code, ErrorCode::RootReplaced);
+}
+
+#[test]
+fn an_untracked_nested_repository_is_a_change_of_the_checkout() {
+    let temporary = tempfile::tempdir().unwrap();
+    let checkout = temporary.path().join("checkout");
+    repository(&checkout);
+    // Git reports a folder it does not enter as `nested/`, even with
+    // `--untracked-files=all`.
+    repository(&checkout.join("nested"));
+    let answer = read(
+        &Root::open(&checkout).unwrap(),
+        &query("", None, false, None),
+    )
+    .unwrap();
+    let listed: Vec<(&str, FileStatus)> = answer
+        .entries
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry.status))
+        .collect();
+    assert_eq!(listed, [("nested", FileStatus::Untracked)]);
 }
 
 #[test]

@@ -161,7 +161,11 @@ pub const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 /// from the paths alone, so this is the boundary's own answer to the client
 /// rather than the last word on the name.
 pub fn valid_name(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\0')
+    !name.contains('/')
+        && hide_platform::path::RelPath::root()
+            .join(name)
+            .and_then(|path| path.to_native())
+            .is_ok()
 }
 
 /// Lexical normalization of an absolute path: `.` dropped, `..` applied to
@@ -304,8 +308,9 @@ impl Boundary {
     /// directory: a daemon without a boundary must not serve the registration
     /// flow at all.
     pub fn new(home: &Path) -> Result<Self, String> {
-        let real = home
-            .canonicalize()
+        // The short spelling (no `\\?\` on Windows), which is the one a
+        // client sends and the snapshot carries.
+        let real = hide_platform::fs::identity::canonical(home)
             .map_err(|error| format!("HOME {} does not resolve: {error}", home.display()))?;
         if !real.is_dir() {
             return Err(format!("HOME {} is not a directory", home.display()));
@@ -401,10 +406,7 @@ impl Boundary {
             .iter()
             .any(|known| {
                 known.device_id == device_id
-                    && (known.path == path
-                        || path
-                            .strip_prefix(known.path.trim_end_matches('/'))
-                            .is_some_and(|rest| rest.starts_with('/')))
+                    && hide_platform::path::wire_relative(&known.path, path).is_ok()
             })
     }
 
@@ -634,7 +636,8 @@ impl Boundary {
         // The walk left no symlink in `resolved`, so this only settles the
         // spelling the OS keeps (letter case on a case-insensitive volume)
         // and cannot fail for a reason the walk has not already answered.
-        let real = resolved.canonicalize().map_err(|_| Refusal::InvalidPath)?;
+        let real =
+            hide_platform::fs::identity::canonical(&resolved).map_err(|_| Refusal::InvalidPath)?;
         if !real.starts_with(&self.home) {
             return Err(Refusal::OutsideHome);
         }
@@ -796,7 +799,12 @@ impl Boundary {
     pub fn home_label(&self, path: &Path) -> String {
         match path.strip_prefix(&self.home) {
             Ok(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-            Ok(rest) => format!("~/{}", rest.display()),
+            Ok(rest) => format!(
+                "~/{}",
+                hide_platform::path::RelPath::from_native(rest)
+                    .map(hide_platform::path::RelPath::into_string)
+                    .unwrap_or_else(|_| rest.display().to_string())
+            ),
             Err(_) => path.display().to_string(),
         }
     }
@@ -852,12 +860,12 @@ impl Boundary {
                 _ => Refusal::NotFound,
             })?;
         Ok(Listing {
-            root_path: dir.display().to_string(),
+            root_path: hide_platform::path::to_wire_lossy(&dir),
             entries: listed
                 .entries
                 .into_iter()
                 .map(|entry| Entry {
-                    path: dir.join(&entry.name).display().to_string(),
+                    path: hide_platform::path::to_wire_lossy(&dir.join(&entry.name)),
                     name: entry.name,
                     is_directory: entry.is_directory,
                     inode: Some(entry.inode),

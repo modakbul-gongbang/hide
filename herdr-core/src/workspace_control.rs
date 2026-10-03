@@ -1,7 +1,6 @@
 //! Pane-scoped, daemon-only Workspace command contract. The core remains the
 //! sole owner of membership and View state; the transport proves the caller.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -226,10 +225,7 @@ impl ActionSource {
                 reason: "path_outside_checkout",
                 next_action: "Choose a path inside the calling pane's checkout",
             })?;
-        let path = std::path::Path::new(&self.root.path)
-            .join(relative)
-            .to_string_lossy()
-            .into_owned();
+        let path = hide_platform::path::wire_join(&self.root.path, &relative);
         if matches!(self.kind, SourceKind::Browser) {
             let extension = std::path::Path::new(&path)
                 .extension()
@@ -274,7 +270,7 @@ impl ActionSource {
             });
         }
         let changes = changes::read(&ChangesRequest {
-            root_path: PathBuf::from(&self.root.path),
+            root_path: self.root.path.clone(),
             root: self.root,
             channel: Ok(ChannelRef(self.channel)),
             selected_path: Some(path.clone()),

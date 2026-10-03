@@ -1102,7 +1102,10 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         renamed.join("lib.rs").to_string_lossy()
     );
     // The tab's saves go to the file it now shows, not to the old path.
-    assert_eq!(runtime.document_places["file:lib"].relative, "lib/lib.rs");
+    assert_eq!(
+        runtime.document_places["file:lib"].relative.as_str(),
+        "lib/lib.rs"
+    );
     std::fs::remove_dir_all(&root).ok();
 }
 

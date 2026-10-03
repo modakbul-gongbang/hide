@@ -8,5 +8,6 @@
 pub mod fs;
 pub mod host;
 pub mod ipc;
+pub mod path;
 pub mod process;
 pub mod watch;

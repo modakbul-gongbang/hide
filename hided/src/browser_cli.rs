@@ -16,10 +16,11 @@ pub fn address(target: &str, cwd: &Path) -> Result<String, String> {
     }
     let path = cwd.join(text);
     if path.exists() {
-        let real = path
-            .canonicalize()
+        let real = hide_platform::fs::identity::canonical(&path)
             .map_err(|error| format!("{text}: {error}"))?;
-        return Ok(crate::file_url::file_url(&real.display().to_string(), ""));
+        let real =
+            hide_platform::path::to_wire(&real).map_err(|error| format!("{text}: {error}"))?;
+        return Ok(crate::file_url::file_url(&real, ""));
     }
     if text.starts_with(['/', '.', '~']) {
         return Err(format!("no such file: {text}"));
@@ -37,10 +38,13 @@ fn has_scheme(text: &str) -> bool {
     let Some((scheme, rest)) = text.split_once(':') else {
         return false;
     };
-    let named = scheme
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic())
+    // A one-letter "scheme" is a Windows drive (`C:\\a.html`); no registered
+    // URL scheme is one letter long.
+    let named = scheme.len() > 1
+        && scheme
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
         && scheme
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
@@ -119,5 +123,14 @@ mod tests {
         for input in ["", "./missing.html", "/no/such/file.html", "two words"] {
             assert!(address(input, dir.path()).is_err(), "{input}");
         }
+    }
+
+    #[test]
+    fn a_windows_drive_is_a_path_and_not_a_scheme() {
+        assert!(!has_scheme(r"C:\site\index.html"));
+        assert!(!has_scheme("C:/site/index.html"));
+        assert!(!has_scheme("localhost:3000"));
+        assert!(has_scheme("https://example.com"));
+        assert!(has_scheme("about:blank"));
     }
 }

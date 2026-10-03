@@ -326,20 +326,21 @@ fn retarget_path(path: &str, source: &str, destination: &str) -> Option<String> 
     Some(format!("{destination}/{rest}"))
 }
 
+/// The folders from `checkout_path` down to `path`, both wire spellings of
+/// one device's paths, and `path` itself when it is a folder.
 fn reveal_expansion_paths(checkout_path: &str, path: &str, is_directory: bool) -> Vec<String> {
-    let root = Path::new(checkout_path);
-    let Ok(relative) = Path::new(path).strip_prefix(root) else {
+    let Ok(relative) = hide_platform::path::wire_relative(checkout_path, path) else {
         return Vec::new();
     };
     let mut expanded = Vec::new();
-    let mut current = root.to_path_buf();
-    let mut components = relative.components().peekable();
-    while let Some(component) = components.next() {
-        current.push(component);
-        if components.peek().is_none() && !is_directory {
+    let mut current = hide_platform::path::RelPath::root();
+    let mut names = relative.names().peekable();
+    while let Some(name) = names.next() {
+        if names.peek().is_none() && !is_directory {
             break;
         }
-        expanded.push(current.to_string_lossy().into_owned());
+        current = current.join(name).expect("a name of a parsed path");
+        expanded.push(hide_platform::path::wire_join(checkout_path, &current));
     }
     expanded
 }
