@@ -82,7 +82,7 @@ fn read_bootstrap_answer(stream: &mut impl Read) -> Result<PathBuf, String> {
     }
     answer["reference"]
         .as_str()
-        .map(PathBuf::from)
+        .and_then(|wire| hide_platform::path::from_wire(wire).ok())
         .ok_or_else(|| "reference_unavailable".to_owned())
 }
 
@@ -408,7 +408,8 @@ mod tests {
         let (channel, mut daemon) = std::io::pipe().unwrap();
         let (sent, lines) = mpsc::channel();
         let init = json!({
-            "bridge_dir": bridges, "herdr_socket": directory.path().join("no-herdr.sock"),
+            "bridge_dir": hide_platform::path::to_wire(&bridges).unwrap(),
+            "herdr_socket": directory.path().join("no-herdr.sock"),
             "port": 1, "origin_port": 2,
         });
         writeln!(daemon, "{init}").unwrap();
@@ -422,6 +423,15 @@ mod tests {
         let ready: Value =
             serde_json::from_str(&lines.recv_timeout(Duration::from_secs(10)).unwrap()).unwrap();
         assert_eq!(ready["type"], "ready");
+        // Both ends of the line read and write the wire spelling, which on
+        // Windows is the only one `from_wire` reads.
+        let socket = ready["socket"].as_str().unwrap();
+        assert!(
+            hide_platform::path::from_wire(socket)
+                .unwrap()
+                .starts_with(&bridges),
+            "{socket}"
+        );
         let home = directory.path().to_str().unwrap().to_owned();
         let bridge_dir = bridges.to_str().unwrap().to_owned();
         let env = crate::env::load_from(|key| match key {

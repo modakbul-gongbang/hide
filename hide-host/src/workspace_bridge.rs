@@ -35,9 +35,12 @@ struct IssuedReference {
     shell_started: u64,
 }
 
+/// The daemon's first line. `bridge_dir` is this device's folder in the
+/// wire spelling (`hide_platform::path`); `herdr_socket` is the socket this
+/// device's Herdr reported, handed back to it in Herdr's own spelling.
 #[derive(Deserialize)]
 pub struct Init {
-    pub bridge_dir: Option<PathBuf>,
+    pub bridge_dir: Option<String>,
     pub herdr_socket: PathBuf,
     pub port: u16,
     pub origin_port: u16,
@@ -89,9 +92,14 @@ fn write_line(output: &Mutex<impl Write>, value: Value) -> io::Result<()> {
     output.flush()
 }
 
+/// A reference with no wire spelling is not answered at all, so its caller
+/// reads the end of the stream and the issuer withdraws the reference.
 fn answer_client(stream: &mut LocalStream, result: Result<PathBuf, String>) -> io::Result<()> {
     let answer = match result {
-        Ok(reference) => json!({"ok":true,"reference":reference}),
+        Ok(reference) => {
+            let reference = hide_platform::path::to_wire(&reference).map_err(io::Error::other)?;
+            json!({"ok":true,"reference":reference})
+        }
         Err(reason) => json!({"ok":false,"reason":reason}),
     };
     writeln!(stream, "{answer}")
@@ -292,7 +300,8 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
         ));
     }
     let bridge_dir = match &init.bridge_dir {
-        Some(path) => path.clone(),
+        Some(wire) => hide_platform::path::from_wire(wire)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
         None => hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(
             &hide_platform::host::home_dir()?,
         )),
@@ -302,9 +311,11 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
         .prefix("bridge-")
         .tempdir_in(&bridge_dir)?;
     let socket = dir.path().join("bootstrap.sock");
+    let socket_wire = hide_platform::path::to_wire(&socket)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let listener = LocalListener::bind(&socket)?;
     let output = Mutex::new(output);
-    write_line(&output, json!({"type":"ready","socket":socket}))?;
+    write_line(&output, json!({"type":"ready","socket":socket_wire}))?;
     let (sender, receiver) = mpsc::sync_channel::<Value>(1);
     let replies = Mutex::new(receiver);
     let issued = Mutex::new(HashMap::new());
