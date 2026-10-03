@@ -393,6 +393,7 @@ hided starts on Windows, and `hided/tests/handshake.rs` runs there except the te
 On Windows a pane bootstrap caller is bound to its pane when it descends from the pane's shell; the checkout binding needs the caller's working directory, which `cwd_of` cannot read there, so a caller outside a pane is refused `caller_unavailable`.
 
 `hide-platform/tests/` and `hide-herdr-client/tests/real_herdr.rs` (the client against the pinned Herdr, ignored unless `HIDE_E2E_HERDR_BIN` names the binary) are where a change to the transport is proved; the subscription's reader is the high-frequency path, and on Unix it is the same blocking `read` as before.
+`hided/tests/real_herdr.rs` is the same for the daemon: hided starts against a private pinned Herdr, answers `/health`, opens a Workspace through the shell's `/ws` events, and a line typed into its pane comes back on the terminal stream through `herdr terminal session control`; the Windows check runs it on Windows, where it is the proof that hided starts there.
 
 ## The bundled Herdr runtime
 
