@@ -37,7 +37,9 @@ use super::analysis::{
 };
 use super::analyzer::{AnalysisJob, AnalysisResult, LabelAnalyzer};
 use super::context_label;
+use super::facts::{InputView, LogTarget, ReadFacts};
 use super::generator::GeneratorLock;
+use super::input::{OperatorInput, Submit};
 use super::overlay::LabelOverlay;
 use super::store::{LabelStore, PaneRecord};
 
@@ -82,6 +84,8 @@ pub(crate) struct WorkerConfig {
     pub(crate) target: String,
     /// The Herdr server's generator lock (D-10); see `generator`.
     pub(crate) lock_path: Option<PathBuf>,
+    /// Where the runtime records the operator's submits (D-19).
+    pub(crate) input: Arc<OperatorInput>,
 }
 
 pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -92,6 +96,8 @@ enum WorkerResult {
         generation: u64,
         reference: String,
         from_start: bool,
+        /// The read began at the conversation's start.
+        from_beginning: bool,
         result: Box<Result<LabelTranscript, ReadFailure>>,
     },
     Analysis(AnalysisOutcome),
@@ -139,12 +145,17 @@ struct PaneState {
     follow_up_armed: bool,
     /// The last failure logged, so a repeating one is logged once.
     last_failure: Option<String>,
+    /// When this worker began seeing the pane, and so its input (D-19).
+    input_observed_since_unix_ms: u64,
+    /// The newest operator submit matched to a message.
+    claimed_submit: Option<Submit>,
 }
 
 pub(crate) struct LabelWorker {
     target: String,
     store: Arc<LabelStore>,
     analyzer: Arc<LabelAnalyzer>,
+    input: Arc<OperatorInput>,
     records: BTreeMap<String, PaneRecord>,
     panes: BTreeMap<String, PaneState>,
     generator: GeneratorLock,
@@ -174,6 +185,7 @@ impl LabelWorker {
             records: store.target(&config.target),
             generator: GeneratorLock::new(config.lock_path, &config.target),
             target: config.target,
+            input: config.input,
             store,
             analyzer,
             panes: BTreeMap::new(),
@@ -288,6 +300,8 @@ impl LabelWorker {
                             follow_up_at: None,
                             follow_up_armed: status_moved,
                             last_failure: None,
+                            input_observed_since_unix_ms: now_unix_ms,
+                            claimed_submit: None,
                         },
                     );
                 }
@@ -388,8 +402,16 @@ impl LabelWorker {
                     generation,
                     reference,
                     from_start,
+                    from_beginning,
                     result,
-                } => self.handle_read(&pane, generation, &reference, from_start, *result, now),
+                } => self.handle_read(
+                    &pane,
+                    generation,
+                    &reference,
+                    (from_start, from_beginning),
+                    *result,
+                    now,
+                ),
                 WorkerResult::Analysis(outcome) => self.handle_analysis(outcome, now),
             };
         }
@@ -477,6 +499,10 @@ impl LabelWorker {
             record.and_then(|record| record.anchor.clone())
         };
         let (kind, value) = pane.reference.clone().expect("a token has a reference");
+        let subagents = record
+            .filter(|_| same_file)
+            .map(|record| record.facts.subagents.clone())
+            .unwrap_or_default();
         let job = ReadJob {
             pane: id.clone(),
             generation: pane.generation,
@@ -488,6 +514,7 @@ impl LabelWorker {
                 reference_value: value,
                 cwd: pane.cwd.clone(),
                 checkpoint,
+                subagents,
             },
         };
         self.read_in_flight = Some(id);
@@ -528,7 +555,7 @@ impl LabelWorker {
         pane_id: &str,
         generation: u64,
         reference: &str,
-        from_start: bool,
+        (from_start, from_beginning): (bool, bool),
         result: Result<LabelTranscript, ReadFailure>,
         now: Instant,
     ) -> bool {
@@ -604,6 +631,27 @@ impl LabelWorker {
         }
         record.incarnation = Some(transcript.confirmed.incarnation.clone());
         self.dirty = true;
+        let pane = self.panes.get_mut(pane_id).expect("checked above");
+        let submits = self.input.submits(&target, pane_id);
+        changed |= record.facts.fold(
+            ReadFacts {
+                events: &transcript.events,
+                title: transcript.title.as_deref(),
+                custom_title: transcript.custom_title.as_deref(),
+                sightings: &transcript.pr_sightings,
+                subagents: &transcript.subagents,
+                from_beginning: from_beginning || transcript.rescanned.is_some(),
+            },
+            InputView {
+                submits: &submits,
+                observed_since_unix_ms: pane.input_observed_since_unix_ms,
+                claimed: &mut pane.claimed_submit,
+            },
+            &LogTarget {
+                target: &target,
+                pane_id,
+            },
+        );
         if transcript.skipped_lines > 0 {
             crate::diagnostic!(json!({
                 "component": "labels",
@@ -863,6 +911,7 @@ fn provider(kind: Option<&str>) -> Option<Agent> {
     match kind? {
         "claude" => Some(Agent::Claude),
         "codex" => Some(Agent::Codex),
+        "opencode" => Some(Agent::OpenCode),
         _ => None,
     }
 }
@@ -898,6 +947,7 @@ impl Reader {
                             generation: job.generation,
                             reference: job.reference,
                             from_start: job.from_start,
+                            from_beginning: job.request.checkpoint.is_none(),
                             result: Box::new(result),
                         })
                         .is_err()

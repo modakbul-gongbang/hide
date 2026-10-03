@@ -5,8 +5,10 @@
 //!
 //! The file is `labels.json` beside `core-state.json`, written whole through
 //! a temporary file and a rename, mode 0600, never under the runtime mutex.
-//! It holds no conversation text: labels are the provider's short summaries,
-//! positions are byte offsets and file identities, turns are hashes. A file
+//! Labels are the provider's short summaries, positions are byte offsets and
+//! file identities, turns are hashes; the only conversation text is each
+//! pane's last request and reply, capped (`facts`, PRD overview-request-view
+//! B31). A file
 //! that cannot be read starts empty with a diagnostic (B21); nothing in it is
 //! shown until the pane's current session reference proves it.
 
@@ -17,6 +19,8 @@ use std::sync::Mutex;
 use hide_session::ConversationCheckpoint;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+use super::facts::SessionFacts;
 
 pub(crate) const LABELS_FILE: &str = "labels.json";
 const SCHEMA_VERSION: u32 = 1;
@@ -71,6 +75,9 @@ pub(crate) struct PaneRecord {
     pub(crate) changed_unix_ms: u64,
     #[serde(default)]
     pub(crate) agent_status: Option<String>,
+    /// What the session says without any AI; see `facts`.
+    #[serde(default)]
+    pub(crate) facts: SessionFacts,
 }
 
 /// Whether `reference` names the session a label was made for: its owner,
@@ -114,6 +121,7 @@ impl PaneRecord {
         self.progress.clear();
         self.expected_reply.clear();
         self.question = false;
+        self.facts = SessionFacts::default();
         self.reset_analysis();
     }
 
@@ -123,6 +131,7 @@ impl PaneRecord {
         self.task_input_cursor = None;
         self.analysis_turn_start = None;
         self.analysis_turn_end = None;
+        self.facts.forget_offsets();
     }
 
     pub(crate) fn forget_position(&mut self) {

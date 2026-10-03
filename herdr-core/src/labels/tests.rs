@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 
 use super::DeviceTranscripts;
 use super::analyzer::LabelAnalyzer;
+use super::facts::Requester;
+use super::input::OperatorInput;
 use super::store::{LOCAL_TARGET, LabelStore};
 use super::worker::{
     LabelWorker, LocalTranscripts, ObservedAgent, ReadFailure, TranscriptSource, WorkerConfig,
@@ -120,6 +122,7 @@ struct Harness {
     locks: tempfile::TempDir,
     backend: Arc<Scripted>,
     analyzer: Arc<LabelAnalyzer>,
+    input: Arc<OperatorInput>,
 }
 
 impl Harness {
@@ -147,6 +150,7 @@ impl Harness {
             locks: tempfile::tempdir().unwrap(),
             backend,
             analyzer: Arc::new(analyzer),
+            input: Arc::default(),
         }
     }
 
@@ -191,6 +195,7 @@ impl Harness {
             WorkerConfig {
                 target: target.to_owned(),
                 lock_path: Some(self.locks.path().join(lock_name)),
+                input: Arc::clone(&self.input),
             },
             store,
             Arc::clone(&self.analyzer),
@@ -878,4 +883,71 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         ["w9:p1"],
         "only the named home's label state is imported"
     );
+}
+
+/// `2026-10-01T00:00:<second>Z`, the time `Harness::session` stamps a turn.
+fn turn_at(second: u64) -> u64 {
+    1_790_812_800_000 + second * 1_000
+}
+
+#[test]
+fn a_request_the_operator_submitted_is_theirs_and_survives_a_restart_without_a_read() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, source) = harness.worker(Arc::clone(&store));
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "요청 보기 만들어줘"),
+            ("assistant", "만들었습니다\nPR을 열었어요"),
+            ("user", "HCOORD_REQUEST r1 from ci-lead (p9)\nCI 다시 봐줘"),
+        ],
+    );
+    harness.backend.answer("요청 보기", "none", "");
+    harness.input.record("w1:p1", turn_at(0) - 300, false);
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+
+    let facts = store.target(LOCAL_TARGET)["w1:p1"].facts.clone();
+    let operator = facts.operator_request.as_ref().unwrap();
+    assert_eq!(operator.text, "요청 보기 만들어줘");
+    assert_eq!(operator.requester, Requester::Operator);
+    assert!(operator.first);
+    let other = facts.other_request.as_ref().unwrap();
+    assert_eq!(other.requester, Requester::Named("ci-lead".to_owned()));
+    assert_eq!(
+        facts.reply.as_ref().unwrap().text,
+        "만들었습니다\nPR을 열었어요"
+    );
+
+    // A restarted daemon has no submits and reads nothing for an unchanged
+    // pane; what it shows is what was stored.
+    drop(worker);
+    let reads = source.reads.load(Ordering::SeqCst);
+    let (mut restarted, woken, source) = harness.worker(harness.store());
+    observe(&mut restarted, &idle);
+    settle(&mut restarted, &woken);
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        0,
+        "{reads} reads before"
+    );
+    assert_eq!(harness.store().target(LOCAL_TARGET)["w1:p1"].facts, facts);
+}
+
+#[test]
+fn a_message_no_submit_explains_is_another_agents() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let path = harness.session("a", "native-a", &[("user", "이 테스트 돌려줘")]);
+    harness.backend.answer("테스트", "none", "");
+    let working = agent(&path, "working", 1);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    let facts = store.target(LOCAL_TARGET)["w1:p1"].facts.clone();
+    assert!(facts.operator_request.is_none());
+    assert_eq!(facts.other_request.unwrap().requester, Requester::Agent);
 }

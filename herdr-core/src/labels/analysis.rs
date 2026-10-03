@@ -460,6 +460,8 @@ pub(crate) fn human(text: &str, at: u64) -> LabelEvent {
         at_unix_ms: at,
         text: text.to_owned(),
         offset: at,
+        images: 0,
+        sender: None,
     }
 }
 
@@ -470,6 +472,8 @@ pub(crate) fn assistant(text: &str, at: u64) -> LabelEvent {
         at_unix_ms: at,
         text: text.to_owned(),
         offset: at,
+        images: 0,
+        sender: None,
     }
 }
 

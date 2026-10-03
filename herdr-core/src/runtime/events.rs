@@ -1204,6 +1204,7 @@ pub(super) enum Event {
     ForkPane(PaneTargetPayload),
     AgentSleepSet(AgentSleepSetPayload),
     AgentSleep(PaneTargetPayload),
+    PaneInputSubmitted(PaneTargetPayload),
     AgentWake(AgentWakePayload),
     AgentTreeToggle(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
@@ -1401,6 +1402,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "fork_pane" => decode!(PaneTargetPayload, ForkPane),
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
+        "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
@@ -1546,6 +1548,9 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
+                if crate::labels::input::key_submits(&payload.bytes_base64) {
+                    self.record_operator_submit(&payload.pane_id);
+                }
                 if self.live.is_some()
                     || self.remote_terminals.keys().any(|target_id| {
                         remote_pane_source_id(target_id, &payload.pane_id).is_some()
@@ -1571,6 +1576,11 @@ impl Runtime {
             Event::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
             Event::AgentSleepSet(payload) => self.set_agent_sleep_after(payload),
             Event::AgentSleep(payload) => self.request_agent_sleep(&payload.pane_id),
+            // The phone's reply reached the pane; nothing on screen moves.
+            Event::PaneInputSubmitted(payload) => {
+                self.record_operator_submit(&payload.pane_id);
+                false
+            }
             Event::AgentWake(payload) => self.request_agent_wake(payload),
             Event::RefreshStatus => self.request_status_refresh(),
             Event::PetSetVisible(payload) => self.set_pet_visible(payload.visible),

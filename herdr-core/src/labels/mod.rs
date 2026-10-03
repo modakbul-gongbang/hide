@@ -11,8 +11,10 @@
 pub(crate) mod analysis;
 pub(crate) mod analyzer;
 mod context_label;
+pub(crate) mod facts;
 pub(crate) mod generator;
 mod import;
+pub(crate) mod input;
 pub(crate) mod overlay;
 pub(crate) mod store;
 pub(crate) mod worker;
@@ -40,6 +42,8 @@ const DEVICE_READ_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) struct LabelServices {
     pub(crate) store: Arc<LabelStore>,
     pub(crate) analyzer: Arc<LabelAnalyzer>,
+    /// The operator's submits the runtime records for every worker.
+    pub(crate) input: Arc<input::OperatorInput>,
     home: Option<PathBuf>,
     /// The daemon's state folder, which holds the device generator locks.
     state_dir: Option<PathBuf>,
@@ -64,6 +68,7 @@ impl LabelServices {
         Ok(Self {
             store,
             analyzer: Arc::new(analyzer),
+            input: Arc::default(),
             home,
             state_dir: state_dir.map(Path::to_path_buf),
         })
@@ -82,6 +87,7 @@ impl LabelServices {
             WorkerConfig {
                 target: store::LOCAL_TARGET.to_owned(),
                 lock_path: Some(generator::local_lock_path(socket_path)),
+                input: Arc::clone(&self.input),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
@@ -105,6 +111,7 @@ impl LabelServices {
                     .state_dir
                     .as_deref()
                     .map(|state_dir| generator::device_lock_path(state_dir, device_id)),
+                input: Arc::clone(&self.input),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
