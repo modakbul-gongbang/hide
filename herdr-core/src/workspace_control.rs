@@ -80,6 +80,10 @@ pub enum Action {
     Select {
         view_id: String,
         reveal: bool,
+        /// When supplied by a browser capability, the target must still be
+        /// a browser display in this area at commit time.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_browser_area: Option<String>,
     },
     Split {
         view_id: String,
@@ -93,6 +97,8 @@ pub enum Action {
     },
     Close {
         view_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_browser_area: Option<String>,
     },
 }
 
@@ -357,6 +363,31 @@ mod tests {
         assert_eq!(wire["area_id"], "a1");
         assert_eq!(wire["new_target"], true);
         assert_eq!(serde_json::from_value::<Action>(wire).unwrap(), action);
+    }
+
+    #[test]
+    fn browser_scope_is_additive_to_legacy_select_and_close_wire_actions() {
+        for legacy in [
+            serde_json::json!({"action": "select", "view_id": "v2", "reveal": false}),
+            serde_json::json!({"action": "close", "view_id": "v2"}),
+        ] {
+            let action: Action = serde_json::from_value(legacy.clone()).unwrap();
+            assert!(matches!(
+                &action,
+                Action::Select {
+                    expected_browser_area: None,
+                    ..
+                } | Action::Close {
+                    expected_browser_area: None,
+                    ..
+                }
+            ));
+            assert_eq!(serde_json::to_value(&action).unwrap(), legacy);
+            let mut scoped = legacy;
+            scoped["expected_browser_area"] = serde_json::json!("a1");
+            let action: Action = serde_json::from_value(scoped.clone()).unwrap();
+            assert_eq!(serde_json::to_value(action).unwrap(), scoped);
+        }
     }
 
     #[test]
