@@ -245,6 +245,40 @@ async fn next_frame(socket: &mut Socket, deadline: Instant) -> Option<Value> {
     }
 }
 
+/// Keep a bounded record of state changes without another API request in the
+/// input/echo path. A missing pane and a pane leaving its checkout have the
+/// same empty terminal symptom, but different lifetime boundaries.
+fn record_state(frame: &Value, states: &mut Vec<Value>) {
+    let Some(rest) = frame["payload"]["rest"].as_object() else {
+        return;
+    };
+    let state = json!({
+        "focused": rest.get("focused"),
+        "navigator": rest.get("navigator"),
+        "terminal": rest.get("terminal"),
+        "diagnostics": rest.get("status").map(|status| &status["diagnostics"]),
+    });
+    if states.last() != Some(&state) {
+        if states.len() == 8 {
+            // Preserve the initial selection alongside the latest changes.
+            states.remove(1);
+        }
+        states.push(state);
+    }
+}
+
+fn failure_snapshot(herdr: &PrivateHerdr) -> String {
+    match hide_herdr_client::request_with_timeout(
+        &herdr.socket,
+        "session.snapshot",
+        json!({}),
+        Duration::from_secs(5),
+    ) {
+        Ok(snapshot) => snapshot.to_string(),
+        Err(error) => format!("session.snapshot failed: {error}"),
+    }
+}
+
 /// Every `{pane_id, bytes_base64}` chunk anywhere in a frame, decoded.
 fn chunks(value: &Value, out: &mut Vec<(String, Vec<u8>)>) {
     match value {
@@ -331,11 +365,13 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
     .await;
     // The Workspace's first pane, as the shell finds it: the focused one.
     let deadline = Instant::now() + Duration::from_secs(60);
+    let mut states = Vec::new();
     let pane = loop {
         let frame = next_frame(&mut socket, deadline)
             .await
             .expect("the new Workspace's pane is focused within a minute");
         if let Some(pane) = frame["payload"]["rest"]["focused"]["pane_id"].as_str() {
+            record_state(&frame, &mut states);
             break pane.to_owned();
         }
     };
@@ -360,6 +396,7 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
         let Some(frame) = next_frame(&mut socket, deadline).await else {
             break false;
         };
+        record_state(&frame, &mut states);
         let mut out = Vec::new();
         chunks(&frame, &mut out);
         for (from, bytes) in out {
@@ -387,8 +424,9 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
     };
     assert!(
         found,
-        "the typed line never came back on the terminal stream (typed: {typed}); the screen read: {:?}; {}; herdr: {}",
+        "the typed line never came back on the terminal stream (typed: {typed}); the screen read: {:?}; states: {states:?}; snapshot: {}; {}; herdr: {}",
         plain(&screen),
+        failure_snapshot(&herdr),
         control_attempt(&herdr, &pane),
         std::fs::read_to_string(&herdr.log).unwrap_or_default()
     );
