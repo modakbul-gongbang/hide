@@ -2,6 +2,7 @@ import { commandsCatalogs, commandsEnglish } from "./resources/commands";
 import { boardCatalogs, boardEnglish } from "./resources/board";
 import { cleanupCatalogs, cleanupEnglish } from "./resources/cleanup";
 import { commonCatalogs, commonEnglish } from "./resources/common";
+import { agentPresentationCatalogs, agentPresentationEnglish } from "./resources/agentPresentation";
 import { devicesCatalogs, devicesEnglish } from "./resources/devices";
 import { issueSettingsCatalogs, issueSettingsEnglish } from "./resources/issueSettings";
 import { issuesCatalogs, issuesEnglish } from "./resources/issues";
@@ -17,6 +18,7 @@ import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
 
 export const english = {
+  ...agentPresentationEnglish,
   ...commonEnglish,
   ...commandsEnglish,
   ...nativeEnglish,
@@ -40,6 +42,7 @@ export type MessageKey = keyof typeof english;
 export const catalogs = {
   en: english,
   ko: {
+    ...agentPresentationCatalogs.ko,
     ...commonCatalogs.ko,
     ...commandsCatalogs.ko,
     ...nativeCatalogs.ko,
@@ -58,6 +61,7 @@ export const catalogs = {
     ...overviewCatalogs.ko,
   },
   "zh-CN": {
+    ...agentPresentationCatalogs["zh-CN"],
     ...commonCatalogs["zh-CN"],
     ...commandsCatalogs["zh-CN"],
     ...nativeCatalogs["zh-CN"],
@@ -76,6 +80,7 @@ export const catalogs = {
     ...overviewCatalogs["zh-CN"],
   },
   ja: {
+    ...agentPresentationCatalogs.ja,
     ...commonCatalogs.ja,
     ...commandsCatalogs.ja,
     ...nativeCatalogs.ja,

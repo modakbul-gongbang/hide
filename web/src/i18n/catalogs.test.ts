@@ -4,6 +4,7 @@ import { commandsEnglish } from "./resources/commands";
 import { boardEnglish } from "./resources/board";
 import { cleanupEnglish } from "./resources/cleanup";
 import { commonEnglish } from "./resources/common";
+import { agentPresentationEnglish } from "./resources/agentPresentation";
 import { devicesEnglish } from "./resources/devices";
 import { issueSettingsEnglish } from "./resources/issueSettings";
 import { issuesEnglish } from "./resources/issues";
@@ -25,6 +26,7 @@ describe("interface resources", () => {
 
   it("keeps domain keys separate so composition cannot overwrite a message", () => {
     const keys = [
+      agentPresentationEnglish,
       commonEnglish,
       commandsEnglish,
       nativeEnglish,
