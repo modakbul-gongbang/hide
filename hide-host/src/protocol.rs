@@ -27,7 +27,7 @@ use crate::root::RootIdentity;
 /// hide-home-layout D-13); a helper on 12 would leave them.
 /// 14: `session_activity` answers only a proven session's modification time
 /// and size, for the parent-owned inactivity watcher.
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {

@@ -83,7 +83,7 @@ PRD A의 로컬 전달 범위와 hcoord 공존 범위는 유지한다.
 | D-36 | 1단계 완료 기준 7개(수신자는 로컬로 한정, D-49): 1 hide request send가 idle 또는 done이고 입력창이 빈 로컬 에이전트에 초인종과 UserPromptSubmit hook으로 도착(Claude와 Codex), 2 working이면 치지 않고 idle 뒤 전달, 3 초안이면 입력창 불변과 대기 유지와 기한 뒤 미전달 알림, 4 같은 intent 재전송은 한 통이고 확정 뒤 재주입 없음(확정 전 중단 시에만 같은 id로 재주입 가능), 5 상한 초과는 capacity 오류나 대기 유지, 6 키 입력 경로의 마지막 입력 시각 기록은 메모리 쓰기 하나이고 입력 지연이 전과 같음, 7 hide 쪽 충돌 검사 범위에서 기존 hcoord는 그대로 돌고 이중 감시나 이중 전달이 없음(반대 방향 hcoord 등록은 D-43의 잔여 위험). 증명은 격리 Herdr e2e, 상태 기계 단위 테스트, 입력 경로 성능 측정이다. | qa-log D-36, Q15, Q32 |
 | D-37 | 감지 틱은 1분이고 락 밖에서 정수 비교만 한다. digest는 대상 이름, 마지막 활동 시각, 경과 분, Herdr 상태 값, 열린 request 수, 활동 근거이며 화면 읽기는 하지 않고 막힘 판단은 부모가 한다. 전달은 1단계의 편지함, 초인종, hook을 쓴다. 같은 정지 상태의 알림 횟수와 안전망은 D-48을 따른다. | qa-log D-37, Q17, Q31 |
 | D-38 | 2단계 완료 기준 9개: 1 20분 무활동이면 부모에게 편지 한 통, 2 같은 정지 상태의 알림 횟수는 D-48(첫 알림 한 번, 첫 알림 후 60분에 한 번 더)이고 활동 재개 시 초기화, 3 이상 없는 동안 편지 0통, 4 안전망 60분에 한 번 더(D-48), 5 대상 이탈과 watch stop에서만 끝나고 일반 reply로는 끝나지 않음, 6 감시 수와 틱 비용 상한과 capacity 오류, 7 시작과 경고와 종료 전이 때만 스냅샷, 8 sasu 감시는 hcoord가 맡고 hide 쪽 충돌 검사 범위에서 이중 감시 없음(반대 방향 hcoord 등록은 D-43의 잔여 위험), 9 원격 대상의 세션 파일 활동 감지와 폴백과 digest 근거 표시. | qa-log D-38, Q18, Q22 |
-| D-39 | 원격 활동용 helper 호출 session_activity를 넣는다. 요청은 LabelTranscriptRequest에서 checkpoint를 뺀 형태(에이전트 종류, 세션 참조, cwd), 응답은 세션 파일의 마지막 수정 시각과 크기뿐이며 대화는 읽지 않고 오류는 경로나 내용 없는 안정적 코드다. 세션 위치와 소유 증명은 SessionLocator와 confirm_label_session을 재사용하고 로컬은 같은 함수를 직접 부른다. 프로토콜 13에서 14로 올리고 연결 시 helper가 교체된다. 원격 호출은 대상당 1분에 한 번이며 Runtime 락 밖 원격 worker에서 하고 감시 수 상한이 호출 수를 묶는다. 세션 참조가 없으면 상태 전이로 폴백한다. 모든 새 작업은 락 밖, 상한, 틱 비용 설명을 지킨다. | qa-log D-39, Q20 |
+| D-39 | 원격 활동용 helper 호출 session_activity를 넣는다. 요청은 LabelTranscriptRequest에서 checkpoint를 뺀 형태(에이전트 종류, 세션 참조, cwd), 응답은 세션 파일의 마지막 수정 시각과 크기뿐이며 대화는 읽지 않고 오류는 경로나 내용 없는 안정적 코드다. 세션 위치와 소유 증명은 SessionLocator와 confirm_label_session을 재사용하고 로컬은 같은 함수를 직접 부른다. 프로토콜 15에서 15로 올리고 연결 시 helper가 교체된다. 원격 호출은 대상당 1분에 한 번이며 Runtime 락 밖 원격 worker에서 하고 감시 수 상한이 호출 수를 묶는다. 세션 참조가 없으면 상태 전이로 폴백한다. 모든 새 작업은 락 밖, 상한, 틱 비용 설명을 지킨다. | qa-log D-39, Q20 |
 | D-41 | PRD를 둘로 나눈다. PRD A는 1단계와 2단계로 hided에 새 엔진을 만들고 hcoord와 공존한다. PRD B는 3단계와 4단계이며 A를 운영해 본 뒤 별도 인터뷰로 만든다. | qa-log D-41, Q16 |
 | D-42 | PRD A의 감시 종료 조건에서 명시적 완료 보고를 뺀다. 자식이 스스로 보고하는 명령은 PRD B에서 implement report와 함께 설계한다. | qa-log D-42, Q22 |
 | D-43 | PRD A 동안 장부는 각자 소유한다. hide request와 hide watch로 만든 것은 hided 장부, hcoord 명령(sasu 포함)으로 만든 것은 hcoord 장부이고 서로의 장부를 읽거나 쓰지 않으며 편지는 보낸 CLI의 장부에서 전달한다. hide watch start는 등록 때 hcoord watch list --json을 락 밖에서 한 번 호출해 그 대상에 활성 hcoord 감시가 있으면 conflict로 거부한다. hcoord가 없거나 호출이 실패하면 확인하지 못했음을 진단 로그에 남기고 등록한다. 반대 방향은 막지 못하므로 hide로 건 감시 대상에는 hcoord watch를 걸지 않는다는 운영 규칙으로 문서에 기록하고, 이중 감시가 나도 부모가 알림을 두 번 받는 소음에 그친다. | qa-log D-43, Q23 |
@@ -136,7 +136,7 @@ PRD A의 로컬 전달 범위와 hcoord 공존 범위는 유지한다.
 | B36 | `hide watch start`는 등록 때 `hcoord watch list --json`을 락 밖에서 한 번 호출해 그 대상에 활성 hcoord 감시가 있으면 `conflict`로 거부한다. hcoord가 없거나 호출이 실패하면 확인하지 못했음을 진단 로그에 남기고 등록한다. sasu가 만든 감시는 hcoord가 맡아 이중 감시가 없다. | D-32, D-38, D-43 |
 | B37 | hcoord가 hide 감시 대상에 감시를 거는 반대 방향은 막지 못하므로 "PRD A 동안 hide로 건 감시 대상에는 hcoord watch를 걸지 않는다"는 운영 규칙이 문서에 적히고, 이중 감시가 나도 부모가 알림을 두 번 받는 소음에 그친다. | D-43 |
 | B38 | helper 호출 `session_activity`는 요청에 에이전트 종류, 세션 참조, cwd를 받고 응답에는 세션 파일의 마지막 수정 시각과 크기만 담으며 대화를 읽지 않는다. 오류는 경로나 내용 없는 안정적 코드이고, 세션 위치와 소유 증명은 SessionLocator와 confirm_label_session을 재사용하며 로컬은 같은 함수를 직접 부른다. | D-39 |
-| B39 | helper 프로토콜은 13에서 14로 올라가고 연결 시 helper가 교체된다. 원격 호출은 감시 대상당 1분에 한 번이며 Runtime 락 밖의 원격 worker에서 하고, 감시 수 상한이 호출 수를 묶는다. 원격 대상의 감시 알림은 로컬 부모에게 가므로 원격 hook 경로를 쓰지 않는다. | D-39, D-46, D-49 |
+| B39 | helper 프로토콜은 14에서 15로 올라가고 연결 시 helper가 교체된다. 원격 호출은 감시 대상당 1분에 한 번이며 Runtime 락 밖의 원격 worker에서 하고, 감시 수 상한이 호출 수를 묶는다. 원격 대상의 감시 알림은 로컬 부모에게 가므로 원격 hook 경로를 쓰지 않는다. | D-39, D-46, D-49 |
 | B40 | session_activity가 오류, 타임아웃(5초, 같은 틱 재시도 없음), 응답 형식 불일치, helper 없음, 버전 불일치로 실패하면 그 틱은 Herdr 상태 전이로 폴백하고 digest에 활동 근거와 원격 읽기 실패 코드를 표시하며 알림을 억제하지 않는다. 응답은 캐시하지 않고, 연속 3회 실패하면 진단 로그를 10분에 한 번 횟수와 함께 남긴다. | D-45 |
 | B41 | digest에는 활동 근거(세션 파일 또는 상태 전이만)가 표시되고, 원격 대상도 세션 참조가 있으면 세션 파일 활동으로 감지되며 참조가 없으면 상태 전이로 폴백한다. | D-26, D-38, D-39 |
 | B42 | hided가 재시작해도 장부에 저장된 첫 알림 시각과 횟수로 같은 정지 상태를 이어간다. 첫 알림은 반복하지 않고 첫 알림 후 60분의 두 번째 알림 시점을 유지하며 총 2회를 넘지 않는다. 활동이 다시 생기면 해당 대상의 시각과 횟수가 초기화된다(PRD B Q15, D-27). | D-37, D-44 |
@@ -150,7 +150,7 @@ PRD A의 로컬 전달 범위와 hcoord 공존 범위는 유지한다.
 - 장부는 hided가 소유하는 디스크 파일 하나이고(임시 파일 후 rename, 비공개 모드, hide_platform::fs::private) hcoord 장부와 분리된다. 기존 hcoord와는 등록 때 `hcoord watch list --json` 한 번 호출 외에 접점이 없다(D-43, D-44).
 - `hide-agent-hooks`의 `UserPromptSubmit` 처리가 hided에서 대기 편지를 받아 컨텍스트로 출력한 뒤 확정을 호출한다. hided 연결은 hide_platform의 OS별 한 함수를 거친다(D-24, D-35, D-47, D-28).
 - 키 입력 경로에 pane별 마지막 입력 시각의 메모리 쓰기가 추가되고, 감시 상태 전이가 스냅샷 wire에 더해진다(D-18, D-38).
-- hide-host helper 프로토콜 14에 `session_activity` 호출이 추가되고 hide-session의 SessionLocator와 confirm_label_session을 재사용한다(D-39).
+- hide-host helper 프로토콜 15에 `session_activity` 호출이 추가되고 hide-session의 SessionLocator와 confirm_label_session을 재사용한다(D-39).
 - 편지 전달 대상은 이 Mac의 로컬 pane이다. 원격 수신자 전달 경로는 PRD B이고 원격에 대해서는 session_activity로 활동을 읽는 감시만 있다(D-49).
 - Herdr 계약은 바꾸지 않는다. 입력창 상태 API가 없어 화면 읽기를 쓰고 pane 쓰기는 하나의 함수로 모은다(D-17, D-30). 새 외부 서비스, 인증, 결제는 없다.
 
@@ -158,7 +158,7 @@ PRD A의 로컬 전달 범위와 hcoord 공존 범위는 유지한다.
 
 - 초인종 판정은 Herdr 상태(화면 휴리스틱, 1~2초 늦음)와 화면 읽기(TUI 버전 의존, Claude placeholder는 ANSI dim, Codex 슬래시 메뉴 행이 파서를 속일 수 있음)에 기댄다. 불확실하면 보류하므로 안전한 쪽으로 실패하지만 편지가 늦거나 미전달이 될 수 있다(D-19, D-20).
 - hide 창 밖 입력(Herdr TUI 직접, 소켓 직접)은 보이지 않아 사람이 막 친 초안에 초인종이 겹칠 수 있고, 휴대폰 답장 경로는 사람 입력과의 겹침 보호가 없다. 알고 받아들인 위험이다(D-18).
-- 라이브 증명은 격리 Herdr 서버와 정확히 식별한 후보 PID에서만 하고 운영자의 앱, pane, 서버를 건드리지 않는다(CLAUDE.md의 Performance Guide와 docs/PERFORMANCE_TESTING.md). 격리 e2e와 초인종 실험은 macOS 기준이고 Windows와 Linux의 e2e와 hook 전달은 #293과 #344가 잇는다(D-28). 프로토콜 14의 helper 교체는 무인 운영 중인 mini에서 연결 때 일어나므로 mini에 대한 라이브 확인은 상태를 먼저 읽고 하며 프로세스를 먼저 종료하지 않는다.
+- 라이브 증명은 격리 Herdr 서버와 정확히 식별한 후보 PID에서만 하고 운영자의 앱, pane, 서버를 건드리지 않는다(CLAUDE.md의 Performance Guide와 docs/PERFORMANCE_TESTING.md). 격리 e2e와 초인종 실험은 macOS 기준이고 Windows와 Linux의 e2e와 hook 전달은 #293과 #344가 잇는다(D-28). 프로토콜 15의 helper 교체는 무인 운영 중인 mini에서 연결 때 일어나므로 mini에 대한 라이브 확인은 상태를 먼저 읽고 하며 프로세스를 먼저 종료하지 않는다.
 - 상한값과 20분, 60분, 30초 기준은 초기값이고 구현 때 측정으로 조정한다. 틱 비용과 입력 지연은 측정 전까지 설명일 뿐이다(D-04, D-46).
 - 반대 방향 이중 감시(hcoord가 hide 감시 대상을 등록)는 막지 못하고 운영 규칙으로만 막는다. sasu 런의 15분 watch 소음은 PRD B까지 남는다(D-41, D-43).
 - 구현 전에 운영자가 따로 해 줄 일은 없다(자격 증명, 계정, 결제 없음).
