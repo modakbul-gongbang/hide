@@ -333,7 +333,9 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
         None => {
             let home =
                 std::env::var_os("HOME").ok_or_else(|| io::Error::other("HOME is unavailable"))?;
-            PathBuf::from(home).join(".local/state/hide/workspace-bridges")
+            hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(
+                Path::new(&home),
+            ))
         }
     };
     validate_dir(&bridge_dir)?;

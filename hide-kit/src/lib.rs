@@ -23,6 +23,8 @@ mod device;
 mod hcoord;
 mod hooks;
 mod labels;
+pub mod layout;
+pub mod legacy;
 mod local;
 mod payload;
 pub mod process;
@@ -37,7 +39,8 @@ use serde::{Deserialize, Serialize};
 
 pub use device::{CURRENT, device_target};
 pub use hcoord::{HcoordRuntime, NODE_MINIMUM, find_node};
-pub use labels::{LABELS_PLUGIN_ID, LabelsRetirement, labels_home, plugin_state_dir};
+pub use labels::{HCOORD_PLUGIN_ID, LABELS_PLUGIN_ID, Retirement, labels_home, plugin_state_dir};
+pub use legacy::is_build_name;
 pub use local::{STANDALONE_REASON, bundled_kit_dir, local_target};
 pub use record::kit_state_dir;
 
@@ -138,8 +141,13 @@ pub struct KitReport {
     pub components: Vec<ComponentReport>,
     /// What an apply took out of the retired labels plugin; empty when there
     /// was nothing of it (PRD labels-in-hided D-12).
-    #[serde(default, skip_serializing_if = "LabelsRetirement::is_empty")]
-    pub labels_retirement: LabelsRetirement,
+    #[serde(default, skip_serializing_if = "Retirement::is_empty")]
+    pub labels_retirement: Retirement,
+    /// What an apply took off the machine from older layouts: the
+    /// standalone hcoord Herdr plugin and the folders `~/.hide` replaced;
+    /// empty when there was nothing (PRD hide-home-layout D-13, D-14).
+    #[serde(default, skip_serializing_if = "Retirement::is_empty")]
+    pub legacy_retirement: Retirement,
 }
 
 impl KitReport {
@@ -160,7 +168,8 @@ impl KitReport {
                     location: None,
                 })
                 .collect(),
-            labels_retirement: LabelsRetirement::default(),
+            labels_retirement: Retirement::default(),
+            legacy_retirement: Retirement::default(),
         }
     }
 }
@@ -191,6 +200,11 @@ pub struct KitTarget {
     pub herdr_bin: Option<PathBuf>,
     /// What runs hcoord on this machine, or why nothing can.
     pub hcoord: Result<HcoordRuntime, String>,
+    /// hcoord's relocated home (HCOORD_HOME), `None` for its default
+    /// `~/.hide/hcoord`. A relocated hcoord is never moved (D-08).
+    pub hcoord_home: Option<PathBuf>,
+    /// Folders of older layouts the pass takes off this machine (D-13).
+    pub legacy: Vec<legacy::Legacy>,
     /// Raised by the kit's owner when it is going away: a child the kit is
     /// waiting on is ended and no further part is started.
     pub stop: Arc<AtomicBool>,
@@ -263,7 +277,7 @@ fn location(id: ComponentId, target: &KitTarget) -> String {
             .config_path(&target.home)
             .display()
             .to_string(),
-        ComponentId::Hcoord => hcoord::shim_path(&target.home).display().to_string(),
+        ComponentId::Hcoord => hcoord::shim_path(target).display().to_string(),
     }
 }
 
@@ -276,6 +290,9 @@ fn report(
 ) -> ComponentReport {
     let (state, reason) = match (failure, observed) {
         (Some(failure), _) => (ComponentState::Failed, Some(failure)),
+        (None, Observed::Current) if id == ComponentId::Hcoord => {
+            (ComponentState::Installed, hcoord::note(target))
+        }
         (None, Observed::Current) => (ComponentState::Installed, None),
         (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),
         (None, Observed::Missing) if recorded => (
@@ -333,7 +350,8 @@ pub fn status(target: &KitTarget) -> KitReport {
             .into_iter()
             .map(|id| report(id, target, observe(id, target), recorded(id), None))
             .collect(),
-        labels_retirement: LabelsRetirement::default(),
+        labels_retirement: Retirement::default(),
+        legacy_retirement: Retirement::default(),
     }
 }
 
@@ -357,6 +375,16 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     // possible; on this Mac the core has already imported its labels.
     let labels_retirement = labels::retire(target);
     let mut changed = false;
+    // Asked once per machine: nothing on disk says whether the standalone
+    // plugin was ever linked, and a pass Herdr did not answer asks again.
+    let mut legacy_retirement = Retirement::default();
+    if !record.has_retired(HCOORD_PLUGIN_ID) {
+        legacy_retirement = labels::retire_hcoord_plugin(target);
+        if legacy_retirement.failures.is_empty() {
+            record.mark_retired(HCOORD_PLUGIN_ID);
+            changed = true;
+        }
+    }
     let mut components = Vec::with_capacity(ComponentId::ALL.len());
     for id in ComponentId::ALL {
         // The owner is quitting: what is done is recorded, and the rest waits
@@ -411,9 +439,15 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
             }
         }
     }
+    // Last, so a hook or link the pass just moved off a legacy folder no
+    // longer names it.
+    let folders = legacy::retire(target);
+    legacy_retirement.removed.extend(folders.removed);
+    legacy_retirement.failures.extend(folders.failures);
     KitReport {
         components,
         labels_retirement,
+        legacy_retirement,
     }
 }
 

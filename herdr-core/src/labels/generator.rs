@@ -32,11 +32,12 @@ pub(crate) fn local_lock_path(socket: &Path) -> PathBuf {
     socket.with_file_name(format!("{name}.hide-label-generator.lock"))
 }
 
-/// The lock of a registered device's server, under the daemon's `home`.
-pub(crate) fn device_lock_path(home: &Path, device_id: &str) -> PathBuf {
+/// The lock of a registered device's server, in the daemon's state folder,
+/// so an isolated daemon never writes the operator's (PRD hide-home-layout
+/// D-06).
+pub(crate) fn device_lock_path(state_dir: &Path, device_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("device:{device_id}").as_bytes());
-    home.join(".local/state/hide/label-generators")
-        .join(format!("{digest:x}.lock"))
+    hide_kit::layout::label_generators(state_dir).join(format!("{digest:x}.lock"))
 }
 
 pub(crate) struct GeneratorLock {

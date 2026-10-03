@@ -252,12 +252,18 @@ jobs:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hide and hided for the desktop app
-        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+        # hide-agent-hooks and hide-host-helper too: the home-layout spec
+        # stages every binary the packaged app carries.
+        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided -p hide-agent-hooks -p hide-host'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build the web shell
         # The desktop app serves web/dist through the hided it starts.
         run: pnpm --dir web build
+      - name: Build hcoord
+        # The staged app carries plugins/hcoord/dist, which the kit installs
+        # at ~/.hide/hcoord; the home-layout spec stages it like a package.
+        run: pnpm --dir plugins/hcoord build
       - name: Install Playwright Chromium
         # The browser spec opens a page in Chromium beside the Electron app.
         run: pnpm --dir desktop exec playwright install chromium

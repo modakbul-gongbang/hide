@@ -685,6 +685,7 @@ impl ConnectError {
 fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
     let build = crate::build_id::of_file(&daemon_binary().map_err(ConnectError::StartFailed)?)
         .map_err(ConnectError::StartFailed)?;
+    move_legacy_state(env).map_err(ConnectError::StartFailed)?;
     let _serialized = state_file::lock_connect(&env.state_dir)
         .map_err(|error| ConnectError::StartFailed(format!("the connect lock: {error}")))?;
     if let Some((state, health)) = healthy_daemon(env) {
@@ -722,7 +723,7 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
                 "pid": state.pid, "running_build": running, "build": build,
             })
         );
-        stop_daemon(env, &state).map_err(|detail| {
+        stop_daemon(&env.state_dir, &state).map_err(|detail| {
             eprintln!(
                 "{}",
                 serde_json::json!({"component": "hide", "kind": "daemon.replace_failed", "pid": state.pid, "message": detail})
@@ -732,6 +733,36 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
     }
     spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
     wait_healthy(env).map_err(ConnectError::NoResponse)
+}
+
+/// Moves the legacy default state folder into place before anything looks
+/// for a daemon (PRD hide-home-layout D-05). The daemon running from it is
+/// the one that answers its own `/health` as the pid its state names, the
+/// same rule that keeps a reused pid from ever being signalled.
+fn move_legacy_state(env: &Env) -> Result<(), String> {
+    let Some(legacy) = env.legacy_state_dir.as_deref() else {
+        return Ok(());
+    };
+    let moved = crate::state_move::move_legacy(legacy, &env.state_dir, |legacy| {
+        let Some((state, _)) = healthy_daemon_in(legacy) else {
+            return Ok(None);
+        };
+        stop_daemon(legacy, &state)?;
+        Ok(Some(state.pid))
+    })
+    .map_err(|detail| format!("the state folder could not be moved: {detail}"))?;
+    if let crate::state_move::Moved::Moved { stopped_pid } = moved {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "hide", "kind": "state.moved",
+                "from": legacy.display().to_string(),
+                "to": env.state_dir.display().to_string(),
+                "stopped_pid": stopped_pid,
+            })
+        );
+    }
+    Ok(())
 }
 
 fn open(env: &Env) -> Result<(), String> {
@@ -807,16 +838,9 @@ fn status(env: &Env) -> Result<(), String> {
 
 fn stop(env: &Env) -> Result<(), String> {
     if let Some(state) = state_file::read_state(&env.state_dir).map_err(|e| e.to_string())? {
-        stop_daemon(env, &state)?;
+        stop_daemon(&env.state_dir, &state)?;
     }
     Ok(())
-}
-
-/// Ends the daemon `state` names: SIGTERM and five seconds for its graceful
-/// stop, which ends its AI requests and provider processes, then SIGKILL.
-/// An error only when it is still alive after that.
-fn stop_daemon(env: &Env, state: &DaemonState) -> Result<(), String> {
-    end_recorded_daemon(&env.state_dir, state)
 }
 
 /// Whether `state`'s pid is still the daemon that recorded it. A pid another
@@ -830,7 +854,10 @@ fn still_the_daemon(state: &DaemonState) -> bool {
     }
 }
 
-fn end_recorded_daemon(state_dir: &Path, state: &DaemonState) -> Result<(), String> {
+/// Ends the daemon `state` names: SIGTERM and five seconds for its graceful
+/// stop, which ends its AI requests and provider processes, then SIGKILL.
+/// An error only when it is still alive after that.
+fn stop_daemon(state_dir: &Path, state: &DaemonState) -> Result<(), String> {
     // A pid that is gone, or is another process now, has nothing to stop:
     // only the state is cleared.
     if !still_the_daemon(state) {
@@ -960,7 +987,11 @@ fn healthy_state(env: &Env) -> Option<DaemonState> {
 /// after a crash, with another daemon on the port, is a stale state that
 /// `hide connect` must never signal.
 fn healthy_daemon(env: &Env) -> Option<(DaemonState, serde_json::Value)> {
-    let state = state_file::read_state(&env.state_dir).ok().flatten()?;
+    healthy_daemon_in(&env.state_dir)
+}
+
+fn healthy_daemon_in(state_dir: &Path) -> Option<(DaemonState, serde_json::Value)> {
+    let state = state_file::read_state(state_dir).ok().flatten()?;
     if !still_the_daemon(&state) {
         return None;
     }
@@ -1019,7 +1050,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         state_file::write_state(dir.path(), &replaced).unwrap();
-        end_recorded_daemon(dir.path(), &replaced).unwrap();
+        stop_daemon(dir.path(), &replaced).unwrap();
         assert!(
             stranger.try_wait().unwrap().is_none(),
             "the process that reused the pid was signalled"

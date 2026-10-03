@@ -433,6 +433,7 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
                 location: None,
             }],
             labels_retirement: Default::default(),
+            legacy_retirement: Default::default(),
         },
     );
 

@@ -5,16 +5,24 @@ import crypto from "node:crypto";
 import { HcoordError } from "./model";
 import { runHerdrCommand } from "../implement/herdr";
 import { convergeLaunchAgent, kickstartLabel, type LaunchdEnvironment } from "../support/launchd";
-import { dataDir, stopMarkerPath } from "./store";
+import { accountHome, dataDir, defaultDataDir, stopMarkerPath } from "./store";
 
-const DEFAULT_LABEL = "com.hcoord.daemon";
-export function daemonLabel(): string {
-  const override = process.env["HCOORD_HOME"];
-  if (override === undefined || override === "") return DEFAULT_LABEL;
-  const suffix = crypto.createHash("sha256").update(path.resolve(override)).digest("hex").slice(0, 12);
+export const DEFAULT_LABEL = "com.hcoord.daemon";
+/**
+ * The account's one coordinator keeps the plain label: the daemon whose home
+ * is the account's default `~/.hide/hcoord`, however that home was named (an
+ * explicit HCOORD_HOME equal to it, as the remote shell passes, is the same
+ * coordinator). Any other home gets a label of its own. launchd domains are
+ * per account, not per HOME, so the account's home is read from the user
+ * database: a test that only moved HOME can never take the account's label.
+ */
+export function daemonLabel(home = os.homedir()): string {
+  const dir = path.resolve(dataDir(home));
+  if (dir === path.resolve(defaultDataDir(accountHome()))) return DEFAULT_LABEL;
+  const suffix = crypto.createHash("sha256").update(dir).digest("hex").slice(0, 12);
   return `${DEFAULT_LABEL}.${suffix}`;
 }
-const plistPath = (home: string, label: string): string => path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+export const plistPath = (home: string, label: string): string => path.join(home, "Library", "LaunchAgents", `${label}.plist`);
 const escapeXml = (text: string): string => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 // Each value states what was actually observed (PRD B18): "verified_isolated"
 // means a real run in an isolated HOME or test session, not a production login.
@@ -35,7 +43,7 @@ export function notifyHuman(requestId: string): { ok: boolean; code: string } {
 /** What a person prepares once so a machine can host remote agents (PRD B18, D-13). */
 export const REMOTE_SETUP = [
   "on the HQ: herdr machine add --label <name> <ssh-target> (hcoord reads only this saved machine; it stores no credentials)",
-  "on the remote: run scripts/install-local-skills.mjs from this repository, which writes ~/.hcoord/bin/hcoord for the HQ's SSH calls",
+  "on the remote: add it as a device in hide (Settings > Devices); hide installs hcoord there at ~/.hide/hcoord/bin/hcoord for the HQ's SSH calls",
   "on the remote: clone the source repository that agent spawn --repo names",
 ] as const;
 
@@ -67,7 +75,7 @@ export function daemonPlist(home: string, args: string[], label = DEFAULT_LABEL)
  */
 export function startDaemon(home = os.homedir(), environment: LaunchdEnvironment = {}): { label: string; path: string; launchctl: string[] } {
   if (process.platform !== "darwin") throw new HcoordError("unsupported_platform", "automatic daemon start is implemented only for macOS; see hcoord daemon run on a supported host");
-  const label = daemonLabel();
+  const label = daemonLabel(home);
   const file = plistPath(home, label);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.mkdirSync(dataDir(home), { recursive: true, mode: 0o700 });

@@ -1,9 +1,0 @@
-#!/bin/sh
-set -eu
-
-root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-if ! command -v node >/dev/null 2>&1; then
-  echo "hcoord requires Node.js 22 or newer when installed as a Herdr plugin" >&2
-  exit 1
-fi
-exec node "$root/dist/hcoord/cli.js" "$@"

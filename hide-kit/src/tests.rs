@@ -112,9 +112,18 @@ impl Fixture {
         executable(&kit.join("hide-agent-hooks"), "#!/bin/sh\n");
         // hcoord's "Node" is sh, and its cli.js a script that answers the
         // ensure call the way hcoord does and remembers it was asked.
+        // `home adopt` moves the old home the way hcoord does, or refuses
+        // when the test left an `adopt-fails` file.
         executable(
             &kit.join("hcoord/dist/hcoord/cli.js"),
-            "echo \"$@\" >> \"$HOME/ensure.log\"\nprintf '{\"ok\":true,\"value\":{}}\\n'\n",
+            concat!(
+                "echo \"$@\" >> \"$HOME/ensure.log\"\n",
+                "if [ \"$1\" = home ]; then\n",
+                "  if [ -e \"$HOME/adopt-fails\" ]; then printf '{\"ok\":false,\"error\":{\"code\":\"adopt_failed\",\"message\":\"pid 9 still runs\"}}\\n'; exit 1; fi\n",
+                "  mv \"$HOME/.hcoord\" \"$HOME/.hide/hcoord\" && printf '{\"ok\":true,\"value\":{\"moved\":true}}\\n'; exit 0\n",
+                "fi\n",
+                "printf '{\"ok\":true,\"value\":{}}\\n'\n",
+            ),
         );
         executable(
             &root.join("bin/herdr"),
@@ -132,6 +141,8 @@ impl Fixture {
                 program: PathBuf::from("/bin/sh"),
                 env: vec![("HCOORD_TEST".to_owned(), "1".to_owned())],
             }),
+            hcoord_home: None,
+            legacy: Vec::new(),
             stop: Arc::default(),
         };
         Self {
@@ -228,11 +239,12 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
         std::fs::read_link(fixture.home().join(".local/bin/hide")).unwrap(),
         fixture.target.kit_dir.join("hide")
     );
-    // A machine that never had the labels plugin is not asked about it.
-    assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+    // A machine that never had the labels plugin is not asked about it; the
+    // standalone hcoord plugin is looked for once.
+    assert_eq!(*fixture.herdr.calls.lock().unwrap(), ["plugin.list"]);
     assert!(report.labels_retirement.is_empty());
     if HCOORD_INSTALLS {
-        let shim = std::fs::read_to_string(fixture.home().join(".hcoord/bin/hcoord")).unwrap();
+        let shim = std::fs::read_to_string(fixture.home().join(".hide/hcoord/bin/hcoord")).unwrap();
         assert!(shim.starts_with("#!/bin/sh\nHCOORD_TEST='1' exec '/bin/sh' '"));
         assert!(
             std::fs::read_to_string(fixture.home().join("ensure.log"))
@@ -240,14 +252,28 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
                 .contains("daemon ensure --json")
         );
     } else {
-        assert!(!fixture.home().join(".hcoord").exists());
+        assert!(!fixture.home().join(".hide/hcoord").exists());
     }
-    let record = std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap();
-    for code in ["cli", "claude_code_hook"] {
-        assert!(record.contains(code), "{record}");
+    let record: Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap(),
+    )
+    .unwrap();
+    let mut installed = vec!["claude_code_hook", "cli"];
+    if HCOORD_INSTALLS {
+        installed.push("hcoord");
     }
-    assert_eq!(record.contains("hcoord"), HCOORD_INSTALLS, "{record}");
-    assert!(!record.contains("codex_hook"));
+    assert_eq!(
+        record["installed"],
+        serde_json::json!(installed),
+        "{record}"
+    );
+    // The standalone plugin is looked for on every platform, so its
+    // retirement is recorded whether or not this one installs hcoord.
+    assert_eq!(
+        record["retired"],
+        serde_json::json!(["hide.hcoord"]),
+        "{record}"
+    );
 }
 
 #[test]
@@ -571,7 +597,7 @@ fn a_watcher_that_cannot_be_stopped_keeps_its_state_folder() {
 #[test]
 fn without_a_runtime_for_hcoord_it_fails_and_an_existing_shim_is_left() {
     let mut fixture = Fixture::new();
-    let shim = fixture.home().join(".hcoord/bin/hcoord");
+    let shim = fixture.home().join(".hide/hcoord/bin/hcoord");
     executable(
         &shim,
         "#!/bin/sh\nexec \"/opt/node\" \"/x/cli.js\" \"$@\"\n",
@@ -602,7 +628,7 @@ fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
     let state = kit_state_dir(&fixture.target.home);
     assert_eq!(mode(&state), 0o700);
     assert_eq!(mode(state.parent().unwrap()), 0o700);
-    assert_eq!(mode(&fixture.target.home.join(".hcoord/bin")), 0o700);
+    assert_eq!(mode(&fixture.target.home.join(".hide/hcoord/bin")), 0o700);
 
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o775)).unwrap();
     let report = status(&fixture.target);
@@ -692,6 +718,361 @@ fn removing_the_kit_takes_only_hides_parts_and_leaves_hcoord() {
     assert!(!settings.contains("hide-subagents"));
     assert_eq!(other_tool_entry(&settings), other_tool_entry(OTHER_TOOL));
     assert!(!fixture.home().join(".local/bin/hide").exists());
-    assert!(fixture.home().join(".hcoord/bin/hcoord").is_file());
+    assert!(fixture.home().join(".hide/hcoord/bin/hcoord").is_file());
     assert!(!fixture.home().join(".hide/kit/installed.json").exists());
+}
+
+/// The old `~/.hcoord` as an earlier Hide left it, and a record that says
+/// hcoord was installed: the new shim is missing, which must not read as
+/// taken away (PRD hide-home-layout D-09, B10, B11).
+#[cfg(target_os = "macos")]
+fn installed_under_the_old_home(fixture: &Fixture) -> PathBuf {
+    let old = fixture.home().join(".hcoord");
+    executable(
+        &old.join("bin/hcoord"),
+        "#!/bin/sh\nexec '/opt/node' '/x/cli.js' \"$@\"\n",
+    );
+    std::fs::write(old.join("ledger.json"), "{\"kept\":true}").unwrap();
+    let record = fixture.home().join(".hide/kit/installed.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(&record, "{\"format\":1,\"installed\":[\"cli\",\"hcoord\"]}").unwrap();
+    old
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_recorded_hcoord_in_the_old_home_is_moved_before_the_new_copy_and_linked_on_path() {
+    let fixture = Fixture::new();
+    let old = installed_under_the_old_home(&fixture);
+    let before = status(&fixture.target);
+    assert_eq!(
+        state(&before, ComponentId::Hcoord),
+        ComponentState::Outdated
+    );
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    assert_eq!(
+        state(&report, ComponentId::Hcoord),
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert!(!old.exists(), "no copy of the old home is left");
+    let home = fixture.home().join(".hide/hcoord");
+    assert_eq!(
+        std::fs::read_to_string(home.join("ledger.json")).unwrap(),
+        "{\"kept\":true}"
+    );
+    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
+    let calls: Vec<&str> = calls.lines().collect();
+    assert_eq!(calls[0], "home adopt --json");
+    assert_eq!(calls[1], "daemon ensure --json", "{calls:?}");
+    // The adopt ran from the build's packaged copy, before the installed one changed.
+    assert!(
+        std::fs::read_to_string(home.join("bin/hcoord"))
+            .unwrap()
+            .contains(".hide/kit/hcoord/dist/hcoord/cli.js")
+    );
+    assert_eq!(
+        std::fs::read_link(fixture.home().join(".local/bin/hcoord")).unwrap(),
+        home.join("bin/hcoord")
+    );
+    assert_eq!(
+        report
+            .component(ComponentId::Hcoord)
+            .unwrap()
+            .location
+            .as_deref(),
+        Some(home.join("bin/hcoord").display().to_string().as_str())
+    );
+    let again = apply(&fixture.target, &Scope::Automatic);
+    assert_eq!(
+        state(&again, ComponentId::Hcoord),
+        ComponentState::Installed
+    );
+    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
+    assert_eq!(
+        calls.matches("home adopt").count(),
+        1,
+        "a second pass moves nothing"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_failed_move_leaves_the_old_home_and_says_how_it_is_retried() {
+    let fixture = Fixture::new();
+    let old = installed_under_the_old_home(&fixture);
+    std::fs::write(fixture.home().join("adopt-fails"), "").unwrap();
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    let part = report.component(ComponentId::Hcoord).unwrap();
+    assert_eq!(part.state, ComponentState::Failed);
+    let reason = part.reason.as_deref().unwrap();
+    assert!(reason.contains("pid 9 still runs"), "{reason}");
+    assert!(
+        reason.contains("next launch or Reinstall tries again"),
+        "{reason}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(old.join("ledger.json")).unwrap(),
+        "{\"kept\":true}"
+    );
+    assert!(
+        !fixture.home().join(".hide/kit/hcoord").exists(),
+        "the old daemon's code is not replaced"
+    );
+    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
+    assert!(!calls.contains("daemon ensure"), "{calls}");
+}
+
+/// A move that worked followed by an install that did not is finished on
+/// the next pass, not read as hcoord taken away.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_install_that_failed_after_the_move_is_finished_on_the_next_pass() {
+    let fixture = Fixture::new();
+    let old = installed_under_the_old_home(&fixture);
+    // A folder where the shim goes: the move works, the shim write does not.
+    std::fs::remove_file(old.join("bin/hcoord")).unwrap();
+    std::fs::create_dir(old.join("bin/hcoord")).unwrap();
+
+    let first = apply(&fixture.target, &Scope::Automatic);
+    assert_eq!(
+        state(&first, ComponentId::Hcoord),
+        ComponentState::Failed,
+        "{first:?}"
+    );
+    assert!(fixture.home().join(".hide/hcoord/ledger.json").is_file());
+
+    std::fs::remove_dir(fixture.home().join(".hide/hcoord/bin/hcoord")).unwrap();
+    let second = apply(&fixture.target, &Scope::Automatic);
+    assert_eq!(
+        state(&second, ComponentId::Hcoord),
+        ComponentState::Installed,
+        "{second:?}"
+    );
+    assert!(fixture.home().join(".hide/hcoord/bin/hcoord").is_file());
+    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
+    assert!(calls.contains("daemon ensure"), "{calls}");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_relocated_hcoord_is_never_moved() {
+    let mut fixture = Fixture::new();
+    let old = installed_under_the_old_home(&fixture);
+    std::fs::remove_file(fixture.home().join(".hide/kit/installed.json")).unwrap();
+    let relocated = fixture.root.join("coordinator");
+    fixture.target.hcoord_home = Some(relocated.clone());
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    assert_eq!(
+        state(&report, ComponentId::Hcoord),
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert!(old.join("ledger.json").is_file());
+    assert!(relocated.join("bin/hcoord").is_file());
+    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
+    assert!(!calls.contains("home adopt"), "{calls}");
+}
+
+/// A relocated hcoord is not the account's: the `hcoord` link on PATH that
+/// leads to the account's own copy stays as it is.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_relocated_hcoord_leaves_the_accounts_hcoord_link_alone() {
+    let mut fixture = Fixture::new();
+    let link = fixture.home().join(".local/bin/hcoord");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    let accounts = fixture.home().join(".hide/hcoord/bin/hcoord");
+    std::os::unix::fs::symlink(&accounts, &link).unwrap();
+    fixture.target.hcoord_home = Some(fixture.root.join("coordinator"));
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    let part = report.component(ComponentId::Hcoord).unwrap();
+    assert_eq!(part.state, ComponentState::Installed, "{report:?}");
+    assert_eq!(part.reason, None);
+    assert_eq!(std::fs::read_link(&link).unwrap(), accounts);
+}
+
+/// An old home left beside the new one (an old copy made it again) is never
+/// merged and never blocks the new one: hcoord is updated and kept running,
+/// and the row names both folders.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_old_home_beside_the_new_one_is_named_and_does_not_block_updates() {
+    let fixture = Fixture::new();
+    apply(&fixture.target, &Scope::Automatic);
+    std::fs::remove_file(fixture.home().join("ensure.log")).unwrap();
+    let old = fixture.home().join(".hcoord");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("ledger.json"), "{\"kept\":true}").unwrap();
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    let part = report.component(ComponentId::Hcoord).unwrap();
+    assert_eq!(part.state, ComponentState::Installed, "{report:?}");
+    let reason = part.reason.as_deref().unwrap();
+    assert!(reason.contains("never merges two hcoord homes"), "{reason}");
+    assert!(reason.contains(&old.display().to_string()), "{reason}");
+    assert_eq!(
+        std::fs::read_to_string(old.join("ledger.json")).unwrap(),
+        "{\"kept\":true}"
+    );
+    assert!(fixture.home().join(".hide/hcoord/bin/hcoord").is_file());
+    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
+    assert!(!calls.contains("home adopt"), "{calls}");
+    assert!(calls.contains("daemon ensure"), "{calls}");
+}
+
+/// `hcoord` on PATH is linked only when the name is free or already Hide's;
+/// another program's stays and the row says so (B14).
+#[cfg(target_os = "macos")]
+#[test]
+fn another_programs_hcoord_on_path_is_left_and_named() {
+    let fixture = Fixture::new();
+    let theirs = fixture.home().join(".local/bin/hcoord");
+    executable(&theirs, "#!/bin/sh\necho theirs\n");
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    let part = report.component(ComponentId::Hcoord).unwrap();
+    assert_eq!(part.state, ComponentState::Installed);
+    let reason = part.reason.as_deref().unwrap();
+    assert!(reason.contains("another program's file"), "{reason}");
+    assert_eq!(
+        std::fs::read_to_string(&theirs).unwrap(),
+        "#!/bin/sh\necho theirs\n"
+    );
+
+    // A link to the old home's shim is Hide's and is moved along.
+    std::fs::remove_file(&theirs).unwrap();
+    std::os::unix::fs::symlink(fixture.home().join(".hcoord/bin/hcoord"), &theirs).unwrap();
+    let report = apply(&fixture.target, &Scope::Automatic);
+    assert_eq!(report.component(ComponentId::Hcoord).unwrap().reason, None);
+    assert_eq!(
+        std::fs::read_link(&theirs).unwrap(),
+        fixture.home().join(".hide/hcoord/bin/hcoord")
+    );
+}
+
+/// The standalone hcoord plugin is taken out of Herdr once, and the result
+/// goes to the report the core logs (B16).
+#[test]
+fn the_standalone_hcoord_plugin_is_unlinked_once() {
+    let fixture = Fixture::new();
+    fixture.herdr.plugins.lock().unwrap().push(plugin(
+        HCOORD_PLUGIN_ID,
+        "/work/herdr-ide/plugins/hcoord",
+        "local",
+    ));
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    assert_eq!(
+        report.legacy_retirement.removed,
+        ["hcoord Herdr plugin link (linked folder)"]
+    );
+    assert!(fixture.herdr.plugins.lock().unwrap().is_empty());
+    let calls = fixture.herdr.calls.lock().unwrap().len();
+    let again = apply(&fixture.target, &Scope::Automatic);
+    assert!(again.legacy_retirement.is_empty());
+    assert_eq!(
+        fixture.herdr.calls.lock().unwrap().len(),
+        calls,
+        "asked once per machine"
+    );
+}
+
+/// This Mac's pass takes the labels-era folders and the share folder they
+/// leave empty, and never follows a link out of them (B9).
+#[test]
+fn the_labels_era_folders_go_and_a_link_is_not_followed() {
+    let mut fixture = Fixture::new();
+    fixture.target.legacy = crate::legacy::local(fixture.home());
+    let home = fixture.home().to_path_buf();
+    std::fs::create_dir_all(home.join(".local/state/hide-plugin-upgrade/20260920T110346Z"))
+        .unwrap();
+    std::fs::create_dir_all(home.join(".local/share/hide/agent-context-labels")).unwrap();
+    std::fs::write(
+        home.join(".local/share/hide/agent-context-labels/watcher.out"),
+        "x",
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join(".local/state/claude")).unwrap();
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+
+    assert!(report.legacy_retirement.failures.is_empty(), "{report:?}");
+    assert!(!home.join(".local/state/hide-plugin-upgrade").exists());
+    assert!(!home.join(".local/share/hide").exists());
+    assert!(home.join(".local/share").is_dir() && home.join(".local/state/claude").is_dir());
+
+    let precious = fixture.root.join("precious");
+    std::fs::create_dir_all(&precious).unwrap();
+    std::fs::write(precious.join("keep"), "x").unwrap();
+    std::os::unix::fs::symlink(&precious, home.join(".local/state/hide-plugin-upgrade")).unwrap();
+    let report = apply(&fixture.target, &Scope::Automatic);
+    assert!(precious.join("keep").is_file());
+    assert!(
+        report
+            .legacy_retirement
+            .failures
+            .iter()
+            .any(|failure| failure.contains("not a folder of this account")),
+        "{report:?}"
+    );
+}
+
+/// A device's old helper root stays while a hook entry still names it and
+/// goes on the pass after nothing does; folders it did not make stay (B19,
+/// B22).
+#[test]
+fn the_old_helper_root_goes_only_once_nothing_names_it() {
+    let mut fixture = Fixture::new();
+    let home = fixture.home().to_path_buf();
+    let root = crate::layout::helper_root(&home);
+    std::fs::create_dir_all(&root).unwrap();
+    fixture.target.legacy = crate::legacy::device(&home, &root);
+    let old = crate::layout::legacy_helper_root(&home);
+    std::fs::create_dir_all(old.join("0123456789abcdef")).unwrap();
+    std::os::unix::fs::symlink("0123456789abcdef", old.join("current")).unwrap();
+    let codex = home.join(".codex/hooks.json");
+    std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
+    std::fs::write(
+        &codex,
+        format!(
+            "{{\"hooks\":{{\"Stop\":[{{\"command\":\"{}/current/hide-agent-hooks\"}}]}}}}",
+            old.display()
+        ),
+    )
+    .unwrap();
+
+    let report = apply(&fixture.target, &Scope::Automatic);
+    assert!(
+        old.join("current").exists(),
+        "kept while the Codex hook names it"
+    );
+    assert!(
+        report
+            .legacy_retirement
+            .failures
+            .iter()
+            .any(|failure| failure.contains("still names it")),
+        "{report:?}"
+    );
+
+    std::fs::write(&codex, "{}").unwrap();
+    let report = apply(&fixture.target, &Scope::Automatic);
+    assert!(!old.exists(), "{report:?}");
+    assert!(!home.join(".local/share/hide").exists());
+    assert!(home.join(".local/share").is_dir());
+
+    // Under any other root nothing of the old layout is touched (D-12).
+    assert!(crate::legacy::device(&home, &fixture.root.join("helper-root")).is_empty());
 }

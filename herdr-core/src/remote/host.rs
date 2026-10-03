@@ -70,7 +70,7 @@ pub const HOST_CONSENT_CARRIED_FROM: u32 = 2;
 
 /// Where the helper is installed on the device unless the daemon was started
 /// with another root; `~` is the remote account's home.
-pub const DEFAULT_HELPER_ROOT: &str = "~/.local/share/hide/host-helper";
+pub const DEFAULT_HELPER_ROOT: &str = hide_kit::layout::HELPER_ROOT;
 
 /// Where the device's `hide` command is linked unless the daemon was started
 /// with another folder; `~` is the remote account's home.
@@ -1674,15 +1674,8 @@ mod tests {
         assert!(refusal.contains("chmod go-w /home/me/.local"), "{refusal}");
         // The resolved path is checked from `/`, home and its parents too.
         assert_eq!(
-            ancestors("/Users/example/.local/share/hide/host-helper").unwrap(),
-            [
-                "/",
-                "/Users",
-                "/Users/example",
-                "/Users/example/.local",
-                "/Users/example/.local/share",
-                "/Users/example/.local/share/hide"
-            ]
+            ancestors("/Users/example/.hide/host-helper").unwrap(),
+            ["/", "/Users", "/Users/example", "/Users/example/.hide"]
         );
         assert_eq!(ancestors("/helper").unwrap(), ["/"]);
         assert!(ancestors("relative/helper").is_err());

@@ -1,54 +1,45 @@
 # hcoord
 
 hcoord coordinates Herdr agents and writes their portable parent relationship to the child pane.
-Its ledger and outbox stay under `${HCOORD_HOME:-~/.hcoord}`, and the pane-token contract is documented in [docs/pane-tokens.md](docs/pane-tokens.md).
+It is a part of hide, installed and run only by hide; there is no separate install.
+Its ledger and outbox stay under `${HCOORD_HOME:-~/.hide/hcoord}`, and the pane-token contract is documented in [docs/pane-tokens.md](docs/pane-tokens.md).
 
-## Install
+## Where hide puts it
 
-The packaged hide app carries hcoord and reconciles `~/.hcoord/bin/hcoord` plus its user LaunchAgent whenever the app opens.
-It uses the Electron runtime already inside the app, so this path does not require a system Node installation.
+The packaged hide app carries hcoord, and every launch or device connection reconciles it through hide's kit (`hide-kit/src/hcoord.rs`):
+the compiled CLI is copied to `~/.hide/kit/hcoord/`, the command is `~/.hide/hcoord/bin/hcoord`, and `~/.local/bin/hcoord` links to it when that name is free or already hide's, so `hcoord` on `PATH` is hide's; a relocated hcoord (`HCOORD_HOME`) never takes that link.
+On this Mac it runs on the Electron runtime inside the app, so it needs no system Node; on a device it runs on a Node 22.12 or newer that the device already has.
 
-To install hcoord as a standalone Herdr plugin on a machine with Node.js 22 or newer:
+A machine that still has hcoord in the old `~/.hcoord` is moved once by the kit: it stops the old daemon, renames the folder to `~/.hide/hcoord` whole (the ledger, letters and a manual stop go with it), drops only the socket, the lock of the dead daemon and the temporary files, and starts the daemon again under the same `com.hcoord.daemon` label.
+If the move fails, the old folder and the old daemon keep running and Settings shows the reason on the hcoord row; the next launch or Reinstall tries again.
+`hcoord home adopt --json` is that step, run by the kit; it moves only `~/.hcoord` of the `HOME` it runs with and takes no path, refuses when `HCOORD_HOME` is set or when the new home already exists, and never merges two homes.
 
-```sh
-herdr plugin install modakbul-gongbang/hide/plugins/hcoord
-```
-
-The plugin build installs its dependencies and compiles the CLI.
-Its one-shot startup hook runs `hcoord daemon ensure` and exits after ensuring the login-owned service.
-If Node or npm is unavailable, the build fails before Herdr registers the plugin.
-
-To work from this checkout:
+To work from this checkout, build and call the compiled CLI directly:
 
 ```sh
-herdr plugin link ./plugins/hcoord
 pnpm --dir plugins/hcoord build
-plugins/hcoord/bin/hcoord status
-```
-
-To install the fixed command used by an HQ over SSH on a remote machine:
-
-```sh
-pnpm --dir plugins/hcoord install:remote
-~/.hcoord/bin/hcoord status
+node plugins/hcoord/dist/hcoord/cli.js status
 ```
 
 Set `HCOORD_HOME` for an isolated installation.
-On macOS its LaunchAgent label is derived from that directory, so it does not replace the default `com.hcoord.daemon` service.
+On macOS the plain `com.hcoord.daemon` label belongs only to the account's default home (`~/.hide/hcoord` under the home in the user database, not `$HOME`); any other home gets a label derived from its directory, so an isolated install never replaces the account's service.
+launchd domains are per account, not per HOME, so a test that only moves HOME still gets a label of its own.
+
+A Codex session in `workspace-write` needs `~/.hide/hcoord` in `writable_roots` of `~/.codex/config.toml` to send letters; hide does not edit that file.
 
 ## Daemon lifecycle
 
 ```sh
-~/.hcoord/bin/hcoord daemon start
-~/.hcoord/bin/hcoord daemon status --json
-~/.hcoord/bin/hcoord daemon stop
+hcoord daemon start
+hcoord daemon status --json
+hcoord daemon stop
 ```
 
 `start` clears a manual-stop marker.
-`stop` records that choice, and a later hide launch or plugin startup leaves the daemon stopped until `start` is run.
+`stop` records that choice, and a later hide launch leaves the daemon stopped until `start` is run.
 The LaunchAgent starts at login and restarts an unexpected exit, while the ledger and outbox survive executable upgrades.
 
-Every write command saves a letter in `${HCOORD_HOME:-~/.hcoord}/outbox` first.
+Every write command saves a letter in `${HCOORD_HOME:-~/.hide/hcoord}/outbox` first.
 A session whose sandbox cannot write there (a Codex `workspace-write` session without that directory in `writable_roots`) gets `permission_denied` naming the blocked path and the next action, and nothing is sent; running the same command again after the fix is safe.
 An unexpected exception keeps its errno code and message in the `hcoord.command_failed` event on stderr.
 A watch check an observer never closes is sent to the observer, reminded once and escalated to the human once, then left alone.
@@ -66,7 +57,7 @@ rm -f "$HOME/Library/LaunchAgents/com.hcoord.daemon.plist"
 Inside a pane with a reported agent session, `here` identifies that execution and registers it first when needed:
 
 ```sh
-~/.hcoord/bin/hcoord agent spawn \
+hcoord agent spawn \
   --parent here \
   --name worker \
   --intent issue-123 \
@@ -87,6 +78,6 @@ A retry restores a name Herdr dropped only when the recorded session matches, be
 `--resume-start` replaces the recorded start of a child that is gone.
 
 Remote registration, worktree spawn, and outbox collection use the machine names saved by Herdr.
-The remote machine must have `~/.hcoord/bin/hcoord`, the source repository, and a testable Herdr server; hcoord stores no SSH credentials and the HQ always initiates the connection.
+The remote machine must be a hide device (hide installs `~/.hide/hcoord/bin/hcoord` there), with the source repository and a testable Herdr server; hcoord stores no SSH credentials and the HQ always initiates the connection.
 Runs to one machine share a multiplexed SSH connection (a socket under `/tmp/hcoord-ssh-<uid>/`, closed after 60 idle seconds), so a flaky SSH agent is asked to sign far less often.
 A collection that keeps failing the same way logs one `hcoord.collect_failed` line per ten minutes with a `repeated` count, and `hcoord.collect_recovered` when it works again.
