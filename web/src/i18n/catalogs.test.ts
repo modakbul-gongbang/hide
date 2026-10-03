@@ -10,6 +10,7 @@ import { issuesEnglish } from "./resources/issues";
 import { mobileEnglish } from "./resources/mobile";
 import { mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeEnglish } from "./resources/native";
+import { overviewEnglish } from "./resources/overview";
 import { prWorkEnglish } from "./resources/prWork";
 import { prListEnglish } from "./resources/prList";
 import { requestsEnglish } from "./resources/requests";
@@ -39,6 +40,7 @@ describe("interface resources", () => {
       prWorkEnglish,
       boardEnglish,
       prListEnglish,
+      overviewEnglish,
     ].flatMap((schema) => Object.keys(schema));
     expect(new Set(keys).size).toBe(keys.length);
   });
