@@ -33,9 +33,21 @@ class WorkstationIdentityTests(unittest.TestCase):
         target.write_bytes(contents.encode() if isinstance(contents, str) else contents)
         self.git("add", "-f", "--", path)
 
-    def check(self, scope="checkout"):
-        return subprocess.run([sys.executable, str(CHECK), "--scope", scope],
-                              cwd=self.root, capture_output=True, text=True)
+    def check(self, scope="checkout", checker=CHECK):
+        return subprocess.run([sys.executable, str(checker), "--scope", scope],
+                              cwd=self.root, capture_output=True, text=True, timeout=15)
+
+    def checker_with_limit(self, name, value):
+        """Exercise declared caps with small real fixtures, not huge allocations."""
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        checker = Path(temporary.name) / "checker.py"
+        lines = CHECK.read_text().splitlines(keepends=True)
+        matches = [i for i, line in enumerate(lines) if line.startswith(name + " = ")]
+        self.assertEqual(len(matches), 1)
+        lines[matches[0]] = name + " = " + str(value) + "\n"
+        checker.write_text("".join(lines))
+        return checker
 
     def classes(self, result):
         return [json.loads(line)["class"] for line in result.stderr.splitlines()]
@@ -57,7 +69,9 @@ class WorkstationIdentityTests(unittest.TestCase):
         for platform, classification in (("macos", "macos_home"), ("linux", "linux_home"),
                                          ("windows", "windows_home")):
             with self.subTest(platform=platform):
-                self.tracked("fixture.txt", home(platform, "example") + " " + home(platform, account))
+                # The separator proves the neutral account's component ends.
+                self.tracked("fixture.txt", home(platform, "example") + "/project "
+                             + home(platform, account))
                 result = self.check("index")
                 self.assertEqual(result.returncode, 1)
                 self.assertNotIn(account, result.stdout + result.stderr)
@@ -67,6 +81,71 @@ class WorkstationIdentityTests(unittest.TestCase):
     def test_neutral_prefix_is_not_an_allow(self):
         self.tracked("fixture.txt", home("macos", "example-private"))
         self.assertEqual(self.classes(self.check()), ["macos_home"])
+
+    def test_neutral_prefix_with_whitespace_or_punctuation_fails_both_scopes(self):
+        for platform, classification in (("macos", "macos_home"), ("linux", "linux_home"),
+                                         ("windows", "windows_home")):
+            for suffix in (" private", ",private", ";private", ":private", "(private)",
+                           "\tprivate"):
+                for quote in ("", '"', "'", "`"):
+                    with self.subTest(platform=platform, suffix=suffix, quote=quote):
+                        account = "example" + suffix
+                        value = quote + home(platform, account) + "/project" + quote
+                        self.tracked("fixture.txt", value)
+                        for scope in ("checkout", "index"):
+                            result = self.check(scope)
+                            self.assertEqual(result.returncode, 1)
+                            self.assertEqual(self.classes(result), [classification])
+                            self.assertNotIn(account, result.stdout + result.stderr)
+
+    def test_terminal_neutral_components_need_unambiguous_quotes(self):
+        for platform, classification in (("macos", "macos_home"), ("linux", "linux_home"),
+                                         ("windows", "windows_home")):
+            for prefix, suffix, expected in (("", "", 0), ('"', '"', 0),
+                                             ("'", "'", 0), ("`", "`", 0),
+                                             ('"', "", 1), ('"', "'", 1),
+                                             ('"', '"private/project', 1),
+                                             ('"', '\\"', 1)):
+                with self.subTest(platform=platform, prefix=prefix, suffix=suffix):
+                    self.tracked("fixture.txt", prefix + home(platform, "example") + suffix)
+                    for scope in ("checkout", "index"):
+                        result = self.check(scope)
+                        self.assertEqual(result.returncode, expected)
+                        self.assertEqual(self.classes(result), [classification] if expected else [])
+
+    def test_dynamic_accounts_need_a_complete_component(self):
+        for platform, classification in (("macos", "macos_home"), ("linux", "linux_home"),
+                                         ("windows", "windows_home")):
+            for account, expected in (("$USER", 0), ("${provider}", 0), (".${provider}", 0),
+                                      ("$USER private", 1), ("${provider},private", 1),
+                                      (".${provider};private", 1), ("$USER-private", 1)):
+                with self.subTest(platform=platform, account=account):
+                    self.tracked("fixture.txt", '"' + home(platform, account) + '/project"')
+                    for scope in ("checkout", "index"):
+                        result = self.check(scope)
+                        self.assertEqual(result.returncode, expected)
+                        self.assertEqual(self.classes(result), [classification] if expected else [])
+
+    def test_audited_nested_fixture_quotes_keep_exact_components(self):
+        values = ["// returns `" + home("linux", "remote") + "`.",
+                  'path: "' + home("macos", "example") + '/project".to_string(),',
+                  'r#"' + json.dumps({"command": "cd '" + home("macos", "example")
+                                     + "/project'; pwd"}) + '"#,']
+        for depth in (1, 3):
+            quote = "\\" * depth + '"'
+            values.append('"{' + quote + 'cwd' + quote + ':' + quote
+                          + home("macos", "example") + quote + '}"')
+        self.tracked("fixture.txt", "\n".join(values))
+        for scope in ("checkout", "index"):
+            self.assertEqual(self.check(scope).returncode, 0)
+        # The same encodings must reject suffixes inside the paired delimiters.
+        self.tracked("fixture.txt", "\n".join(value.replace("example", "example private")
+                                              .replace("remote", "remote,private")
+                                              for value in values))
+        for scope in ("checkout", "index"):
+            result = self.check(scope)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(len(self.classes(result)), len(values))
 
     def test_file_url_home_is_checked(self):
         self.tracked("fixture.txt", "file://" + home("macos", "private-fixture-person"))
@@ -144,6 +223,28 @@ class WorkstationIdentityTests(unittest.TestCase):
         self.tracked("session_search.rs", "// ordinary source\n")
         self.assertEqual(self.check().returncode, 0)
 
+    def test_sqlite_profile_sidecar_families_fail_both_scopes(self):
+        paths = ["Default/Network/" + database + "-" + sidecar
+                 for database in ("Cookies", "History", "Login Data", "Web Data")
+                 for sidecar in ("journal", "wal", "shm")]
+        for path in paths:
+            self.tracked(path, "private-content-marker")
+        for scope in ("checkout", "index"):
+            result = self.check(scope)
+            self.assertEqual(result.returncode, 1)
+            self.assertNotIn("private-content-marker", result.stdout + result.stderr)
+            rows = [json.loads(line) for line in result.stderr.splitlines()]
+            self.assertEqual({row["path"] for row in rows}, set(paths))
+            self.assertTrue(all(row["class"] == "browser_profile_artifact" for row in rows))
+
+    def test_sqlite_sidecar_source_suffixes_are_not_profiles(self):
+        for path in ("Default/Network/Cookies-wal.rs", "Default/History-shm.md",
+                     "Default/Login Data-wal.txt", "Default/Web Data-shm.test.ts",
+                     "Default/Other-wal", "Default/History-walker"):
+            self.tracked(path, "ordinary source\n")
+        for scope in ("checkout", "index"):
+            self.assertEqual(self.check(scope).returncode, 0)
+
     def test_symlink_target_is_scanned_without_following_it(self):
         target = self.root / "link"
         target.symlink_to(home("macos", "private-fixture-person") + "/missing")
@@ -169,6 +270,41 @@ class WorkstationIdentityTests(unittest.TestCase):
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.classes(result), ["no_tracked_files"])
+
+    def test_manifest_entry_cap_boundary_fails_both_scopes(self):
+        checker = self.checker_with_limit("MAX_TRACKED_FILES", 2)
+        self.tracked("one.txt", "neutral")
+        self.tracked("two.txt", "neutral")
+        for scope in ("checkout", "index"):
+            self.assertEqual(self.check(scope, checker).returncode, 0)
+        self.tracked("three.txt", "neutral")
+        for scope in ("checkout", "index"):
+            result = self.check(scope, checker)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(self.classes(result), ["tracked_file_limit_exceeded"])
+            self.assertFalse(result.stdout)
+
+    def test_manifest_byte_cap_boundary_fails_both_scopes(self):
+        self.tracked("fixture.txt", "neutral")
+        size = len(self.git("ls-files", "--stage", "-z").stdout)
+        for cap, expected in ((size, 0), (size - 1, 1)):
+            checker = self.checker_with_limit("MAX_MANIFEST_BYTES", cap)
+            for scope in ("checkout", "index"):
+                result = self.check(scope, checker)
+                self.assertEqual(result.returncode, expected)
+                self.assertEqual(self.classes(result),
+                                 ["git_manifest_byte_limit_exceeded"] if expected else [])
+                if expected:
+                    self.assertFalse(result.stdout)
+
+    def test_git_read_deadline_reports_a_structured_failure(self):
+        self.tracked("fixture.txt", "neutral")
+        checker = self.checker_with_limit("GIT_READ_SECONDS", 0)
+        for scope in ("checkout", "index"):
+            result = self.check(scope, checker)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(self.classes(result), ["git_read_timeout"])
+            self.assertFalse(result.stdout)
 
     def test_blob_limit_fails_with_value_free_diagnostic(self):
         self.tracked("fixture.txt", "neutral\n")

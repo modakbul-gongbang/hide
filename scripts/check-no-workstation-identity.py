@@ -17,32 +17,35 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 
 
 MAX_BYTES = 16 * 1024 * 1024
 MAX_DIAGNOSTICS = 200
+MAX_MANIFEST_BYTES = 8 * 1024 * 1024
+MAX_TRACKED_FILES = 100000
+MAX_GIT_HEADER_BYTES = 1024
+MAX_ROOT_BYTES = 64 * 1024
+READ_CHUNK_BYTES = 64 * 1024
+GIT_READ_SECONDS = 10
+GIT_CLEANUP_SECONDS = 2
 # Audited current fixtures: generic example; alice/al test component prefixes;
 # me, remote and u stand for local/remote test users. Exact occurrences only.
 NEUTRAL_ACCOUNTS = frozenset({"example", "alice", "al", "me", "remote", "u"})
-ACCOUNT = r"[^/\\\s\x00\"'`<>{}\[\];,:()]+"
 BOUNDARY = r"(?:(?<![\w./\\])|(?<=file://))"
-HOME_PATTERNS = (
-    ("macos_home", re.compile(BOUNDARY + r"/Users/(?P<account>" + ACCOUNT + r")")),
-    ("linux_home", re.compile(BOUNDARY + r"/home/(?P<account>" + ACCOUNT + r")")),
-    ("windows_home", re.compile(
-        BOUNDARY + r"[A-Za-z]:[\\/]+Users[\\/]+(?P<account>" + ACCOUNT + r")", re.I)),
-)
+HOME = re.compile(BOUNDARY + r"(?:"
+                  r"(?P<macos_home>/Users" r"/)|(?P<linux_home>/home" r"/)|"
+                  r"(?P<windows_home>(?i:[A-Za-z]:[\\/]+Users[\\/]+)))")
 WORKSTATION = re.compile(
     r"(?<![\w.-])(?P<account>[\w.]+(?:-[\w.]+)*)-"
     r"(?:MacBook(?:-Pro|-Air)?|Mac-mini|Mac-Studio|Mac-Pro|iMac|mbp)"
     r"(?:\.local)?(?![\w-])", re.I)
 DYNAMIC_ACCOUNT = re.compile(
-    r"\.?(?:\$[A-Za-z_][A-Za-z_0-9]*|\$\{[A-Za-z_][A-Za-z_0-9]*\})"
-    r"(?=[/\\\s\x00\"'`<>{}\[\];,:()]|$)")
+    r"\.?(?:\$[A-Za-z_][A-Za-z_0-9]*|\$\{[A-Za-z_][A-Za-z_0-9]*\})")
 EVIDENCE = re.compile(
     r"^(?:docs/(?:verification|screenshots)(?:/|$)|spikes/[^/]+/evidence(?:/|$))")
 PROFILE = re.compile(
-    r"(?:^|/)(?:Cookies|History|Login Data|Web Data)(?:-journal)?$"
+    r"(?:^|/)(?:Cookies|History|Login Data|Web Data)(?:-(?:journal|wal|shm))?$"
     r"|(?:^|/)(?:Local State|Preferences|Secure Preferences)$"
     r"|\.pma$|(?:^|/)(?:Session_|Tabs_)[0-9]+$"
     r"|(?:^|/)(?:browser-profile|chromium-profile|chrome-profile)(?:/|$)", re.I)
@@ -54,11 +57,99 @@ class ScanError(Exception):
         self.path = path
 
 
+def closing_quote(text, start, quote, depth):
+    """Locate a delimiter at the same escaping level as its opening quote."""
+    backslashes = 0
+    for pos in range(start, len(text)):
+        char = text[pos]
+        if char in "\r\n\x00":
+            break
+        if char == quote:
+            matches = (backslashes == depth if depth else
+                       quote == "'" or backslashes % 2 == 0)
+            if matches:
+                return pos - depth, pos + 1
+        backslashes = backslashes + 1 if char == "\\" else 0
+    return None
+
+
+def home_components(text):
+    """Whitespace and punctuation belong to a name until its boundary is proven.
+
+    A slash proves a component boundary. A terminal component needs either the
+    end of an unquoted token or an unescaped, matching closing quote. Ambiguous
+    quotes never establish an exemption. This is a lexical check, not a shell or
+    programming-language evaluator.
+    """
+    quote = None
+    quote_boundary = None
+    escaped = False
+    cursor = 0
+    for match in HOME.finditer(text):
+        for char in text[cursor:match.start()]:
+            if char in "\r\n\x00":
+                quote, quote_boundary, escaped = None, None, False
+            elif escaped:
+                escaped = False
+            elif char == "\\" and quote != "'":
+                escaped = True
+            elif quote:
+                if char == quote:
+                    quote = None
+                    quote_boundary = None
+            elif char in "\"'`":
+                quote = char
+                quote_boundary = None
+        cursor = match.start()
+        start = end = match.end()
+        component_quote = quote
+        boundary = None
+        before = match.start()
+        if before and text[before - 1] in "\"'`":
+            # An inner shell/JSON quote can be inside a source string. Pair it at
+            # its own escaping level rather than treating punctuation as a name.
+            component_quote = text[before - 1]
+            depth = 0
+            before -= 2
+            while before >= 0 and text[before] == "\\":
+                depth += 1
+                before -= 1
+            boundary = closing_quote(text, start, component_quote, depth)
+        elif quote:
+            if quote_boundary is None:
+                # Cache one lookahead per outer token, including unmatched quotes.
+                quote_boundary = closing_quote(text, start, quote, 0) or False
+            boundary = quote_boundary or None
+        separators = "/\\" if match.lastgroup == "windows_home" else "/"
+        proven = component_quote is None
+        while end < len(text):
+            char = text[end]
+            if boundary and end == boundary[0]:
+                after = text[boundary[1]:boundary[1] + 1]
+                proven = (not after or after.isspace() or after in ",;:)}]"
+                          or component_quote == "`" and after == ".")
+                break
+            if char in separators:
+                proven = component_quote is None or boundary is not None
+                break
+            if char in "\r\n\x00":
+                proven = component_quote is None
+                break
+            end += 1
+        if end > start:
+            yield match, end, proven
+
+
 def safe_path(path):
-    for _, pattern in HOME_PATTERNS:
-        path = pattern.sub(lambda m: m.group(0)[:m.start("account") - m.start()]
-                           + "[redacted]", path)
-    return WORKSTATION.sub("[redacted-workstation]", path)
+    pieces = []
+    cursor = 0
+    for match, end, _ in home_components(path):
+        if match.end() < cursor:
+            continue
+        pieces.extend((path[cursor:match.end()], "[redacted]"))
+        cursor = end
+    pieces.append(path[cursor:])
+    return WORKSTATION.sub("[redacted-workstation]", "".join(pieces))
 
 
 def diagnostic(path, line, classification, scope):
@@ -66,26 +157,141 @@ def diagnostic(path, line, classification, scope):
                       "class": classification, "scope": scope}), file=sys.stderr)
 
 
-def git(root, *args):
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True)
-    if result.returncode:
+class GitReader:
+    """At most one pipe reader, with a deadline portable to Windows pipes."""
+
+    def __init__(self, process):
+        self.process = process
+        self.reader = None
+
+    def read(self, operation):
+        if GIT_READ_SECONDS <= 0:
+            raise ScanError("git_read_timeout")
+        done = threading.Event()
+        outcome = []
+
+        def run():
+            try:
+                outcome.append((operation(), None))
+            except ScanError as error:
+                outcome.append((None, error))
+            except Exception:
+                outcome.append((None, ScanError("git_read_failed")))
+            finally:
+                done.set()
+
+        self.reader = threading.Thread(target=run, daemon=True)
+        self.reader.start()
+        if not done.wait(GIT_READ_SECONDS):
+            raise ScanError("git_read_timeout")
+        self.reader.join()
+        self.reader = None
+        value, error = outcome[0]
+        if error:
+            raise error
+        return value
+
+    def close(self, failed):
+        process = self.process
+        try:
+            if failed and process.poll() is None:
+                process.kill()
+            if process.stdin:
+                try:
+                    process.stdin.close()
+                except BrokenPipeError:
+                    pass
+            try:
+                process.wait(timeout=GIT_CLEANUP_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                try:
+                    process.wait(timeout=GIT_CLEANUP_SECONDS)
+                except subprocess.TimeoutExpired:
+                    raise ScanError("git_cleanup_failed") from None
+                if not failed:
+                    raise ScanError("git_read_timeout")
+        finally:
+            if self.reader:
+                self.reader.join(timeout=GIT_CLEANUP_SECONDS)
+                if self.reader.is_alive():
+                    raise ScanError("git_cleanup_failed")
+            process.stdout.close()
+
+
+@contextmanager
+def owned_git_process(root, *args, input_pipe=False):
+    """Only spawn point. EOF/broken output ends Git if the scanner is killed."""
+    process = subprocess.Popen(["git", "--no-replace-objects", "-C", str(root), *args],
+                               stdin=subprocess.PIPE if input_pipe else subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    helper = GitReader(process)
+    failed = False
+    try:
+        yield helper
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        helper.close(failed)
+
+
+def git_root():
+    def read_root():
+        data = helper.process.stdout.read(MAX_ROOT_BYTES + 1)
+        if len(data) > MAX_ROOT_BYTES:
+            raise ScanError("git_root_too_large")
+        return data
+
+    with owned_git_process(Path.cwd(), "rev-parse", "--show-toplevel") as helper:
+        data = helper.read(read_root)
+    if helper.process.returncode or not data:
         raise ScanError("git_read_failed")
-    return result.stdout
+    return Path(os.fsdecode(data).rstrip("\r\n")).resolve()
 
 
 def tracked_entries(root):
-    entries = []
-    for row in git(root, "ls-files", "--stage", "-z").split(b"\0"):
-        if not row:
-            continue
-        header, raw_path = row.split(b"\t", 1)
-        mode, oid, stage = header.decode("ascii").split()
-        path = os.fsdecode(raw_path)
-        if stage != "0":
-            raise ScanError("unmerged_index", path)
-        if mode not in {"100644", "100755", "120000"}:
-            raise ScanError("unsupported_index_entry", path)
-        entries.append((path, oid))
+    def read_manifest():
+        entries = []
+        pending = bytearray()
+        total = 0
+        while True:
+            chunk = helper.process.stdout.read(min(READ_CHUNK_BYTES,
+                                                  MAX_MANIFEST_BYTES - total + 1))
+            total += len(chunk)
+            if total > MAX_MANIFEST_BYTES:
+                raise ScanError("git_manifest_byte_limit_exceeded")
+            if not chunk:
+                break
+            pending.extend(chunk)
+            start = 0
+            while (end := pending.find(b"\0", start)) >= 0:
+                if len(entries) >= MAX_TRACKED_FILES:
+                    raise ScanError("tracked_file_limit_exceeded")
+                row = pending[start:end]
+                start = end + 1
+                try:
+                    header, raw_path = row.split(b"\t", 1)
+                    mode, oid, stage = header.decode("ascii").split()
+                except (ValueError, UnicodeError):
+                    raise ScanError("git_manifest_invalid") from None
+                if not raw_path or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid):
+                    raise ScanError("git_manifest_invalid")
+                path = os.fsdecode(bytes(raw_path))
+                if stage != "0":
+                    raise ScanError("unmerged_index", path)
+                if mode not in {"100644", "100755", "120000"}:
+                    raise ScanError("unsupported_index_entry", path)
+                entries.append((path, oid))
+            del pending[:start]
+        if pending:
+            raise ScanError("git_manifest_invalid")
+        return entries
+
+    with owned_git_process(root, "ls-files", "--stage", "-z") as helper:
+        entries = helper.read(read_manifest)
+    if helper.process.returncode:
+        raise ScanError("git_read_failed")
     if not entries:
         raise ScanError("no_tracked_files")
     return entries
@@ -114,52 +320,50 @@ def checkout_bytes(root, path):
 
 def content_findings(data):
     text = data.decode("utf-8", errors="replace")
-    for classification, pattern in HOME_PATTERNS:
-        for match in pattern.finditer(text):
-            account = match.group("account")
-            if account in NEUTRAL_ACCOUNTS:
-                continue
-            if DYNAMIC_ACCOUNT.match(text, match.start("account")):
-                continue
-            yield text.count("\n", 0, match.start()) + 1, classification
+    for match, end, proven in home_components(text):
+        account = text[match.end():end]
+        if proven and (account in NEUTRAL_ACCOUNTS or DYNAMIC_ACCOUNT.fullmatch(account)):
+            continue
+        yield text.count("\n", 0, match.start()) + 1, match.lastgroup
     for match in WORKSTATION.finditer(text):
         if match.group("account") not in NEUTRAL_ACCOUNTS:
             yield text.count("\n", 0, match.start()) + 1, "named_workstation"
 
 
 def index_bytes(batch, path, oid):
-    batch.stdin.write(oid.encode("ascii") + b"\n")
-    batch.stdin.flush()
-    header = batch.stdout.readline().split()
-    if len(header) != 3 or header[0] != oid.encode("ascii") or header[1] != b"blob":
-        raise ScanError("index_blob_read_failed", path)
-    try:
-        size = int(header[2])
-    except ValueError:
-        raise ScanError("index_blob_read_failed", path) from None
-    if size < 0 or size > MAX_BYTES:
-        raise ScanError("tracked_blob_too_large", path)
-    data = batch.stdout.read(size)
-    if len(data) != size or batch.stdout.read(1) != b"\n":
-        raise ScanError("index_blob_read_failed", path)
-    return data
+    def read_blob():
+        process = batch.process
+        process.stdin.write(oid.encode("ascii") + b"\n")
+        process.stdin.flush()
+        raw_header = process.stdout.readline(MAX_GIT_HEADER_BYTES + 1)
+        if len(raw_header) > MAX_GIT_HEADER_BYTES or not raw_header.endswith(b"\n"):
+            raise ScanError("index_blob_read_failed", path)
+        header = raw_header.split()
+        if len(header) != 3 or header[0] != oid.encode("ascii") or header[1] != b"blob":
+            raise ScanError("index_blob_read_failed", path)
+        try:
+            size = int(header[2])
+        except ValueError:
+            raise ScanError("index_blob_read_failed", path) from None
+        if size < 0 or size > MAX_BYTES:
+            raise ScanError("tracked_blob_too_large", path)
+        data = process.stdout.read(size)
+        if len(data) != size or process.stdout.read(1) != b"\n":
+            raise ScanError("index_blob_read_failed", path)
+        return data
+
+    return batch.read(read_blob)
 
 
 @contextmanager
 def owned_git_batch(root, scope):
     """One local helper; stdin EOF ends it even if the scanner is killed."""
-    batch = None
-    try:
-        if scope == "index":
-            batch = subprocess.Popen(["git", "-C", str(root), "cat-file", "--batch"],
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL)
+    if scope == "index":
+        with owned_git_process(root, "cat-file", "--batch", input_pipe=True) as batch:
+            yield batch
+    else:
+        batch = None
         yield batch
-    finally:
-        if batch:
-            batch.stdin.close()
-            batch.stdout.close()
-            batch.wait()
 
 
 def scan(root, scope):
@@ -193,8 +397,7 @@ def main():
                         help="tracked checkout bytes (default) or exact staged blobs")
     args = parser.parse_args()
     try:
-        root = Path(os.fsdecode(git(Path.cwd(), "rev-parse", "--show-toplevel")).strip()).resolve()
-        return scan(root, args.scope)
+        return scan(git_root(), args.scope)
     except ScanError as error:
         diagnostic(error.path, 0, error.classification, args.scope)
     except OSError:
