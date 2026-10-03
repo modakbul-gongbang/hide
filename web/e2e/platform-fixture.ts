@@ -7,6 +7,16 @@ import { execFileSync } from "node:child_process";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
 
+/** A fixture compiler is an owned, bounded child, separate from test deadlines. */
+export function compileFixtureC(source: string, executable: string): void {
+  const compiler = process.platform === "win32" ? "clang.exe" : "cc";
+  try {
+    execFileSync(compiler, ["-O1", "-o", executable, source], { timeout: 20_000 });
+  } catch (error) {
+    throw new Error(`fixture C compiler ${compiler} failed (20 second process bound); the runner needs its native C toolchain: ${String(error)}`, { cause: error });
+  }
+}
+
 /** Windows environment keys are case-insensitive, including Path/PATH. */
 export function inheritedFixtureEnv(): Record<string, string> {
   return Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => {
@@ -56,7 +66,7 @@ export function fixtureOpenCommand(root?: string, privateRoot?: string): string 
     fs.mkdirSync(path.dirname(command), { recursive: true });
     const source = path.join(privateRoot!, "hide-open.c");
     fs.writeFileSync(source, "int main(void) { return 0; }\n");
-    execFileSync("clang.exe", ["-O1", "-o", command, source]);
+    compileFixtureC(source, command);
   }
   if (!fs.existsSync(command)) throw new Error(`Windows fixture opener is missing: ${command}`);
   return command;
