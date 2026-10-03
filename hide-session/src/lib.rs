@@ -1055,14 +1055,23 @@ fn parse_claude_line(item: &Value) -> LineResult {
             .is_some_and(Value::is_string);
     let is_meta = item.get("isMeta").and_then(Value::as_bool).unwrap_or(false);
     let is_system_prompt = item.get("promptSource").and_then(Value::as_str) == Some("system");
-    let provider_injected = origin_is_injected || is_meta || is_system_prompt;
+    // A compaction summary is Claude Code's own record, written as an external
+    // user prompt with a `promptId`; only these flags tell it from the operator.
+    let is_compact_summary = item
+        .get("isCompactSummary")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || item
+            .get("isVisibleInTranscriptOnly")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    let provider_injected = origin_is_injected || is_meta || is_system_prompt || is_compact_summary;
     let interrupted = is_interruption(&text);
     let command = slash_command_text(&text);
     let kind = if interrupted {
         EventKind::Interrupted
     } else if (origin_is_human || external_human)
-        && !is_meta
-        && !is_system_prompt
+        && !provider_injected
         && !has_injected_prefix(&text)
     {
         EventKind::Human
