@@ -1,0 +1,100 @@
+# The unsigned Windows x64 and Linux x64 packages (operator decision
+# 2026-10-03), each built on its own runner by `pnpm --dir desktop package`
+# and then started without a window by `desktop/scripts/smoke-package.mjs`,
+# because no machine of either system is at hand to try a package on.
+#
+# A release calls this workflow and attaches what it uploads. A pull request
+# runs it only when it changes what goes into a package; a cold release build
+# of the workspace takes several times the `windows check` job, and a pull
+# request that touches none of these paths changes no package that
+# `verify`'s own lanes would not already catch (the workspace compiling and
+# `hide connect` starting its daemon on Windows). It is not part of `verify`:
+# a check that runs on some pull requests only cannot be required.
+name: package
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The version the packages report, a release tag with or without its v
+        type: string
+        required: true
+  pull_request:
+    paths:
+      - desktop/scripts/**
+      - desktop/package.json
+      - desktop/resources/**
+      - contracts/herdr-bundle.json
+      - scripts/fetch-herdr-runtime.*
+      - scripts/verify-cargo.sh
+      - .github/workflows/package.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    name: package (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    # Nothing is cached: release artifacts share nothing with the debug
+    # caches main keeps, so every run is a cold release build.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: windows
+            runner: windows-latest
+            archive: zip
+          - system: linux
+            runner: ubuntu-latest
+            archive: tar.gz
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install zsh for the Herdr fetch
+        if: matrix.system == 'linux'
+        run: sudo apt-get install -y --no-install-recommends zsh
+      - name: Name the version
+        # A pull request's package reports a version no release uses.
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED#v}"
+          echo "HIDE_VERSION=${version:-0.0.0-ci.${{ github.run_number }}}" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - name: Package the unsigned app and its checksum
+        # The packager builds the web shell, hcoord and the release binaries,
+        # fetches the pinned Herdr and refuses when any of them cannot run.
+        timeout-minutes: 50
+        run: pnpm --dir desktop package
+      - name: Unpack the package and start it without a window
+        timeout-minutes: 5
+        run: node desktop/scripts/smoke-package.mjs "desktop/out/hide-v${HIDE_VERSION}-${{ matrix.system }}-x64.${{ matrix.archive }}"
+      - name: Keep the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-package-${{ matrix.system }}
+          path: |
+            desktop/out/hide-v*-${{ matrix.system }}-x64.${{ matrix.archive }}
+            desktop/out/hide-v*-${{ matrix.system }}-x64.${{ matrix.archive }}.sha256
+          if-no-files-found: error
+          # A release attaches it within the same run; a pull request's copy
+          # is there to be tried on a real machine within the week.
+          retention-days: 7
