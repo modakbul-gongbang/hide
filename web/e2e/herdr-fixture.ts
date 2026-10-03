@@ -111,7 +111,7 @@ static int provider(int argc, char **argv) {
     puts("{\\"loggedIn\\":true}");
     return 0;
   }
-  size_t len = 0; ssize_t n;
+  size_t len = 0; fixture_count_t n;
   while (len < sizeof prompt - 1 && (n = read(0, prompt + len, sizeof prompt - 1 - len)) > 0) len += (size_t)n;
   prompt[len] = 0;
   char *label = NULL;
