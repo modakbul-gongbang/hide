@@ -114,13 +114,19 @@ It owns the reproduction procedure, the isolation checklist, the measurement bou
 
 This project uses the engineering-harness PRD pipeline. Agent-facing assets live in one visible namespace.
 
-**`agents/` is local-only by default, and `agents/prd/<slug>/prd.md` is the one exception.** `.gitignore` carries one anchored line, `/agents/`, which ignores the top-level harness namespace and nothing else, so nothing under it is committed unless someone adds it deliberately. The anchor matters: the unanchored form also matched `.claude/agents/`, which silently made a committed subagent definition uncommittable. A PRD is the approved contract a reviewer reads to judge the change, so it is committed with `git add -f`; interview logs, rules, run state, and every run artifact stay on the machine that produced them.
+**The entire root `agents/` namespace is local-only, including approved PRDs and configuration.**
+`.gitignore` carries one anchored line, `/agents/`, which ignores the top-level harness namespace and nothing else.
+The anchor matters: the unanchored form also matched `.claude/agents/`, which silently made a committed subagent definition uncommittable.
+Nothing under root `agents/` may be force-added.
+`scripts/check-harness-ignore-anchor.sh` requires zero indexed paths there, including newly staged files, and keeps `.claude/agents/` outside the ignore rule.
+Preserve local originals when removing existing paths from Git tracking; do not delete the namespace or rewrite history as part of that operation.
+Ignoring and untracking current files do not remove older public commits or release assets.
 
-Because the ignore rule does not know about the exception, a new PRD is committed only when someone remembers the `-f`. Check `git ls-files agents/` before claiming a PRD is shared.
+Approved PRDs remain local implementation contracts.
+A public pull request states the reviewable behavior, scope, decisions and acceptance evidence in its body and owning guides, without copying private interview logs, configuration or run artifacts.
+Never force-add evidence to make a local path linkable; see `Evidence Belongs Outside The Repository`.
 
-Nothing else under `agents/` may be force-added. In particular, never force-add a run directory to make an evidence path linkable; see `Evidence Belongs Outside The Repository`.
-
-- `agents/prd/` - PRD contracts, human-approved before implementation. Committed.
+- `agents/prd/` - PRD contracts, human-approved before implementation, retained locally.
 - `agents/interview/` - interview sources (`qa-log.md`), the canonical record behind a PRD.
 - `agents/rules/` - learned rules: `INDEX.md` is the ledger, `invariants/` hold machine-checked rules (trigger globs + executable check) that gate delivery, `pending/` holds lessons that have not landed yet.
 - `agents/runs/` - per-run state and evidence (gate verdicts + implement state under one `agents/runs/<slug>/`), never hand-edited. This is also where run artifacts go; see `Evidence Belongs Outside The Repository`.

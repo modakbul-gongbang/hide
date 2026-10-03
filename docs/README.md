@@ -70,6 +70,8 @@ A document's location or an old PRD citation does not make it current authority.
 The Herdr pin lives in `contracts/herdr-bundle.json`; the matching schema lives in `contracts/herdr-api.schema.json`.
 Documentation must point to those files rather than inventing another version or protocol authority.
 Approved PRDs are scoped change contracts, not an always-current description of the whole product.
+They stay in local `agents/prd/`; root `agents/` has no public tracking exception.
+Public review uses the pull request's behavior and acceptance summary together with these owning guides.
 When code, tests, and a current contract disagree, investigate and update the responsible contract and implementation together; do not silently assume either is correct.
 
 ## References and historical records, not implementation instructions
