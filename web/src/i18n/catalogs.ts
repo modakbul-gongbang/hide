@@ -2,6 +2,7 @@ import { commandsCatalogs, commandsEnglish } from "./resources/commands";
 import { cleanupCatalogs, cleanupEnglish } from "./resources/cleanup";
 import { commonCatalogs, commonEnglish } from "./resources/common";
 import { devicesCatalogs, devicesEnglish } from "./resources/devices";
+import { issueSettingsCatalogs, issueSettingsEnglish } from "./resources/issueSettings";
 import { mobileCatalogs, mobileEnglish } from "./resources/mobile";
 import { mobileSetupCatalogs, mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeCatalogs, nativeEnglish } from "./resources/native";
@@ -19,6 +20,7 @@ export const english = {
   ...devicesEnglish,
   ...mobileSetupEnglish,
   ...workspaceEnglish,
+  ...issueSettingsEnglish,
 } as const;
 
 export type MessageKey = keyof typeof english;
@@ -35,6 +37,7 @@ export const catalogs = {
     ...devicesCatalogs.ko,
     ...mobileSetupCatalogs.ko,
     ...workspaceCatalogs.ko,
+    ...issueSettingsCatalogs.ko,
   },
   "zh-CN": {
     ...commonCatalogs["zh-CN"],
@@ -46,6 +49,7 @@ export const catalogs = {
     ...devicesCatalogs["zh-CN"],
     ...mobileSetupCatalogs["zh-CN"],
     ...workspaceCatalogs["zh-CN"],
+    ...issueSettingsCatalogs["zh-CN"],
   },
   ja: {
     ...commonCatalogs.ja,
@@ -57,5 +61,6 @@ export const catalogs = {
     ...devicesCatalogs.ja,
     ...mobileSetupCatalogs.ja,
     ...workspaceCatalogs.ja,
+    ...issueSettingsCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;

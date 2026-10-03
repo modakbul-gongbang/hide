@@ -4,6 +4,7 @@ import { commandsEnglish } from "./resources/commands";
 import { cleanupEnglish } from "./resources/cleanup";
 import { commonEnglish } from "./resources/common";
 import { devicesEnglish } from "./resources/devices";
+import { issueSettingsEnglish } from "./resources/issueSettings";
 import { mobileEnglish } from "./resources/mobile";
 import { mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeEnglish } from "./resources/native";
@@ -27,6 +28,7 @@ describe("interface resources", () => {
       devicesEnglish,
       mobileSetupEnglish,
       workspaceEnglish,
+      issueSettingsEnglish,
     ].flatMap((schema) => Object.keys(schema));
     expect(new Set(keys).size).toBe(keys.length);
   });
