@@ -303,6 +303,13 @@ pub fn handle(call: Call) -> HostResult<Value> {
                 worktrees::remove_confirmed(&removal),
             ))
         }
+        Call::WorktreeRemovalCheck { removal } => {
+            absolute(&removal.repository_root)?;
+            absolute(&removal.checkout_path)?;
+            worktrees::check_removal(&removal)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            to_value(())
+        }
         Call::Changes {
             root,
             scope,

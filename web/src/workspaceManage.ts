@@ -269,6 +269,12 @@ export function deletionFacts(checkout: Checkout, paneCount: number): string[] {
   return facts;
 }
 
+/** A Discard choice belongs only to the measured loss currently displayed. */
+export function discardConfirmationKey(checkout: Checkout): string {
+  const row = checkout.worktree;
+  return JSON.stringify([row?.deletion_gate.discard_label ?? null, row?.ignored_repositories ?? [], row?.ignored_scan_unavailable ?? null, row?.lock_reason ?? null]);
+}
+
 /** Facts joined into the one line a confirmation shows, its first word capitalized. */
 export function factsLine(facts: readonly string[]): string {
   const line = facts.join(" · ");
@@ -302,5 +308,5 @@ export function removalFor(removal: WorktreeRemoval | null | undefined, deviceId
  */
 export function checkoutRemoving(removal: WorktreeRemoval | null | undefined, deviceId: string, checkoutPath: string): boolean {
   const current = removalFor(removal, deviceId, checkoutPath, 0);
-  return current !== null && (current.phase === "closing" || current.phase === "removing");
+  return current !== null && (current.phase === "checking" || current.phase === "closing" || current.phase === "removing");
 }

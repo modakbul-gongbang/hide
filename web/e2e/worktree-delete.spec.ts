@@ -4,7 +4,7 @@
 // the row is dimmed with a spinner while it goes, then the folder and its
 // unmerged branch go and the row leaves the sidebar.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -15,6 +15,92 @@ import { screenshot } from "./wire";
 test.describe.configure({ timeout: 180_000 });
 
 const BRANCH = "feature/delete";
+
+async function deletionFixture(herdr: HerdrFixture) {
+  const repo = path.join(herdr.root, "preflight-repo");
+  fs.mkdirSync(repo);
+  git(repo, ["init", "-q"]);
+  fs.writeFileSync(path.join(repo, ".gitignore"), "target/\nnode_modules/\n");
+  git(repo, ["add", ".gitignore"]);
+  git(repo, ["commit", "-qm", "initial"]);
+  git(repo, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+  const worktree = path.join(herdr.root, "preflight-linked");
+  git(repo, ["worktree", "add", "-qb", BRANCH, worktree]);
+  const created = herdr.run(["workspace", "create", "--cwd", worktree, "--label", "preflight-linked", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { root_pane: { pane_id: string } } };
+  return { repo, worktree, pane: created.result.root_pane.pane_id };
+}
+
+async function openDeletion(page: Page, daemon: Daemon) {
+  await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+  await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+  await page.locator('[data-sidebar-mode="projects"]').click();
+  const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
+  await expect(feature).toBeVisible({ timeout: 30_000 });
+  await feature.locator("[data-checkout-menu]").click({ button: "right" });
+  await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
+  return page.locator("[data-delete-worktree]");
+}
+
+test("a lock acquired after the dialog read refuses before closing the pane and names the reason and unlock action", { tag: "@platform" }, async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const fixture = await deletionFixture(herdr);
+    const reason = "검토 끝날 때까지 보관 $(literal)";
+    // Preserve the ordinary browser confirmation, then change Git at the
+    // transport boundary before the request reaches the real core.
+    await page.routeWebSocket(/\/ws$/, (socket) => {
+      const server = socket.connectToServer();
+      socket.onMessage((message) => {
+        if (typeof message === "string" && message.includes('"kind":"remove_worktree"')) git(fixture.repo, ["worktree", "lock", "--reason", reason, fixture.worktree]);
+        server.send(message);
+      });
+      server.onMessage((message) => socket.send(message));
+    });
+    daemon = await startHided(herdr, "worktree-locked-preflight");
+    const dialog = await openDeletion(page, daemon);
+    const confirm = dialog.locator("[data-delete-confirm]");
+    await expect(confirm).toBeEnabled({ timeout: 30_000 });
+    await confirm.click();
+    await expect(dialog.locator('[data-delete-result="failed"]')).toContainText(reason);
+    await expect(dialog).toContainText(`Worktree ${BRANCH} is locked`);
+    await expect(dialog).toContainText("git worktree unlock");
+    await expect(dialog).toContainText("No panes were closed");
+    const pane = herdr.run(["pane", "get", fixture.pane]) as { result: { pane: { pane_id: string } } };
+    expect(pane.result.pane.pane_id).toBe(fixture.pane);
+    expect(fs.existsSync(fixture.worktree)).toBe(true);
+    const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (evidence) await dialog.screenshot({ path: path.join(evidence, "worktree-locked-preflight.png") });
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("Discard names each ignored nested repository and deletes them only after explicit confirmation", { tag: "@platform" }, async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const fixture = await deletionFixture(herdr);
+    const names = ["node_modules/vendor/beta", "target/deep/alpha"];
+    for (const name of names) {
+      const nested = path.join(fixture.worktree, name);
+      fs.mkdirSync(nested, { recursive: true });
+      git(nested, ["init", "-q"]);
+    }
+    daemon = await startHided(herdr, "worktree-ignored-preflight");
+    const dialog = await openDeletion(page, daemon);
+    const discard = dialog.locator("label").filter({ has: page.locator("[data-delete-discard]") });
+    for (const name of names) await expect(discard).toContainText(name, { timeout: 30_000 });
+    const confirm = dialog.locator("[data-delete-confirm]");
+    await expect(confirm).toBeDisabled();
+    expect(fs.existsSync(fixture.worktree)).toBe(true);
+    const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (evidence) await dialog.screenshot({ path: path.join(evidence, "worktree-ignored-repositories.png") });
+    await dialog.locator("[data-delete-discard]").click();
+    await confirm.click();
+    await expect(dialog.locator('[data-delete-result="finished"]')).toBeVisible({ timeout: 60_000 });
+    expect(fs.existsSync(fixture.worktree)).toBe(false);
+  } finally { daemon?.stop(); herdr.stop(); }
+});
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });

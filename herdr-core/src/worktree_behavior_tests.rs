@@ -1,5 +1,88 @@
 use super::*;
 
+#[test]
+fn locked_worktrees_name_the_reason_and_unlock_action_even_when_the_folder_is_missing() {
+    let repo = Repository::new();
+    let linked = repo.linked("locked-feature");
+    let reason = "review 보류 $(literal)";
+    git(
+        &repo.0,
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            reason,
+            linked.to_str().unwrap(),
+        ],
+    )
+    .unwrap();
+    let project = repo.read(None);
+    let row = project
+        .worktrees
+        .iter()
+        .find(|row| row.branch.as_deref() == Some("locked-feature"))
+        .unwrap();
+    let blocked = row.deletion_gate.blocked_reason.as_deref().unwrap();
+    assert!(blocked.contains("locked-feature"));
+    assert!(blocked.contains(reason));
+    assert!(blocked.contains("git worktree unlock"));
+    std::fs::remove_dir_all(&linked).unwrap();
+    let project = repo.read(None);
+    let row = project
+        .worktrees
+        .iter()
+        .find(|row| row.branch.as_deref() == Some("locked-feature"))
+        .unwrap();
+    assert!(row.missing);
+    assert!(
+        row.deletion_gate
+            .blocked_reason
+            .as_deref()
+            .unwrap()
+            .contains(reason)
+    );
+}
+
+#[test]
+fn discard_names_every_measured_repository_and_an_unavailable_scan_blocks_the_choice() {
+    let repo = Repository::new();
+    let linked = repo.linked("repositories");
+    std::fs::write(linked.join(".gitignore"), "target/\nnode_modules/\n").unwrap();
+    for name in ["target/deep/alpha", "node_modules/vendor/beta"] {
+        let nested = linked.join(name);
+        std::fs::create_dir_all(&nested).unwrap();
+        git(&nested, &["init", "-q"]).unwrap();
+    }
+    let project = repo.read(None);
+    let row = project
+        .worktrees
+        .iter()
+        .find(|row| row.branch.as_deref() == Some("repositories"))
+        .unwrap();
+    assert_eq!(
+        row.ignored_repositories,
+        ["node_modules/vendor/beta", "target/deep/alpha"]
+    );
+    let discard = row.deletion_gate.discard_label.as_deref().unwrap();
+    assert!(discard.contains("node_modules/vendor/beta"));
+    assert!(discard.contains("target/deep/alpha"));
+    std::fs::write(linked.join("target/.git"), "gitdir: missing\n").unwrap();
+    let project = repo.read(None);
+    let row = project
+        .worktrees
+        .iter()
+        .find(|row| row.branch.as_deref() == Some("repositories"))
+        .unwrap();
+    assert!(row.ignored_scan_unavailable.is_some());
+    assert!(
+        row.deletion_gate
+            .blocked_reason
+            .as_deref()
+            .unwrap()
+            .contains("refresh before deleting")
+    );
+}
+
 struct Repository(PathBuf);
 impl Repository {
     fn new() -> Self {

@@ -3096,6 +3096,9 @@ pub struct UnpushedSnapshot {
 /// counts the row badge and the card show.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeSnapshot {
+    pub lock_reason: Option<String>,
+    pub ignored_repositories: Vec<String>,
+    pub ignored_scan_unavailable: Option<String>,
     pub head_sha: Option<String>,
     pub last_commit_subject: Option<String>,
     pub last_commit_unix_seconds: Option<u64>,
@@ -3167,7 +3170,7 @@ pub struct WorktreeAgentLineSnapshot {
 /// One policy shared by all worktree deletion surfaces.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeDeletionGateSnapshot {
-    /// Why nothing can be deleted: only ever the main worktree.
+    /// Why deletion cannot start: main, locked or unmeasured ignored folders.
     pub blocked_reason: Option<String>,
     /// What the operator should know before deleting, in the order shown.
     pub warnings: Vec<String>,
@@ -3184,7 +3187,8 @@ pub struct WorktreeDeletionGateSnapshot {
     pub discard_label: Option<String>,
 }
 
-/// Shell authorization issued only after Herdr confirms every pane is gone.
+/// The accepted deletion, measured before any pane closes and executed by
+/// the worker only after Herdr confirms every pane is gone.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorktreeRemovalSnapshot {
     pub id: u64,
@@ -3204,6 +3208,7 @@ pub struct WorktreeRemovalSnapshot {
     /// The operator accepted losing the folder's changes, so the recheck
     /// lets dirt through and Git removes with `--force`.
     pub discard_changes: bool,
+    pub expected_ignored_repositories: Vec<String>,
     pub phase: String,
     pub message: Option<String>,
 }

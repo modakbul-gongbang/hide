@@ -1373,11 +1373,11 @@ export function createActions(dispatch: DispatchFn) {
 
     /** `discardChanges`: the operator ticked the discard the core's gate offered, accepting the folder's uncommitted work is lost. */
     /** `closeDescendants`: the agents outside the worktree the operator chose to close first (PRD close-agent-subtree D-36). */
-    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean, closeDescendants: string[] = []) {
+    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean, closeDescendants: string[] = [], ignoredRepositories: string[] = []) {
       dispatch({
         schema_version: 2,
         kind: "remove_worktree",
-        payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges, ...(closeDescendants.length > 0 ? { close_descendant_pane_ids: closeDescendants } : {}) },
+        payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges, expected_ignored_repositories: ignoredRepositories, ...(closeDescendants.length > 0 ? { close_descendant_pane_ids: closeDescendants } : {}) },
       });
     },
 

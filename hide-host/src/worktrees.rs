@@ -6,7 +6,7 @@
 //!
 //! The core calls these in process for this machine; a device's helper
 //! answers the same functions (`Call::Worktrees`, `Call::BranchCheck`,
-//! `Call::WorktreeRemove`), so a local and a device repository obey one
+//! `Call::WorktreeRemovalCheck`, `Call::WorktreeRemove`), so a local and a device repository obey one
 //! rule set. The policy built on the facts - the deletion gate, pull request
 //! bases, disk and agent decoration - stays with the core.
 
@@ -52,6 +52,11 @@ pub struct WorktreeFacts {
     /// Git lists the worktree but its path is not on disk.
     pub missing: bool,
     pub is_main: bool,
+    /// `Some("")` is locked without a reason; `None` is unlocked.
+    pub lock_reason: Option<String>,
+    /// Measured repository boundaries relative to this checkout.
+    pub ignored_repositories: Vec<String>,
+    pub ignored_scan_unavailable: Option<String>,
     /// Another listed worktree lies inside this one.
     pub nested: bool,
     pub dirty: bool,
@@ -132,8 +137,8 @@ pub fn read_project(
         "unknown"
     }
     .to_owned();
-    let listed = match git(root, &["worktree", "list", "--porcelain"]) {
-        Ok(output) => output,
+    let listed = match registered(root) {
+        Ok(rows) => rows,
         Err(reason) => {
             return RepositoryWorktrees {
                 root_path,
@@ -143,8 +148,19 @@ pub fn read_project(
             };
         }
     };
-    let mut worktrees: Vec<WorktreeFacts> = parse_worktree_list(&listed)
+    let mut worktrees: Vec<WorktreeFacts> = listed
         .into_iter()
+        .enumerate()
+        .map(|(index, row)| ListedWorktree {
+            path: row.path.into(),
+            branch: row.branch,
+            head_sha: row
+                .head
+                .filter(|sha| sha.chars().any(|character| character != '0')),
+            is_main: index == 0,
+            bare: row.bare,
+            lock_reason: row.lock_reason,
+        })
         .filter(|listed| !listed.bare)
         .map(|listed| {
             describe(
@@ -217,6 +233,7 @@ pub struct ListedWorktree {
     pub is_main: bool,
     pub bare: bool,
     pub head_sha: Option<String>,
+    pub lock_reason: Option<String>,
 }
 
 /// Splits porcelain worktree records. Records are separated by a blank line
@@ -245,6 +262,7 @@ pub fn parse_worktree_list(output: &str) -> Vec<ListedWorktree> {
                     .map(str::to_owned),
                 bare: record.lines().any(|line| line == "bare"),
                 is_main: false,
+                lock_reason: record.lines().find_map(lock_reason),
             })
         })
         .enumerate()
@@ -273,6 +291,7 @@ pub fn describe(
             missing: true,
             is_main: listed.is_main,
             head_sha: listed.head_sha,
+            lock_reason: listed.lock_reason,
             ..WorktreeFacts::default()
         };
     }
@@ -350,11 +369,22 @@ pub fn describe(
     .and_then(|m| m.modified().ok())
     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
     .map(|d| d.as_millis() as u64);
+    let (ignored_repositories, ignored_scan_unavailable) = if listed.is_main {
+        (Vec::new(), None)
+    } else {
+        match ignored_repositories(&listed.path) {
+            Ok(names) => (names, None),
+            Err(reason) => (Vec::new(), Some(reason)),
+        }
+    };
     WorktreeFacts {
         path,
         branch: listed.branch,
         missing: false,
         is_main: listed.is_main,
+        lock_reason: listed.lock_reason,
+        ignored_repositories,
+        ignored_scan_unavailable,
         nested: false,
         dirty,
         changed_file_count,
@@ -670,7 +700,18 @@ fn git_within(cwd: &Path, arguments: &[&str], deadline: Duration) -> Result<Stri
 /// The first ignored folder of the worktree that holds a Git repository of
 /// its own, relative to the worktree.
 pub fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
-    let listed = git(
+    let listed = ignored_folders(worktree)?;
+    let mut budget = WalkBudget::worktree();
+    for folder in listed.split('\0').filter(|entry| entry.ends_with('/')) {
+        if holds_repository(&worktree.join(folder), &mut budget)? {
+            return Ok(Some(folder.trim_end_matches('/').to_owned()));
+        }
+    }
+    Ok(None)
+}
+
+fn ignored_folders(worktree: &Path) -> Result<String, String> {
+    git(
         worktree,
         &[
             "ls-files",
@@ -680,14 +721,134 @@ pub fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
             "--directory",
             "-z",
         ],
-    )?;
-    let mut budget = WalkBudget::worktree();
+    )
+}
+
+/// Every repository boundary in ignored folders, measured off the runtime
+/// lock. Git metadata is not traversed, and directory links are not followed.
+pub fn ignored_repositories(worktree: &Path) -> Result<Vec<String>, String> {
+    scan_ignored_repositories(worktree, &mut WalkBudget::worktree())
+}
+
+const IGNORED_REPOSITORY_CAP: usize = 1024;
+
+fn scan_ignored_repositories(
+    worktree: &Path,
+    budget: &mut WalkBudget,
+) -> Result<Vec<String>, String> {
+    let listed = ignored_folders(worktree)
+        .map_err(|_| ignored_scan_failure("Git could not list its ignored folders"))?;
+    let mut names = std::collections::BTreeSet::new();
     for folder in listed.split('\0').filter(|entry| entry.ends_with('/')) {
-        if holds_repository(&worktree.join(folder), &mut budget)? {
-            return Ok(Some(folder.trim_end_matches('/').to_owned()));
+        let relative = Path::new(folder);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err(ignored_scan_failure(
+                "Git returned an invalid ignored folder",
+            ));
+        }
+        let mut pending = vec![worktree.join(relative)];
+        while let Some(directory) = pending.pop() {
+            scan_entry(budget)?;
+            let name = hide_platform::path::relative(worktree, &directory)
+                .map_err(|_| ignored_scan_failure("an ignored folder name cannot be displayed"))?
+                .into_string();
+            let metadata = std::fs::symlink_metadata(&directory).map_err(|_| {
+                ignored_scan_failure(&format!("ignored folder {name} could not be read"))
+            })?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                continue;
+            }
+            let marker = match std::fs::symlink_metadata(directory.join(".git")) {
+                Ok(_) => Some(".git"),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(_) => {
+                    return Err(ignored_scan_failure(&format!(
+                        "repository marker in {name} could not be read"
+                    )));
+                }
+            };
+            let bare =
+                marker.is_none()
+                    && directory.join("HEAD").try_exists().map_err(|_| {
+                        ignored_scan_failure("a repository marker could not be read")
+                    })?
+                    && directory.join("objects").try_exists().map_err(|_| {
+                        ignored_scan_failure("a repository marker could not be read")
+                    })?
+                    && directory.join("refs").try_exists().map_err(|_| {
+                        ignored_scan_failure("a repository marker could not be read")
+                    })?;
+            if let Some(marker) = marker.or(bare.then_some(".")) {
+                let remaining = budget
+                    .until
+                    .saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(ignored_scan_failure(
+                        "the ignored-folder scan deadline was reached",
+                    ));
+                }
+                git_within(
+                    &directory,
+                    &["rev-parse", "--resolve-git-dir", marker],
+                    remaining.min(GIT_DEADLINE),
+                )
+                .map_err(|_| {
+                    ignored_scan_failure(&format!("Git could not verify repository {name}"))
+                })?;
+                names.insert(name);
+                if names.len() > IGNORED_REPOSITORY_CAP {
+                    return Err(ignored_scan_failure(
+                        "too many ignored repositories to review",
+                    ));
+                }
+                // Bare repositories have no checkout below their metadata.
+                if bare {
+                    continue;
+                }
+            }
+            let entries = std::fs::read_dir(&directory)
+                .map_err(|_| ignored_scan_failure("an ignored folder could not be read"))?;
+            for entry in entries {
+                scan_entry(budget)?;
+                let entry = entry.map_err(|_| {
+                    ignored_scan_failure("an ignored folder entry could not be read")
+                })?;
+                if entry.file_name() == ".git" {
+                    continue;
+                }
+                let kind = entry.file_type().map_err(|_| {
+                    ignored_scan_failure("an ignored folder entry could not be read")
+                })?;
+                if kind.is_dir() {
+                    pending.push(entry.path());
+                }
+            }
         }
     }
-    Ok(None)
+    Ok(names.into_iter().collect())
+}
+
+fn ignored_scan_failure(reason: &str) -> String {
+    format!(
+        "Ignored repository scan unavailable: {reason}. Check folder access and repository metadata, then refresh before deleting; Hide could not confirm every ignored repository."
+    )
+}
+
+fn scan_entry(budget: &mut WalkBudget) -> Result<(), String> {
+    budget.entries = budget
+        .entries
+        .checked_sub(1)
+        .ok_or_else(|| ignored_scan_failure("the ignored-folder entry limit was reached"))?;
+    if std::time::Instant::now() >= budget.until {
+        return Err(ignored_scan_failure(
+            "the ignored-folder scan deadline was reached",
+        ));
+    }
+    Ok(())
 }
 
 /// How much of the ignored folders one removal looks through for a nested
@@ -959,6 +1120,8 @@ pub struct Registered {
     pub branch: Option<String>,
     pub head: Option<String>,
     pub locked: bool,
+    pub lock_reason: Option<String>,
+    pub bare: bool,
     /// Prunable or bare: Git lists it but cannot use it.
     pub unavailable: bool,
 }
@@ -983,7 +1146,9 @@ pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
                 .iter()
                 .find_map(|v| v.strip_prefix("HEAD "))
                 .map(str::to_owned),
-            locked: fields.iter().any(|v| v.starts_with("locked")),
+            locked: fields.iter().any(|v| lock_reason(v).is_some()),
+            lock_reason: fields.iter().find_map(|v| lock_reason(v)),
+            bare: fields.contains(&"bare"),
             unavailable: fields
                 .iter()
                 .any(|v| v.starts_with("prunable") || *v == "bare"),
@@ -993,6 +1158,26 @@ pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
         return Err("Git returned no main checkout. Refresh the review.".into());
     }
     Ok(rows)
+}
+
+fn lock_reason(field: &str) -> Option<String> {
+    if field == "locked" {
+        Some(String::new())
+    } else {
+        field.strip_prefix("locked ").map(str::to_owned)
+    }
+}
+
+/// Names the locked checkout and the manual action; never executes this text.
+pub fn locked_removal_reason(name: &str, reason: &str) -> String {
+    let detail = if reason.is_empty() {
+        "Git supplied no lock reason"
+    } else {
+        reason
+    };
+    format!(
+        "Worktree {name} is locked: {detail}. Unlock it with git worktree unlock before deleting, then refresh its Git state."
+    )
 }
 
 /// Removes the worktree folder and its registration, keeping the branch.
@@ -1317,8 +1502,8 @@ fn still_registered(admin: &Path) -> bool {
     !named.exists()
 }
 
-/// One operator-confirmed worktree deletion, as the runtime recorded it when
-/// the operator confirmed and Herdr then confirmed every pane was gone.
+/// One operator-confirmed worktree deletion, recorded before the host's
+/// preflight and reused after Herdr confirms every pane is gone.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ConfirmedRemoval {
     pub repository_root: String,
@@ -1333,12 +1518,15 @@ pub struct ConfirmedRemoval {
     /// unmerged branch. Absent from an older sender, which means `-d`.
     #[serde(default)]
     pub force_delete_branch: bool,
-    /// The operator accepted losing the folder's changes: dirt, a worktree
-    /// inside it and an ignored repository no longer stop the removal, and
-    /// Git removes with `--force`. Absent from an older sender, which means
-    /// none of that is accepted.
+    /// The operator accepted losing the folder's changes and the exact
+    /// ignored repositories named below. Git removes with `--force`, while
+    /// a lock or an unavailable scan still refuses it.
+    /// Absent from an older sender, no discard was accepted.
     #[serde(default)]
     pub discard_changes: bool,
+    /// The exact measured names shown in the destructive confirmation.
+    #[serde(default)]
+    pub expected_ignored_repositories: Vec<String>,
 }
 
 /// What a confirmed removal did, as the helper answers it: a stopped
@@ -1365,23 +1553,23 @@ impl From<Result<String, String>> for RemovalOutcome {
     }
 }
 
-/// Rechecks the confirmed target against Git's registration and removes it.
-/// The recheck is the last line between a confirmation the operator gave
-/// minutes ago and the folder as it is now: a moved HEAD or a branch that
-/// became the protected base stops the removal and leaves the folder where it
-/// is. A nested worktree, a dirty file or an ignored repository stops it too,
-/// unless the operator accepted discarding them, in which case Git removes
-/// with `--force`.
-///
-/// The branch is deleted with `-d` unless the operator was told it is
-/// unmerged (`-D`); a `-d` that Git refuses keeps the branch and reports
-/// why, and the folder's removal still stands.
-pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
+/// Measures the accepted deletion without changing files or Git registration.
+/// The core asks before closing any pane; removal repeats the same checks.
+pub fn check_removal(request: &ConfirmedRemoval) -> Result<(), String> {
+    check_confirmed_removal(request, false)
+}
+
+fn check_confirmed_removal(request: &ConfirmedRemoval, panes_closed: bool) -> Result<(), String> {
     let root = Path::new(&request.repository_root);
     let target = Path::new(&request.checkout_path);
     let stopped = |detail: String| {
         format!(
-            "Worktree removal stopped: {detail}. The worktree remains; panes already closed stay closed."
+            "Worktree removal stopped: {detail}. {}",
+            if panes_closed {
+                "The worktree remains; panes already closed stay closed."
+            } else {
+                "The worktree and its panes are kept. Review again before deleting."
+            }
         )
     };
     let rows = registered(root).map_err(|error| {
@@ -1398,6 +1586,14 @@ pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
         return Err(stopped("the main worktree cannot be deleted".into()));
     }
     let current = &rows[index];
+    if let Some(reason) = current.lock_reason.as_deref() {
+        let name = current
+            .branch
+            .as_deref()
+            .or_else(|| target.file_name().and_then(|name| name.to_str()))
+            .unwrap_or("selected checkout");
+        return Err(stopped(locked_removal_reason(name, reason)));
+    }
     if current.head != request.expected_head_sha || current.branch != request.expected_branch {
         return Err(stopped(
             "the worktree identity changed after confirmation".into(),
@@ -1417,43 +1613,63 @@ pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
             "the worktree now contains a nested worktree".into(),
         ));
     }
-    if !request.discard_changes
-        && target
-            .try_exists()
-            .map_err(|error| stopped(error.to_string()))?
+    if target
+        .try_exists()
+        .map_err(|error| stopped(error.to_string()))?
     {
-        let status = git(
-            target,
-            &["status", "--porcelain=v1", "--untracked-files=all"],
-        )
-        .map_err(|error| stopped(format!("could not recheck the worktree state: {error}")))?;
-        let changed = status
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .count();
-        if changed > 0 {
-            return Err(format!(
-                "Not deleted: {} changed after you confirmed, likely written by an agent as it stopped. \
+        if !request.discard_changes {
+            let status = git(
+                target,
+                &["status", "--porcelain=v1", "--untracked-files=all"],
+            )
+            .map_err(|error| stopped(format!("could not recheck the worktree state: {error}")))?;
+            let changed = status
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count();
+            if changed > 0 {
+                return Err(if panes_closed {
+                    format!(
+                        "Not deleted: {} changed after you confirmed, likely written by an agent as it stopped. \
                  The worktree and its files are kept; the panes already closed stay closed. \
                  Delete again and tick Discard to remove it anyway.",
-                if changed == 1 {
-                    "1 file".to_owned()
+                        if changed == 1 {
+                            "1 file".to_owned()
+                        } else {
+                            format!("{changed} files")
+                        }
+                    )
                 } else {
-                    format!("{changed} files")
-                }
-            ));
+                    stopped(format!(
+                        "{changed} files changed after confirmation; review again and explicitly choose Discard"
+                    ))
+                });
+            }
         }
         // Git leaves ignored folders out of the status above, and removing
         // the worktree deletes them, including a repository cloned into one
         // (B28): such a nested repository stops the removal.
-        if let Some(nested) = ignored_repository(target)
-            .map_err(|error| stopped(format!("could not recheck ignored folders: {error}")))?
-        {
+        let nested = ignored_repositories(target)
+            .map_err(|error| stopped(format!("could not recheck ignored folders: {error}")))?;
+        if !nested.is_empty() && !request.discard_changes {
             return Err(stopped(format!(
-                "the ignored folder {nested} holds its own Git repository"
+                "ignored repositories would be deleted: {}. Review and explicitly choose Discard",
+                nested.join(", ")
             )));
         }
+        if nested != request.expected_ignored_repositories {
+            return Err(stopped("the ignored repository list changed after confirmation; refresh and review every repository before choosing Discard".to_owned()));
+        }
     }
+    Ok(())
+}
+
+/// Repeats the preflight after pane closure, then applies the existing
+/// guarded removal and only the branch policy the operator accepted.
+pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
+    check_confirmed_removal(request, true)?;
+    let root = Path::new(&request.repository_root);
+    let target = Path::new(&request.checkout_path);
     remove_worktree(root, target, request.discard_changes).map_err(|error| {
         format!("git worktree remove failed: {error}. The worktree remains; panes already closed stay closed.")
     })?;
@@ -1490,6 +1706,39 @@ mod ignored_repository_tests {
             .status()
             .unwrap();
         assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn an_incomplete_ignored_scan_never_claims_the_repository_list_is_empty() {
+        let directory = tempfile::tempdir().unwrap();
+        let repo = directory.path();
+        run(repo, &["init", "-q"]);
+        std::fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+        std::fs::create_dir_all(repo.join("target/deep")).unwrap();
+        let mut exhausted = WalkBudget {
+            entries: 1,
+            until: std::time::Instant::now() + IGNORED_WALK_TIME,
+        };
+        assert!(
+            scan_ignored_repositories(repo, &mut exhausted)
+                .unwrap_err()
+                .contains("entry limit")
+        );
+        let mut expired = WalkBudget {
+            entries: IGNORED_WALK_ENTRIES,
+            until: std::time::Instant::now(),
+        };
+        assert!(
+            scan_ignored_repositories(repo, &mut expired)
+                .unwrap_err()
+                .contains("deadline")
+        );
+        std::fs::write(repo.join("target/.git"), "gitdir: unavailable\n").unwrap();
+        assert!(
+            ignored_repositories(repo)
+                .unwrap_err()
+                .contains("Git could not verify repository target")
+        );
     }
 
     /// D-15: the deadline stops Git's descendants too, so one that still
