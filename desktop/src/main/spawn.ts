@@ -8,6 +8,11 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 
+/** The file name an executable has on this system: `name.exe` on Windows, `name` elsewhere. */
+export function executableFile(name: string): string {
+  return process.platform === "win32" ? `${name}.exe` : name;
+}
+
 /** Children in flight at once; a second request while one runs is refused. */
 export const MAX_CHILDREN = 1;
 /** Bytes kept from each stream; a verb answers one JSON line. */

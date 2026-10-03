@@ -16,7 +16,7 @@ function sources(dir: string): string[] {
 describe("the environment registry", () => {
   it("is the only reader of process.env, and every key it reads is registered", () => {
     const readers = sources(SRC).filter((file) => fs.readFileSync(file, "utf8").includes("process.env"));
-    expect(readers.map((file) => path.relative(SRC, file))).toEqual(["main/index.ts"]);
+    expect(readers.map((file) => path.relative(SRC, file).split(path.sep).join("/"))).toEqual(["main/index.ts"]);
     const envSource = fs.readFileSync(path.join(SRC, "main/env.ts"), "utf8");
     const read = [...envSource.matchAll(/(?:absolute\(|source\.)"?([A-Z_]+)"?/g)].map((match) => match[1]);
     const registered = ENV_REGISTRY.map((entry) => entry.key);

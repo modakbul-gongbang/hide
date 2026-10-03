@@ -5,7 +5,9 @@ import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { MAX_PROBE_PATHS, executableHeader, openRoute, probe, probeRequest } from "./localPath";
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hide-local-path-")));
+// The physical spelling `fs.realpath` answers: on Windows the temporary
+// folder's long name, where `os.tmpdir()` may give its 8.3 short one.
+const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-local-path-")));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
 function file(name: string, contents: string | Uint8Array, mode = 0o644): string {
@@ -75,7 +77,9 @@ describe("openRoute", () => {
     for (const name of ["setup.pkg", "run.command", "a.tcl", "b.pl", "c.py", "page.html", "sheet.csv", "disk.iso", "host.vncloc", "tool"]) {
       expect(await openRoute(file(name, "plain")), name).toMatchObject({ action: "reveal", reason: "type" });
     }
-    expect(await openRoute(file("runnable.txt", "plain", 0o755))).toMatchObject({ action: "reveal", reason: "execute_bit" });
+    // Windows keeps no execute permission (`chmod` sets only read-only), so a text file there is a document whatever its mode.
+    const runnable = process.platform === "win32" ? { action: "open", reason: "document" } : { action: "reveal", reason: "execute_bit" };
+    expect(await openRoute(file("runnable.txt", "plain", 0o755))).toMatchObject(runnable);
     expect(await openRoute(file("renamed.txt", new Uint8Array([0xcf, 0xfa, 0xed, 0xfe, 0, 0])))).toMatchObject({ action: "reveal", reason: "header" });
     expect(await openRoute(file("script.txt", "#!/bin/sh\necho hi"))).toMatchObject({ action: "reveal", reason: "header" });
   });

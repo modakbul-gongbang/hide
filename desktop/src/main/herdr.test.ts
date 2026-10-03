@@ -1,12 +1,15 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { executableFile } from "./spawn";
 import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type ServerStatus } from "./herdr";
 import type { ChildResult } from "./spawn";
 
 describe("chooseHerdr", () => {
   const packaged = { bundledDir: "/A/Contents/Resources", herdrBinPath: null, herdrPaneId: null };
+  const bundled = path.join("/A/Contents/Resources", executableFile("herdr"));
 
   it("hands a packaged app's children its bundled herdr when nothing names one", () => {
-    expect(chooseHerdr(packaged)).toEqual({ path: "/A/Contents/Resources/herdr", source: "bundled", replacedPaneValue: null });
+    expect(chooseHerdr(packaged)).toEqual({ path: bundled, source: "bundled", replacedPaneValue: null });
   });
 
   it("passes an explicit override through unchanged", () => {
@@ -16,12 +19,12 @@ describe("chooseHerdr", () => {
   it("replaces the value a Herdr pane exported with the bundled herdr", () => {
     const gone = "/A/Contents/Resources/herdr-runtime/herdr";
     expect(chooseHerdr({ ...packaged, herdrBinPath: gone, herdrPaneId: "w1:p1" })).toEqual({
-      path: "/A/Contents/Resources/herdr",
+      path: bundled,
       source: "bundled",
       replacedPaneValue: gone,
     });
-    const current = chooseHerdr({ ...packaged, herdrBinPath: "/A/Contents/Resources/herdr", herdrPaneId: "w1:p1" });
-    expect(current).toEqual({ path: "/A/Contents/Resources/herdr", source: "bundled", replacedPaneValue: null });
+    const current = chooseHerdr({ ...packaged, herdrBinPath: bundled, herdrPaneId: "w1:p1" });
+    expect(current).toEqual({ path: bundled, source: "bundled", replacedPaneValue: null });
   });
 
   it("adds nothing when unpackaged, pane or not", () => {

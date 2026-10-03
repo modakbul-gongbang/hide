@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  CLI_FILE,
+  HAS_LOGIN_SHELL,
   loginPathCommand,
   parseConnect,
   parseLoginPath,
@@ -19,11 +21,6 @@ import { readJsonFile, writeJsonFile } from "./jsonFile";
 import { ChildRunner } from "./spawn";
 import type { ChildResult } from "./spawn";
 
-const probe = (files: Record<string, number>): FileProbe => ({
-  isExecutable: (file) => file in files,
-  mtimeMs: (file) => files[file] ?? null,
-});
-
 const result = (stdout: string, extra: Partial<ChildResult> = {}): ChildResult => ({
   code: 0,
   signal: null,
@@ -34,9 +31,27 @@ const result = (stdout: string, extra: Partial<ChildResult> = {}): ChildResult =
   ...extra,
 });
 
+/**
+ * A path the resolver builds, written in POSIX for the reader and spelled
+ * the way this system's `path.join` spells it, with the CLI's file name for
+ * `hide` (`\w\target\debug\hide.exe` on Windows). Paths the resolver
+ * only passes along (an override, the remembered CLI) are compared as given.
+ */
+const built = (posix: string): string => (path.posix.basename(posix) === "hide" ? path.join(path.posix.dirname(posix), CLI_FILE) : path.join(posix));
+/** A PATH value as this system separates it. */
+const dirs = (...entries: string[]): string => entries.join(path.delimiter);
+/** Executable files, each found by the spelling the resolver builds and by the spelling it was given. */
+const probe = (files: Record<string, number>): FileProbe => {
+  const spelled = new Map(Object.entries(files).flatMap(([file, mtime]) => [[file, mtime] as const, [built(file), mtime] as const]));
+  return {
+    isExecutable: (file) => spelled.has(file),
+    mtimeMs: (file) => spelled.get(file) ?? null,
+  };
+};
+
 describe("resolveCli (B2)", () => {
-  const input: CliSearch = { override: null, worktreeRoot: "/w", bundledDir: null, searchPath: "/usr/local/bin:/opt/bin", remembered: null, loginPath: null, home: "/h" };
-  const packaged: CliSearch = { ...input, worktreeRoot: null, searchPath: "/usr/bin:/bin" };
+  const input: CliSearch = { override: null, worktreeRoot: "/w", bundledDir: null, searchPath: dirs("/usr/local/bin", "/opt/bin"), remembered: null, loginPath: null, home: "/h" };
+  const packaged: CliSearch = { ...input, worktreeRoot: null, searchPath: dirs("/usr/bin", "/bin") };
   const login = (answer: string | null) => {
     const asked = { count: 0 };
     return { asked, loginPath: async () => (asked.count++, answer) };
@@ -50,58 +65,58 @@ describe("resolveCli (B2)", () => {
 
   it("takes the newest worktree build before PATH", async () => {
     const files = { "/w/target/debug/hide": 10, "/w/target/release/hide": 20, "/opt/bin/hide": 30 };
-    expect((await resolveCli(input, probe(files))).found).toEqual({ path: "/w/target/release/hide", source: "worktree" });
+    expect((await resolveCli(input, probe(files))).found).toEqual({ path: built("/w/target/release/hide"), source: "worktree" });
   });
 
   it("searches PATH in order when no build exists, and reports every path it tried", async () => {
     const resolved = await resolveCli(input, probe({ "/opt/bin/hide": 1 }));
-    expect(resolved.found).toEqual({ path: "/opt/bin/hide", source: "path" });
-    expect(resolved.tried).toEqual(["/w/target/debug/hide", "/w/target/release/hide", "/usr/local/bin/hide", "/opt/bin/hide"]);
+    expect(resolved.found).toEqual({ path: built("/opt/bin/hide"), source: "path" });
+    expect(resolved.tried).toEqual(["/w/target/debug/hide", "/w/target/release/hide", "/usr/local/bin/hide", "/opt/bin/hide"].map(built));
   });
 
   it("takes the CLI the app ships after the worktree build and before PATH, and never remembers it", async () => {
     const shipped: CliSearch = { ...packaged, bundledDir: "/App.app/Contents/Resources", ...login("/l") };
     const bundled = await resolveCli(shipped, probe({ "/App.app/Contents/Resources/hide": 1, "/usr/bin/hide": 1, "/l/hide": 1 }));
-    expect(bundled).toEqual({ found: { path: "/App.app/Contents/Resources/hide", source: "bundled" }, tried: ["/App.app/Contents/Resources/hide"] });
+    expect(bundled).toEqual({ found: { path: built("/App.app/Contents/Resources/hide"), source: "bundled" }, tried: [built("/App.app/Contents/Resources/hide")] });
     expect(REMEMBERED_SOURCES.has("bundled")).toBe(false);
     const build = await resolveCli({ ...shipped, worktreeRoot: "/w" }, probe({ "/w/target/debug/hide": 1, "/App.app/Contents/Resources/hide": 1 }));
-    expect(build.found).toEqual({ path: "/w/target/debug/hide", source: "worktree" });
+    expect(build.found).toEqual({ path: built("/w/target/debug/hide"), source: "worktree" });
     // A bundle whose CLI cannot run is logged as tried and the search goes on (D-07), so a missing bundle still reaches an installed CLI.
     const broken = await resolveCli(shipped, probe({ "/usr/bin/hide": 1 }));
-    expect(broken).toEqual({ found: { path: "/usr/bin/hide", source: "path" }, tried: ["/App.app/Contents/Resources/hide", "/usr/bin/hide"] });
+    expect(broken).toEqual({ found: { path: built("/usr/bin/hide"), source: "path" }, tried: ["/App.app/Contents/Resources/hide", "/usr/bin/hide"].map(built) });
   });
 
   it("prefers PATH to the remembered CLI, and the remembered CLI to asking the login shell", async () => {
     const shell = login("/l");
     const onPath = await resolveCli({ ...packaged, searchPath: "/opt/bin", remembered: "/r/hide", ...shell }, probe({ "/opt/bin/hide": 1, "/r/hide": 1 }));
-    expect(onPath.found).toEqual({ path: "/opt/bin/hide", source: "path" });
+    expect(onPath.found).toEqual({ path: built("/opt/bin/hide"), source: "path" });
     const remembered = await resolveCli({ ...packaged, remembered: "/r/hide", ...shell }, probe({ "/r/hide": 1, "/l/hide": 1 }));
-    expect(remembered).toEqual({ found: { path: "/r/hide", source: "remembered" }, tried: ["/usr/bin/hide", "/bin/hide", "/r/hide"] });
+    expect(remembered).toEqual({ found: { path: "/r/hide", source: "remembered" }, tried: [built("/usr/bin/hide"), built("/bin/hide"), "/r/hide"] });
     expect(shell.asked.count).toBe(0);
   });
 
   it("asks the login shell once the remembered CLI is gone, skipping what PATH already tried", async () => {
-    const shell = login("/usr/bin:/l");
+    const shell = login(dirs("/usr/bin", "/l"));
     const resolved = await resolveCli({ ...packaged, remembered: "/r/hide", ...shell }, probe({ "/l/hide": 1 }));
-    expect(resolved).toEqual({ found: { path: "/l/hide", source: "login" }, tried: ["/usr/bin/hide", "/bin/hide", "/r/hide", "/l/hide"] });
+    expect(resolved).toEqual({ found: { path: built("/l/hide"), source: "login" }, tried: [built("/usr/bin/hide"), built("/bin/hide"), "/r/hide", built("/l/hide")] });
     expect(shell.asked.count).toBe(1);
   });
 
   it("looks in the usual install directories when the login shell does not answer", async () => {
     const resolved = await resolveCli({ ...packaged, ...login(null) }, probe({ "/opt/homebrew/bin/hide": 1 }));
     expect(resolved).toEqual({
-      found: { path: "/opt/homebrew/bin/hide", source: "well-known" },
-      tried: ["/usr/bin/hide", "/bin/hide", "/h/.local/bin/hide", "/opt/homebrew/bin/hide"],
+      found: { path: built("/opt/homebrew/bin/hide"), source: "well-known" },
+      tried: ["/usr/bin/hide", "/bin/hide", "/h/.local/bin/hide", "/opt/homebrew/bin/hide"].map(built),
     });
     const missing = await resolveCli({ ...packaged, ...login(null) }, probe({}));
     expect(missing.found).toBeNull();
-    expect(missing.tried.at(-1)).toBe("/usr/local/bin/hide");
+    expect(missing.tried.at(-1)).toBe(built("/usr/local/bin/hide"));
   });
 
   it("never asks a login shell when there is none to ask (unpackaged)", async () => {
     expect(await resolveCli({ ...input, worktreeRoot: null, searchPath: "" }, probe({}))).toEqual({
       found: null,
-      tried: ["/h/.local/bin/hide", "/opt/homebrew/bin/hide", "/usr/local/bin/hide"],
+      tried: ["/h/.local/bin/hide", "/opt/homebrew/bin/hide", "/usr/local/bin/hide"].map(built),
     });
   });
 });
@@ -170,7 +185,8 @@ describe("the hide CLI's answers", () => {
     expect(parseLoginPath("no marks")).toBeNull();
   });
 
-  it("asks a real login shell for its PATH", async () => {
+  // Windows has no login shell, and the host never asks one there.
+  it.runIf(HAS_LOGIN_SHELL)("asks a real login shell for its PATH", async () => {
     const command = loginPathCommand("/bin/sh");
     const answer = await new ChildRunner().run(command.file, command.args, 10_000);
     expect(parseLoginPath(answer.stdout)).toBeTruthy();

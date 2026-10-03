@@ -14,7 +14,9 @@
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
 # checks and the whole web end-to-end, dealt out to six shards by
 # `web-e2e.yml`. `nightly.yml` runs the whole web end-to-end on macOS, so the
-# move costs no macOS coverage, only its delay.
+# move costs no macOS coverage, only its delay. One Windows job, `windows
+# check`, compiles the workspace for Windows and runs the suites whose
+# behaviour differs there (issue #293).
 #
 # Every job and every long step has a timeout a few times its usual length
 # (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that
@@ -115,17 +117,13 @@ jobs:
           pnpm --dir desktop lint
           pnpm --dir desktop test
 
-  # The Windows port's progress report (issue #293), not a gate: it is absent
-  # from `verify`'s `needs`, so nothing here holds a pull request. The compile
-  # check and the desktop unit suite fail today and are `continue-on-error`:
-  # `cargo check` skips every crate that depends on a failed one, so its log
-  # lists the Unix-only code at the bottom of the dependency graph (the
-  # summary step groups it by crate), and it shrinks as the port lands. The
-  # web suite and the desktop typecheck pass today, so a failure of either
-  # turns this job red: that is a Windows regression. hided's end-to-end
-  # tests and hided against the pinned Herdr (a pane opened through `/ws` and
-  # a typed line echoed back) pass today too, so they gate this job the same
-  # way. Promote the job into `needs` only once the compile check is green.
+  # What differs on Windows (issue #293), as a required lane: the whole
+  # workspace compiles for Windows, hided's pane bootstrap and end-to-end
+  # tests pass there, hided drives the pinned Herdr for Windows (a pane opened
+  # through `/ws` and a typed line echoed back), and the web and desktop unit
+  # suites pass with the same assertions as on macOS and Linux. The job took
+  # 4-8 minutes on 2026-10-03 with a warm cache; a cold one compiles the
+  # workspace from nothing, so the timeout leaves room for that.
   windows-check:
     name: windows check
     runs-on: windows-latest
@@ -144,33 +142,7 @@ jobs:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Compile the workspace for Windows
-        id: cargo-check
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          cargo check --locked --workspace --all-targets --keep-going --message-format short 2>&1 | tee "$RUNNER_TEMP/cargo-check.log"
-      - name: Summarize the compile errors
-        run: |
-          log="$RUNNER_TEMP/cargo-check.log"
-          {
-            echo '### Windows cargo check'
-            echo
-            echo "outcome: ${{ steps.cargo-check.outcome }}"
-            echo
-            echo 'Crates that failed to compile:'
-            echo '```'
-            grep -oE 'could not compile `[^`]+`' "$log" | sort | uniq -c || true
-            echo '```'
-            echo 'Errors by crate (first path component) and code:'
-            echo '```'
-            grep -E ': error(\[E[0-9]+\])?:' "$log" | sed -E 's#^(.*[\\/]registry[\\/]src[\\/][^\\/]+[\\/])?([^\\/:]+).*: (error(\[E[0-9]+\])?: .*)$#\2 \3#' | sort | uniq -c | sort -rn || true
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Keep the compile log
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-cargo-check-log
-          path: ${{ runner.temp }}/cargo-check.log
+        run: cargo check --locked --workspace --all-targets --keep-going --message-format short
       - name: hided's pane bootstrap and end-to-end tests
         timeout-minutes: 25
         run: |
@@ -209,10 +181,6 @@ jobs:
           pnpm --dir web test
           pnpm --dir desktop typecheck
       - name: Desktop app unit suite
-        # 20 tests in 6 files fail on Windows today: path separators baked
-        # into expectations, `/bin/sh` and `/bin/sleep` as test programs, and
-        # 8.3 short temp paths. Drop `continue-on-error` when they are fixed.
-        continue-on-error: true
         timeout-minutes: 10
         run: pnpm --dir desktop test
 
@@ -347,7 +315,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e, os-contract]
+    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e, os-contract, windows-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
