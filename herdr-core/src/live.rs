@@ -36,12 +36,12 @@ use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
 };
 use crate::workspace;
+#[cfg(test)]
+use hide_herdr_client::HERDR_PROTOCOL_REVISION;
 use hide_herdr_client::{
     ApiConnector, ApiError, LocalSocketConnector, request_small_response, request_with_connector,
     request_with_correlation_id,
 };
-#[cfg(test)]
-use hide_herdr_client::{HERDR_PROTOCOL_REVISION, request};
 use hide_platform::process::OwnedChild;
 
 #[path = "worktree_cleanup.rs"]

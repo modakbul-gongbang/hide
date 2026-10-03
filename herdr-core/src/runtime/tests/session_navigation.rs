@@ -1545,7 +1545,7 @@ fn superseded_same_pane_failure_cannot_fail_a_newer_correlated_request() {
     assert!(runtime.snapshot().status.last_error.is_none());
     assert!(
         !runtime
-            .ingest_pane_focus_completion(first, Err("late duplicate".into()), 9)
+            .ingest_pane_focus_completion(first, Err("late duplicate".to_owned().into()), 9)
             .0
     );
     finish_running_pane_focus(&mut runtime, Ok(()));
