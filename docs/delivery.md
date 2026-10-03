@@ -86,8 +86,9 @@ Three consecutive read failures produce a rate-limited diagnostic.
 
 The minute tick admits at most one read per watched target, at most four remote reads at once, each with a five-second deadline.
 It compares metadata and integers outside `Mutex<Runtime>` and publishes only watch start, warning and end transitions.
-A target exit, target reply or parent's explicit stop ends the watch.
-A done target remains watched until one of those events; there is no completion-report command in this phase.
+A target exit or parent's explicit stop ends the watch.
+A normal reply closes the request's answer wait and leaves the watch active.
+A done target remains watched until exit or explicit stop; there is no completion-report command in this phase.
 
 At registration only, Hide runs one existing read-only hcoord watch-list call and, when active watches exist, at most one agent-list call within one combined two-second budget.
 An exact current pane/session/machine/host-scope match rejects registration as `conflict`; unavailable or ambiguous proof records a stable diagnostic and allows registration.
