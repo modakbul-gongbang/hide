@@ -6,6 +6,7 @@ import { mobileCatalogs, mobileEnglish } from "./resources/mobile";
 import { mobileSetupCatalogs, mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeCatalogs, nativeEnglish } from "./resources/native";
 import { settingsCatalogs, settingsEnglish } from "./resources/settings";
+import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
 
 export const english = {
@@ -17,6 +18,7 @@ export const english = {
   ...cleanupEnglish,
   ...devicesEnglish,
   ...mobileSetupEnglish,
+  ...workspaceEnglish,
 } as const;
 
 export type MessageKey = keyof typeof english;
@@ -32,6 +34,7 @@ export const catalogs = {
     ...cleanupCatalogs.ko,
     ...devicesCatalogs.ko,
     ...mobileSetupCatalogs.ko,
+    ...workspaceCatalogs.ko,
   },
   "zh-CN": {
     ...commonCatalogs["zh-CN"],
@@ -42,6 +45,7 @@ export const catalogs = {
     ...cleanupCatalogs["zh-CN"],
     ...devicesCatalogs["zh-CN"],
     ...mobileSetupCatalogs["zh-CN"],
+    ...workspaceCatalogs["zh-CN"],
   },
   ja: {
     ...commonCatalogs.ja,
@@ -52,5 +56,6 @@ export const catalogs = {
     ...cleanupCatalogs.ja,
     ...devicesCatalogs.ja,
     ...mobileSetupCatalogs.ja,
+    ...workspaceCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;
