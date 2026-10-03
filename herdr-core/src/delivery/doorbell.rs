@@ -211,6 +211,7 @@ fn styled_lines(screen: &str) -> Option<Vec<Vec<Cell>>> {
     let mut chars = screen.chars().peekable();
     let mut dim = false;
     let mut gray = false;
+    let mut reverse = false;
     while let Some(value) = chars.next() {
         match value {
             '\n' => lines.push(Vec::new()),
@@ -247,9 +248,12 @@ fn styled_lines(screen: &str) -> Option<Vec<Vec<Cell>>> {
                         0 => {
                             dim = false;
                             gray = false;
+                            reverse = false;
                         }
                         2 => dim = true,
+                        7 => reverse = true,
                         22 => dim = false,
+                        27 => reverse = false,
                         90 => gray = true,
                         30..=37 | 39 | 91..=97 => gray = false,
                         38 | 48 => {
@@ -274,7 +278,7 @@ fn styled_lines(screen: &str) -> Option<Vec<Vec<Cell>>> {
             value if value.is_control() => return None,
             value => lines.last_mut()?.push(Cell {
                 value,
-                placeholder: dim || gray,
+                placeholder: (dim || gray) && !reverse,
             }),
         }
     }
@@ -299,12 +303,17 @@ fn empty_composer(kind: &str, screen: &str) -> bool {
     let Some(glyph_index) = prompt.iter().position(|cell| cell.value == glyph) else {
         return false;
     };
-    if prompt[glyph_index + 1..]
+    let content: Vec<_> = prompt[glyph_index + 1..]
         .iter()
-        .any(|cell| !cell.value.is_whitespace() && !cell.placeholder)
-    {
+        .filter(|cell| !cell.value.is_whitespace())
+        .collect();
+    if content.is_empty() || content.iter().any(|cell| !cell.placeholder) {
         return false;
     }
+    // Footer structure is bounded, rather than a list of model-name strings.
+    // The positively styled placeholder above is required even when a draft
+    // could imitate the context/shortcut text on subsequent rows.
+    let mut context = false;
     let mut footer = false;
     for line in &lines[index + 1..] {
         let text: String = line.iter().map(|cell| cell.value).collect();
@@ -312,17 +321,27 @@ fn empty_composer(kind: &str, screen: &str) -> bool {
         if text.is_empty() || text.chars().all(|value| matches!(value, '─' | '━' | ' ')) {
             continue;
         }
+        if footer {
+            return false;
+        }
         let known = if kind == "codex" {
             text.starts_with('?') && text.contains("for shortcuts")
-                || text.contains("% left") && text.contains('·')
         } else {
             text.contains("shift+tab") && (text.contains("permissions") || text.contains("mode"))
                 || text == "? for shortcuts"
         };
-        if !known {
+        if known {
+            footer = true;
+        } else if kind == "codex"
+            && !context
+            && text
+                .split_once('·')
+                .is_some_and(|(left, right)| !left.trim().is_empty() && !right.trim().is_empty())
+        {
+            context = true;
+        } else {
             return false;
         }
-        footer = true;
     }
     footer
 }
@@ -339,7 +358,11 @@ mod tests {
             "❯ \x1b[2mTry a task\x1b[0m\n? for shortcuts"
         ));
         assert!(!empty_composer("claude", "❯ Try a task\n? for shortcuts"));
-        assert!(empty_composer("codex", "› \n? for shortcuts"));
+        assert!(!empty_composer("codex", "› \n? for shortcuts"));
+        assert!(empty_composer(
+            "codex",
+            "› \x1b[2mAsk for a task\x1b[0m\n? for shortcuts"
+        ));
         assert!(!empty_composer(
             "codex",
             "› meaningful draft\n? for shortcuts"
@@ -354,5 +377,32 @@ mod tests {
         ));
         assert!(!empty_composer("codex", "› \nEnter to select"));
         assert!(!empty_composer("codex", "› "));
+    }
+
+    #[test]
+    fn styled_placeholder_and_bounded_footer_distinguish_actual_composer_states() {
+        let footer =
+            "\n  Example runtime high · /workspace\n  ? for shortcuts   1 warning · f2 to view";
+        assert!(empty_composer(
+            "codex",
+            &format!("\x1b[0m\x1b[1m› \x1b[0m\x1b[2mAsk for a task\x1b[0m{footer}")
+        ));
+        for prompt in [
+            "› Ask for a task",
+            "› \nExample runtime high · /workspace",
+            "› \x1b[2;7mAsk for a task\x1b[0m",
+            "› \x1b[2mAsk for a task\x1b[0m\nsecond draft line",
+            "› \x1b[2mAsk for a task\x1b[0m\nextra context · /workspace",
+        ] {
+            assert!(!empty_composer("codex", &format!("{prompt}{footer}")));
+        }
+        assert!(!empty_composer(
+            "codex",
+            "› \x1b[2mAsk for a task\x1b[0m\ncontext · /workspace"
+        ));
+        assert!(!empty_composer(
+            "codex",
+            "› \x1b[2mAsk for a task\x1b[0m\n? for shortcuts\nunknown dialog"
+        ));
     }
 }

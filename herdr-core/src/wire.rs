@@ -1294,8 +1294,9 @@ pub(crate) fn delivery_agent(value: Value) -> Result<DeliveryAgent, String> {
                 .and_then(|session| session_digest(&session.value)),
             status: agent.agent_status.to_string(),
             state_change_seq: agent.state_change_seq,
-            // Missing readiness is uncertainty, never permission to write.
-            ready: agent.interactive_ready == Some(true) && agent.launch_pending == Some(false),
+            // Herdr omits a false launch_pending flag on a ready agent.
+            // Positive readiness remains mandatory; an active launch refuses.
+            ready: agent.interactive_ready == Some(true) && agent.launch_pending != Some(true),
         }),
         _ => Err("delivery_agent_format".into()),
     }
@@ -1304,9 +1305,11 @@ pub(crate) fn delivery_agent(value: Value) -> Result<DeliveryAgent, String> {
 pub(crate) fn delivery_screen_params(pane: &str) -> Result<Value, String> {
     params(req::PaneReadParams {
         pane_id: pane.into(),
-        source: req::ReadSource::Detection,
+        // Detection normalizes away styling even with strip_ansi=false.
+        // Visible ANSI distinguishes a placeholder from an identical draft.
+        source: req::ReadSource::Visible,
         lines: Some(128),
-        format: req::ReadFormat::Text,
+        format: req::ReadFormat::Ansi,
         strip_ansi: false,
     })
 }
@@ -1776,6 +1779,35 @@ pub(crate) fn checked_response_fixture(id: &Value, result: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn delivery_requires_positive_readiness_and_preserves_visible_styling() {
+        // The actual ready response omits launch_pending=false. Missing
+        // interactive_ready or an explicit active launch still refuses input.
+        let mut response = serde_json::json!({"type":"agent_info", "agent": {
+            "pane_id":"w1:p1", "terminal_id":"terminal", "workspace_id":"w1",
+            "tab_id":"w1:t1", "focused":false, "revision":1,
+            "agent":"codex", "agent_status":"idle", "state_change_seq":1,
+            "interactive_ready":true
+        }});
+        assert!(super::delivery_agent(response.clone()).unwrap().ready);
+        response["agent"]["launch_pending"] = serde_json::json!(true);
+        assert!(!super::delivery_agent(response.clone()).unwrap().ready);
+        response["agent"]["launch_pending"] = serde_json::json!(false);
+        assert!(super::delivery_agent(response.clone()).unwrap().ready);
+        response["agent"]
+            .as_object_mut()
+            .unwrap()
+            .remove("interactive_ready");
+        assert!(!super::delivery_agent(response.clone()).unwrap().ready);
+        response["agent"]["interactive_ready"] = serde_json::json!(false);
+        assert!(!super::delivery_agent(response).unwrap().ready);
+        assert_eq!(
+            super::delivery_screen_params("w1:p1").unwrap(),
+            serde_json::json!({"pane_id":"w1:p1", "source":"visible",
+                "lines":128, "format":"ansi", "strip_ansi":false})
+        );
+    }
 
     #[test]
     fn a_program_holding_the_terminal_is_named_apart_from_the_shell() {
