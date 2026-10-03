@@ -4,9 +4,11 @@
 //! the same turns. The worker that holds an exclusive lock on the server's
 //! lock file generates; any other shows provider names, logs once that it is
 //! standing by, and tries again every thirty seconds, so it takes over when
-//! the holder exits. The kernel releases the lock with its process, so a
-//! crashed holder blocks nobody. Windows locks the file's bytes against
-//! reading too, so a daemon standing by there cannot name the holder.
+//! the holder exits. The worker explicitly unlocks when it ends, even if a
+//! concurrently starting child still holds an inherited descriptor. After a
+//! crash, the kernel releases the lock when its last descriptor closes.
+//! Windows locks the file's bytes against reading too, so a daemon standing
+//! by there cannot name the holder.
 //!
 //! A local server's lock sits beside its socket, the one place every daemon
 //! that reaches the server shares whatever HOME it runs with, so a daemon
@@ -118,6 +120,25 @@ impl GeneratorLock {
     }
 }
 
+impl Drop for GeneratorLock {
+    fn drop(&mut self) {
+        let Some(file) = self.held.take() else {
+            return;
+        };
+        // On Unix, close alone keeps a flock alive while a concurrent fork
+        // holds the same open file description. The role belongs to this
+        // worker, so release it before closing our descriptor.
+        if let Err(error) = file.unlock() {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "generator.release_failed",
+                "target": self.target,
+                "message": error.to_string(),
+            }));
+        }
+    }
+}
+
 /// The holder writes who it is into the lock, so a daemon standing by can
 /// say which process generates for its server: a stray daemon on the same
 /// Herdr is otherwise invisible.
@@ -211,5 +232,38 @@ mod tests {
         // Inside the retry window nothing is tried; after it, it takes over.
         assert_eq!(second.ensure(now + Duration::from_secs(1)), (false, false));
         assert_eq!(second.ensure(now + RETRY), (true, true));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_end_releases_the_role_even_with_an_inherited_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = local_lock_path(&dir.path().join("herdr.sock"));
+        let mut first = GeneratorLock::new(Some(path.clone()), "local");
+        let mut second = GeneratorLock::new(Some(path.clone()), "local");
+        let now = Instant::now();
+        assert_eq!(first.ensure(now), (true, false));
+        // A fork retains this same open file description until exec closes
+        // it. Keep a duplicate to hold that window open deterministically.
+        let inherited = first.held.as_ref().unwrap().try_clone().unwrap();
+        assert_eq!(second.ensure(now), (false, false));
+        assert_eq!(
+            second.ensure(now + RETRY),
+            (false, false),
+            "the second worker must stand by while the first owns the role"
+        );
+
+        drop(first);
+        assert_eq!(
+            second.ensure(now + RETRY * 2),
+            (true, true),
+            "the role ends with its owner, even before a forked child execs"
+        );
+
+        // Closing the previous owner's inherited descriptor must not give
+        // away the role that the second worker now owns.
+        drop(inherited);
+        let mut third = GeneratorLock::new(Some(path), "local");
+        assert_eq!(third.ensure(now + RETRY * 2), (false, false));
     }
 }
