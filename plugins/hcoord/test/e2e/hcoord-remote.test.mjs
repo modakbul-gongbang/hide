@@ -105,7 +105,8 @@ test("on a remote machine writes wait in its outbox and queries are refused with
   // hide's kit converges hcoord on every machine; a remote has nothing to start and must not read as failed.
   const ensured = agent.json("daemon", "ensure");
   assert.deepEqual([ensured.ok, ensured.value.running, ensured.value.changed, ensured.value.hq], [true, false, false, os.hostname()]);
-  assert.equal(agent.outbox().length, 1, "ensure on a remote writes no letter");
+  // A written letter answers `delivery: "pending"` with its id; the outbox count races the HQ's collection.
+  assert.deepEqual([ensured.delivery, ensured.value.letter], [undefined, undefined], "ensure on a remote writes no letter");
 });
 
 test("the HQ moves only without open work, and a moved HQ stops its daemon", async (t) => {
