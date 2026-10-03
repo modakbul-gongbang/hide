@@ -61,6 +61,9 @@ type Page = {
   /** CDP can install future scripts. Its filesystem-write/download ban
    * survives disconnect until this native generation ends. */
   cdpRestricted: boolean;
+  /** Download refusals remain enforced after disconnect, with one diagnostic
+   * for this native generation even when installed scripts loop. */
+  cdpDownloadRefused: boolean;
   /** A generation that has held a native file frame never enters CDP. */
   cdpFileFrame: boolean;
   /** Three finite guard categories bound diagnostic state and output even
@@ -370,6 +373,7 @@ export class BrowserViews {
       partition,
       fileRestricted: !partition.startsWith("persist:hide-browser-file-"),
       cdpRestricted: false,
+      cdpDownloadRefused: false,
       cdpFileFrame: false,
       fileRefusals: new Set(),
     };
@@ -399,9 +403,13 @@ export class BrowserViews {
     });
     pageSession.setPermissionCheckHandler((_contents, permission) => PAGE_PERMISSIONS.has(permission));
     pageSession.on("will-download", (event, item, contents) => {
-      if (this.ownerOf(contents.id)?.cdpRestricted) {
+      const page = this.ownerOf(contents.id);
+      if (page?.cdpRestricted) {
         event.preventDefault();
-        this.log.event("browser.download_refused", { reason: "cdp_filesystem_boundary" });
+        if (!page.cdpDownloadRefused) {
+          page.cdpDownloadRefused = true;
+          this.log.event("browser.download_refused", { reason: "cdp_filesystem_boundary", display_id: page.id });
+        }
       } else this.log.event("browser.download", { mime: item.getMimeType() });
     });
     pageSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
