@@ -1,6 +1,7 @@
 import { FolderIcon, GitBranchIcon } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import type { Actions } from "./actions";
+import { noteShellLayer } from "./browserViews";
 import { Hint } from "./components/ui/tooltip";
 import { ExplorerTree } from "./ExplorerTree";
 import { HistoryList } from "./HistoryList";
@@ -53,6 +54,14 @@ export function Tools({
   };
   const giveBackRef = useRef(giveBack);
   giveBackRef.current = giveBack;
+  // The overlay mounts deep in the tree, where the page sync does not look
+  // for new layers, so it says when it opens and closes: a page under it gives
+  // way to its still until it closes.
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    noteShellLayer();
+    return noteShellLayer;
+  }, [open]);
   useLayoutEffect(() => {
     if (!open) return undefined;
     const active = document.activeElement;

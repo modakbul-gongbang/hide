@@ -7,9 +7,11 @@
 // Everything that moves a page goes through one sync: the front Workspace's
 // browser displays, each with the rect its slot occupies now or null. A
 // shell overlay (the palette, a menu, a dialog, a popover, the Recent Panels
-// or Recent Projects list) that meets a page's rect cannot draw over a
-// native view, so the page is captured, its still is drawn in its place, and
-// the page is hidden until the overlay is gone. A shell drag (`shellDrag.ts`)
+// or Recent Projects list, the Tools overlay of a narrow window) that meets a
+// page's rect cannot draw over a native view, so the page is hidden in the
+// same sync that first sees the overlay, the still taken while the page was
+// idle is drawn in its place, and a fresh capture, asked for before that sync
+// hides the page, replaces it when it arrives. A shell drag (`shellDrag.ts`)
 // does the same to every page while it runs, so its guide or preview draws
 // over them and its drop lands in the shell, never in a page.
 
@@ -94,12 +96,10 @@ export function placements(rows: BrowserDisplayRow[], rects: ReadonlyMap<string,
 
 // --- page state the host reports -----------------------------------------------
 
-type Freeze = "capturing" | "frozen";
-
 type BrowserStore = {
   /** What each page says, by host key (`hostKey`). */
   pages: Record<string, BrowserPageState>;
-  /** The still drawn in place of a covered page, by display id of the front Workspace. */
+  /** The still drawn in place of a covered page, by display id of the front Workspace; null draws nothing. */
   stills: Record<string, string | null>;
 };
 
@@ -123,7 +123,33 @@ export function withoutClosed<T>(entries: Readonly<Record<string, T>>, workspace
   return kept;
 }
 
+// --- the idle still -------------------------------------------------------------
+
+/** A page's still and what it was taken of: the page's address and its slot's size in whole points. */
+export type CachedStill = { url: string; width: number; height: number; still: string | null };
+
+/** How long a shown page must stay unchanged before its still is taken. */
+export const STILL_QUIET_MS = 500;
+
+/** Whether `cached` was taken of what a page at `url` in `rect` shows: a still of another address or size is never drawn. */
+export function stillFits(cached: CachedStill | undefined, url: string, rect: BrowserRect): cached is CachedStill {
+  return cached !== undefined && cached.url === url && cached.width === Math.round(rect.width) && cached.height === Math.round(rect.height);
+}
+
+/**
+ * Whether a shown, uncovered, loaded page wants its still taken again: it has
+ * none of its address and size, or `stale` says its load just finished or it
+ * just came into view. Nothing else asks, so an idle page is not captured
+ * again and again.
+ */
+export function stillWanted(cached: CachedStill | undefined, url: string, rect: BrowserRect, stale: boolean): boolean {
+  return stale || !stillFits(cached, url, rect);
+}
+
 // --- the sync loop -------------------------------------------------------------
+
+/** A shell layer that stays where it opened; the others can move with their anchor and are followed every frame. */
+const STILL_LAYER_SELECTOR = "[data-tools-overlay]";
 
 /** Where a shell layer is drawn; a tooltip is only read and stays under a page. */
 const OVERLAY_SELECTOR = [
@@ -131,16 +157,20 @@ const OVERLAY_SELECTOR = [
   '[role="dialog"]',
   '[role="alertdialog"]',
   '[data-slot$="-overlay"]',
+  STILL_LAYER_SELECTOR,
 ].join(",");
 
-function overlayRects(): BrowserRect[] {
+function overlayRects(): { rects: BrowserRect[]; moving: boolean } {
   const rects: BrowserRect[] = [];
+  let moving = false;
   for (const element of document.querySelectorAll<HTMLElement>(OVERLAY_SELECTOR)) {
     if (element.querySelector('[data-slot="tooltip-content"]')) continue;
     const box = element.getBoundingClientRect();
-    if (box.width > 0 && box.height > 0) rects.push({ x: box.left, y: box.top, width: box.width, height: box.height });
+    if (box.width <= 0 || box.height <= 0) continue;
+    rects.push({ x: box.left, y: box.top, width: box.width, height: box.height });
+    if (!element.matches(STILL_LAYER_SELECTOR)) moving = true;
   }
-  return rects;
+  return { rects, moving };
 }
 
 type Front = { workspace: string; rows: BrowserDisplayRow[] };
@@ -149,7 +179,23 @@ class BrowserSyncLoop {
   private front: Front | null = null;
   private retained: { workspace: string; id: string }[] = [];
   private readonly slots = new Map<string, HTMLElement>();
-  private readonly freezes = new Map<string, Freeze>();
+  /** Displays hidden behind their still until what covers them is gone. */
+  private readonly frozen = new Set<string>();
+  /** One still per shown page of the front Workspace. */
+  private readonly cache = new Map<string, CachedStill>();
+  /** Pages with a capture in flight: at most one each. */
+  private readonly capturing = new Set<string>();
+  /** Pages whose load just finished or that just came into view. */
+  private readonly stale = new Set<string>();
+  /** The quiet wait before a page's still is taken, by display id, with what it waits on. */
+  private readonly quiet = new Map<string, { taken: string; timer: ReturnType<typeof setTimeout> }>();
+  /** Pages whose quiet wait ran out: the next flush takes their still if they still want one. */
+  private readonly due = new Map<string, string>();
+  /** Whether each page shown last flush was loading, by display id; a page missing here was not shown. */
+  private shown = new Map<string, boolean>();
+  /** Bumped when the front Workspace changes, so a capture that answers late is dropped. */
+  private epoch = 0;
+  private visible: BrowserRect[] = [];
   private readonly resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this.schedule());
   private frame = 0;
   private lastSent = "";
@@ -163,16 +209,30 @@ class BrowserSyncLoop {
     this.schedule();
   }
 
+  /** The rects of the pages the last sync showed, in the shell's points. */
+  visibleRects(): readonly BrowserRect[] {
+    return this.visible;
+  }
+
   setFront(front: Front | null, retained: { workspace: string; id: string }[]): void {
     if (front?.workspace !== this.front?.workspace) {
-      this.freezes.clear();
+      this.epoch += 1;
+      this.frozen.clear();
+      this.capturing.clear();
+      this.forget(() => true);
       useBrowserStore.setState({ stills: {} });
     }
     if (front) {
       const ids = new Set(front.rows.map((row) => row.id));
+      this.forget((id) => !ids.has(id));
+      for (const id of this.frozen) if (!ids.has(id)) this.frozen.delete(id);
       useBrowserStore.setState((current) => {
         const pages = withoutClosed(current.pages, front.workspace, ids);
-        return pages === current.pages ? current : { pages };
+        const gone = Object.keys(current.stills).filter((id) => !ids.has(id));
+        if (pages === current.pages && gone.length === 0) return current;
+        const stills = { ...current.stills };
+        for (const id of gone) delete stills[id];
+        return { pages, stills };
       });
     }
     this.front = front;
@@ -204,7 +264,7 @@ class BrowserSyncLoop {
     if (this.watching) return;
     this.watching = true;
     // Radix layers and the Recent cycle mount as children of the body; a
-    // shell drag marks the root.
+    // shell drag marks the root; the Tools overlay says so itself.
     new MutationObserver(() => this.schedule()).observe(document.body, { childList: true });
     new MutationObserver(() => this.schedule()).observe(document.documentElement, { attributes: true, attributeFilter: [...SHELL_DRAG_ATTRIBUTES] });
     window.addEventListener("resize", () => this.schedule());
@@ -213,23 +273,35 @@ class BrowserSyncLoop {
   private flush(): void {
     const front = this.front;
     const pages = useBrowserStore.getState().pages;
-    const overlays = this.slots.size > 0 ? overlayRects() : [];
+    const overlays = this.slots.size > 0 ? overlayRects() : { rects: [], moving: false };
     const dragging = this.slots.size > 0 && shellDragging();
     const rects = new Map<string, BrowserRect>();
     const hidden = new Set<string>();
+    const shown = new Map<string, boolean>();
     for (const row of front?.rows ?? []) {
       const element = this.slots.get(row.id);
-      if (!element?.isConnected) continue;
+      if (!front || !element?.isConnected) continue;
       const box = element.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) continue;
       const rect = { x: box.left, y: box.top, width: box.width, height: box.height };
       rects.set(row.id, rect);
-      if (front && pages[hostKey(front.workspace, row.id)]?.failure) hidden.add(row.id);
-      const covered = dragging || overlays.some((overlay) => intersects(overlay, rect));
-      this.follow(row.id, covered, hidden.has(row.id));
-      if (this.freezes.get(row.id) === "frozen") hidden.add(row.id);
+      const page = pages[hostKey(front.workspace, row.id)];
+      const url = page?.url || row.url;
+      const failed = Boolean(page?.failure);
+      if (failed) hidden.add(row.id);
+      const covered = dragging || overlays.rects.some((overlay) => intersects(overlay, rect));
+      this.follow(front.workspace, row.id, url, rect, covered, failed);
+      if (this.frozen.has(row.id)) hidden.add(row.id);
+      const loading = page?.loading ?? true;
+      if (!this.shown.has(row.id) || (this.shown.get(row.id) && !loading)) this.stale.add(row.id);
+      shown.set(row.id, loading);
+      if (!covered && !failed && !loading) this.idle(front.workspace, row.id, url, rect);
+      else this.unwait(row.id);
     }
+    this.shown = shown;
+    this.forget((id) => !shown.has(id));
     const sync: BrowserSync = front ? { workspace: front.workspace, displays: placements(front.rows, rects, hidden), retained: this.retained } : { workspace: null, displays: [], retained: this.retained };
+    this.visible = sync.displays.flatMap((row) => (row.visible && row.rect ? [row.rect] : []));
     const text = JSON.stringify(sync);
     if (text !== this.lastSent) {
       this.lastSent = text;
@@ -242,31 +314,32 @@ class BrowserSyncLoop {
     }
     // A layer that stays open can still move (a popover following its
     // anchor, a dragged tab); follow it while one is drawn over a page.
-    if (overlays.length > 0 && rects.size > 0) this.schedule();
+    if (overlays.moving && rects.size > 0) this.schedule();
   }
 
-  /** Moves one display's still in step with what covers it. */
-  private follow(id: string, covered: boolean, alreadyHidden: boolean): void {
-    const state = this.freezes.get(id);
-    if (covered && state === undefined) {
-      const front = this.front;
-      if (!front || alreadyHidden) {
-        this.freezes.set(id, "frozen");
-        return;
-      }
-      this.freezes.set(id, "capturing");
-      void this.bridge.capture(front.workspace, id).then(
-        (still) => this.frozen(front.workspace, id, still),
-        () => this.frozen(front.workspace, id, null),
-      );
+  /**
+   * Moves one display's still in step with what covers it. A page newly
+   * covered is hidden by the sync this flush sends, its idle still (or
+   * nothing) is drawn at once, and a fresh capture is asked for now, ahead of
+   * that sync, while the host still shows the page.
+   */
+  private follow(workspace: string, id: string, url: string, rect: BrowserRect, covered: boolean, failed: boolean): void {
+    if (covered && !this.frozen.has(id)) {
+      this.frozen.add(id);
+      // A failed page's place already holds its notice, which is shell HTML.
+      if (failed) return;
+      const cached = this.cache.get(id);
+      const still = stillFits(cached, url, rect) ? cached.still : null;
+      useBrowserStore.setState((current) => ({ stills: { ...current.stills, [id]: still } }));
+      this.capture(workspace, id, url, rect);
       return;
     }
-    if (!covered && state !== undefined) {
-      this.freezes.delete(id);
+    if (!covered && this.frozen.has(id)) {
+      this.frozen.delete(id);
       // The page shows again with this sync; its still goes a frame later, so
       // nothing flashes between the two.
       requestAnimationFrame(() => {
-        if (this.freezes.has(id)) return;
+        if (this.frozen.has(id)) return;
         useBrowserStore.setState((current) => {
           if (!(id in current.stills)) return current;
           const stills = { ...current.stills };
@@ -277,11 +350,69 @@ class BrowserSyncLoop {
     }
   }
 
-  private frozen(workspace: string, id: string, still: string | null): void {
-    if (this.front?.workspace !== workspace || this.freezes.get(id) !== "capturing") return;
-    this.freezes.set(id, "frozen");
-    useBrowserStore.setState((current) => ({ stills: { ...current.stills, [id]: still } }));
-    this.schedule();
+  /** Takes a shown, uncovered, loaded page's still once it has been quiet for `STILL_QUIET_MS`, if it wants one. */
+  private idle(workspace: string, id: string, url: string, rect: BrowserRect): void {
+    if (!stillWanted(this.cache.get(id), url, rect, this.stale.has(id))) return this.unwait(id);
+    const taken = `${url}\n${Math.round(rect.width)}x${Math.round(rect.height)}`;
+    if (this.due.get(id) === taken) {
+      // A capture already on its way keeps the trigger; its answer flushes again.
+      if (this.capturing.has(id)) return;
+      this.due.delete(id);
+      this.stale.delete(id);
+      this.capture(workspace, id, url, rect);
+      return;
+    }
+    this.due.delete(id);
+    if (this.quiet.get(id)?.taken === taken) return;
+    this.unwait(id);
+    const timer = setTimeout(() => {
+      this.quiet.delete(id);
+      this.due.set(id, taken);
+      this.schedule();
+    }, STILL_QUIET_MS);
+    this.quiet.set(id, { taken, timer });
+  }
+
+  private unwait(id: string): void {
+    const waiting = this.quiet.get(id);
+    if (waiting) clearTimeout(waiting.timer);
+    this.quiet.delete(id);
+    this.due.delete(id);
+  }
+
+  /** Drops what is kept for the displays `gone` names: their still, their wait and their triggers. */
+  private forget(gone: (id: string) => boolean): void {
+    for (const id of new Set([...this.cache.keys(), ...this.quiet.keys(), ...this.due.keys(), ...this.stale])) {
+      if (!gone(id)) continue;
+      this.cache.delete(id);
+      this.stale.delete(id);
+      this.unwait(id);
+    }
+  }
+
+  /**
+   * Asks the host for one page's still, unless one is already on its way:
+   * whichever arrives becomes the page's cached still and, while the page is
+   * covered, the still drawn in its place. A capture that fails leaves
+   * nothing on screen; the host logs why.
+   */
+  private capture(workspace: string, id: string, url: string, rect: BrowserRect): void {
+    if (this.capturing.has(id)) return;
+    this.capturing.add(id);
+    const epoch = this.epoch;
+    const taken = { url, width: Math.round(rect.width), height: Math.round(rect.height) };
+    void this.bridge
+      .capture(workspace, id)
+      .catch(() => null)
+      .then((still) => {
+        if (this.epoch !== epoch) return;
+        this.capturing.delete(id);
+        if (!this.shown.has(id) && !this.frozen.has(id)) return;
+        const kept = this.cache.get(id);
+        this.cache.set(id, { ...taken, still: still ?? (stillFits(kept, url, rect) ? kept.still : null) });
+        if (still && this.frozen.has(id)) useBrowserStore.setState((current) => ({ stills: { ...current.stills, [id]: still } }));
+        this.schedule();
+      });
   }
 }
 
@@ -299,6 +430,16 @@ function syncLoop(): BrowserSyncLoop | null {
 export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined, inventory: { device_id: string; path: string; view_id: string }[]): void {
   syncLoop()?.setFront(workspace ? { workspace: workspaceKey(workspace), rows: browserDisplays(layout) } : null,
     inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id })));
+}
+
+/** The rects of the pages the host shows now, in the shell's points; none in a plain browser tab. */
+export function visiblePageRects(): readonly BrowserRect[] {
+  return loop?.visibleRects() ?? [];
+}
+
+/** Places the pages again: a shell layer that mounts outside the body's children says it opened or closed. */
+export function noteShellLayer(): void {
+  loop?.schedule();
 }
 
 /** A display's page slot: the host places the page over this element. */

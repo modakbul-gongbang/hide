@@ -1,6 +1,8 @@
 import { Tooltip as TooltipPrimitive } from "radix-ui";
-import { useEffect, useRef, useState, type ComponentProps, type FocusEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ComponentProps, type FocusEvent, type ReactNode, type RefObject } from "react";
+import { visiblePageRects } from "../../browserViews";
 import { cn } from "../../lib/utils";
+import { hintSide, type HintSide } from "../../tooltipSide";
 import { useUiStore } from "../../ui";
 
 // A hint for a control whose meaning is its icon or its shortcut. The label a
@@ -13,19 +15,70 @@ function TooltipProvider({ delayDuration = 500, disableHoverableContent = true, 
   return <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} disableHoverableContent={disableHoverableContent} {...props} />;
 }
 
+/** The element a hint is about, so its content can place itself beside it. */
+const TriggerContext = createContext<RefObject<HTMLElement | null> | null>(null);
+
 function Tooltip(props: ComponentProps<typeof TooltipPrimitive.Root>) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
+  const trigger = useRef<HTMLElement | null>(null);
+  return (
+    <TriggerContext.Provider value={trigger}>
+      <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+    </TriggerContext.Provider>
+  );
 }
 
-function TooltipTrigger(props: ComponentProps<typeof TooltipPrimitive.Trigger>) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+function TooltipTrigger({ ref, ...props }: ComponentProps<typeof TooltipPrimitive.Trigger>) {
+  const trigger = useContext(TriggerContext);
+  const attach = useCallback(
+    (node: HTMLButtonElement | null) => {
+      if (trigger) trigger.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    },
+    [trigger, ref],
+  );
+  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" ref={attach} {...props} />;
 }
 
-function TooltipContent({ className, sideOffset = 4, children, ...props }: ComponentProps<typeof TooltipPrimitive.Content>) {
+/**
+ * A hint is drawn under a browser page it meets, since the page is a native
+ * view, and it never freezes one. When pages are shown, the hint measures
+ * itself as it mounts, before Radix places it, and takes the first side that
+ * fits the window clear of them (`tooltipSide.ts`); with none shown it keeps
+ * the side it was given.
+ */
+function TooltipContent({ ref, className, side = "top", align = "center", sideOffset = 4, children, ...props }: ComponentProps<typeof TooltipPrimitive.Content>) {
+  const trigger = useContext(TriggerContext);
+  const [clear, setClear] = useState<HintSide | null>(null);
+  const measure = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+      const pages = visiblePageRects();
+      const anchor = trigger?.current;
+      if (!node || !anchor || pages.length === 0) return setClear(null);
+      const box = anchor.getBoundingClientRect();
+      setClear(
+        hintSide({
+          side,
+          align,
+          offset: sideOffset,
+          trigger: { x: box.left, y: box.top, width: box.width, height: box.height },
+          size: { width: node.offsetWidth, height: node.offsetHeight },
+          viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+          pages,
+        }),
+      );
+    },
+    [ref, trigger, side, align, sideOffset],
+  );
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
+        ref={measure}
         data-slot="tooltip-content"
+        side={clear ?? side}
+        align={align}
         sideOffset={sideOffset}
         className={cn("pointer-events-none z-50 max-w-(--size-tooltip-max-width) text-balance rounded-sm border border-border bg-popover px-sm py-xs text-caption text-popover-foreground shadow-lg", className)}
         {...props}
