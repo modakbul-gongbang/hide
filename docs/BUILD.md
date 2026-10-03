@@ -86,3 +86,17 @@ The fixture also preloads `desktop/e2e/focus-guard.cjs` into the app, which reco
 The guard sees only this app, so a spec that could reach another program (a browser, Finder, the folder picker) stubs it, as the existing ones do.
 A spec that needs the key window or native input (a page holding the keyboard, a pinch, a native drag) carries the `@needs-focus` tag (`NEEDS_FOCUS` in the fixture) and focuses the window itself; `pnpm --dir desktop e2e --grep-invert @needs-focus` runs everything that leaves the operator's keyboard alone, and CI runs the whole suite.
 The suite runs the focus tests after every other one (`desktop/playwright.config.ts` puts them in a project that depends on the rest): a focus test brings its app forward and quits it, and on a machine with no other app in front, a CI runner, macOS then activates the next app that opens, which failed every background test after the first focus test.
+
+## Release asset gate
+
+The release workflow accepts only a stable `vX.Y.Z` tag whose commit is already an ancestor of protected `main`.
+It serializes runs of the same tag, waits for all three packaging jobs, then runs `node scripts/check-release-assets.mjs <tag> <directory> [existing-release.json]` before touching a GitHub release.
+The directory must contain exactly that tag's macOS ARM64 ZIP, Windows x64 ZIP and Linux x64 TAR.GZ, and one SHA-256 sidecar per archive.
+The gate rejects a missing target, extra or mixed-version files, symbolic links, empty archives, an incorrectly named sidecar, and a mismatched digest; archive hashing streams bytes rather than retaining each package in memory.
+An existing release must be an unpublished, non-prerelease draft for that same tag, with only expected asset names and no duplicates.
+A failed upload can therefore retry the same draft, while a published release or a draft containing stale assets requires maintainer review and is left unchanged.
+An API lookup failure blocks the update instead of being treated as an absent release.
+
+This gate proves the asset set and digests, not installation, terminal input/output, native first launch, signing or notarization.
+The Windows and Linux package smoke checks cover bundled tools, daemon startup, the embedded shell and daemon shutdown; actual desktop and terminal checks on each supported system still need their own evidence before a maintainer publishes the draft.
+The release workflow prepares a draft only and never publishes it automatically.

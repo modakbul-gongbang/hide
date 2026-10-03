@@ -14,11 +14,22 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require a stable tag already on protected main
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
@@ -85,17 +96,31 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: actions/download-artifact@v8
         with:
           pattern: hide-package-*
           path: packages
           merge-multiple: true
-      - name: Verify every archive against its checksum
+      - name: Read existing release without changing it
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cd packages
-          ls -l
-          test "$(ls ./*.sha256 | wc -l)" -eq 3
-          sha256sum -c ./*.sha256
+          mkdir -p agents/runs/release
+          status=$(curl --silent --show-error --output agents/runs/release/existing.json --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")
+          case "$status" in
+            200) ;;
+            404) printf 'null\n' > agents/runs/release/existing.json ;;
+            *) printf 'Release lookup failed with HTTP %s\n' "$status" >&2; exit 1 ;;
+          esac
+      - name: Require this version of all three targets and an unpublished draft
+        run: node scripts/check-release-assets.mjs "$GITHUB_REF_NAME" packages agents/runs/release/existing.json
       - name: Create draft release
         uses: softprops/action-gh-release@v3
         with:
