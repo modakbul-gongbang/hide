@@ -109,6 +109,10 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
     assert_eq!(runtime.snapshot.browser_views.len(), 1);
     assert_eq!(runtime.snapshot.browser_views[0].view_id, id);
     assert_eq!(runtime.snapshot.browser_views[0].area_id, "a1");
+    assert_eq!(runtime.snapshot.browser_scopes.len(), 1);
+    assert_eq!(runtime.snapshot.browser_scopes[0].device_id, "local");
+    assert_eq!(runtime.snapshot.browser_scopes[0].path, path);
+    assert_eq!(runtime.snapshot.browser_scopes[0].area_id, "a1");
     let published = runtime.snapshot.browser_views_revision;
     runtime.sync_workspace_view();
     assert_eq!(
@@ -123,6 +127,7 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
         "removed catalog cannot retain a page"
     );
     assert_ne!(runtime.snapshot.browser_views_revision, published);
+    assert!(runtime.snapshot.browser_scopes.is_empty());
     assert!(
         runtime
             .workspace_views
@@ -144,12 +149,30 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
         runtime.snapshot.browser_views.is_empty(),
         "offline saved layout has no page authority"
     );
+    assert!(runtime.snapshot.browser_scopes.is_empty());
     runtime.snapshot.status.herdr.state = "connected".into();
     runtime.sync_workspace_view();
     assert_eq!(
         runtime.snapshot.browser_views.len(),
         1,
         "reconnected checkout gets fresh inventory"
+    );
+    assert_eq!(runtime.snapshot.browser_scopes.len(), 1);
+
+    let store = runtime.workspace_views.as_mut().unwrap();
+    store
+        .views
+        .entry("local", &path)
+        .layout
+        .remove(&id)
+        .unwrap();
+    store.generation += 1;
+    runtime.sync_workspace_view();
+    assert!(runtime.snapshot.browser_views.is_empty());
+    assert_eq!(
+        runtime.snapshot.browser_scopes.len(),
+        1,
+        "closing the final page preserves an authorized empty area"
     );
 }
 

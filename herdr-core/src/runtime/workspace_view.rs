@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use super::view_areas::Reconciled;
 use super::*;
-use crate::model::{BrowserViewInventoryRow, WorkspaceViewSnapshot};
+use crate::model::{BrowserAreaScopeRow, BrowserViewInventoryRow, WorkspaceViewSnapshot};
 use crate::view_layout::DisplayKind;
 use crate::workspace_views::{self, PanelState, Tool, WorkspaceView, WorkspaceViews};
 
@@ -604,30 +604,35 @@ impl Runtime {
         if let Some(store) = self.workspace_views.as_ref()
             && self.snapshot.browser_views_revision != Some(store.generation)
         {
-            self.snapshot.browser_views = store
-                .views
-                .workspaces
-                .iter()
-                .filter(|view| {
-                    store
-                        .browser_inventory_scope
-                        .iter()
-                        .any(|key| key.0 == view.device_id && key.1 == view.path)
-                })
-                .flat_map(|view| {
-                    view.layout.areas().into_iter().flat_map(move |area| {
+            let mut displays = Vec::new();
+            let mut scopes = Vec::new();
+            for view in store.views.workspaces.iter().filter(|view| {
+                store
+                    .browser_inventory_scope
+                    .iter()
+                    .any(|key| key.0 == view.device_id && key.1 == view.path)
+            }) {
+                for area in view.layout.areas() {
+                    scopes.push(BrowserAreaScopeRow {
+                        device_id: view.device_id.clone(),
+                        path: view.path.clone(),
+                        area_id: area.id.clone(),
+                    });
+                    displays.extend(
                         area.displays
                             .iter()
                             .filter(|display| display.kind == DisplayKind::Browser)
-                            .map(move |display| BrowserViewInventoryRow {
+                            .map(|display| BrowserViewInventoryRow {
                                 device_id: view.device_id.clone(),
                                 path: view.path.clone(),
                                 area_id: area.id.clone(),
                                 view_id: display.id.clone(),
-                            })
-                    })
-                })
-                .collect();
+                            }),
+                    );
+                }
+            }
+            self.snapshot.browser_views = displays;
+            self.snapshot.browser_scopes = scopes;
             self.snapshot.browser_views_revision = Some(store.generation);
         }
         self.publish_workspace_view(front.as_ref());
