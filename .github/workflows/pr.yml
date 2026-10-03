@@ -330,6 +330,9 @@ jobs:
         run: |
           bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
           bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
+      - name: Delivery state, ledger, watch and activity contracts
+        timeout-minutes: 10
+        run: python3 scripts/check-delivery-os-contract.py
       - name: Desktop app end-to-end
         # The desktop app against an isolated Herdr, starting its own hided
         # through the hide CLI built above. Electron downloads its runtime on

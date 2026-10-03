@@ -138,6 +138,10 @@ jobs:
         run: |
           bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
           bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
+      - name: Delivery state, ledger, watch and activity contracts
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        run: python3 scripts/check-delivery-os-contract.py
       - name: Whole desktop suite, including tracked flaky tests
         timeout-minutes: 20
         env:

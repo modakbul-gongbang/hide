@@ -5,8 +5,9 @@
 # `hide-platform/tests/` state each contract as what a caller observes and run
 # unchanged on every system. Each leg then runs `hide-herdr-client` against the
 # pinned Herdr for that system, the one place the pinned Windows asset runs.
-# The crates are small, so this lane builds in minutes and does not wait for
-# the workspace. The macOS leg runs inside `desktop-e2e` in `pr.yml`, which
+# Named delivery state, ledger, watch, wire and session-activity library
+# contracts also run here, with nonempty name and result guards. The macOS leg
+# runs inside `desktop-e2e` in `pr.yml`, which
 # already holds a macOS runner, instead of taking a second one.
 name: os contract
 
@@ -45,6 +46,9 @@ jobs:
         # rather than holding the runner until the job's timeout.
         timeout-minutes: 10
         run: bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
+      - name: Delivery state, ledger, watch and activity contracts
+        timeout-minutes: 10
+        run: python3 scripts/check-delivery-os-contract.py
       - name: Lint the platform crates
         run: bash scripts/verify-cargo.sh clippy -p hide-platform -p hide-herdr-client --all-targets -- -D warnings
       - name: Install zsh for the Herdr fetch
