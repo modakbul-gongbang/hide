@@ -3,6 +3,7 @@
 // and the words each row's lines say. The verb is the core's (D-07); this
 // file only groups, orders and shortens. `RequestView.tsx` draws it.
 
+import { parser as markdownParser } from "@lezer/markdown";
 import type { DeviceAvailability } from "./navigation";
 import type { LensAgent, Tile } from "./overviewLens";
 import type { AgentPullRequest, AgentRequest, AgentRow, LabelEnd, RequestSender, RequestVerb, Task, Workspace } from "./snapshot";
@@ -334,9 +335,23 @@ export function openCandidates(reply: string, exclude: readonly string[], paths:
   const skip = new Set(exclude);
   const seen = new Set<string>();
   const result: OpenCandidate[] = [];
-  for (const word of reply.split(/\s+/u)) {
+  const words: string[] = [];
+  let from = 0;
+  // Use the editor's existing Markdown grammar for balanced destinations
+  // and labels containing spaces. Do not treat words in a link's label as
+  // filesystem candidates. The existing validator still owns every target.
+  markdownParser.parse(reply).iterate({ enter(node) {
+    if (node.name !== "Link" && node.name !== "Image") return;
+    const destination = node.node.getChild("URL");
+    if (!destination) return;
+    words.push(...reply.slice(from, node.from).split(/\s+/u), reply.slice(destination.from, destination.to));
+    from = node.to;
+    return false;
+  } });
+  words.push(...reply.slice(from).split(/\s+/u));
+  for (const word of words) {
     // Markdown wraps links in brackets and backticks the parser does not strip.
-    const token = word.replace(/^[`*_[(<]+|[`*_\])>]+$/gu, "");
+    const token = word.replace(/^[`*_]+|[`*_]+$/gu, "");
     const parsed = token ? parseToken(token) : null;
     if (!parsed) continue;
     const { target } = parsed;

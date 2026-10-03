@@ -49,7 +49,7 @@ export type PendingClose = {
  * (PRD home-device-rail D-13): `deviceId` names the device, and without one it
  * is the device in front.
  */
-export type Screen = { kind: "main"; deviceId?: string } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
+export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
 
 /**
  * How All projects is looked at: every Project's tasks, every agent, or the
@@ -290,6 +290,8 @@ type UiStore = {
   /** A screen brought back as it was left (Recent Panels): Home keeps the view it had. */
   restoreScreen: (screen: Screen) => void;
   setMainView: (view: MainView) => void;
+  /** The Main request view's lens rides on its screen for Recent Panels. */
+  setMainRequestLens: (patch: Partial<RequestLens>) => void;
   setTasksMode: (mode: TasksMode) => void;
   /** Changes the Project Overview's lens in place; a no-op on any other screen. */
   setLens: (patch: Partial<OverviewLens>) => void;
@@ -367,6 +369,11 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, mainView: "requests" } : { screen, opening: null })),
   restoreScreen: (screen) => set({ screen, opening: null }),
   setMainView: (mainView) => set({ mainView }),
+  setMainRequestLens: (patch) => {
+    const screen = get().screen;
+    if (screen?.kind !== "main") return;
+    set({ screen: { ...screen, requests: { ...(screen.requests ?? NO_REQUEST_LENS), ...patch } } });
+  },
   setTasksMode: (tasksMode) => set({ tasksMode }),
   // A lens change is a new screen value, so Recent Panels records the
   // Overview as it now is; the open request stays, since nothing moved away.

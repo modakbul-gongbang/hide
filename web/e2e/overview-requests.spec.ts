@@ -209,11 +209,14 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await (await popup).close();
 
     // Expanding the finished row reads it: it leaves 결과 볼 것 (B15, D-29).
+    await restingHead.click();
+    await expect(row(restingPane)).toHaveCount(0);
     const before = sent.get("overview_open_result") ?? 0;
     await row(donePane).locator(`[data-request-toggle="${donePane}"]`).click();
     await expect.poll(() => (sent.get("overview_open_result") ?? 0) - before).toBe(1);
     expect(last.get("overview_open_result")?.pane_id).toBe(donePane);
     await expect(row(donePane)).toHaveAttribute("data-request-verb", "idle", { timeout: 15_000 });
+    await expect(row(donePane).locator("[data-request-detail]")).toBeVisible();
     await expect(tile.locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "2");
     // A row to answer stays one to answer once expanded (D-29).
     await row(askingPane).locator(`[data-request-toggle="${askingPane}"]`).click();

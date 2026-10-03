@@ -259,4 +259,12 @@ describe("open targets (D-39, B49)", () => {
   it("offers a device's row its URLs only", () => {
     expect(openCandidates(reply, [], false).map((target) => target.label)).toEqual(["#9", "report"]);
   });
+
+  it("extracts Markdown destinations before validation, with spaced labels and balanced paths", () => {
+    const markdown = '[Read report](https://example.com/report) [report](/repo/report.md) [local notes](<docs/local notes.md>) [nested](https://example.com/a_(b)) [same](https://example.com/report) [PR](https://github.com/acme/project/pull/9) [unsafe](javascript:alert(1))';
+    expect(openCandidates(markdown, ["https://github.com/acme/project/pull/9"], true).map((candidate) => candidate.key)).toEqual([
+      "https://example.com/report", "/repo/report.md", "docs/local notes.md", "https://example.com/a_(b)",
+    ]);
+    expect(openCandidates(markdown, [], false).every((candidate) => candidate.target.kind === "url")).toBe(true);
+  });
 });

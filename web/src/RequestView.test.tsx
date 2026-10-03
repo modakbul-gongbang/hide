@@ -75,6 +75,25 @@ it("keeps twenty unchanged rows asleep, but renders changed facts and uses curre
     await act(async () => (container.querySelector('[data-request-toggle="a0"]') as HTMLButtonElement).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
     expect(openAgent).toHaveBeenCalledWith("a0");
     expect(container.querySelectorAll("[data-request-detail]")).toHaveLength(1);
+    const completed = { ...agent, request: { ...agent.request, verb: "result" as const, pull_requests: [{ number: 9, title: "전체 과거 PR 제목 ".repeat(20), url: "https://github.com/acme/project/pull/9", badge: "merged" as const, checks: "passing" as const, live: false, head_branch: "feature/history", closing_issues: [], duty: false, created: true, settled_at_unix_ms: 1 }] } };
+    const branch = "feature/전체-분기-이름-".repeat(15);
+    const result: RequestRow = { ...first, verb: "result", lens: { ...first.lens, checkout: { ...checkout, branch }, agent: completed } };
+    const openGitHub = vi.fn();
+    const openedResult = vi.spyOn(actions, "openResult");
+    props = { ...props, rows: [result], lens: NO_REQUEST_LENS, handlers: { ...props.handlers, openGitHub } };
+    await render();
+    await act(async () => (container.querySelector('[data-request-toggle="a0"]') as HTMLButtonElement).click());
+    expect(onLens).toHaveBeenLastCalledWith({ open: ["a0"], resting: true });
+    expect(openedResult).toHaveBeenCalledWith("a0");
+    // The acknowledged result's next snapshot regroups it as idle. Its
+    // intentionally opened detail must remain usable with default resting folded.
+    props = { ...props, lens: { ...NO_REQUEST_LENS, ...onLens.mock.lastCall![0] }, rows: [{ ...result, verb: "idle", lens: { ...result.lens, agent: { ...completed, request: { ...completed.request, verb: "idle" } } } }] };
+    await render();
+    expect(container.querySelector('[data-request-detail="a0"]')).not.toBeNull();
+    expect(container.querySelector('[data-request-place="a0"]')?.textContent).toContain(branch);
+    expect(container.querySelector('[data-request-pull="9"]')?.textContent).toContain(completed.request.pull_requests[0]!.title);
+    await act(async () => (container.querySelector('[data-request-pr-chip="9"]') as HTMLButtonElement).click());
+    expect(openGitHub).toHaveBeenCalledWith("https://github.com/acme/project/pull/9", "local");
   } finally {
     await act(async () => root.unmount());
     container.remove();

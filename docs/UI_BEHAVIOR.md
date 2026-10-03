@@ -490,9 +490,14 @@ Expanded rows keep every linked issue, including older closed issues, with the I
 
 A click or Enter expands the row in place and again folds it: the request as written (20 lines, then `전부 보기`), the agent's last words, the label's verdict while summaries are on (`AI 판정 · 질문 · <line>`, the end read as 진행 중, 질문, 끝남, 기다림 or 덜 끝남), every open target, every pull request with its state (one settled before the request as `예전 PR #N 머지됨`), every issue, each descendant with its verb, line and 열기, and `패널 열기`.
 Expanding a row in 결과 볼 것 reads that pane without moving the focus, so it leaves the sidebar's Done and, with nothing else to do, the group; a row to answer stays until it is answered.
+The resting group opens with that action, so the result's expanded request and reply remain visible when the acknowledgement moves it to 쉬는 중.
+Expanded rows show the full title, project, device, branch, PR titles and target addresses; folded chips and their hints keep short names, with the specifically allowed stale-value age hint.
+Every expanded PR opens through the ordinary PR action, including dimmed historical PRs.
 A double click, ⌘Enter or `패널 열기` opens the agent's pane as the Agents list does.
 The arrows step through the group heads, rows and chips in the order drawn, Home and End go to the ends, and Escape leaves the Overview.
 With no agent the view is one line and New agent; when every row rests it reads `할 일 없음` above the folded 쉬는 중.
+Home's empty entry uses the project in front, else the first project in that device's scope, and opens the existing New worktree dialog or folder Workspace; without a project it opens Add project.
+The expanded rows, full requests and resting fold ride on both Project and Home screens, so Recent Panels restores them after departure; an ordinary Home entry starts folded.
 While the view is on screen the page says so, and the core re-reads a project's pull requests once a minute while one of its rows has checks running; nothing else is read for it.
 Unchanged request, agent, descendant and issue/PR inputs keep the row tree asleep when an unrelated snapshot field changes; the shared elapsed-time clock updates its own text leaves.
 

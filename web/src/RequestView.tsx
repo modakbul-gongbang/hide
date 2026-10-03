@@ -91,7 +91,7 @@ export const RequestView = memo(function RequestView({ rows, scope, lens, onLens
   }
   const toggle = (paneId: string, row: RequestRow) => {
     const open = lens.open.includes(paneId);
-    onLens({ open: open ? lens.open.filter((id) => id !== paneId) : [...lens.open, paneId] });
+    onLens({ open: open ? lens.open.filter((id) => id !== paneId) : [...lens.open, paneId], ...(!open && row.verb === "result" ? { resting: true } : {}) });
     // Opening a finished row is looking at it (D-29, B15).
     if (!open && row.verb === "result") actions.openResult(paneId);
   };
@@ -354,18 +354,20 @@ function chipOf(project: Workspace, pull: AgentPullRequest): PrChip {
  * While GitHub cannot be read the last value stays, dimmed, with its age in
  * the tooltip (B41).
  */
-function RowPullRequestChip({ project, pull, more, handlers }: { project: Workspace; pull: AgentPullRequest; more: number; handlers: LensHandlers }) {
+function RowPullRequestChip({ project, pull, more, handlers, historical = false }: { project: Workspace; pull: AgentPullRequest; more: number; handlers: LensHandlers; historical?: boolean }) {
   const chip = chipOf(project, pull);
   const status = project.checkouts.find((checkout) => checkout.github)?.github ?? null;
   const stale = status !== null && (status.stale || (!status.available && status.unavailable_reason !== null));
   const age = stale && status?.last_success_at_unix_ms != null ? `${ageWords(Date.now() - status.last_success_at_unix_ms)} 값` : null;
   const listed = projectPull(project, pull) !== null;
   const words = [`PR #${pull.number}`, pull.title, chip.checks ? CHECKS_WORDS[chip.checks] : null, age].filter(Boolean).join(" · ");
+  const hint = [`PR #${pull.number}`, chip.checks ? CHECKS_WORDS[chip.checks] : null, age].filter(Boolean).join(" · ");
   return (
-    <Hint label={words}>
+    <Hint label={hint}>
       <button
         type="button"
         data-request-pr-chip={pull.number}
+        data-request-historical={historical ? "true" : undefined}
         data-request-focus="chip"
         data-pr-tone={chip.tone}
         data-stale={stale ? "true" : undefined}
@@ -378,10 +380,10 @@ function RowPullRequestChip({ project, pull, more, handlers }: { project: Worksp
           else handlers.openGitHub(pull.url, project.device_id);
         }}
       >
-        <Badge variant="outline" className={PR_TONE[chip.tone]}>
+        {historical ? <span className="text-muted-foreground">예전 PR #{pull.number} {BADGE_WORDS[pull.badge]}</span> : <Badge variant="outline" className={PR_TONE[chip.tone]}>
           <GitPullRequestIcon aria-hidden="true" />#{pull.number}
           {chip.checks ? <ChecksMark checks={chip.checks} /> : null}
-        </Badge>
+        </Badge>}
         {more > 0 ? <span className="font-mono text-caption text-muted-foreground">+{more}</span> : null}
       </button>
     </Hint>
@@ -391,7 +393,7 @@ function RowPullRequestChip({ project, pull, more, handlers }: { project: Worksp
 /** Something to open from the agent's last words (D-39): a link by its short name, opened as a terminal link opens it (B49). */
 function OpenChip({ target, actions }: { target: ResolvedTarget; actions: Actions }) {
   return (
-    <Hint label={target.key} reveals>
+    <Hint label={`${target.label} 열기`}>
       <button
         type="button"
         data-request-open={target.key}
@@ -482,6 +484,9 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
   const issues = rowIssues(row, project);
   return (
     <div className="flex min-w-0 flex-col gap-sm px-sm pb-sm pl-[calc(var(--spacing-sm)+var(--size-agent-mark)*2)] text-caption" data-request-detail={agent.pane_id}>
+      <p className="min-w-0 break-words text-subtle-foreground" data-request-place={agent.pane_id}>
+        {agent.identity_label} · {project.label} · {row.lens.device ? `${row.lens.device} · ` : ""}{row.lens.checkout.branch ?? row.lens.checkout.label}
+      </p>
       {request ? (
         <div className="flex min-w-0 flex-col gap-xxs">
           <span className="text-subtle-foreground">{senderWords(block!.request!.sender)} ›</span>
@@ -507,18 +512,21 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
         </span>
       ) : null}
       {targets.length > 0 ? (
-        <span className="flex min-w-0 flex-wrap items-center gap-xs" data-request-targets={targets.length}>
+        <span className="flex min-w-0 flex-col gap-xs" data-request-targets={targets.length}>
           {targets.map((target) => (
-            <OpenChip key={target.key} target={target} actions={actions} />
+            <span key={target.key} className="flex min-w-0 items-start gap-xs">
+              <OpenChip target={target} actions={actions} />
+              <span className="min-w-0 break-all text-muted-foreground">{target.key}</span>
+            </span>
           ))}
         </span>
       ) : null}
       {pulls.length > 0 ? (
         <ul className="flex min-w-0 flex-col gap-xxs" role="list" data-request-pulls={pulls.length}>
           {pulls.map((pull) => (
-            <li key={pull.url} className="flex min-w-0 items-center gap-xs" data-request-pull={pull.number} data-live={pull.live ? "true" : undefined}>
-              {pull.live ? <RowPullRequestChip project={project} pull={pull} more={0} handlers={handlers} /> : <span className="shrink-0 text-muted-foreground">예전 PR #{pull.number} {BADGE_WORDS[pull.badge]}</span>}
-              <span className="min-w-0 flex-1 truncate text-foreground">{pull.title}</span>
+            <li key={pull.url} className="flex min-w-0 items-start gap-xs" data-request-pull={pull.number} data-live={pull.live ? "true" : undefined}>
+              <RowPullRequestChip project={project} pull={pull} more={0} handlers={handlers} historical={!pull.live} />
+              <span className="min-w-0 flex-1 break-words text-foreground">{pull.title}</span>
               {pull.live ? <span className="shrink-0 text-muted-foreground">{BADGE_WORDS[pull.badge]}</span> : null}
             </li>
           ))}
