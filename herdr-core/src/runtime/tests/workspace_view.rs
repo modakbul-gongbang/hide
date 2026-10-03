@@ -218,7 +218,16 @@ fn browser_authority_regrant_survives_coalesced_session_updates() {
         "a native client must observe a new grant even without an absent frame"
     );
     let recovered_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
-    with_tabs(&mut runtime, &directory);
+    let tabs = ["w-order:t1", "w-order:t2"];
+    assert!(
+        !runtime.ingest_session(Ok(tab_order_payload(
+            &directory.to_string_lossy(),
+            &tabs,
+            &tabs,
+            "w-order:t1"
+        ))),
+        "an unchanged session must not publish another change"
+    );
     runtime.snapshot_delta_payload(recovered.revision, 0);
     assert_eq!(
         runtime.snapshot.browser_scopes[0].incarnation, recovered_incarnation,
