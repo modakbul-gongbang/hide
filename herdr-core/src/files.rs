@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,6 +8,8 @@ use hide_host::document::Document;
 use hide_host::protocol::{Call, RevisionNow, RootRef};
 use hide_host::save::Saved;
 use hide_host::{ErrorCode, RootIdentity};
+use hide_platform::fs::identity;
+use hide_platform::path::{self, PathError, RelPath};
 
 use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::model::EditorDocumentSnapshot;
@@ -85,7 +87,7 @@ pub struct DocumentRoot {
 pub struct DocumentPlace {
     pub device_id: String,
     pub root: RootRef,
-    pub relative: String,
+    pub relative: RelPath,
 }
 
 #[derive(Debug)]
@@ -122,47 +124,49 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 const SAVE_TIMEOUT: Duration = Duration::from_secs(60);
 const REVISION_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// `absolute` spelled under `root`, as the host protocol names a path.
-pub fn relative_under(root: &str, absolute: &str) -> Result<String, String> {
-    let root = root.trim_end_matches('/');
-    let rest = absolute
-        .strip_prefix(root)
-        .and_then(|rest| rest.strip_prefix('/'))
-        .filter(|rest| !rest.is_empty())
-        .ok_or_else(|| "The file is not inside its checkout".to_owned())?;
-    hide_host::relative_path(rest).map_err(|error| error.message)?;
-    Ok(rest.to_owned())
+/// `absolute` below `root`, both one device's paths in the wire spelling
+/// (`hide_platform::path`), as the host protocol names it. By names alone,
+/// so it holds for a device on any system; the root itself is not a file.
+pub fn relative_under(root: &str, absolute: &str) -> Result<RelPath, String> {
+    path::wire_relative(root, absolute)
+        .ok()
+        .filter(|relative| !relative.is_root())
+        .ok_or_else(|| "The file is not inside its checkout".to_owned())
 }
 
 /// `relative_under` for a file on this machine, which a shell may spell
-/// through a link to the checkout's folder (`/var` for `/private/var`): the
-/// folder holding the file is resolved, never the file itself, so a link
-/// inside the checkout is still opened as the link.
-fn local_relative(root: &str, absolute: &str) -> Result<String, String> {
+/// through a link to the checkout's folder (`/var` for `/private/var`) or
+/// in another case on a volume that ignores it: the folder holding the
+/// file is resolved, never the file itself, so a link inside the checkout
+/// is still opened as the link.
+fn local_relative(root: &str, absolute: &str) -> Result<RelPath, String> {
     relative_under(root, absolute).or_else(|refused| {
-        let absolute = Path::new(absolute);
+        let (Ok(root), Ok(absolute)) = (path::from_wire(root), path::from_wire(absolute)) else {
+            return Err(refused);
+        };
         let resolved = absolute
             .parent()
-            .and_then(|folder| folder.canonicalize().ok())
+            .and_then(|folder| identity::canonical(folder).ok())
             .zip(absolute.file_name())
             .map(|(folder, name)| folder.join(name))
-            .zip(Path::new(root).canonicalize().ok());
+            .zip(identity::canonical(&root).ok());
         match resolved {
-            Some((absolute, root)) => {
-                relative_under(&root.to_string_lossy(), &absolute.to_string_lossy())
-            }
+            Some((absolute, root)) => path::relative(&root, &absolute)
+                .ok()
+                .filter(|relative| !relative.is_root())
+                .ok_or(refused),
             None => Err(refused),
         }
     })
 }
 
-/// The host's existing checkout-relative path rule, including macOS root
-/// aliases such as `/var` and `/private/var` for local reads.
+/// The host's checkout-relative path rule, including macOS root aliases
+/// such as `/var` and `/private/var` for local reads.
 pub fn relative_in_root(
     channel: &dyn HostChannel,
     root: &str,
     absolute: &str,
-) -> Result<String, String> {
+) -> Result<RelPath, String> {
     if channel.in_process() {
         local_relative(root, absolute)
     } else {
@@ -187,7 +191,7 @@ pub fn open_document(
         channel,
         Call::OpenDocument {
             root: place.root.clone(),
-            path: place.relative.clone(),
+            path: place.relative.to_string(),
         },
         OPEN_TIMEOUT,
     );
@@ -266,7 +270,7 @@ pub fn save_document(
         channel,
         Call::Save {
             root: place.root.clone(),
-            path: place.relative.clone(),
+            path: place.relative.to_string(),
             contents: contents.to_owned(),
             expected_revision: expected.to_owned(),
         },
@@ -298,7 +302,7 @@ pub fn revision_now(
         channel,
         Call::Revision {
             root: place.root.clone(),
-            path: place.relative.clone(),
+            path: place.relative.to_string(),
         },
         REVISION_TIMEOUT,
     ) {
@@ -338,20 +342,22 @@ impl ExplorerOperationKind {
 /// runtime mutex, where it may read nothing from disk, and the filesystem
 /// call runs on a worker with the lock released. Everything the runtime
 /// refuses - a path outside the root, a name with a separator, a folder
-/// moved into itself - is refused here from the paths alone.
+/// moved into itself - is refused here from the paths alone. The paths are
+/// the checkout device's, in the wire spelling, and are related by their
+/// names alone, so a device on any system is judged the same way.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExplorerOperation {
     pub kind: ExplorerOperationKind,
     /// The item the change starts from: the path a new item takes, or the
     /// current path of the item being renamed or moved.
-    pub source: PathBuf,
+    pub source: String,
     /// Where the item is once the change has landed. Equal to `source` for
     /// a creation, and for a trash, whose item has no path here afterwards.
-    pub destination: PathBuf,
+    pub destination: String,
     /// The row the tree selects once the change has landed: the item itself
     /// for a creation, rename or move, and the tree's chosen neighbour for
     /// a trash, whose item is no longer there to select.
-    pub selection: PathBuf,
+    pub selection: String,
     /// The inode the operator was shown when a trash was confirmed, when the
     /// shell could read one. The call refuses an item with another inode:
     /// what leaves is what the modal named, not whatever replaced it at that
@@ -363,8 +369,8 @@ pub struct ExplorerOperation {
 impl ExplorerOperation {
     pub fn create(
         kind: ExplorerOperationKind,
-        root: &Path,
-        parent: &Path,
+        root: &str,
+        parent: &str,
         name: &str,
     ) -> Result<Self, String> {
         if !matches!(
@@ -374,8 +380,7 @@ impl ExplorerOperation {
             return Err(format!("{} does not create an item", kind.as_str()));
         }
         let parent = path_inside_root(root, parent, true)?;
-        let name = valid_item_name(name)?;
-        let path = parent.join(name);
+        let path = path::wire_join(root, &item_below(&parent, name)?);
         Ok(Self {
             kind,
             source: path.clone(),
@@ -385,41 +390,42 @@ impl ExplorerOperation {
         })
     }
 
-    pub fn rename(root: &Path, path: &Path, name: &str) -> Result<Self, String> {
+    pub fn rename(root: &str, path: &str, name: &str) -> Result<Self, String> {
         let source = path_inside_root(root, path, false)?;
-        let name = valid_item_name(name)?;
-        let destination = source
+        let parent = source
             .parent()
-            .ok_or_else(|| "The item has no parent folder".to_owned())?
-            .join(name);
+            .ok_or_else(|| "The item has no parent folder".to_owned())?;
+        let destination = item_below(&parent, name)?;
         if destination == source {
             return Err("The name is unchanged".to_owned());
         }
+        let destination = path::wire_join(root, &destination);
         Ok(Self {
             kind: ExplorerOperationKind::PathRename,
-            source,
+            source: path::wire_join(root, &source),
             destination: destination.clone(),
             selection: destination,
             expected_inode: None,
         })
     }
 
-    pub fn move_into(root: &Path, path: &Path, destination_dir: &Path) -> Result<Self, String> {
+    pub fn move_into(root: &str, path: &str, destination_dir: &str) -> Result<Self, String> {
         let source = path_inside_root(root, path, false)?;
         let destination_dir = path_inside_root(root, destination_dir, true)?;
         let name = source
             .file_name()
             .ok_or_else(|| "The item has no name".to_owned())?;
-        if destination_dir == source || destination_dir.starts_with(&source) {
+        if destination_dir.starts_with(&source) {
             return Err("A folder cannot be moved into itself".to_owned());
         }
-        let destination = destination_dir.join(name);
+        let destination = item_below(&destination_dir, name)?;
         if destination == source {
             return Err("The item is already in that folder".to_owned());
         }
+        let destination = path::wire_join(root, &destination);
         Ok(Self {
             kind: ExplorerOperationKind::PathMove,
-            source,
+            source: path::wire_join(root, &source),
             destination: destination.clone(),
             selection: destination,
             expected_inode: None,
@@ -432,23 +438,24 @@ impl ExplorerOperation {
     /// the call, and a selection that would leave with the item is refused
     /// rather than pointed at nothing.
     pub fn trash(
-        root: &Path,
-        path: &Path,
-        select_after: &Path,
+        root: &str,
+        path: &str,
+        select_after: &str,
         expected_inode: Option<u64>,
     ) -> Result<Self, String> {
         let source = path_inside_root(root, path, false)?;
         let selection = path_inside_root(root, select_after, true)?;
-        if selection == source || selection.starts_with(&source) {
+        if selection.starts_with(&source) {
             return Err(
                 "The selection cannot move into the item being moved to the Trash".to_owned(),
             );
         }
+        let source = path::wire_join(root, &source);
         Ok(Self {
             kind: ExplorerOperationKind::PathTrash,
             source: source.clone(),
             destination: source,
-            selection,
+            selection: path::wire_join(root, &selection),
             expected_inode,
         })
     }
@@ -456,13 +463,12 @@ impl ExplorerOperation {
 
 const CHANGE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// `absolute` spelled under `root`, the root itself as the empty path.
-fn relative_or_root(root: &str, absolute: &Path) -> Result<String, String> {
-    let absolute = absolute.to_string_lossy();
-    if absolute.trim_end_matches('/') == root.trim_end_matches('/') {
-        return Ok(String::new());
-    }
-    relative_under(root, &absolute)
+/// `absolute` below `root` as the host protocol spells it, the root itself
+/// as the empty path.
+fn relative_or_root(root: &str, absolute: &str) -> Result<String, String> {
+    path::wire_relative(root, absolute)
+        .map(RelPath::into_string)
+        .map_err(|_| "The file is not inside its checkout".to_owned())
 }
 
 /// The root as the checkout's host requests name it: the identity hided
@@ -495,34 +501,33 @@ pub fn apply_explorer_operation(
 ) -> Result<(), String> {
     let root_ref = root_ref(channel, root).map_err(|error| change_failure(operation, error))?;
     let source = relative_or_root(&root.path, &operation.source)?;
+    let destination = RelPath::parse(&relative_or_root(&root.path, &operation.destination)?)
+        .map_err(|error| error.to_string())?;
     let call = match operation.kind {
         ExplorerOperationKind::FileCreate | ExplorerOperationKind::DirCreate => {
-            let parent = operation
-                .source
-                .parent()
-                .ok_or_else(|| "The item has no parent folder".to_owned())?;
+            let created = RelPath::parse(&source).map_err(|error| error.to_string())?;
             Call::Create {
                 root: root_ref,
-                parent: relative_or_root(&root.path, parent)?,
-                name: file_name(&operation.source)?,
+                parent: created
+                    .parent()
+                    .ok_or_else(|| "The item has no parent folder".to_owned())?
+                    .into_string(),
+                name: file_name(&created)?,
                 directory: operation.kind == ExplorerOperationKind::DirCreate,
             }
         }
         ExplorerOperationKind::PathRename => Call::Rename {
             root: root_ref,
             path: source,
-            name: file_name(&operation.destination)?,
+            name: file_name(&destination)?,
         },
         ExplorerOperationKind::PathMove => Call::Move {
             root: root_ref,
             path: source,
-            destination: relative_or_root(
-                &root.path,
-                operation
-                    .destination
-                    .parent()
-                    .ok_or_else(|| "The destination has no folder".to_owned())?,
-            )?,
+            destination: destination
+                .parent()
+                .ok_or_else(|| "The destination has no folder".to_owned())?
+                .into_string(),
         },
         ExplorerOperationKind::PathTrash => Call::Trash {
             root: root_ref,
@@ -535,11 +540,10 @@ pub fn apply_explorer_operation(
         .map_err(|error| change_failure(operation, error))
 }
 
-fn file_name(path: &Path) -> Result<String, String> {
+fn file_name(path: &RelPath) -> Result<String, String> {
     path.file_name()
-        .and_then(|name| name.to_str())
         .map(str::to_owned)
-        .ok_or_else(|| format!("{} has no name", path.display()))
+        .ok_or_else(|| "The checkout root has no name".to_owned())
 }
 
 fn change_failure(operation: &ExplorerOperation, error: HostCallError) -> String {
@@ -549,46 +553,40 @@ fn change_failure(operation: &ExplorerOperation, error: HostCallError) -> String
         error @ HostCallError::Busy => error.to_string(),
         HostCallError::Unknown(reason) => format!(
             "{reason}; whether {} changed is unknown, so the folder is read again",
-            operation.source.display()
+            operation.source
         ),
     }
 }
 
-/// The path as given when it is absolute, normal, and inside `root`.
-/// Component-wise, so `/repo-other` is outside `/repo`; lexical, so a
-/// symlink that escapes the root is not followed here and cannot be
-/// created here either.
+/// `path` below `root`, both wire spellings of the checkout device's paths,
+/// when it is absolute, normal, and inside `root`. By names alone, so
+/// `/repo-other` is outside `/repo`, and lexical, so a symlink that escapes
+/// the root is not followed here and cannot be created here either.
 pub(crate) fn path_inside_root(
-    root: &Path,
-    path: &Path,
+    root: &str,
+    path: &str,
     allow_root: bool,
-) -> Result<PathBuf, String> {
-    if !root.is_absolute() {
+) -> Result<RelPath, String> {
+    if !path::is_wire_absolute(root) {
         return Err("The workspace root is not an absolute path".to_owned());
     }
-    if !path.is_absolute() {
-        return Err(format!("{} is not an absolute path", path.display()));
+    if !path::is_wire_absolute(path) {
+        return Err(format!("{path} is not an absolute path"));
     }
-    if path
-        .components()
-        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
-    {
-        return Err(format!("{} is not a normal path", path.display()));
-    }
-    if !path.starts_with(root) {
-        return Err(format!(
-            "{} is outside the workspace {}",
-            path.display(),
-            root.display()
-        ));
-    }
-    if !allow_root && path == root {
+    let relative = path::wire_relative(root, path).map_err(|error| match error {
+        PathError::NotNormal => format!("{path} is not a normal path"),
+        _ => format!("{path} is outside the workspace {root}"),
+    })?;
+    if !allow_root && relative.is_root() {
         return Err("The workspace root itself cannot be changed".to_owned());
     }
-    Ok(path.to_path_buf())
+    Ok(relative)
 }
 
-fn valid_item_name(name: &str) -> Result<&str, String> {
+/// `name` as one item below `parent`. The wire's own rule: one name, no
+/// `/`, no NUL, not `.` or `..`; whether the device's system can hold the
+/// name is the device's host's to judge when it makes the item.
+fn item_below(parent: &RelPath, name: &str) -> Result<RelPath, String> {
     if name.is_empty() {
         return Err("A name is required".to_owned());
     }
@@ -598,10 +596,9 @@ fn valid_item_name(name: &str) -> Result<&str, String> {
     if name.contains('\0') {
         return Err("A name cannot contain NUL".to_owned());
     }
-    if name == "." || name == ".." {
-        return Err(format!("{name} is not a valid name"));
-    }
-    Ok(name)
+    parent
+        .join(name)
+        .map_err(|_| format!("{name} is not a valid name"))
 }
 
 #[cfg(test)]
@@ -674,10 +671,11 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(document.contents_utf8.as_deref(), Some("inside"));
+        let wire_root = root.to_string_lossy();
         let create = ExplorerOperation::create(
             ExplorerOperationKind::FileCreate,
-            &root,
-            &root,
+            &wire_root,
+            &wire_root,
             "created.txt",
         )
         .unwrap();
@@ -717,7 +715,7 @@ pub(crate) mod tests {
             assert!(relative_under(root, path).is_err(), "{root} {path}");
         }
         assert_eq!(
-            relative_under("/repo/", "/repo/src/a.rs").unwrap(),
+            relative_under("/repo/", "/repo/src/a.rs").unwrap().as_str(),
             "src/a.rs"
         );
     }
@@ -744,7 +742,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(document.path, spelled.to_string_lossy());
-        assert_eq!(place.relative, "src/a.txt");
+        assert_eq!(place.relative.as_str(), "src/a.txt");
         let outside = sandbox.path().join("alias/../elsewhere.txt");
         fs::write(sandbox.path().join("elsewhere.txt"), "b").unwrap();
         assert!(
@@ -817,7 +815,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_change_asks_the_checkout_host_with_paths_under_its_pinned_root() {
-        let root = Path::new("/repo");
+        let root = "/repo";
         let identity = RootIdentity {
             device: 1,
             inode: 2,
@@ -834,16 +832,11 @@ pub(crate) mod tests {
         let host = RecordingHost::default();
         let operations = [
             ExplorerOperation::create(ExplorerOperationKind::DirCreate, root, root, "new").unwrap(),
-            ExplorerOperation::create(
-                ExplorerOperationKind::FileCreate,
-                root,
-                Path::new("/repo/src"),
-                "a.rs",
-            )
-            .unwrap(),
-            ExplorerOperation::rename(root, Path::new("/repo/src/a.rs"), "b.rs").unwrap(),
-            ExplorerOperation::move_into(root, Path::new("/repo/src/b.rs"), root).unwrap(),
-            ExplorerOperation::trash(root, Path::new("/repo/src"), root, Some(7)).unwrap(),
+            ExplorerOperation::create(ExplorerOperationKind::FileCreate, root, "/repo/src", "a.rs")
+                .unwrap(),
+            ExplorerOperation::rename(root, "/repo/src/a.rs", "b.rs").unwrap(),
+            ExplorerOperation::move_into(root, "/repo/src/b.rs", root).unwrap(),
+            ExplorerOperation::trash(root, "/repo/src", root, Some(7)).unwrap(),
         ];
         for operation in &operations {
             apply_explorer_operation(&host, &document_root, operation).unwrap();
@@ -884,36 +877,29 @@ pub(crate) mod tests {
 
     #[test]
     fn explorer_refuses_to_trash_outside_the_root_or_the_root_itself() {
-        let root = Path::new("/repo");
-        let outside = ExplorerOperation::trash(root, Path::new("/repo-other/a"), root, None);
+        let root = "/repo";
+        let outside = ExplorerOperation::trash(root, "/repo-other/a", root, None);
         assert!(outside.unwrap_err().contains("outside the workspace"));
-        let escaping = ExplorerOperation::trash(root, Path::new("/repo/../etc/passwd"), root, None);
+        let escaping = ExplorerOperation::trash(root, "/repo/../etc/passwd", root, None);
         assert!(escaping.unwrap_err().contains("not a normal path"));
         let root_itself = ExplorerOperation::trash(root, root, root, None);
         assert!(root_itself.unwrap_err().contains("root itself"));
-        let relative = ExplorerOperation::trash(root, Path::new("src/a"), root, None);
+        let relative = ExplorerOperation::trash(root, "src/a", root, None);
         assert!(relative.unwrap_err().contains("not an absolute path"));
 
-        let selection_outside =
-            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo-other"), None);
+        let selection_outside = ExplorerOperation::trash(root, "/repo/src", "/repo-other", None);
         assert!(
             selection_outside
                 .unwrap_err()
                 .contains("outside the workspace")
         );
-        let selection_inside = ExplorerOperation::trash(
-            root,
-            Path::new("/repo/src"),
-            Path::new("/repo/src/a.rs"),
-            None,
-        );
+        let selection_inside = ExplorerOperation::trash(root, "/repo/src", "/repo/src/a.rs", None);
         assert!(
             selection_inside
                 .unwrap_err()
                 .contains("cannot move into the item")
         );
-        let selection_itself =
-            ExplorerOperation::trash(root, Path::new("/repo/src"), Path::new("/repo/src"), None);
+        let selection_itself = ExplorerOperation::trash(root, "/repo/src", "/repo/src", None);
         assert!(
             selection_itself
                 .unwrap_err()
@@ -923,22 +909,18 @@ pub(crate) mod tests {
 
     #[test]
     fn explorer_refuses_paths_outside_the_root_and_invalid_names() {
-        let root = Path::new("/repo");
-        let outside = ExplorerOperation::create(
-            ExplorerOperationKind::FileCreate,
-            root,
-            Path::new("/repo-other"),
-            "a",
-        );
+        let root = "/repo";
+        let outside =
+            ExplorerOperation::create(ExplorerOperationKind::FileCreate, root, "/repo-other", "a");
         assert!(outside.unwrap_err().contains("outside the workspace"));
-        let escaping = ExplorerOperation::rename(root, Path::new("/repo/../etc/passwd"), "x");
+        let escaping = ExplorerOperation::rename(root, "/repo/../etc/passwd", "x");
         assert!(escaping.unwrap_err().contains("not a normal path"));
         let root_itself = ExplorerOperation::rename(root, root, "x");
         assert!(root_itself.unwrap_err().contains("root itself"));
-        let relative = ExplorerOperation::move_into(root, Path::new("src/a"), root);
+        let relative = ExplorerOperation::move_into(root, "src/a", root);
         assert!(relative.unwrap_err().contains("not an absolute path"));
 
-        let parent = Path::new("/repo/src");
+        let parent = "/repo/src";
         for (name, expected) in [
             ("", "A name is required"),
             ("a/b", "cannot contain /"),
@@ -953,20 +935,14 @@ pub(crate) mod tests {
 
     #[test]
     fn explorer_refuses_a_move_that_changes_nothing_or_nests_a_folder_in_itself() {
-        let root = Path::new("/repo");
-        let same_parent =
-            ExplorerOperation::move_into(root, Path::new("/repo/src/a.rs"), Path::new("/repo/src"));
+        let root = "/repo";
+        let same_parent = ExplorerOperation::move_into(root, "/repo/src/a.rs", "/repo/src");
         assert!(same_parent.unwrap_err().contains("already in that folder"));
-        let into_self =
-            ExplorerOperation::move_into(root, Path::new("/repo/src"), Path::new("/repo/src"));
+        let into_self = ExplorerOperation::move_into(root, "/repo/src", "/repo/src");
         assert!(into_self.unwrap_err().contains("into itself"));
-        let into_child = ExplorerOperation::move_into(
-            root,
-            Path::new("/repo/src"),
-            Path::new("/repo/src/nested"),
-        );
+        let into_child = ExplorerOperation::move_into(root, "/repo/src", "/repo/src/nested");
         assert!(into_child.unwrap_err().contains("into itself"));
-        let unchanged = ExplorerOperation::rename(root, Path::new("/repo/src/a.rs"), "a.rs");
+        let unchanged = ExplorerOperation::rename(root, "/repo/src/a.rs", "a.rs");
         assert!(unchanged.unwrap_err().contains("unchanged"));
     }
 }

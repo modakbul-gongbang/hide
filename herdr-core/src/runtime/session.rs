@@ -3226,7 +3226,7 @@ impl Runtime {
     /// from is no longer the one on screen (PRD S5.5 B34).
     pub(super) fn start_explorer_operation(
         &mut self,
-        plan: impl FnOnce(&Path) -> Result<files::ExplorerOperation, String>,
+        plan: impl FnOnce(&str) -> Result<files::ExplorerOperation, String>,
         root: &str,
         started_from: &str,
         device: Option<&str>,
@@ -3262,7 +3262,7 @@ impl Runtime {
             Some(target) if target.device_id != device => Err(format!(
                 "{root} is not on the device in front; nothing was changed"
             )),
-            Some(target) if target.root == root => plan(Path::new(root)).and_then(|operation| {
+            Some(target) if target.root == root => plan(root).and_then(|operation| {
                 self.document_source(&target.workspace_id, &target.checkout_id)
                     .map(|source| (operation, target, source))
             }),
@@ -3291,8 +3291,8 @@ impl Runtime {
             id,
             kind: operation.kind.as_str().to_owned(),
             phase: "working".to_owned(),
-            path: operation.source.to_string_lossy().into_owned(),
-            destination: operation.destination.to_string_lossy().into_owned(),
+            path: operation.source.clone(),
+            destination: operation.destination.clone(),
             message: None,
         });
         crate::diagnostic!(serde_json::json!({
@@ -3373,8 +3373,8 @@ impl Runtime {
         if slot.id != id || slot.phase != "working" {
             return false;
         }
-        let source = operation.source.to_string_lossy().into_owned();
-        let destination = operation.destination.to_string_lossy().into_owned();
+        let source = operation.source.clone();
+        let destination = operation.destination.clone();
         match result {
             Ok(()) => {
                 slot.phase = "finished".to_owned();
@@ -3403,12 +3403,7 @@ impl Runtime {
                         let Some(moved) = retarget_path(&tab.path, &source, &destination) else {
                             continue;
                         };
-                        tab.label = Path::new(&moved)
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| moved.clone());
+                        tab.label = hide_platform::path::wire_name(&moved).to_owned();
                         tab.path = moved.clone();
                         if let Some(document) =
                             self.editor_documents.get_mut(&tab.id).map(Edited::edit)
@@ -3451,8 +3446,7 @@ impl Runtime {
                     }
                     self.sync_active_editor_document();
                 }
-                self.snapshot.ui_state.selected_path =
-                    Some(operation.selection.to_string_lossy().into_owned());
+                self.snapshot.ui_state.selected_path = Some(operation.selection.clone());
                 self.push_diagnostic(
                     format!("explorer.{}", operation.kind.as_str()),
                     format!("{source} -> {destination}"),

@@ -128,11 +128,13 @@ impl Tally {
     }
 }
 
+/// A folder's name below the walked root for the screen, in the wire's
+/// spelling so it reads the same whatever system measured it.
 fn relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .into_owned()
+    let below = path.strip_prefix(root).unwrap_or(path);
+    hide_platform::path::RelPath::from_native(below)
+        .map(hide_platform::path::RelPath::into_string)
+        .unwrap_or_else(|_| below.to_string_lossy().into_owned())
 }
 
 /// The first 43 bytes of a cache directory tag (bford.info/cachedir).

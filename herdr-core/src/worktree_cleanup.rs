@@ -141,7 +141,8 @@ pub(crate) fn read_in_use(
     let mut in_use = InUseMap::new();
     let mut reads = 0usize;
     for checkout in checkouts {
-        let path = std::fs::canonicalize(&checkout.path).unwrap_or_else(|_| checkout.path.clone());
+        let path = hide_platform::fs::identity::canonical(&checkout.path)
+            .unwrap_or_else(|_| checkout.path.clone());
         if checkout.agent_working > 0 {
             in_use.insert(
                 checkout.path.clone(),
@@ -220,7 +221,7 @@ fn live_in_use(context: &LiveContext, checkouts: &[CheckoutFacts]) -> Result<InU
 }
 
 fn canonical(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    hide_platform::fs::identity::canonical(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn unverified_use() -> InUse {
@@ -374,7 +375,7 @@ fn verified_pane_paths(paths: Vec<Option<String>>) -> Result<Vec<PathBuf>, Strin
             // absolute path for component-wise ownership checks instead of
             // letting that one stale folder disable cleanup for every current
             // worktree. Existing paths still resolve aliases before matching.
-            Ok(std::fs::canonicalize(&path).unwrap_or(path))
+            Ok(hide_platform::fs::identity::canonical(&path).unwrap_or(path))
         })
         .collect()
 }
@@ -439,7 +440,8 @@ fn inspect_with_merge_proofs(
     let mut rows = listed(root)?;
     let main_head = git(root, &["rev-parse", "--verify", "refs/heads/main^{commit}"])
         .map(|v| v.trim().to_owned());
-    let canonical_current = current.and_then(|current| std::fs::canonicalize(current).ok());
+    let canonical_current =
+        current.and_then(|current| hide_platform::fs::identity::canonical(current).ok());
     let paths: Vec<PathBuf> = rows.iter().map(|r| PathBuf::from(&r.path)).collect();
     for row in &mut rows {
         row.in_use = in_use.get(Path::new(&row.path)).cloned();
@@ -448,7 +450,7 @@ fn inspect_with_merge_proofs(
         }
         let checked = (|| -> Result<(), Exclusion> {
             let path = Path::new(&row.path);
-            let canonical = std::fs::canonicalize(path)
+            let canonical = hide_platform::fs::identity::canonical(path)
                 .map_err(|_| Exclusion::new("missing", "Folder is missing or unreadable"))?;
             if canonical != path {
                 return Err(Exclusion::new(
@@ -529,7 +531,7 @@ fn inspect_with_merge_proofs(
         }
     }
     Ok(CleanupSnapshot {
-        repository_root: root.to_string_lossy().into_owned(),
+        repository_root: hide_platform::path::to_wire_lossy(root),
         main_head: main_head.ok(),
         rows,
         phase: "review".into(),
@@ -754,7 +756,7 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
             let base = CleanupSnapshot {
                 id,
                 workspace_id: input.workspace_id.clone(),
-                repository_root: input.root.to_string_lossy().into_owned(),
+                repository_root: hide_platform::path::to_wire_lossy(&input.root),
                 phase: "loading".into(),
                 free_bytes: disk::volume_free_bytes(&input.root),
                 ..Default::default()
@@ -1088,7 +1090,12 @@ fn tracked_folders<'a>(
                 // Not under the checkout: cannot be shown untracked.
                 return true;
             };
-            let below = format!("{}/", folded(&relative.to_string_lossy()));
+            // Git lists the index in the wire's relative spelling, `/`
+            // between names on every system.
+            let relative = hide_platform::path::RelPath::from_native(relative)
+                .map(hide_platform::path::RelPath::into_string)
+                .unwrap_or_else(|_| relative.to_string_lossy().into_owned());
+            let below = format!("{}/", folded(&relative));
             let at = index.partition_point(|entry| entry.as_str() < below.as_str());
             index.get(at).is_some_and(|entry| entry.starts_with(&below))
         })

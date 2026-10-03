@@ -450,7 +450,7 @@ impl Runtime {
         };
         let root = key.1.trim_end_matches('/');
         if let Some(path) = payload.reveal.as_deref()
-            && crate::files::path_inside_root(Path::new(root), Path::new(path), false).is_err()
+            && crate::files::path_inside_root(root, path, false).is_err()
         {
             self.set_error(
                 "workspace_view.reveal_outside",
@@ -858,11 +858,7 @@ impl Runtime {
     }
 }
 
+/// The last name of a path, which may be any device's, read by names alone.
 pub(super) fn file_label(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(path)
-        .to_owned()
+    hide_platform::path::wire_name(path).to_owned()
 }

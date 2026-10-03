@@ -43,13 +43,25 @@ pub fn file_path(url: &str) -> Option<(String, &str)> {
     if decoded.contains('\0') {
         return None;
     }
-    Some((decoded.into_owned(), suffix))
+    // A Windows path is `file:///C:/a` (RFC 8089): the slash before the
+    // drive belongs to the URL, not to the path's wire spelling.
+    let path = match decoded.strip_prefix('/') {
+        Some(drive) if !drive.starts_with('/') && hide_platform::path::is_wire_absolute(drive) => {
+            drive.to_owned()
+        }
+        _ => decoded.into_owned(),
+    };
+    Some((path, suffix))
 }
 
 /// The `file:` URL of an absolute path, with `suffix` (a query or fragment)
 /// kept as written.
 pub fn file_url(path: &str, suffix: &str) -> String {
-    format!("file://{}{suffix}", utf8_percent_encode(path, PATH_SET))
+    let slash = if path.starts_with('/') { "" } else { "/" };
+    format!(
+        "file://{slash}{}{suffix}",
+        utf8_percent_encode(path, PATH_SET)
+    )
 }
 
 #[cfg(test)]
@@ -67,6 +79,11 @@ mod tests {
             let url = file_url(path, "");
             assert_eq!(file_path(&url), Some((path.to_owned(), "")), "{url}");
         }
+        assert_eq!(file_url("C:/a/b.html", ""), "file:///C:/a/b.html");
+        assert_eq!(
+            file_path("file:///C:/a/b.html"),
+            Some(("C:/a/b.html".to_owned(), ""))
+        );
         assert_eq!(
             file_url("/문서/a b.html", "#top"),
             "file:///%EB%AC%B8%EC%84%9C/a%20b.html#top"

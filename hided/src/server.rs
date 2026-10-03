@@ -220,7 +220,7 @@ fn browser_route_authorized(headers: &HeaderMap, state: &AppState) -> bool {
 fn browser_route_request_valid(request: &BrowserRouteRequest) -> bool {
     !request.device_id.is_empty()
         && request.device_id.len() <= 256
-        && request.checkout_path.starts_with('/')
+        && hide_platform::path::is_wire_absolute(&request.checkout_path)
         && request.checkout_path.len() <= 8192
         && !request.id.is_empty()
         && request.id.len() <= 256
@@ -1166,17 +1166,11 @@ fn device_listing(
         return refused("file_list", &root, Refusal::OutsideCheckout);
     }
     let folder = if raw.is_empty() { root.clone() } else { raw };
-    let relative = if folder == root {
-        String::new()
-    } else {
-        match folder
-            .strip_prefix(root.trim_end_matches('/'))
-            .and_then(|rest| rest.strip_prefix('/'))
-            .filter(|rest| hide_host::relative_path(rest).is_ok())
-        {
-            Some(rest) => rest.to_owned(),
-            None => return refused("file_list", &folder, Refusal::OutsideCheckout),
-        }
+    // Both are the device's paths in the wire spelling, related by names
+    // alone whatever system the device runs.
+    let relative = match hide_platform::path::wire_relative(&root, &folder) {
+        Ok(relative) => relative.into_string(),
+        Err(_) => return refused("file_list", &folder, Refusal::OutsideCheckout),
     };
     let unavailable = |code: &str, message: String| {
         eprintln!(
@@ -1351,7 +1345,7 @@ fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
         return vec![Message::Text(
             json!({
                 "type": "open_external_result",
-                "payload": {"path": real.display().to_string(), "ok": false, "reason": reason},
+                "payload": {"path": hide_platform::path::to_wire_lossy(&real), "ok": false, "reason": reason},
             })
             .to_string()
             .into(),
@@ -1373,7 +1367,7 @@ fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
     vec![Message::Text(
         json!({
             "type": "open_external_result",
-            "payload": {"path": real.display().to_string(), "ok": ok, "reason": reason},
+            "payload": {"path": hide_platform::path::to_wire_lossy(&real), "ok": ok, "reason": reason},
         })
         .to_string()
         .into(),
@@ -1694,7 +1688,7 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
                 .into(),
         )];
     };
-    let root_path = known.display().to_string();
+    let root_path = hide_platform::path::to_wire_lossy(&known);
     let walk_root = known.clone();
     let answer = state.index.query(
         herdr_core::workspace::LOCAL_DEVICE_ID,
@@ -1714,7 +1708,8 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
             &query,
             answer,
             |relative| {
-                let path = known.join(relative).display().to_string();
+                let relative = hide_platform::path::RelPath::parse(relative).ok()?;
+                let path = hide_platform::path::wire_join(&root_path, &relative);
                 state.boundary.resolve_target(&path).ok().map(|_| path)
             },
         )
@@ -1782,9 +1777,10 @@ fn device_file_index(state: &AppState, device: &str, root: &str, query: &str) ->
             error.to_string()
         })
     });
-    let base = root.trim_end_matches('/');
     index_result(device, root, query, answer, |relative| {
-        Some(format!("{base}/{relative}"))
+        hide_platform::path::RelPath::parse(relative)
+            .ok()
+            .map(|relative| hide_platform::path::wire_join(root, &relative))
     })
 }
 
@@ -1855,11 +1851,10 @@ async fn stream_device_file_bytes(
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let length = event.pointer("/payload/length").and_then(Value::as_u64);
-    let relative = path
-        .strip_prefix(root.trim_end_matches('/'))
-        .and_then(|rest| rest.strip_prefix('/'))
-        .filter(|rest| hide_host::relative_path(rest).is_ok())
-        .map(str::to_owned);
+    let relative = hide_platform::path::wire_relative(&root, &path)
+        .ok()
+        .filter(|relative| !relative.is_root())
+        .map(hide_platform::path::RelPath::into_string);
     let Some(relative) = relative.filter(|_| device_root_known(&boundary, &roots, device, &root))
     else {
         return frames
@@ -2053,7 +2048,7 @@ async fn send_file_bytes(
             .map_err(|_| ());
     }
     let end = start.saturating_add(wanted).min(total);
-    let displayed = real.display().to_string();
+    let displayed = hide_platform::path::to_wire_lossy(&real);
     let mut cursor = start;
     loop {
         let take = (end - cursor).min(BYTES_CHUNK) as usize;
@@ -2258,7 +2253,7 @@ fn rewrite(
     let raw = payload_str(event, field);
     match resolve(&raw) {
         Ok(real) => {
-            event["payload"][field] = Value::String(real.display().to_string());
+            event["payload"][field] = Value::String(hide_platform::path::to_wire_lossy(&real));
             None
         }
         Err(refusal) => Some(refused(kind, &raw, refusal)),
@@ -2273,7 +2268,7 @@ fn clone_admit(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Val
     let name = payload_str(event, "name");
     match boundary.resolve_clone_target(&parent, &name) {
         Ok(real) => {
-            event["payload"]["parent"] = Value::String(real.display().to_string());
+            event["payload"]["parent"] = Value::String(hide_platform::path::to_wire_lossy(&real));
             None
         }
         Err(refusal) => Some(refused(
@@ -2297,7 +2292,7 @@ fn clone_target(boundary: &Boundary, event: &Value) -> Value {
         "payload": {
             "parent": parent,
             "name": name,
-            "path": answer.as_ref().ok().map(|real| real.join(&name).display().to_string()),
+            "path": answer.as_ref().ok().map(|real| hide_platform::path::to_wire_lossy(&real.join(&name))),
             "reason": answer.err().map(Refusal::code),
         },
     })
@@ -2336,12 +2331,12 @@ fn project_target(boundary: &Boundary, event: &Value) -> Value {
             return json!({"type": "project_target", "payload": payload});
         }
     };
-    payload["parent_path"] = Value::String(real_parent.display().to_string());
+    payload["parent_path"] = Value::String(hide_platform::path::to_wire_lossy(&real_parent));
     payload["parent_label"] = Value::String(boundary.home_label(&real_parent));
     if !name.is_empty() {
         match boundary.resolve_new_project(&parent, &name) {
             Ok(project) => {
-                payload["path"] = Value::String(project.path.display().to_string());
+                payload["path"] = Value::String(hide_platform::path::to_wire_lossy(&project.path));
                 payload["leftover"] = Value::Bool(project.leftover);
             }
             Err(refusal) => payload["reason"] = Value::String(refusal.code().to_owned()),
@@ -2408,7 +2403,7 @@ fn browser_url(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Val
     };
     match boundary.resolve_target(&path) {
         Ok(real) => {
-            let url = crate::file_url::file_url(&real.display().to_string(), suffix);
+            let url = crate::file_url::file_url(&hide_platform::path::to_wire_lossy(&real), suffix);
             event["payload"]["url"] = Value::String(url);
             None
         }
@@ -2444,8 +2439,8 @@ fn explorer_rooted_path(
         Ok(real) => real,
         Err(refusal) => return Some(refused(kind, &raw, refusal)),
     };
-    event["payload"]["root"] = Value::String(known.display().to_string());
-    event["payload"][field] = Value::String(real.display().to_string());
+    event["payload"]["root"] = Value::String(hide_platform::path::to_wire_lossy(&known));
+    event["payload"][field] = Value::String(hide_platform::path::to_wire_lossy(&real));
     None
 }
 

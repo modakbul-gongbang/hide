@@ -230,13 +230,13 @@ impl BrowserRoutes {
         let (url, kind) = if crate::file_url::is_file_url(&source.url) {
             let (path, suffix) =
                 crate::file_url::file_path(&source.url).ok_or("invalid_file_url")?;
-            let relative = Path::new(&path)
-                .strip_prefix(&source.checkout_path)
-                .map_err(|_| "outside_checkout")?
-                .to_str()
-                .ok_or("invalid_file_url")?
-                .to_owned();
-            hide_host::relative_path(&relative).map_err(|_| "outside_checkout")?;
+            // The device's paths in the wire spelling, related by names
+            // alone whatever system the device runs.
+            let relative = hide_platform::path::wire_relative(&source.checkout_path, &path)
+                .ok()
+                .filter(|relative| !relative.is_root())
+                .ok_or("outside_checkout")?
+                .into_string();
             let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
                 .await
                 .map_err(|_| "route_bind_failed")?;
@@ -561,7 +561,7 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
     let Ok(decoded) = percent_decode_str(path).decode_utf8() else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    if hide_host::relative_path(&decoded).is_err() {
+    if hide_platform::path::RelPath::parse(&decoded).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
     let is_entry = decoded == route.entry;

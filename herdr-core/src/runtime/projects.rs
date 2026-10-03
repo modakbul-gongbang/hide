@@ -134,10 +134,7 @@ impl Runtime {
         let (workspace, _) = self.catalog_checkout(workspace_id, checkout_id)?;
         Some(crate::changes::ChangesKey {
             device_id: workspace.device_id.clone(),
-            root_path: self
-                .focused_changes_root_path()?
-                .to_string_lossy()
-                .into_owned(),
+            root_path: self.focused_changes_root_path()?,
         })
     }
 
@@ -155,7 +152,7 @@ impl Runtime {
             })
     }
 
-    fn changes_target(&self) -> Option<(String, String, PathBuf)> {
+    fn changes_target(&self) -> Option<(String, String, String)> {
         let section_visible = |section| {
             self.snapshot.ui_state.right_panel_visible
                 && self.snapshot.ui_state.right_panel_section == section
@@ -200,10 +197,9 @@ impl Runtime {
     /// navigator workspace path may have been projected as the repository
     /// root after Herdr occupies it, so use the registration's own path.
     /// Linked worktree rows use their own checkout root.
-    pub(super) fn focused_changes_root_path(&self) -> Option<PathBuf> {
+    pub(super) fn focused_changes_root_path(&self) -> Option<String> {
         let (workspace_id, checkout_id) = self.front_checkout()?;
         let (workspace, checkout) = self.catalog_checkout(workspace_id, checkout_id)?;
-        let checkout_root = PathBuf::from(&checkout.path);
         if workspace.registered
             && let Some(registered) = self
                 .snapshot
@@ -211,22 +207,18 @@ impl Runtime {
                 .workspace_registrations
                 .iter()
                 .find(|registration| registration.id == workspace.id)
+            && hide_platform::path::wire_relative(&checkout.path, &registered.path).is_ok()
         {
-            let registered = PathBuf::from(&registered.path);
-            if registered.starts_with(&checkout_root) {
-                return Some(registered);
-            }
+            return Some(registered.path.clone());
         }
-        Some(checkout_root)
+        Some(checkout.path.clone())
     }
 
     /// Keep the History identity in the same snapshot frame as checkout focus.
     /// All focus routes call this after assigning the focused workspace and
     /// checkout; remote checkouts clear the identity immediately.
     pub(super) fn sync_changes_root_path(&mut self) {
-        self.snapshot.navigator.changes_root_path = self
-            .focused_changes_root_path()
-            .map(|path| path.to_string_lossy().into_owned());
+        self.snapshot.navigator.changes_root_path = self.focused_changes_root_path();
         // The same folder on another device is another checkout: a projection
         // read on the one left behind is dropped in this same frame rather
         // than shown under the new device until the next read lands (B22).
@@ -460,7 +452,7 @@ impl Runtime {
         let mut review = live::cleanup::CleanupSnapshot {
             id: self.next_cleanup_id,
             workspace_id: workspace_id.to_owned(),
-            repository_root: input.root.to_string_lossy().into_owned(),
+            repository_root: hide_platform::path::to_wire_lossy(&input.root),
             phase: "loading".into(),
             ..Default::default()
         };
@@ -609,7 +601,7 @@ impl Runtime {
             .github_request()
             .projects
             .iter()
-            .map(|p| p.root.to_string_lossy().into_owned())
+            .map(|p| hide_platform::path::to_wire_lossy(&p.root))
             .collect();
         let github = self.github.clone();
         let disk_usage = self.disk_usage.clone();

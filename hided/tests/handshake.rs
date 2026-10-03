@@ -442,7 +442,7 @@ async fn send_event(
 #[tokio::test]
 async fn registration_refusals_are_answered_by_hided() {
     let (dir, running) = start().await;
-    let home = dir.path().canonicalize().unwrap();
+    let home = hide_platform::fs::identity::canonical(dir.path()).unwrap();
     std::fs::create_dir_all(home.join("projects/alpha")).unwrap();
     std::fs::create_dir_all(home.join("projects/.hidden")).unwrap();
     std::fs::write(home.join("projects/file.txt"), "x").unwrap();
@@ -453,37 +453,19 @@ async fn registration_refusals_are_answered_by_hided() {
     let mut socket = live_socket(&running).await;
 
     let cases = [
-        (
-            home.join("projects/escape").display().to_string(),
-            "outside_home",
-        ),
-        (
-            home.join("projects/escape/nope").display().to_string(),
-            "outside_home",
-        ),
-        (
-            home.join("projects/dangling").display().to_string(),
-            "outside_home",
-        ),
-        (
-            home.join("projects/dangling/child").display().to_string(),
-            "outside_home",
-        ),
+        (wire(&home.join("projects/escape")), "outside_home"),
+        (wire(&home.join("projects/escape/nope")), "outside_home"),
+        (wire(&home.join("projects/dangling")), "outside_home"),
+        (wire(&home.join("projects/dangling/child")), "outside_home"),
         (format!("{}/projects/../..", home.display()), "invalid_path"),
         (
             format!("{}/projects/%2e%2e/%2e%2e", home.display()),
             "not_found",
         ),
-        (
-            home.join("projects/file.txt").display().to_string(),
-            "not_a_directory",
-        ),
-        (outside.path().display().to_string(), "outside_home"),
-        (
-            outside.path().join("nope").display().to_string(),
-            "outside_home",
-        ),
-        (home.display().to_string(), "home_root"),
+        (wire(&home.join("projects/file.txt")), "not_a_directory"),
+        (wire(outside.path()), "outside_home"),
+        (wire(&outside.path().join("nope")), "outside_home"),
+        (wire(&home), "home_root"),
         ("relative/path".to_owned(), "invalid_path"),
     ];
     for (path, reason) in cases {
@@ -516,7 +498,7 @@ async fn a_remote_listing_is_forwarded_untouched() {
                 json!({
                     "schema_version": 2,
                     "kind": "remote_file_list",
-                    "payload": {"target_id": target, "root_path": outside.path().display().to_string()},
+                    "payload": {"target_id": target, "root_path": wire(outside.path())},
                 })
                 .to_string()
                 .into(),
@@ -600,6 +582,12 @@ async fn send_event_expecting(
     })
 }
 
+/// `path` as a client spells it on the wire (`hide_platform::path`), which on
+/// macOS and Linux is the path as written.
+fn wire(path: &std::path::Path) -> String {
+    hide_platform::path::to_wire(path).expect("a test path has a wire spelling")
+}
+
 /// The reaction predicate of a step whose only expected answer is the refusal
 /// itself, which the loop returns before it asks.
 fn never(_: &Value) -> bool {
@@ -620,7 +608,7 @@ fn seed_registration(state_dir: &std::path::Path, id: &str, path: &std::path::Pa
             "workspace_registrations": [{
                 "id": id,
                 "label": "alpha",
-                "path": path.display().to_string(),
+                "path": wire(path),
             }],
         })
         .to_string(),
@@ -631,9 +619,10 @@ fn seed_registration(state_dir: &std::path::Path, id: &str, path: &std::path::Pa
 #[tokio::test]
 async fn explorer_paths_are_checked_against_the_registered_checkout() {
     let (dir, env) = test_env(true);
-    // Joined one component at a time: Windows spells the canonical home with
-    // a `\\?\` prefix, after which `/` is not a separator.
-    let home = dir.path().canonicalize().unwrap();
+    // The short spelling, as the daemon and a client use it; Windows writes
+    // `std::fs::canonicalize`'s answer with a `\\?\` prefix after which `/`
+    // is not a separator.
+    let home = hide_platform::fs::identity::canonical(dir.path()).unwrap();
     let checkout = home.join("projects").join("alpha");
     let main = checkout.join("src").join("main.rs");
     std::fs::create_dir_all(checkout.join("src")).unwrap();
@@ -654,14 +643,14 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
         .as_array()
         .expect("the snapshot carries the navigator")
         .iter()
-        .find(|workspace| workspace["path"] == json!(checkout.display().to_string()))
+        .find(|workspace| workspace["path"] == json!(wire(&checkout)))
         .cloned()
         .expect("the seeded registration is a workspace");
     let workspace_id = workspace["id"].as_str().unwrap().to_owned();
     let checkout_id = workspace["checkouts"][0]["id"].as_str().unwrap().to_owned();
-    let checkout_path = checkout.display().to_string();
-    let notes_path = notes.join("todo.md").display().to_string();
-    let file_path = main.display().to_string();
+    let checkout_path = wire(&checkout);
+    let notes_path = wire(&notes.join("todo.md"));
+    let file_path = wire(&main);
 
     // A path under home that no checkout covers is refused as such, for an
     // open and for a change alike.
@@ -698,13 +687,13 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
     assert_eq!(refused["payload"]["reason"], "outside_checkout");
 
     // The root a change names has to be one of the registered ones.
-    let unregistered_root = home.join("projects").display().to_string();
+    let unregistered_root = wire(&home.join("projects"));
     let refused = send_event_expecting(
         &mut socket,
         "path_trash",
         json!({
             "root": unregistered_root,
-            "path": checkout.join("src").display().to_string(),
+            "path": wire(&checkout.join("src")),
             "select_after": checkout_path,
             "inode": Value::Null,
         }),
@@ -728,29 +717,24 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
     assert_eq!(refused["payload"]["path"], "../escape.rs");
 
     // A path inside the registered checkout is the Explorer's: the core opens
-    // it, and the tab it makes carries the file's own name. Not on Windows
-    // yet: the core's `files::relative_under` takes a checkout-relative path
-    // after a `/`, so a `\`-separated file is "not inside its checkout"
-    // (`file.open_failed`); the Windows path model is a later slice's.
-    if cfg!(unix) {
-        let opened = send_event_expecting(
-            &mut socket,
-            "file_open",
-            json!({
-                "path": file_path,
-                "workspace_id": workspace_id,
-                "checkout_id": checkout_id,
-                "preview": false,
-            }),
-            |frame| frame["payload"]["editor"]["tabs"][0]["label"] == "main.rs",
-        )
-        .await;
-        assert_eq!(opened["type"], "delta", "the open has to reach the core");
-        assert_eq!(
-            opened["payload"]["editor"]["tabs"][0]["label"], "main.rs",
-            "the tab the core makes carries the file's own name"
-        );
-    }
+    // it, and the tab it makes carries the file's own name.
+    let opened = send_event_expecting(
+        &mut socket,
+        "file_open",
+        json!({
+            "path": file_path,
+            "workspace_id": workspace_id,
+            "checkout_id": checkout_id,
+            "preview": false,
+        }),
+        |frame| frame["payload"]["editor"]["tabs"][0]["label"] == "main.rs",
+    )
+    .await;
+    assert_eq!(opened["type"], "delta", "the open has to reach the core");
+    assert_eq!(
+        opened["payload"]["editor"]["tabs"][0]["label"], "main.rs",
+        "the tab the core makes carries the file's own name"
+    );
 
     running.stop();
 }
@@ -761,7 +745,7 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
 #[tokio::test]
 async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
     let (dir, env) = test_env(true);
-    let home = dir.path().canonicalize().unwrap();
+    let home = hide_platform::fs::identity::canonical(dir.path()).unwrap();
     let checkout = home.join("projects/alpha");
     std::fs::create_dir_all(checkout.join("src")).unwrap();
     std::fs::create_dir_all(checkout.join(".github")).unwrap();
@@ -780,8 +764,8 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
     seed_registration(&env.state_dir, "w-alpha", &checkout);
     let running = hided::start_daemon(env).await.expect("start daemon");
     let mut socket = live_socket(&running).await;
-    let checkout_path = checkout.display().to_string();
-    let notes_path = notes.display().to_string();
+    let checkout_path = wire(&checkout);
+    let notes_path = wire(&notes);
 
     let listing = send_event_expecting(
         &mut socket,
@@ -824,13 +808,13 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
     let nested = send_event_expecting(
         &mut socket,
         "file_list",
-        json!({"root": checkout_path, "path": checkout.join("src").display().to_string()}),
+        json!({"root": checkout_path, "path": wire(&checkout.join("src"))}),
         |frame| frame["type"] == "directory_list",
     )
     .await;
     assert_eq!(
         nested["payload"]["root_path"],
-        json!(checkout.join("src").display().to_string())
+        json!(wire(&checkout.join("src")))
     );
     assert!(nested["payload"]["entries"].as_array().unwrap().is_empty());
 
@@ -844,7 +828,7 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
                 "kind": "file_create",
                 "payload": {
                     "root": checkout_path,
-                    "parent": checkout.join("alias").display().to_string(),
+                    "parent": wire(&checkout.join("alias")),
                     "name": "through-link.txt"
                 }
             })
@@ -868,10 +852,7 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
     for (root, path) in [
         (checkout_path.clone(), notes_path.clone()),
         (notes_path.clone(), notes_path.clone()),
-        (
-            checkout_path.clone(),
-            checkout.join("escape").display().to_string(),
-        ),
+        (checkout_path.clone(), wire(&checkout.join("escape"))),
     ] {
         let refused = send_event_expecting(
             &mut socket,
@@ -901,7 +882,7 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
         ),
         (
             "file_save",
-            json!({"path": checkout.join("outside-secret.txt").display().to_string()}),
+            json!({"path": wire(&checkout.join("outside-secret.txt"))}),
         ),
         (
             "file_index",
@@ -934,7 +915,7 @@ async fn recv_binary(socket: &mut Socket) -> (Value, Vec<u8>) {
 #[tokio::test]
 async fn file_bytes_streams_a_checkout_file_and_refuses_a_path_outside_it() {
     let (dir, env) = test_env(true);
-    let home = dir.path().canonicalize().unwrap();
+    let home = hide_platform::fs::identity::canonical(dir.path()).unwrap();
     let checkout = home.join("projects/alpha");
     std::fs::create_dir_all(&checkout).unwrap();
     let contents: Vec<u8> = (0u8..64).collect();
@@ -944,7 +925,7 @@ async fn file_bytes_streams_a_checkout_file_and_refuses_a_path_outside_it() {
     seed_registration(&env.state_dir, "w-alpha", &checkout);
     let running = hided::start_daemon(env).await.expect("start daemon");
     let mut socket = live_socket(&running).await;
-    let path = checkout.join("blob.bin").display().to_string();
+    let path = wire(&checkout.join("blob.bin"));
 
     // A whole-file read: one binary frame carrying the header and every byte.
     socket
@@ -996,7 +977,7 @@ async fn file_bytes_streams_a_checkout_file_and_refuses_a_path_outside_it() {
         "file_bytes",
         json!({
             "request_id": "r3",
-            "path": outside.path().join("secret.bin").display().to_string(),
+            "path": wire(&outside.path().join("secret.bin")),
             "offset": 0,
             "length": Value::Null,
         }),
@@ -1013,7 +994,7 @@ async fn file_bytes_streams_a_checkout_file_and_refuses_a_path_outside_it() {
         "file_bytes",
         json!({
             "request_id": "r4",
-            "path": checkout.display().to_string(),
+            "path": wire(&checkout),
             "offset": 0,
             "length": Value::Null,
         }),
@@ -1048,7 +1029,9 @@ async fn a_fifo_byte_request_is_refused_and_another_socket_stays_responsive() {
     use std::os::unix::ffi::OsStrExt;
 
     let (dir, env) = test_env(true);
-    let checkout = dir.path().canonicalize().unwrap().join("projects/alpha");
+    let checkout = hide_platform::fs::identity::canonical(dir.path())
+        .unwrap()
+        .join("projects/alpha");
     std::fs::create_dir_all(&checkout).unwrap();
     let pipe = checkout.join("pipe");
     let name = CString::new(pipe.as_os_str().as_bytes()).unwrap();
@@ -1061,7 +1044,7 @@ async fn a_fifo_byte_request_is_refused_and_another_socket_stays_responsive() {
         send_event_expecting(
             &mut socket,
             "file_bytes",
-            json!({"request_id": "fifo", "path": pipe.display().to_string(), "offset": 0, "length": Value::Null}),
+            json!({"request_id": "fifo", "path": wire(&pipe), "offset": 0, "length": Value::Null}),
             never,
         ),
     )
@@ -1078,7 +1061,7 @@ async fn a_fifo_byte_request_is_refused_and_another_socket_stays_responsive() {
     let listing = send_event_expecting(
         &mut second,
         "file_list",
-        json!({"root": checkout.display().to_string(), "path": checkout.display().to_string()}),
+        json!({"root": wire(&checkout), "path": wire(&checkout)}),
         |frame| frame["type"] == "directory_list",
     )
     .await;
@@ -1089,7 +1072,7 @@ async fn a_fifo_byte_request_is_refused_and_another_socket_stays_responsive() {
 #[tokio::test]
 async fn a_change_in_a_watched_checkout_is_announced() {
     let (dir, env) = test_env(true);
-    let home = dir.path().canonicalize().unwrap();
+    let home = hide_platform::fs::identity::canonical(dir.path()).unwrap();
     let checkout = home.join("projects/alpha");
     std::fs::create_dir_all(checkout.join("src")).unwrap();
     seed_registration(&env.state_dir, "w-alpha", &checkout);
@@ -1109,20 +1092,15 @@ async fn a_change_in_a_watched_checkout_is_announced() {
     })
     .await
     .expect("a directory_changed frame for the changed checkout");
-    assert_eq!(
-        frame["payload"]["path"],
-        json!(checkout.display().to_string())
-    );
+    assert_eq!(frame["payload"]["path"], json!(wire(&checkout)));
     running.stop();
 }
 
-// The index answers relative paths with the system's separator (`src\main.rs`
-// on Windows); which one the wire carries there is not settled yet.
-#[cfg(unix)]
+// The relative paths are the wire's, `/` between names on every system.
 #[tokio::test]
 async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     let (dir, env) = test_env(true);
-    let home = dir.path().canonicalize().unwrap();
+    let home = hide_platform::fs::identity::canonical(dir.path()).unwrap();
     let checkout = home.join("projects/alpha");
     std::fs::create_dir_all(checkout.join("src")).unwrap();
     std::fs::create_dir_all(checkout.join("docs")).unwrap();
@@ -1133,7 +1111,7 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     seed_registration(&env.state_dir, "w-alpha", &checkout);
     let running = hided::start_daemon(env).await.expect("start daemon");
     let mut socket = live_socket(&running).await;
-    let root = checkout.display().to_string();
+    let root = wire(&checkout);
 
     // The first query starts the walk; the daemon answers `indexing`, and the
     // next query has the list.
@@ -1172,7 +1150,7 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     );
     assert_eq!(
         result["payload"]["files"][0]["path"],
-        json!(checkout.join("src/main.rs").display().to_string()),
+        json!(wire(&checkout.join("src/main.rs"))),
         "a palette entry carries the absolute path to open"
     );
 
@@ -1180,7 +1158,7 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     let refused = send_event_expecting(
         &mut socket,
         "file_index",
-        json!({"root": home.join("projects").display().to_string(), "query": "x"}),
+        json!({"root": wire(&home.join("projects")), "query": "x"}),
         never,
     )
     .await;
@@ -1196,7 +1174,7 @@ async fn browser_socket_cannot_start_a_host_file_handler() {
     use std::os::unix::fs::PermissionsExt;
 
     let (dir, mut env) = test_env(true);
-    let home = dir.path().canonicalize().unwrap();
+    let home = hide_platform::fs::identity::canonical(dir.path()).unwrap();
     let checkout = home.join("projects/alpha");
     std::fs::create_dir_all(&checkout).unwrap();
     let file = checkout.join("notes.txt");
@@ -1217,7 +1195,7 @@ async fn browser_socket_cannot_start_a_host_file_handler() {
     let answer = send_event_expecting(
         &mut socket,
         "open_external",
-        json!({"path": file.display().to_string()}),
+        json!({"path": wire(&file)}),
         |frame| frame["type"] == "open_external_result",
     )
     .await;

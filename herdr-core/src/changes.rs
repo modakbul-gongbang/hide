@@ -14,13 +14,13 @@
 //! diff of every diff the front Workspace's View areas show (PRD S7 A5), so
 //! several diffs on screen cost one read, not one each.
 
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use hide_host::git::{ChangedFile, Changes, DiffTarget, FileStatus};
 use hide_host::protocol::Call;
+use hide_platform::path;
 
 use crate::files::DocumentRoot;
 use crate::handle::ChangeNotifier;
@@ -78,7 +78,7 @@ pub struct ChangesRequest {
     pub channel: Result<ChannelRef, String>,
     /// The folder the view describes: the checkout root, or a registered
     /// folder below it.
-    pub root_path: PathBuf,
+    pub root_path: String,
     pub selected_path: Option<String>,
     /// Whether the selection is in the committed group, which decides what
     /// its diff is taken against.
@@ -96,7 +96,7 @@ impl ChangesRequest {
     pub fn key(&self) -> ChangesKey {
         ChangesKey {
             device_id: self.root.device_id.clone(),
-            root_path: self.root_path.to_string_lossy().into_owned(),
+            root_path: self.root_path.clone(),
         }
     }
 
@@ -230,7 +230,7 @@ impl Drop for ChangesPump {
 /// the channel; a refusal or a lost answer is a stated reason, never an empty
 /// list, so a failure is not shown as a clean tree.
 pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
-    let root_path = request.root_path.to_string_lossy().into_owned();
+    let root_path = request.root_path.clone();
     let unavailable = |reason: String| ChangesSnapshot {
         root_path: Some(root_path.clone()),
         unavailable_reason: Some(reason),
@@ -240,21 +240,19 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
         Ok(channel) => Arc::clone(&channel.0),
         Err(reason) => return unavailable(reason.clone()),
     };
-    let Some(scope) = request
-        .root_path
-        .strip_prefix(&request.root.path)
-        .ok()
-        .map(|scope| scope.to_string_lossy().into_owned())
+    // Every path here is the checkout device's, in the wire spelling, and is
+    // related by names alone, whatever system the device runs.
+    let Ok(scope) =
+        path::wire_relative(&request.root.path, &request.root_path).map(path::RelPath::into_string)
     else {
         return unavailable(
             "This History folder no longer matches its registered checkout".to_owned(),
         );
     };
     let relative = |path: &str| {
-        Path::new(path)
-            .strip_prefix(&request.root_path)
+        path::wire_relative(&request.root_path, path)
             .ok()
-            .map(|relative| relative.to_string_lossy().into_owned())
+            .map(path::RelPath::into_string)
     };
     let selected = request.selected_path.as_deref().and_then(&relative);
     // A View diff outside the folder History reads cannot be taken here: the
@@ -348,11 +346,13 @@ fn reason(error: HostCallError) -> String {
     }
 }
 
-fn absolute(root_path: &Path, relative: &str) -> String {
-    root_path.join(relative).to_string_lossy().into_owned()
+/// A path the host answered below `root_path`: both are the device's wire
+/// spelling, which joins with `/` whatever system the device runs.
+fn absolute(root_path: &str, relative: &str) -> String {
+    format!("{}/{relative}", root_path.trim_end_matches('/'))
 }
 
-fn snapshot_of(root_path: &Path, file: ChangedFile) -> ChangedFileSnapshot {
+fn snapshot_of(root_path: &str, file: ChangedFile) -> ChangedFileSnapshot {
     ChangedFileSnapshot {
         path: absolute(root_path, &file.path),
         relative_path: file.path,
@@ -375,7 +375,7 @@ mod tests {
     use super::*;
     use crate::host_access::InProcessHost;
 
-    fn git(directory: &Path, arguments: &[&str]) {
+    fn git(directory: &std::path::Path, arguments: &[&str]) {
         let output = std::process::Command::new("git")
             .arg("-C")
             .arg(directory)
@@ -385,7 +385,11 @@ mod tests {
         assert!(output.status.success(), "git {arguments:?}");
     }
 
-    fn request(checkout: &Path, folder: &Path, selected: Option<&Path>) -> ChangesRequest {
+    fn request(
+        checkout: &std::path::Path,
+        folder: &std::path::Path,
+        selected: Option<&std::path::Path>,
+    ) -> ChangesRequest {
         ChangesRequest {
             root: DocumentRoot {
                 device_id: crate::workspace::LOCAL_DEVICE_ID.to_owned(),
@@ -393,7 +397,7 @@ mod tests {
                 identity: None,
             },
             channel: Ok(ChannelRef(Arc::new(InProcessHost))),
-            root_path: folder.to_path_buf(),
+            root_path: folder.to_string_lossy().into_owned(),
             selected_path: selected.map(|path| path.to_string_lossy().into_owned()),
             selected_committed: false,
             base_branch: None,
