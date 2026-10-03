@@ -18,7 +18,7 @@
 import { create } from "zustand";
 import { browserBridge, type BrowserBridge, type BrowserHostEvent, type BrowserPageState, type BrowserPlacement, type BrowserRect, type BrowserSync } from "./host";
 import { SHELL_DRAG_ATTRIBUTES, shellDragging } from "./shellDrag";
-import type { ViewLayoutSnapshot } from "./snapshot";
+import type { SnapshotRest, ViewLayoutSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { areasOf, workspaceKey, type ViewWorkspace } from "./viewLayout";
 
@@ -181,6 +181,7 @@ type Front = { workspace: string; rows: BrowserDisplayRow[] };
 class BrowserSyncLoop {
   private front: Front | null = null;
   private retained: BrowserSync["retained"] = [];
+  private authorizedScopes: NonNullable<BrowserSync["authorized_scopes"]> = [];
   private retainedKeys = new Set<string>();
   private readonly slots = new Map<string, HTMLElement>();
   /** Displays hidden behind their still until what covers them is gone. */
@@ -257,7 +258,7 @@ class BrowserSyncLoop {
     return this.visible;
   }
 
-  setFront(front: Front | null, retained: BrowserSync["retained"]): void {
+  setFront(front: Front | null, retained: BrowserSync["retained"], authorizedScopes: NonNullable<BrowserSync["authorized_scopes"]>): void {
     const frontIds = new Set(front?.rows.map((row) => row.id));
     this.retainedKeys = new Set(retained
       .filter((row) => row.workspace !== front?.workspace || frontIds.has(row.id))
@@ -291,6 +292,7 @@ class BrowserSyncLoop {
     }
     this.front = front;
     this.retained = retained;
+    this.authorizedScopes = authorizedScopes;
     this.schedule();
   }
 
@@ -358,6 +360,7 @@ class BrowserSyncLoop {
       workspace: front?.workspace ?? null,
       displays: front ? placements(front.rows, rects, hidden) : [],
       retained: this.retained,
+      authorized_scopes: this.authorizedScopes,
       ...(this.attachmentEpoch === undefined ? {} : { attachment_epoch: this.attachmentEpoch }),
     };
     this.visible = sync.displays.flatMap((row) => (row.visible && row.rect ? [row.rect] : []));
@@ -485,10 +488,11 @@ function syncLoop(): BrowserSyncLoop | null {
   return loop;
 }
 
-/** The front Workspace's browser displays, whenever the snapshot changes them. */
-export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined, inventory: { device_id: string; path: string; view_id: string; area_id: string }[]): void {
+/** The core's browser displays and positive area authority, whenever the snapshot changes them. */
+export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined, inventory: { device_id: string; path: string; view_id: string; area_id: string }[], scopes: NonNullable<SnapshotRest["browser_scopes"]> = []): void {
   syncLoop()?.setFront(workspace ? { workspace: workspaceKey(workspace), rows: browserDisplays(layout) } : null,
-    inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id, area_id: row.area_id })));
+    inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id, area_id: row.area_id })),
+    scopes.map((row) => ({ workspace: workspaceKey(row), area_id: row.area_id, incarnation: row.incarnation })));
 }
 
 /** One controller mount and connection observer; its owner releases both on unmount. */

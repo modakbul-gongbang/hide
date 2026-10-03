@@ -9,6 +9,8 @@ import type { BrowserCommand, BrowserPlacement, BrowserRect, BrowserSync } from 
 /** A Workspace holds at most this many displays (`MAX_VIEW_DISPLAYS`). */
 export const MAX_SYNCED_DISPLAYS = 64;
 export const MAX_RETAINED_DISPLAYS = 16_384;
+/** Positive areas across at most 256 Workspaces, each with at most six View areas. */
+export const MAX_AUTHORIZED_SCOPES = 1_536;
 /** Live pages at once; a hidden one past this is closed and loads again when shown. */
 export const MAX_LIVE_VIEWS = 12;
 /** Popup windows open at once across every page; a page asking for one more is refused. */
@@ -60,11 +62,25 @@ function rect(value: unknown): BrowserRect | null | undefined {
 /** A sync message, or null when any part of it is out of shape. */
 export function parseSync(value: unknown): BrowserSync | null {
   if (typeof value !== "object" || value === null) return null;
-  const { workspace, displays, retained, attachment_epoch } = value as Record<string, unknown>;
+  const { workspace, displays, retained, attachment_epoch, authorized_scopes } = value as Record<string, unknown>;
   if (attachment_epoch !== undefined && (typeof attachment_epoch !== "string" || attachment_epoch.length === 0 || attachment_epoch.length > 64 || /[^A-Za-z0-9-]/.test(attachment_epoch))) return null;
   if (workspace !== null && !workspaceIdentity(workspace)) return null;
   if (!Array.isArray(displays) || displays.length > MAX_SYNCED_DISPLAYS) return null;
   if (!Array.isArray(retained) || retained.length > MAX_RETAINED_DISPLAYS) return null;
+  const scopes: NonNullable<BrowserSync["authorized_scopes"]> = [];
+  if (authorized_scopes !== undefined) {
+    if (!Array.isArray(authorized_scopes) || authorized_scopes.length > MAX_AUTHORIZED_SCOPES) return null;
+    const scopeKeys = new Set<string>();
+    for (const entry of authorized_scopes as unknown[]) {
+      if (typeof entry !== "object" || entry === null) return null;
+      const { workspace: owner, area_id, incarnation } = entry as Record<string, unknown>;
+      if (!workspaceIdentity(owner) || !identity(area_id) || typeof incarnation !== "number" || !Number.isSafeInteger(incarnation) || incarnation < 0) return null;
+      const key = viewKey(owner, area_id);
+      if (scopeKeys.has(key)) return null;
+      scopeKeys.add(key);
+      scopes.push({ workspace: owner, area_id, incarnation });
+    }
+  }
   const owned: BrowserSync["retained"] = [];
   const ownedAreas = new Map<string, string>();
   for (const entry of retained as unknown[]) {
@@ -89,7 +105,13 @@ export function parseSync(value: unknown): BrowserSync | null {
   }
   if (workspace === null && parsed.length > 0) return null;
   if (workspace && parsed.some((display) => ownedAreas.get(viewKey(workspace, display.id)) !== display.area_id)) return null;
-  return { workspace: workspace as string | null, displays: parsed, retained: owned, ...(attachment_epoch === undefined ? {} : { attachment_epoch }) };
+  return {
+    workspace: workspace as string | null,
+    displays: parsed,
+    retained: owned,
+    ...(attachment_epoch === undefined ? {} : { attachment_epoch }),
+    ...(authorized_scopes === undefined ? {} : { authorized_scopes: scopes }),
+  };
 }
 
 /** A display named by the shell for a still or a command. */

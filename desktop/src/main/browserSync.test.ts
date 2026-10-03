@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appScheme, browserPartition, isPopup, loadable, popupBounds, MAX_SYNCED_DISPLAYS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
+import { appScheme, browserPartition, isPopup, loadable, popupBounds, MAX_AUTHORIZED_SCOPES, MAX_SYNCED_DISPLAYS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
 
 const rect = { x: 0, y: 40, width: 800, height: 600 };
 const display = { id: "d1", area_id: "a1", url: "https://a.test/", load: 3, rect, visible: true };
@@ -51,6 +51,37 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
     for (const attachment_epoch of [null, false, 1, {}, "", "a".repeat(65), "a_b", "a b", "é", "a\n", "a\u0000b", "a\u0001b"]) {
       expect(parseSync({ ...sync, attachment_epoch })).toBeNull();
     }
+  });
+
+  it("accepts explicit area authority independently of browser inventory and manual placement", () => {
+    const authorized_scopes = [
+      { workspace, area_id: "empty-area", incarnation: 0 },
+      { workspace: "local\u0000/other", area_id: "empty-area", incarnation: 1 },
+      { workspace: "ssh\u0000/r", area_id: "empty-area", incarnation: Number.MAX_SAFE_INTEGER },
+    ];
+    const empty = { workspace: null, displays: [], retained: [], authorized_scopes };
+    expect(parseSync(empty)).toEqual(empty);
+    expect(parseSync({ ...sync, authorized_scopes })).toEqual({ ...sync, authorized_scopes });
+    expect(parseSync({ ...sync, authorized_scopes: [] })).toEqual({ ...sync, authorized_scopes: [] });
+    expect(parseSync(sync)).toEqual(sync);
+  });
+
+  it("rejects malformed or duplicate positive Workspace area scopes as a whole", () => {
+    const scope = { workspace, area_id: "a1", incarnation: 1 };
+    const invalid: unknown[] = [null, {}, "a1", [null], [1], [{}], [scope, scope], [scope, { ...scope, incarnation: 2 }]];
+    for (const area_id of [undefined, null, "", 1, "a".repeat(8193), "a\u0000b", "a\u0001b"]) invalid.push([{ ...scope, area_id }]);
+    for (const owner of [undefined, null, "", "w", "\u0000/r", "local\u0000", "local\u0000/r\u0000other", "local\u0000/r\u0001a1", `local\u0000${"r".repeat(8192)}`]) invalid.push([{ ...scope, workspace: owner }]);
+    for (const incarnation of [undefined, null, "1", true, {}, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) invalid.push([{ ...scope, incarnation }]);
+    for (const authorized_scopes of invalid) expect(parseSync({ ...sync, authorized_scopes })).toBeNull();
+    const authorized_scopes = [{ workspace: `local\u0000${"r".repeat(8186)}`, area_id: "a".repeat(8192), incarnation: 1 }];
+    expect(parseSync({ ...sync, authorized_scopes })?.authorized_scopes).toEqual(authorized_scopes);
+  });
+
+  it("bounds positive scopes without dropping or inferring authority", () => {
+    expect(MAX_AUTHORIZED_SCOPES).toBe(1536);
+    const authorized_scopes = Array.from({ length: MAX_AUTHORIZED_SCOPES }, (_, i) => ({ workspace, area_id: `a${i}`, incarnation: i }));
+    expect(parseSync({ ...sync, authorized_scopes })?.authorized_scopes).toEqual(authorized_scopes);
+    expect(parseSync({ ...sync, authorized_scopes: [...authorized_scopes, { workspace, area_id: "one-too-many", incarnation: 1 }] })).toBeNull();
   });
 
   it("matches ownership by the complete Workspace, display and authoritative area", () => {

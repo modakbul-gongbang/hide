@@ -181,11 +181,12 @@ export function BrowserHost({ actions }: { actions: Actions }) {
   const connection = useShellStore((s) => s.connection);
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   const inventory = useShellStore((s) => s.rest?.browser_views);
+  const scopes = useShellStore((s) => s.rest?.browser_scopes);
   const front = view ? workspaceKey({ device_id: view.device_id, path: view.path }) : null;
   const layout = view?.layout ?? null;
   useEffect(() => {
-    syncBrowserFront(front ? parseWorkspaceKey(front) : null, layout, inventory ?? []);
-  }, [front, layout, inventory]);
+    syncBrowserFront(front ? parseWorkspaceKey(front) : null, layout, inventory ?? [], scopes ?? []);
+  }, [front, layout, inventory, scopes]);
   useEffect(() => {
     if (connection !== "live") clearBrowserAttachments();
   }, [connection]);

@@ -7,7 +7,7 @@ import { BrowserHost } from "./BrowserDisplay";
 import { hostKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
 import type { BrowserHostEvent, BrowserSync, HostBridge } from "./host";
 import { TooltipProvider } from "./components/ui/tooltip";
-import type { ViewDisplaySnapshot, ViewLayoutSnapshot } from "./snapshot";
+import type { SnapshotRest, ViewDisplaySnapshot, ViewLayoutSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { workspaceKey } from "./viewLayout";
 import { DisplayTab } from "./ViewAreas";
@@ -88,7 +88,7 @@ beforeEach(() => {
   lastNativeEpoch = undefined;
   act(() => root.render(null));
   act(() => {
-    useShellStore.setState({ connection: "live" });
+    useShellStore.setState({ connection: "live", rest: null, revision: 0 });
     root.render(createElement(BrowserHost, { actions }));
   });
   syncBrowserFront(null, null, []);
@@ -183,10 +183,86 @@ describe("native browser attachment facts", () => {
       workspace: workspaceKey(local),
       displays: [{ id: "d1", area_id: "a1", url: "https://example.test/", load: 1, rect: null, visible: false }],
       retained: inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id, area_id: row.area_id })),
+      authorized_scopes: [],
       attachment_epoch: expect.any(String),
     });
     latestEpoch();
     expect(listeners.size).toBe(1);
+  });
+
+  it("forwards positive empty and hidden area scopes with no front Workspace or browser inventory", () => {
+    const scopes = [local, other, remote].map((workspace) => ({ ...workspace, area_id: "empty-area", incarnation: 0 }));
+    syncBrowserFront(null, null, [], scopes);
+    flush();
+    expect(sent.at(-1)).toMatchObject({
+      workspace: null,
+      displays: [],
+      retained: [],
+      authorized_scopes: [
+        { workspace: "local\u0000/fixture/a", area_id: "empty-area", incarnation: 0 },
+        { workspace: "local\u0000/fixture/b", area_id: "empty-area", incarnation: 0 },
+        { workspace: "ssh\u0000/fixture/a", area_id: "empty-area", incarnation: 0 },
+      ],
+    });
+  });
+
+  it("syncs only core-positive scope changes through snapshot frames without changing the attachment epoch", () => {
+    const scopes = [
+      { ...local, area_id: "empty-area", incarnation: 5 },
+      { ...other, area_id: "a1", incarnation: 6 },
+      { ...remote, area_id: "a1", incarnation: 7 },
+    ];
+    const rest = { workspace_view: { ...local, panel: "open", layout }, browser_views: inventory, browser_scopes: scopes } as SnapshotRest;
+    act(() => useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest } }));
+    flush();
+    expect(sent.at(-1)?.authorized_scopes).toEqual([
+      { workspace: "local\u0000/fixture/a", area_id: "empty-area", incarnation: 5 },
+      { workspace: "local\u0000/fixture/b", area_id: "a1", incarnation: 6 },
+      { workspace: "ssh\u0000/fixture/a", area_id: "a1", incarnation: 7 },
+    ]);
+    // The visible/inventory area a1 is deliberately absent from local's positive authority.
+    const epoch = latestEpoch();
+    const displays = sent.at(-1)?.displays;
+    const retained = sent.at(-1)?.retained;
+    const count = sent.length;
+    act(() => useShellStore.getState().applyFrame({ type: "delta", payload: { revision: 2, rest: structuredClone(rest) } }));
+    flush();
+    expect(sent).toHaveLength(count);
+    act(() => useShellStore.getState().applyFrame({ type: "delta", payload: { revision: 3, rest: { ...rest, browser_scopes: [scopes[0]!] } } }));
+    flush();
+    expect(sent).toHaveLength(count + 1);
+    expect(sent.at(-1)?.authorized_scopes).toEqual([{ workspace: "local\u0000/fixture/a", area_id: "empty-area", incarnation: 5 }]);
+    expect(sent.at(-1)?.displays).toEqual(displays);
+    expect(sent.at(-1)?.retained).toEqual(retained);
+    expect(latestEpoch()).toBe(epoch);
+    expect(listeners.size).toBe(1);
+    // Revoke/regrant may be coalesced by the core: the same area identity must send its new incarnation.
+    act(() => useShellStore.getState().applyFrame({ type: "delta", payload: { revision: 4, rest: { ...rest, browser_scopes: [{ ...scopes[0]!, incarnation: 8 }] } } }));
+    flush();
+    expect(sent).toHaveLength(count + 2);
+    expect(sent.at(-1)?.authorized_scopes).toEqual([{ workspace: "local\u0000/fixture/a", area_id: "empty-area", incarnation: 8 }]);
+    expect(sent.at(-1)?.displays).toEqual(displays);
+    expect(sent.at(-1)?.retained).toEqual(retained);
+    expect(latestEpoch()).toBe(epoch);
+  });
+
+  it("grants no area authority when core scopes are missing or removed while manual placement remains", () => {
+    const manual: SnapshotRest = { workspace_view: { ...local, panel: "open", layout } as SnapshotRest["workspace_view"], browser_views: inventory };
+    const scopes = [{ ...local, area_id: "empty-area", incarnation: 5 }];
+    act(() => useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest: { ...manual, browser_scopes: scopes } } }));
+    flush();
+    expect(sent.at(-1)?.authorized_scopes).toEqual([{ workspace: "local\u0000/fixture/a", area_id: "empty-area", incarnation: 5 }]);
+    act(() => useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 2, rest: manual } }));
+    flush();
+    expect(sent.at(-1)?.authorized_scopes).toEqual([]);
+    expect(sent.at(-1)?.workspace).toBe("local\u0000/fixture/a");
+    expect(sent.at(-1)?.displays).toEqual([{ id: "d1", area_id: "a1", url: "https://example.test/", load: 1, rect: null, visible: false }]);
+    expect(sent.at(-1)?.retained).toHaveLength(inventory.length);
+    act(() => useShellStore.getState().applyFrame({ type: "delta", payload: { revision: 3, rest: { ...manual, browser_scopes: scopes } } }));
+    flush();
+    act(() => useShellStore.getState().applyFrame({ type: "delta", payload: { revision: 4, rest: { ...manual, browser_scopes: [] } } }));
+    flush();
+    expect(sent.at(-1)?.authorized_scopes).toEqual([]);
   });
 
   it("shows the existing badge only on the attached browser's own Workspace tab", () => {

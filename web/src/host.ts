@@ -41,6 +41,8 @@ export type BrowserSync = {
   retained: { workspace: string; id: string; area_id: string }[];
   /** Changes on controller mount or reconnect so the host replays actual attachment facts once. */
   attachment_epoch?: string;
+  /** Positive core area authority, including empty areas; absent grants no debugger access. Incarnation changes on revoke/regrant. */
+  authorized_scopes?: { workspace: string; area_id: string; incarnation: number }[];
 };
 
 export type BrowserCommand = "back" | "forward" | "reload" | "stop" | "focus";
