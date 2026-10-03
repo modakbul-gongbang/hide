@@ -23,8 +23,8 @@ function isolated(t, extra = {}) {
   fs.mkdirSync(home);
   const env = { ...process.env, HOME: home, HCOORD_HOME: data, PATH: launchctl.env.PATH, LAUNCHCTL_FAKE_LOG: launchctl.log, LAUNCHCTL_FAKE_STATE: launchctl.stateFile, ...extra };
   delete env.HERDR_SOCKET_PATH;
-  const start = () => spawnSync(process.execPath, [CLI, "daemon", "start", "--json"], { env, encoding: "utf8" });
-  return { home, data, launchctl, start };
+  const daemon = (action) => spawnSync(process.execPath, [CLI, "daemon", action, "--json"], { env, encoding: "utf8", timeout: 45_000 });
+  return { home, data, launchctl, start: () => daemon("start"), daemon, env };
 }
 
 test("daemon start after a manual stop kickstarts the still-loaded label instead of failing its bootstrap", MACOS_ONLY, (t) => {
@@ -40,6 +40,25 @@ test("daemon start after a manual stop kickstarts the still-loaded label instead
   assert.deepEqual(asked.filter((verb) => verb === "bootstrap").length, 1, "a loaded label is never bootstrapped a second time");
   assert.equal(launchctl.state().kicked, 2, "each start asks launchd to run the loaded label");
   assert.equal(fs.existsSync(path.join(data, "manual-stop")), false, "start clears the manual stop");
+});
+
+test("daemon uninstall unloads only its own label, removes its plist, and preserves conversation data", MACOS_ONLY, (t) => {
+  const { data, launchctl, start, daemon } = isolated(t, { LAUNCHCTL_FAKE_BOOTOUT_SETTLE_PRINTS: "3" });
+  const started = start();
+  assert.equal(started.status, 0, started.stdout + started.stderr);
+  const { label, path: plist } = JSON.parse(started.stdout).value;
+  const ledger = path.join(data, "ledger.json");
+  fs.writeFileSync(ledger, "conversation kept\n");
+  fs.writeFileSync(path.join(data, "manual-stop"), "stopped\n");
+  fs.writeFileSync(launchctl.stateFile, JSON.stringify({ loaded: { [label]: plist, "com.hcoord.daemon": "/operator/service.plist" } }));
+  const removed = daemon("uninstall");
+  assert.equal(removed.status, 0, removed.stdout + removed.stderr);
+  assert.equal(JSON.parse(removed.stdout).value.label, label);
+  assert.deepEqual(launchctl.state().loaded, { "com.hcoord.daemon": "/operator/service.plist" });
+  assert.equal(fs.existsSync(plist), false);
+  assert.equal(fs.readFileSync(ledger, "utf8"), "conversation kept\n");
+  assert.equal(daemon("uninstall").status, 0, "removal is idempotent when the daemon is already down");
+  assert.equal(launchctl.argv().filter(([verb]) => verb === "bootout").length, 1);
 });
 
 test("daemon start that reloads a changed plist waits for the bootout to settle before bootstrapping", MACOS_ONLY, (t) => {

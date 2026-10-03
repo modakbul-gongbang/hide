@@ -33,10 +33,15 @@ A Codex session in `workspace-write` needs `~/.hide/hcoord` in `writable_roots` 
 hcoord daemon start
 hcoord daemon status --json
 hcoord daemon stop
+hcoord daemon uninstall
 ```
 
 `start` clears a manual-stop marker.
 `stop` records that choice, and a later hide launch leaves the daemon stopped until `start` is run.
+`stop` leaves its LaunchAgent loaded so a later `start` can kickstart it.
+`uninstall` stops and unloads this home's exact LaunchAgent, confirms that launchd has released it, and removes only its plist.
+It works even when the daemon is already stopped, preserves the ledger and outbox, and keeps a manual-stop marker so a kit pass does not undo the removal.
+If launchctl cannot confirm removal, the command fails and leaves the plist and home available for recovery.
 The LaunchAgent starts at login and restarts an unexpected exit, while the ledger and outbox survive executable upgrades.
 
 Every write command saves a letter in `${HCOORD_HOME:-~/.hide/hcoord}/outbox` first.
@@ -45,12 +50,15 @@ An unexpected exception keeps its errno code and message in the `hcoord.command_
 A watch check an observer never closes is sent to the observer, reminded once and escalated to the human once, then left alone.
 A watch whose target and observer have both been unreachable for an hour is stopped by the daemon (`watch.orphaned` event) and can be restarted or reassigned by a human.
 
-After deleting hide.app, remove the default login service explicitly:
+Before deleting hide.app, remove its login service through the installed CLI:
 
 ```sh
-launchctl bootout "gui/$(id -u)/com.hcoord.daemon" 2>/dev/null || true
-rm -f "$HOME/Library/LaunchAgents/com.hcoord.daemon.plist"
+hcoord daemon uninstall --json
 ```
+
+For an isolated installation, pass the same `HOME` and `HCOORD_HOME` used to start it to `daemon uninstall` before removing that home.
+This removes the per-home hashed label and leaves the account's default service untouched.
+If hide.app was already deleted, run `node plugins/hcoord/dist/hcoord/cli.js daemon uninstall --json` from a built checkout with those same home variables.
 
 ## Delegate from a Herdr pane
 
