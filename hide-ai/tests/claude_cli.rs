@@ -142,6 +142,30 @@ fn the_child_receives_the_system_prompt_and_the_emptied_tool_and_setting_sources
     });
 }
 
+/// Print mode thinks by default, which made a short JSON answer take tens of
+/// seconds; a model turn always runs with thinking off, even when the
+/// operator's shell exports a budget of its own.
+#[test]
+fn a_model_turn_runs_with_thinking_off_whatever_the_shell_exports() {
+    with_mode("ok", || {
+        let thinking_file = scratch("claude-thinking");
+        unsafe {
+            std::env::set_var("FAKE_THINKING_FILE", &thinking_file);
+            std::env::set_var("MAX_THINKING_TOKENS", "31999");
+        }
+        let result = backend().execute(&request(Duration::from_secs(30)), &CancelToken::new());
+        unsafe {
+            std::env::remove_var("FAKE_THINKING_FILE");
+            std::env::remove_var("MAX_THINKING_TOKENS");
+        }
+        let received = std::fs::read_to_string(&thinking_file).unwrap();
+        let _ = std::fs::remove_file(&thinking_file);
+
+        result.unwrap();
+        assert_eq!(received, "0");
+    });
+}
+
 /// `result` carries the same JSON the schema bound, and it is still not the
 /// answer: without `structured_output` nothing validated the shape.
 #[test]

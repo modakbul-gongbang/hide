@@ -10,7 +10,9 @@ FAKE_MODE selects the frame: ok (default), no_structured_output,
 null_structured_output, api_401, api_403, api_429, api_500, api_400,
 structured_output_retries, context_limit, no_result_frame, init_frame_only,
 slow, no_account, auth_broken, auth_without_field.
-FAKE_ARGS_FILE records the argument vector, FAKE_STDIN_FILE the prompt body.
+FAKE_ARGS_FILE records the argument vector, FAKE_STDIN_FILE the prompt body,
+FAKE_THINKING_FILE the MAX_THINKING_TOKENS value the child received ("unset"
+when it had none).
 
 A `/usage` run receives a whitelisted environment, so it reads no FAKE_*
 variable. It takes its mode from a `usage-mode` file in its working directory
@@ -29,6 +31,10 @@ ARGS = sys.argv[1:]
 if path := os.environ.get("FAKE_ARGS_FILE"):
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(ARGS, handle)
+
+if path := os.environ.get("FAKE_THINKING_FILE"):
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(os.environ.get("MAX_THINKING_TOKENS", "unset"))
 
 
 def emit(obj, code=0):

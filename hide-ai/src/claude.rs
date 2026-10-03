@@ -42,9 +42,24 @@ use crate::{
     ProviderId,
 };
 
-/// The user's decision for background features: the cheapest alias that
-/// answered the measured classification correctly.
-pub const DEFAULT_MODEL: &str = "haiku";
+/// The default for background features. With thinking off (see
+/// [`THINKING_OFF`]) sonnet answered the label prompt in 3.6 to 7 s with about
+/// 165 output tokens and followed its rules best of the aliases measured;
+/// haiku without thinking was as fast but broke the rules, and haiku with
+/// thinking took 56 to 81 s. Measured 2026-10-02 on claude 2.1.287.
+pub const DEFAULT_MODEL: &str = "sonnet";
+
+/// The variable and value that turn thinking off for a model turn.
+///
+/// Print mode thinks by default, and a background answer is a short JSON
+/// object: on 2026-10-02 the context label spent a median 2,656 output tokens
+/// (at most 9,425) to return about 100, which put its median at 28 s and 17%
+/// of requests past their 60 s deadline. There is no flag for it:
+/// `--settings '{"alwaysThinkingEnabled":false}'` left the thinking in place,
+/// and this variable removed it. It is set on the child whatever the
+/// operator's environment says, so a budget exported in their shell cannot
+/// bring the latency back.
+pub const THINKING_OFF: (&str, &str) = ("MAX_THINKING_TOKENS", "0");
 
 /// The aliases `--model` accepts, cheapest first.
 ///
@@ -118,21 +133,30 @@ pub enum UsageError {
 /// What a child inherits from this process.
 #[derive(Clone, Copy)]
 enum ChildEnvironment {
-    /// The process environment as is; a model turn needs whatever the
+    /// The process environment as is; the login probe needs whatever the
     /// operator's shell gave the app.
     Inherit,
+    /// The process environment with [`THINKING_OFF`] set: a model turn needs
+    /// the same login and `PATH`, and never a thinking budget.
+    ModelTurn,
     /// Exactly these variables, each copied from this process when set.
     Only(&'static [&'static str]),
 }
 
 impl ChildEnvironment {
     fn apply(self, command: &mut Command) {
-        if let Self::Only(keys) = self {
-            let kept = keys
-                .iter()
-                .filter_map(|key| std::env::var_os(key).map(|value| (*key, value)))
-                .collect::<BTreeMap<&str, OsString>>();
-            command.env_clear().envs(kept);
+        match self {
+            Self::Inherit => {}
+            Self::ModelTurn => {
+                command.env(THINKING_OFF.0, THINKING_OFF.1);
+            }
+            Self::Only(keys) => {
+                let kept = keys
+                    .iter()
+                    .filter_map(|key| std::env::var_os(key).map(|value| (*key, value)))
+                    .collect::<BTreeMap<&str, OsString>>();
+                command.env_clear().envs(kept);
+            }
         }
     }
 }
@@ -314,7 +338,7 @@ impl AiBackend for ClaudeCliBackend {
             &Self::print_arguments(&self.config.model, &request.system, &request.output_schema),
             &self.config.cwd,
             Some(&request.input),
-            ChildEnvironment::Inherit,
+            ChildEnvironment::ModelTurn,
             request.deadline,
             cancel,
         )

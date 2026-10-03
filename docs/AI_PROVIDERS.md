@@ -35,7 +35,7 @@ Logs retain request, feature, provider, Project/session subject IDs, counts, dur
 
 The user's installed and logged-in CLIs are the only credentials for background AI requests.
 The background AI boundary reads no token file: the codex backend references the user's `auth.json` only through a symlink in the private `CODEX_HOME` it sets (see the codex bullet below), and never opens the file itself.
-The one environment variable it sets is that `CODEX_HOME`, pointing the app-server at the private directory; it adds none for claude.
+It sets two environment variables: that `CODEX_HOME`, pointing the app-server at the private directory, and `MAX_THINKING_TOKENS=0` on a claude model turn (see the claude bullet).
 `hide-ai` is also the only code that starts a `claude` or `codex` child: the Weekly Usage reader below asks the same `ClaudeCliBackend` for its `/usage` text rather than running the CLI itself.
 
 - `codex`: `codex app-server --listen stdio://`, the official JSON-RPC surface of the Codex CLI, driven with an ephemeral read-only thread, the feature's system prompt as the base instructions, every optional feature disabled, and the feature's output schema attached to the turn.
@@ -60,7 +60,7 @@ The one environment variable it sets is that `CODEX_HOME`, pointing the app-serv
 - `claude`: `claude -p --output-format json`, print mode, one child process per request.
   Print mode is Claude Code's only official structured-output surface; there is no `app-server` equivalent in `claude --help`.
   It was excluded by decision until 2026-09-10, when that exclusion was withdrawn; terminal scraping and token reuse remain excluded, and the background AI boundary reads no credential file.
-  The default model is `haiku`.
+  The default model is `sonnet`.
   Availability is read from `claude auth status --json`: `loggedIn` decides `Ready` against `NeedsLogin`, a binary that is not on `PATH` is `NotInstalled`, and a probe that answers nothing readable is `Unavailable` rather than either guess.
   The answer is the result frame's `structured_output`, the field the CLI validated against the feature's `--json-schema`; the `result` string is never parsed, because without a schema print mode returns the object inside a fenced code block and reading that back would accept an unvalidated shape.
   The prompt body travels on stdin, so no transcript reaches an argument vector or a process listing.
@@ -69,6 +69,11 @@ The one environment variable it sets is that `CODEX_HOME`, pointing the app-serv
   Measured on claude 2.1.267, a bare `claude -p` carries the whole agent harness into the system prompt, 32,903 cached input tokens, and answers the wrong question: it reviews the transcript instead of classifying it.
   Adding `--system-prompt` with `--tools ''` and `--setting-sources ''` takes the same request to 1,188 input tokens and returns a schema-validated answer.
   Dropping any of those three is not a cost regression, it is a wrong answer, so `hide-ai/tests/claude_cli.rs` asserts the vector the child actually received.
+
+  A model turn runs with thinking off: the child gets `MAX_THINKING_TOKENS=0` whatever the operator's environment says, and the same test file asserts the value the child received.
+  Print mode thinks by default, and a background answer is a short JSON object; on 2026-10-02 the context label spent a median 2,656 output tokens (at most 9,425) to return about 100, which put its median at 28 seconds and 43 of 252 requests past the 60-second deadline.
+  No flag turns it off: `--settings '{"alwaysThinkingEnabled":false}'` left the thinking in place, and the variable removed it.
+  Measured on claude 2.1.287 with the same label-style prompt, haiku with thinking answered in 56 to 81 seconds, haiku without it in 5 to 8 seconds but broke the prompt's rules (step verbs, listed items), and sonnet without it in 3.6 to 7 seconds with about 165 output tokens and the best answers, which is why `sonnet` is the default.
   The rest of the vector keeps the turn from reaching anything else or outliving itself: `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence`, `--permission-prompts none`.
   `--bare` cannot be used: it reads `ANTHROPIC_API_KEY` only and never the OAuth keychain, so it is incompatible with the subscription login that is the user's own credential.
 
@@ -90,11 +95,12 @@ The file names a provider and a model per provider:
 ```json
 {
   "provider": "codex",
-  "models": { "codex": "gpt-5.6-luna", "claude": "haiku" }
+  "models": { "codex": "gpt-5.6-luna", "claude": "sonnet" }
 }
 ```
 
-The defaults are the backends' own constants: `codex` with `gpt-5.6-luna`, `claude` with `haiku`.
+The defaults are the backends' own constants: `codex` with `gpt-5.6-luna`, `claude` with `sonnet`.
+A file Hide wrote before this default changed names `haiku` for claude like any other choice, so it keeps haiku until the operator picks a model in Settings.
 A file that is not there means nobody has chosen, so the defaults stand and nothing is reported.
 A field that is missing takes its default and a field the crate does not know is ignored, so an older Hide reads a file a newer one wrote.
 A file that exists and cannot be read is never taken as the defaults in silence: Hide states the reason on the Settings group and writes an `ai_settings` `settings.unreadable` record to its diagnostic log, and only then do the defaults apply.
