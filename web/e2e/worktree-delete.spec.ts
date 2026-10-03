@@ -160,9 +160,6 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
     await page.locator('[data-sidebar-mode="projects"]').click();
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
-    const inactive = project.locator(`[data-inactive-checkouts="${fs.realpathSync(fixture.repo)}"][aria-expanded="false"]`);
-    await expect(inactive).toBeVisible({ timeout: 30_000 });
-    await inactive.click();
     await expect(feature).toBeVisible({ timeout: 30_000 });
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
     await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
