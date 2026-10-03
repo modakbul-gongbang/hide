@@ -12,7 +12,7 @@ import type { BrowserSync } from "../../web/src/host";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { BROWSER_SYNC_CHANNEL } from "../src/channel";
-import { fitWindow, HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
+import { fitWindow, HIDE_CLI, hostLog, isolate, launch, REPO, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 180_000 });
 let herdr: HerdrFixture;
@@ -210,20 +210,61 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
   await page.getByRole("textbox", { name: "Name" }).fill("한글 scoped input");
   await page.getByRole("button", { name: "Apply" }).click();
   await expect(page.locator("output")).toHaveText("한글 scoped input");
-  await page.evaluate((url) => {
-    const frame = document.createElement("iframe");
-    frame.id = "cross-site";
-    frame.src = url;
-    document.body.append(frame);
-  }, `${origin.replace("127.0.0.1", "localhost")}/cross-site`);
-  const frame = page.frameLocator("#cross-site");
-  await frame.getByRole("textbox", { name: "Name" }).fill("descendant input");
-  await frame.getByRole("button", { name: "Apply" }).click();
-  await expect(frame.locator("output")).toHaveText("descendant input");
   const cdp = await context.newCDPSession(page);
-  await expect(cdp.send("Browser.close")).rejects.toThrow();
-  await expect(browser.newContext()).rejects.toThrow();
-  await cdp.detach();
+  const childUrl = `${origin.replace("127.0.0.1", "localhost")}/cross-site`;
+  const childEvents: { type: string; url: string; sessionObserved: boolean; targetObserved: boolean }[] = [];
+  let overflow = false;
+  const attached = (event: { sessionId: string; targetInfo: { type: string; url: string; targetId: string } }) => {
+    if (event.targetInfo.type !== "iframe") return;
+    if (childEvents.length === 8) { overflow = true; return; }
+    childEvents.push({ type: event.targetInfo.type, url: event.targetInfo.url, sessionObserved: typeof event.sessionId === "string" && event.sessionId.length > 0, targetObserved: /^iframe-/.test(event.targetInfo.targetId) });
+  };
+  cdp.on("Target.attachedToTarget", attached);
+  try {
+    await cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+    await page.evaluate((url) => {
+      const frame = document.createElement("iframe");
+      frame.id = "cross-site";
+      frame.src = url;
+      document.body.append(frame);
+    }, childUrl);
+    const frame = page.frameLocator("#cross-site");
+    await frame.getByRole("textbox", { name: "Name" }).fill("descendant input");
+    await frame.getByRole("button", { name: "Apply" }).click();
+    await expect(frame.locator("output")).toHaveText("descendant input");
+    // Cross-site interaction alone can succeed in one renderer. Attest the
+    // actual frame tree of this exact candidate WebContents before claiming
+    // an OOPIF, without adding site-isolation flags or touching another app.
+    const provenance = await app.evaluate(({ BrowserWindow }, { parentUrl, childUrl }) => {
+      const windows = BrowserWindow.getAllWindows().filter((window) => window.getParentWindow() === null);
+      if (windows.length !== 1) throw new Error("Expected exactly one candidate main window");
+      const contents = windows[0]!.contentView.children.flatMap((view) => {
+        const page = (view as { webContents?: Electron.WebContents }).webContents;
+        return page?.getURL() === parentUrl ? [page] : [];
+      });
+      if (contents.length !== 1) throw new Error("Expected exactly one owned fixture WebContents");
+      const parent = contents[0]!.mainFrame;
+      const children = parent.framesInSubtree.filter((frame) => !frame.isDestroyed() && frame.url === childUrl);
+      if (children.length !== 1 || !children[0]!.parent) throw new Error("Expected exactly one owned cross-site child frame");
+      const identity = (frame: Electron.WebFrameMain) => ({ processId: frame.processId, routingId: frame.routingId, osProcessId: frame.osProcessId });
+      return { contentsId: contents[0]!.id, parent: identity(parent), child: identity(children[0]!), childParent: identity(children[0]!.parent!) };
+    }, { parentUrl: `${origin}/fixture`, childUrl });
+    const evidenceDir = path.join(REPO, "agents", "runs", "browser-control");
+    fs.mkdirSync(evidenceDir, { recursive: true });
+    const record = () => fs.writeFileSync(path.join(evidenceDir, "oopif-renderer-provenance.json"), JSON.stringify({ candidatePid: app!.process().pid, ...provenance, childEvents, overflow }, null, 2));
+    record();
+    expect(provenance.childParent).toEqual(provenance.parent);
+    expect(provenance.child.processId, "Electron default used one renderer; this run cannot prove OOPIF isolation").not.toBe(provenance.parent.processId);
+    expect(provenance.child.osProcessId).not.toBe(provenance.parent.osProcessId);
+    await expect.poll(() => childEvents.some((event) => event.url === childUrl && event.sessionObserved && event.targetObserved), { timeout: 10_000 }).toBe(true);
+    expect(overflow, "Scoped iframe event witness exceeded its eight-event cap").toBe(false);
+    record();
+    await expect(cdp.send("Browser.close")).rejects.toThrow();
+    await expect(browser.newContext()).rejects.toThrow();
+  } finally {
+    cdp.off("Target.attachedToTarget", attached);
+    await cdp.detach();
+  }
   const candidate = await app.evaluate(({ BrowserWindow }) => {
     const windows = BrowserWindow.getAllWindows().filter((window) => window.getParentWindow() === null);
     if (windows.length !== 1) throw new Error("The candidate must have one main window");
@@ -473,6 +514,13 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   const beforeNavigation = navigationRefusals().length;
   await cdp.send("Runtime.evaluate", { expression: `location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
   await expect.poll(() => navigationRefusals().length).toBeGreaterThan(beforeNavigation);
+  await cdp.send("Runtime.evaluate", { expression: `for(let attempt=0;attempt<20;attempt++) location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
+  expect(navigationRefusals()).toHaveLength(1);
+  await cdp.send("Runtime.evaluate", { expression: `for(let attempt=0;attempt<20;attempt++) window.open(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
+  const popupRefusals = hostLog(run.env).filter((line) => line.event === "browser.window_open_refused" && line.reason === "cdp_file_boundary" && line.display_id === displayId);
+  // Chromium may reject a popup before Electron receives it. When the
+  // native handler does run, repeated attempts still emit at most once.
+  expect(popupRefusals.length).toBeLessThanOrEqual(1);
   await expect(page.getByRole("heading")).toHaveText("Scoped browser fixture");
   const resource = await cdp.send("Runtime.evaluate", { expression: `fetch(String.fromCharCode(...${JSON.stringify(encoded)})).then(r => r.text()).then(() => 'read', () => 'blocked')`, awaitPromise: true, returnByValue: true });
   expect(resource.result.value).toBe("blocked");
@@ -513,11 +561,81 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   const again = await fromPane(["browser", "connect", "--display", displayId]);
   try { browser = await chromium.connectOverCDP((again.result as { browser_ws_url: string }).browser_ws_url, { noDefaults: true, timeout: 20_000 }); }
   catch { throw new Error("The scoped Playwright reconnection could not initialize"); }
-  const protectedPage = browser.contexts()[0]!.pages()[0]!;
-  await protectedPage.goto(`${origin}/file-redirect`).catch(() => undefined);
+  await expect(browser.contexts()[0]!.pages()[0]!.getByRole("heading")).toHaveText("Scoped browser fixture");
+  await browser.close();
+  browser = null;
+  // The first-refusal categories are already spent above. A fresh native
+  // generation provides a causal redirect witness without resetting them.
+  const redirectOpened = await fromPane(["browser", "open", `${origin}/redirect-guard`, "--reveal", "--wait"]);
+  const redirectId = (redirectOpened.result as { view_id: string }).view_id;
+  const redirectCapability = (await fromPane(["browser", "connect", "--display", redirectId])).result as Capability;
+  try { browser = await chromium.connectOverCDP(redirectCapability.browser_ws_url, { noDefaults: true, timeout: 20_000 }); }
+  catch { throw new Error("The scoped redirect proof connection could not initialize"); }
+  const nativeRefusals = () => hostLog(run.env).filter((line) => ["browser.navigation_refused", "browser.request_refused"].includes(line.event as string) && line.reason === "cdp_file_boundary" && line.display_id === redirectId).length;
+  expect(nativeRefusals()).toBe(0);
+  await browser.contexts()[0]!.pages()[0]!.goto(`${origin}/file-redirect`).catch(() => undefined);
+  await expect.poll(nativeRefusals).toBeGreaterThan(0);
   const urls = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
     const contents = (view as { webContents?: Electron.WebContents }).webContents;
     return contents ? contents.mainFrame.framesInSubtree.map((frame) => frame.url) : [];
   }));
   expect(urls).not.toContain(fileUrl);
+});
+
+test("browser CDP: the owned native iframe request is causally canceled before file content", async () => {
+  const launched = await launch(run.env);
+  app = launched.app;
+  await enterWorkspace(launched.page, "fixture");
+  const url = `${origin}/frame-guard`;
+  const opened = await fromPane(["browser", "open", url, "--reveal", "--wait"]);
+  const displayId = (opened.result as { view_id: string }).view_id;
+  const capability = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
+  const refusals = () => hostLog(run.env).filter((line) => line.event === "browser.request_refused" && line.reason === "cdp_file_boundary" && line.display_id === displayId && line.resource_type === "subFrame");
+  await withCdp(capability.browser_ws_url, async (send) => {
+    const inventory = await targets(capability);
+    const attached = await send("Target.attachToTarget", { targetId: inventory[0]!.id, flatten: true });
+    expect(attached.error).toBeUndefined();
+    const sessionId = attached.result!.sessionId as string;
+    expect((await send("Runtime.evaluate", { expression: "const frame=document.createElement('iframe'); frame.srcdoc='<h1>Owned frame</h1>'; document.body.append(frame); 'created'", returnByValue: true }, sessionId)).error).toBeUndefined();
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }, address) => {
+      const contents = BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
+        const page = (view as { webContents?: Electron.WebContents }).webContents;
+        return page?.getURL() === address ? [page] : [];
+      })[0];
+      return contents?.mainFrame.framesInSubtree.some((frame) => frame.url === "about:srcdoc");
+    }, url)).toBe(true);
+    expect(refusals()).toHaveLength(0);
+    // Public CDP refuses file Page.navigate. This deliberate app-owned
+    // native command bypasses that protocol refusal only inside the private
+    // candidate, to exercise the independent subframe request guard.
+    const result = await app!.evaluate(async ({ BrowserWindow }, { address, canary }) => {
+      const contents = BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
+        const page = (view as { webContents?: Electron.WebContents }).webContents;
+        return page?.getURL() === address ? [page] : [];
+      })[0];
+      if (!contents || !contents.debugger.isAttached()) throw new Error("Expected the owned native debugger lease");
+      const command = async (method: string, params: Record<string, unknown> = {}) => {
+        let timer: NodeJS.Timeout | undefined;
+        try {
+          return await Promise.race([contents.debugger.sendCommand(method, params), new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("Owned native frame command timed out")), 10_000);
+          })]);
+        } finally { clearTimeout(timer); }
+      };
+      const tree = await command("Page.getFrameTree") as { frameTree: { childFrames?: { frame: { id: string; url: string } }[] } };
+      const frame = tree.frameTree.childFrames?.find((child) => child.frame.url === "about:srcdoc");
+      if (!frame) throw new Error("Expected an attested child of the owned page");
+      try { await command("Page.navigate", { frameId: frame.frame.id, url: canary }); }
+      catch { /* Cancellation may reject the native command before its reply. */ }
+      const bodies: string[] = [];
+      for (const child of contents.mainFrame.framesInSubtree) {
+        if (child.isDestroyed()) continue;
+        bodies.push(await child.executeJavaScript("document.body?.innerText ?? ''") as string);
+      }
+      return { bodies };
+    }, { address: url, canary: fileUrl });
+    await expect.poll(() => refusals().length).toBe(1);
+    expect(result.bodies.join("\n")).not.toContain("FORBIDDEN_CDP_FILE_CONTENT");
+    expect(refusals()[0]).not.toHaveProperty("url");
+  });
 });
