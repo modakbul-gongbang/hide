@@ -17,7 +17,7 @@ function world(): SnapshotRest {
   const checkout = { id: "c", workspace_id: "w", path: "/fixture", label: "fixture", tabs, active_tab_id: "t1", strip: [] };
   return {
     navigator: { focused_device_id: "local", focused_checkout_id: "c", focused_workspace_id: "w", devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }], workspaces: [{ id: "w", label: "fixture", device_id: "local", checkouts: [checkout, { ...checkout, id: "other", path: "/other", tabs: [{ ...tabs[0], id: "other-tab" }] }] }] },
-    workspace_view: { device_id: "local", path: "/fixture", panel: "open", layout: { root: { area: { id: "a1", active: "d1", displays: ["d1", "d2"].map((id) => ({ id, kind: "browser", label: id, url: "about:blank", state: "open", tab_id: null })) } }, active_area: "a1", display_count: 2, limits }, agent_layout: { root: { split: { id: "s1", axis: "row", ratio: 0.5, first: { area: { id: "a1", active: "t1", displays: ["t1", "t2", "t3"].map((id) => ({ id })) } }, second: { area: { id: "a2", active: "outside", displays: [{ id: "outside" }] } } } }, active_area: "a1", canvases: {}, display_count: 4, limits } },
+    workspace_view: { device_id: "local", path: "/fixture", views: true, layout: { root: { area: { id: "a1", active: "d1", displays: ["d1", "d2"].map((id) => ({ id, kind: "browser", label: id, url: "about:blank", state: "open", tab_id: null })) } }, active_area: "a1", display_count: 2, limits }, agent_layout: { root: { split: { id: "s1", axis: "row", ratio: 0.5, first: { area: { id: "a1", active: "t1", displays: ["t1", "t2", "t3"].map((id) => ({ id })) } }, second: { area: { id: "a2", active: "outside", displays: [{ id: "outside" }] } } } }, active_area: "a1", canvases: {}, display_count: 4, limits } },
   } as unknown as SnapshotRest;
 }
 function draw(rest: SnapshotRest) {
@@ -79,7 +79,7 @@ describe("focused-area recent tabs", () => {
     expect(areaCycle(rest, owner)).toBeNull();
     expect(agentCycle(rest, owner)).toBeNull();
     useUiStore.setState({ screen: { kind: "workspace" } });
-    rest.workspace_view!.panel = "closed";
+    rest.workspace_view!.views = false;
     expect(areaCycle(rest, { kind: "view", workspace: "c", areaId: "a1" })).toBeNull();
     rest.workspace_view!.agent_layout!.canvases.a1 = "outside";
     expect(focusedCycleScope(rest, { kind: "pane", workspace: "c", paneId: "outside-pane" })?.areaId).toBe("a2");

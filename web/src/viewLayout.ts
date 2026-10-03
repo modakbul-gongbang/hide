@@ -294,32 +294,3 @@ export function focusRequestArrived(request: ViewFocusRequest, workspace: string
  * within the core's range and, when the areas are drawn, both sides'
  * minimums; or why it cannot move that way.
  */
-// --- narrow panels -----------------------------------------------------------
-
-/**
- * How the Workspace tools stand (B12, D-08): the `column` beside the View
- * areas while the side panel has room for it; in a narrower panel an overlay
- * that is `closed` until the operator asks for a tool and `open` until they
- * dismiss it, so it never opens by itself.
- */
-export type ToolsPlacement = "column" | "closed" | "open";
-
-/**
- * Where the tools stand once the window is narrow or not: the column comes
- * back whenever there is room for it, and a window turning narrow closes it
- * into an overlay rather than floating the tools over the work by itself.
- */
-export function placementForWidth(current: ToolsPlacement, narrow: boolean): ToolsPlacement {
-  if (!narrow) return "column";
-  return current === "column" ? "closed" : current;
-}
-
-/**
- * The tool a Workspace shows now: the one the core stores while its side
- * panel shows the tool column, except that a narrow panel's overlay shows it
- * only while the operator has it open. The stored tool never changes for it,
- * so widening brings the column back.
- */
-export function shownTool<T extends string>(stored: { tool: T; tools: boolean; panel: string }, placement: ToolsPlacement): T | null {
-  return stored.panel !== "closed" && stored.tools && placement !== "closed" ? stored.tool : null;
-}

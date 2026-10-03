@@ -24,7 +24,7 @@ export function ServerSessionScene({ scene: kind, theme, scale, content }: Scene
     scene.agents = scene.agents.filter((row) => row.pane_id === pane.id);
     scene.rest.navigator!.focused_workspace_id = workspace.id;
     scene.rest.navigator!.focused_checkout_id = checkout.id;
-    scene.rest.workspace_view = {device_id:"local",path:checkout.path,panel:"closed",pinned:false,tool:"explorer",tools:false,views_over_share:0.5,tools_share:null,covered:false};
+    scene.rest.workspace_view = {device_id:"local",path:checkout.path,views:false,tools:false,tool:"explorer",views_width:null,tools_width:null};
     scene.rest.status = {...scene.rest.status,server_discovery:{loading:false,failure:null}};
     const row = {id:"conversation",provider:"codex",provider_label:"Codex",locator:"/work/history/conversation.jsonl",checkout_path:checkout.path,first_human_request:"배포 스크립트 정리",started_at_unix_ms:Date.now(),updated_at_unix_ms:Date.now(),title:"로그인 연결 확인",unavailable_reason:null};
     const detail:ProjectSessionDetail = {session_id:row.id,locator:row.locator,loading:false,failure:null,archive:{id:row.id,kind:"session",title:row.title,provider:"codex",unavailable_reason:null,events:[{source_offset:0,kind:"human",role:"user",at_unix_ms:Date.now(),text:"지난 작업에서 로그인 연결을 확인해 줘."},{source_offset:100,kind:"assistant",role:"assistant",at_unix_ms:Date.now(),text:"대화검색으로 로그인 연결을 확인했습니다."}]}};

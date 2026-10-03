@@ -1360,6 +1360,18 @@
       "type": "number",
       "value": 560
     },
+    "--size-agent-views-min": {
+      "type": "number",
+      "value": 480
+    },
+    "--size-file-views-min": {
+      "type": "number",
+      "value": 360
+    },
+    "--size-file-views-ideal": {
+      "type": "number",
+      "value": 640
+    },
     "--size-workspace-area-min": {
       "type": "number",
       "value": 224

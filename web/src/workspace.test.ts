@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, StripTab } from "./snapshot";
-import { agentEntries, panelCoversToSend, panelFrame, panelShareAt, type WorkspaceView } from "./workspace";
+import { agentEntries, bodyStep, columnFrame, dividerLanding, DEFAULT_SLOTS, type ColumnSizes, type ColumnSlots } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -17,92 +17,79 @@ describe("the Workspace strips", () => {
   });
 });
 
-describe("the side panel", () => {
-  const sizes = { areaMin: 224, toolColumn: 260, gap: 0, hairline: 0 };
-  const view = (panel: WorkspaceView["panel"], extra: Partial<WorkspaceView> = {}) => ({ panel, pinned: false, views_over_share: 0.6, tools_share: null, tools: true, ...extra });
-  const frame = (panel: WorkspaceView["panel"], views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view(panel, extra), views, body, sizes });
+// The token values (`--size-agent-views-min`, `--size-file-views-min`,
+// `--size-panel-min`, `--size-file-views-ideal`, `--size-panel-ideal`,
+// `--spacing-sm`), so the steps read as the PRD states them.
+const sizes: ColumnSizes = { agentMin: 480, viewsMin: 360, toolsMin: 260, viewsIdeal: 640, toolsIdeal: 355, divider: 8 };
 
-  it("floats at its share over agents that keep the body's width, and a pinned one narrows them to its edge", () => {
-    expect(frame("open", true, 1400)).toMatchObject({ shown: "open", content: "views", width: 840, agentsRight: 0, resize: "views_over_share", narrow: false });
-    expect(frame("open", true, 1400, { pinned: true })).toMatchObject({ width: 840, agentsRight: 840 });
-    expect(frame("closed", true, 1400, { pinned: true })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0 });
+const frame = (input: { views?: boolean; tools?: boolean; viewsWidth?: number | null; toolsWidth?: number | null; body: number; slots?: ColumnSlots }) =>
+  columnFrame({ views: input.views ?? false, tools: input.tools ?? false, viewsWidth: input.viewsWidth ?? null, toolsWidth: input.toolsWidth ?? null, body: input.body, sizes, slots: input.slots ?? DEFAULT_SLOTS });
+
+describe("the Workspace columns (PRD three-column-panel)", () => {
+  it("steps at the sums of the column minimums: 1100 and 840 (D-07, B25)", () => {
+    expect([1100, 1099, 840, 839].map((body) => bodyStep(body, sizes))).toEqual(["wide", "mid", "mid", "narrow"]);
   });
 
-  it("covers the whole body when expanded, and a pinned one leaves the agents at their docked width underneath", () => {
-    expect(frame("expanded", true, 1400)).toMatchObject({ shown: "expanded", width: 1400, agentsRight: 0, resize: null });
-    expect(frame("expanded", true, 1400, { pinned: true })).toMatchObject({ width: 1400, agentsRight: 840 });
+  it("shows Agent Views alone with nothing on, and gives it the whole body (B1, B2)", () => {
+    expect(frame({ body: 1600 })).toEqual({ step: "wide", agents: 1600, views: null, tools: null });
   });
 
-  it("is only as wide as the tool column while no view is open, and closes when neither views nor tools remain", () => {
-    expect(frame("open", false, 1400)).toMatchObject({ content: "tools", width: 260, resize: "tools_share", need: 260 });
-    expect(frame("expanded", false, 1400)).toMatchObject({ shown: "open", content: "tools", width: 260 });
-    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0, resize: null });
-    // No empty surface, even when the previous panel was expanded.
-    expect(frame("expanded", false, 1400, { tools: false })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0 });
+  it("docks every column that is on at its default width, Agent Views taking the rest (B1, D-12)", () => {
+    const wide = frame({ views: true, tools: true, body: 1600 });
+    expect(wide).toEqual({ step: "wide", agents: 1600 - 16 - 640 - 355, views: 640, tools: 355 });
+    expect(frame({ tools: true, body: 1600 })).toEqual({ step: "wide", agents: 1600 - 8 - 355, views: null, tools: 355 });
   });
 
-  it("resizes the tools-only panel to a width of its own, never under the tool column or over the agents' minimum", () => {
-    expect(frame("open", false, 1400, { tools_share: 0.4 })).toMatchObject({ content: "tools", width: 560, resize: "tools_share" });
-    expect(frame("open", false, 1400, { tools_share: 0.4, pinned: true })).toMatchObject({ width: 560, agentsRight: 560 });
-    expect(frame("open", false, 1400, { tools_share: 0.2 }).width).toBe(280);
-    expect(frame("open", false, 1000, { tools_share: 0.2 }).width).toBe(260);
-    expect(frame("open", false, 1000, { tools_share: 0.8 }).width).toBe(776);
-    // The View areas keep their own width beside it.
-    expect(frame("open", true, 1400, { tools_share: 0.4 }).width).toBe(840);
+  it("keeps a stored width, but never under a column's minimum or over what leaves Agent Views its own (B21)", () => {
+    expect(frame({ views: true, viewsWidth: 100, body: 1600 }).views).toBe(360);
+    const greedy = frame({ views: true, tools: true, viewsWidth: 5000, toolsWidth: 300, body: 1200 });
+    expect(greedy.views).toBe(1200 - 16 - 300 - 480);
+    expect(greedy.agents).toBe(480);
+    const toolsGreedy = frame({ views: true, tools: true, toolsWidth: 5000, body: 1200 });
+    expect(toolsGreedy.views).toBe(360);
+    expect(toolsGreedy.agents).toBe(480);
   });
 
-  it("places nothing before the body is measured, so no terminal fits to a guess", () => {
-    expect(frame("open", true, 0, { pinned: true })).toMatchObject({ width: 0, agentsRight: 0, toolsOverlay: false });
-    expect(frame("open", false, 0, { pinned: true, tools: false })).toMatchObject({ width: 0, agentsRight: 0 });
+  it("between the steps shows one column beside Agent Views, Tools giving way first unless it was called (B25, B26)", () => {
+    expect(frame({ views: true, tools: true, body: 1000 })).toMatchObject({ step: "mid", views: 1000 - 8 - 480, tools: null });
+    expect(frame({ views: true, tools: true, body: 1000, slots: { side: "tools", single: "tools" } })).toMatchObject({ views: null, tools: 355 });
+    // With only one of them on, that one shows.
+    expect(frame({ tools: true, body: 1000 })).toMatchObject({ views: null, tools: 355 });
   });
 
-  it("keeps a View area and the tool column beside it, and the agents left of it, at their minimum", () => {
-    expect(frame("open", true, 1400, { views_over_share: 0.2 }).width).toBe(484);
-    expect(frame("open", true, 1400, { views_over_share: 0.2, tools: false }).width).toBe(280);
-    expect(frame("open", true, 1000, { views_over_share: 0.8 }).width).toBe(776);
+  it("below the narrow step shows one column, Agent Views unless another that is on was called (B25, B27)", () => {
+    expect(frame({ views: true, tools: true, body: 700 })).toEqual({ step: "narrow", agents: 700, views: null, tools: null });
+    expect(frame({ views: true, body: 700, slots: { side: "views", single: "views" } })).toEqual({ step: "narrow", agents: null, views: 700, tools: null });
+    // A column that is off cannot fill the slot.
+    expect(frame({ body: 700, slots: { side: "views", single: "views" } }).agents).toBe(700);
   });
 
-  it("takes the whole body in a window too narrow for both, unsaved, and a pinned one floats there", () => {
-    expect(frame("open", true, 707, { pinned: true })).toMatchObject({ shown: "expanded", narrow: true, width: 707, agentsRight: 0, resize: null, toolsOverlay: true });
-    // With no view the tool column is the panel, never an overlay.
-    expect(frame("open", false, 400)).toMatchObject({ narrow: true, content: "tools", toolsOverlay: false });
-    expect(frame("open", true, 708, { pinned: true })).toMatchObject({ shown: "open", narrow: false, agentsRight: 484 });
+  it("places nothing beside Agent Views before the body is measured, so no terminal fits to a guess", () => {
+    expect(frame({ views: true, tools: true, body: 0 })).toMatchObject({ views: null, tools: null });
   });
 
-  it("counts its gap and hairlines in every minimum, with the tool column holding its hairlines inside its token", () => {
-    const framed = { ...sizes, gap: 8, hairline: 1 };
-    const at = (views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view("open", extra), views, body, sizes: framed });
-    // Alone the column is the card, both hairlines inside it.
-    expect(at(false, 1400)).toMatchObject({ content: "tools", width: 268 });
-    // Beside a view it holds the card's right hairline; the left one is the View area's.
-    expect(at(true, 1400, { views_over_share: 0.2 }).width).toBe(493);
-    expect(at(true, 1400, { views_over_share: 0.2, tools: false }).width).toBe(280);
-    expect(at(true, 716)).toMatchObject({ narrow: true });
-    expect(at(true, 717)).toMatchObject({ narrow: false });
+  it("lands the File Views divider as its width, within the minimums (D-12, B20)", () => {
+    const shown = frame({ views: true, body: 1600 });
+    // The divider dragged 100px left widens File Views by 100px.
+    const x = 1600 - 640 - 8 - 100;
+    expect(dividerLanding({ divider: "views", x, body: 1600, frame: shown, sizes })).toEqual({ views_width: 740 });
+    expect(dividerLanding({ divider: "views", x: 0, body: 1600, frame: shown, sizes })).toEqual({ views_width: 1600 - 8 - 480 });
+    expect(dividerLanding({ divider: "views", x: 1590, body: 1600, frame: shown, sizes })).toEqual({ views_width: 360 });
   });
 
-  it("folds the tools into an overlay in a window too narrow for both, and only there", () => {
-    expect(frame("expanded", true, 707).toolsOverlay).toBe(true);
-    expect(frame("expanded", true, 708).toolsOverlay).toBe(false);
-    expect(frame("expanded", true, 707, { tools: false }).toolsOverlay).toBe(false);
-    expect(frame("open", true, 1400).toolsOverlay).toBe(false);
+  it("trades width between File Views and Tools at the divider between them, so Agent Views keeps its width", () => {
+    const shown = frame({ views: true, tools: true, body: 1600 });
+    const x = 1600 - 355 - 8 - 45;
+    const landed = dividerLanding({ divider: "tools", x, body: 1600, frame: shown, sizes });
+    expect(landed).toEqual({ views_width: 640 - 45, tools_width: 400 });
+    expect((landed.views_width ?? 0) + (landed.tools_width ?? 0)).toBe(640 + 355);
+    // File Views keeps its minimum.
+    expect(dividerLanding({ divider: "tools", x: 0, body: 1600, frame: shown, sizes })).toEqual({ views_width: 360, tools_width: 640 + 355 - 360 });
   });
 
-  it("reports whether it covers the body once per change, and two pages that disagree each report once", () => {
-    expect(panelCoversToSend(true, false, null)).toBe(true);
-    expect(panelCoversToSend(true, true, null)).toBe(false);
-    // Sent and not echoed yet, or undone by another page: not sent again.
-    expect(panelCoversToSend(true, false, true)).toBe(false);
-    // Forgotten after another Workspace or a reconnect: sent again.
-    expect(panelCoversToSend(false, true, null)).toBe(true);
-    expect(panelCoversToSend(false, true, true)).toBe(true);
-  });
-
-  it("follows its left edge to a share the core keeps where it was released", () => {
-    expect(panelShareAt(560, 1400, 484, 224)).toBeCloseTo(0.6);
-    expect(panelShareAt(1300, 1400, 484, 224)).toBeCloseTo(484 / 1400);
-    expect(panelShareAt(10, 1400, 484, 224)).toBeCloseTo(0.8);
-    expect(panelShareAt(10, 1000, 484, 224)).toBeCloseTo(0.776);
-    expect(panelShareAt(10, 0, 484, 224)).toBe(0.2);
+  it("lands a lone Tools divider as Tools' width against Agent Views", () => {
+    const shown = frame({ tools: true, body: 1600 });
+    expect(dividerLanding({ divider: "tools", x: 1600 - 8 - 500, body: 1600, frame: shown, sizes })).toEqual({ tools_width: 500 });
+    expect(dividerLanding({ divider: "tools", x: 1590, body: 1600, frame: shown, sizes })).toEqual({ tools_width: 260 });
   });
 });

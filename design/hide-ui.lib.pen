@@ -38375,6 +38375,18 @@
     "--graph-trunk-step": {
       "type": "number",
       "value": 12
+    },
+    "--size-agent-views-min": {
+      "type": "number",
+      "value": 480
+    },
+    "--size-file-views-ideal": {
+      "type": "number",
+      "value": 640
+    },
+    "--size-file-views-min": {
+      "type": "number",
+      "value": 360
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",

@@ -20,8 +20,8 @@ const browserCanvas = vi.hoisted(() => {
 afterAll(() => browserCanvas.restore());
 
 const view: WorkspaceView = {
-  device_id: "local", path: "/projects/studio", panel: "closed", pinned: false,
-  tool: "explorer", tools: false, views_over_share: 0.5, tools_share: null, covered: false,
+  device_id: "local", path: "/projects/studio", views: false, tools: false,
+  tool: "explorer", views_width: null, tools_width: null,
 };
 function checkout(servers: { host: string; port: number }[]): Checkout {
   return {

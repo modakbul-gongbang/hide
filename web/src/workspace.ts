@@ -1,34 +1,30 @@
-// The Workspace screen's rules (PRD S6 B5-B11, B17; issue 170): which strip
-// entries are Agent tabs, what an Agent tab is called and marked with, and how
-// the side panel is laid out over the agents. The core owns every value here
-// (`rest.workspace_view`, the strip); these functions only read them, so they
-// are testable without a page. The View areas' own rules are `viewLayout.ts`.
+// The Workspace screen's rules (PRD S6 B5-B11, B17; PRD three-column-panel
+// D-01, D-07, D-12): which strip entries are Agent tabs, what an Agent tab is
+// called and marked with, and how the body is divided into the Agent Views,
+// File Views and Tools columns. The core owns every stored value here
+// (`rest.workspace_view`, the strip); these functions only read them, so
+// they are testable without a page. The View areas' own rules are
+// `viewLayout.ts`.
 
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
-/** How the side panel shows (issue 170): closed, at its width, or over the whole body. */
-export type PanelState = "closed" | "open" | "expanded";
-
-/** The side panel's tools (issue 170): the Explorer, or History (`changes`). The column holds one at a time. */
+/** The Tools column's one tool: the Explorer, or History (`changes`). */
 export type Tool = "explorer" | "changes";
 
 /** The front Workspace's presentation as the core published it. */
 export type WorkspaceView = {
   device_id: string;
   path: string;
-  panel: PanelState;
-  /** Docked: the agents end at the panel's left edge rather than running under it. */
-  pinned: boolean;
-  /** The one tool the tool column holds, kept while the column is hidden. */
-  tool: Tool;
-  /** Whether the tool column shows. */
+  /** Whether the File Views column is on; the core turns it off with its last view. */
+  views: boolean;
+  /** Whether the Tools column is on. */
   tools: boolean;
-  /** The open panel's width, as a share of the Workspace body's. */
-  views_over_share: number;
-  /** A panel holding only the tools: its width as a share of the body's, or null for the tool column's own width until it is resized. */
-  tools_share: number | null;
-  /** A page reported that this panel takes the whole body when it shows (a narrow window). */
-  covered: boolean;
+  /** The one tool the Tools column holds, kept while the column is off. */
+  tool: Tool;
+  /** The File Views column's width in CSS pixels, or null for the default until it is resized. */
+  views_width: number | null;
+  /** The Tools column's width, the same way. */
+  tools_width: number | null;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */
@@ -36,133 +32,127 @@ export type WorkspaceView = {
   agent_layout?: import("./agentLayout").AgentLayout;
 };
 
-/** The three panel states, in the order the toolbar menu offers them, with the menu's name for each. */
-export const PANEL_STATES: readonly { panel: PanelState; label: string }[] = [
-  { panel: "closed", label: "Side panel closed" },
-  { panel: "open", label: "Side panel open" },
-  { panel: "expanded", label: "Side panel expanded" },
-];
+/** The two columns beside Agent Views, left to right. */
+export type SideColumn = "views" | "tools";
+/** Every column of the body, left to right. */
+export type Column = "agents" | SideColumn;
 
-/** The bounds the core keeps the panel's share in (`MIN_VIEWS_OVER_SHARE`, `MAX_VIEWS_OVER_SHARE`). */
-export const PANEL_SHARE_MIN = 0.2;
-export const PANEL_SHARE_MAX = 0.8;
-
-/** The pixel sizes the panel is laid out with, read from their tokens. */
-export type PanelSizes = {
-  /** The narrowest the agents left of the panel, or one View area, may be. */
-  areaMin: number;
-  /** The tool column's width, counting its own left hairline and the card's right one, as the Pen part does. */
-  toolColumn: number;
-  /** The gap on the panel's left, outside the card. */
-  gap: number;
-  /** The card's side hairlines, each. */
-  hairline: number;
+/** The pixel sizes the columns are laid out with, read from their tokens. */
+export type ColumnSizes = {
+  agentMin: number;
+  viewsMin: number;
+  toolsMin: number;
+  /** File Views' width until the operator resizes it. */
+  viewsIdeal: number;
+  /** Tools' width until the operator resizes it. */
+  toolsIdeal: number;
+  /** The divider between two columns. */
+  divider: number;
 };
 
 /**
- * The side panel as the Workspace body draws it (issue 170), from the core's
- * state and the body's width alone; nothing here is sent or stored.
+ * Which column a narrow body shows, a fact of this page alone and never sent
+ * (D-07): `side` is the one column beside Agent Views between the two steps
+ * when both are on, `single` the one column below the narrow step.
+ */
+export type ColumnSlots = { side: SideColumn; single: Column };
+
+export const DEFAULT_SLOTS: ColumnSlots = { side: "views", single: "agents" };
+
+/** How many columns the body can hold, from the column minimums (D-07). */
+export type BodyStep = "wide" | "mid" | "narrow";
+
+/**
+ * The body as it is drawn: each shown column's width, Agent Views taking
+ * what the others leave. A column that is off, or on but hidden by the
+ * body's width, has no width here.
+ */
+export type ColumnFrame = {
+  step: BodyStep;
+  agents: number | null;
+  views: number | null;
+  tools: number | null;
+};
+
+/** The body widths where a third and a second column stop fitting. */
+export function bodySteps(sizes: ColumnSizes): { wide: number; mid: number } {
+  return { wide: sizes.agentMin + sizes.viewsMin + sizes.toolsMin, mid: sizes.agentMin + sizes.viewsMin };
+}
+
+export function bodyStep(body: number, sizes: ColumnSizes): BodyStep {
+  const { wide, mid } = bodySteps(sizes);
+  return body >= wide ? "wide" : body >= mid ? "mid" : "narrow";
+}
+
+/**
+ * The columns the body draws (D-07, D-12), from what is on, the stored
+ * widths and the body's width alone; nothing here is sent or stored.
  *
- * - `shown`: what is drawn. A window too narrow for the agents' minimum beside
- *   the panel's draws an open panel over the whole body, like Expanded, and a
- *   pinned one floats there; widening brings back what the core stores.
- * - `content`: the View areas while a view is open or opening, else the tool
- *   column alone; with neither the panel is closed.
- * - `width`: the panel's width, and `agentsRight` how far the agents end from
- *   the body's right edge: the open panel's width while it is pinned, even
- *   under an expanded panel, so expanding moves no terminal; else 0, since
- *   the Agent area keeps the body's width under a panel that floats.
- * - `resize`: which stored width a drag on the panel's edge sets: the View
- *   areas' share, or the tools-only panel's own, which
- *   is the tool column's width until it is first resized; null while the
- *   panel covers the body. `need` is the narrowest the panel may be.
- * - `toolsOverlay`: in a window too narrow for both, the tools fold into an
- *   overlay inside the panel; anywhere else the panel's minimum already holds
- *   a View area beside the tool column.
+ * - `views`: File Views is on and has something to show (a view, or a file
+ *   of this checkout opening into it).
+ * - At `wide` every column that is on shows; at `mid` one column beside
+ *   Agent Views, Tools giving way first unless `slots.side` asks for it; at
+ *   `narrow` one column, Agent Views unless `slots.single` names another
+ *   that is on.
+ * - Widths: the stored width or the default, no column under its minimum,
+ *   and Agent Views keeps at least its own; it takes the rest.
  */
-export type PanelFrame = {
-  shown: PanelState;
-  content: "views" | "tools";
-  width: number;
-  agentsRight: number;
-  narrow: boolean;
-  resize: "views_over_share" | "tools_share" | null;
-  need: number;
-  toolsOverlay: boolean;
-};
-
-export function panelFrame(input: {
-  view: Pick<WorkspaceView, "panel" | "pinned" | "views_over_share" | "tools_share" | "tools">;
-  /** A view is open, or a file of this checkout is opening into the View areas. */
-  views: boolean;
-  body: number;
-  sizes: PanelSizes;
-}): PanelFrame {
-  const { view, views, body, sizes } = input;
-  const tools = view.tools;
-  const content = views ? "views" : "tools";
-  const need = panelMinimum(content, tools, sizes);
-  if (view.panel === "closed" || (!views && !tools)) return { shown: "closed", content, width: 0, agentsRight: 0, narrow: false, resize: null, need, toolsOverlay: false };
-  // Before the body is measured nothing is placed, so no terminal fits to a guess.
-  if (body <= 0) return { shown: view.panel === "expanded" && content === "views" ? "expanded" : "open", content, width: 0, agentsRight: 0, narrow: false, resize: null, need, toolsOverlay: false };
-  const narrow = body < sizes.areaMin + need;
-  const toolsOnly = content === "tools";
-  const share = toolsOnly ? view.tools_share : view.views_over_share;
-  const open = narrow ? body : share === null ? need : panelWidth(share, body, need, sizes.areaMin);
-  // Only views expand: with none, the panel stays the tool column's width or
-  // the agents stay in reach.
-  const expanded = narrow || (view.panel === "expanded" && content === "views");
-  const width = expanded ? body : open;
-  return {
-    shown: expanded ? "expanded" : "open",
-    content,
-    width,
-    agentsRight: view.pinned && !narrow ? open : 0,
-    narrow,
-    resize: expanded ? null : toolsOnly ? "tools_share" : "views_over_share",
-    need,
-    toolsOverlay: content === "views" && tools && narrow,
-  };
+export function columnFrame(input: { views: boolean; tools: boolean; viewsWidth: number | null; toolsWidth: number | null; body: number; sizes: ColumnSizes; slots: ColumnSlots }): ColumnFrame {
+  const { body, sizes, slots } = input;
+  const step = bodyStep(body, sizes);
+  // Before the body is measured nothing beside Agent Views is placed, so no terminal fits to a guess.
+  if (body <= 0) return { step, agents: 0, views: null, tools: null };
+  let showViews = input.views;
+  let showTools = input.tools;
+  if (step === "mid" && showViews && showTools) {
+    if (slots.side === "tools") showViews = false;
+    else showTools = false;
+  }
+  if (step === "narrow") {
+    const single = slots.single === "views" && input.views ? "views" : slots.single === "tools" && input.tools ? "tools" : "agents";
+    return { step, agents: single === "agents" ? body : null, views: single === "views" ? body : null, tools: single === "tools" ? body : null };
+  }
+  const dividers = (showViews ? sizes.divider : 0) + (showTools ? sizes.divider : 0);
+  const room = body - dividers - sizes.agentMin;
+  let tools: number | null = null;
+  let views: number | null = null;
+  if (showTools) {
+    const reserve = showViews ? sizes.viewsMin : 0;
+    tools = clamp(input.toolsWidth ?? sizes.toolsIdeal, sizes.toolsMin, room - reserve);
+  }
+  if (showViews) views = clamp(input.viewsWidth ?? sizes.viewsIdeal, sizes.viewsMin, room - (tools ?? 0));
+  return { step, agents: body - dividers - (views ?? 0) - (tools ?? 0), views, tools };
 }
 
-/** The narrowest an open panel may be for what it holds. */
-function panelMinimum(content: PanelFrame["content"], tools: boolean, sizes: PanelSizes): number {
-  // The tool column holds the card's right hairline, and alone it holds the
-  // left one too, so it is the token wide wherever it shows.
-  if (content === "tools") return sizes.gap + sizes.toolColumn;
-  if (content === "views" && tools) return sizes.gap + sizes.hairline + sizes.areaMin + sizes.toolColumn;
-  return sizes.gap + 2 * sizes.hairline + sizes.areaMin;
+/** `value` within `min..max`, the minimum winning when the two cross. */
+function clamp(value: number, min: number, max: number): number {
+  return Math.round(Math.max(min, Math.min(value, max)));
 }
 
 /**
- * The open panel's width in pixels for a share of a body `total` wide: the
- * share within the core's bounds, and neither the panel narrower than `need`
- * nor the agents left of it narrower than `areaMin`.
+ * Where a divider dragged to `x` pixels from the body's left edge lands, as
+ * the widths to store: the divider left of File Views sets its width; the
+ * divider left of Tools trades width with File Views when File Views shows,
+ * so Agent Views keeps its width and no terminal resizes, and otherwise
+ * sets Tools' width. Every column stays at or above its minimum.
  */
-export function panelWidth(share: number, total: number, need: number, areaMin: number): number {
-  const bounded = Math.min(Math.max(share, PANEL_SHARE_MIN), PANEL_SHARE_MAX);
-  return Math.round(Math.min(Math.max(bounded * total, need), total - areaMin));
-}
-
-/**
- * The share a panel whose left edge is dragged to `x` pixels from the body's
- * left edge lands at: the width `panelWidth` draws for it, so the core's
- * clamp keeps it where it was released.
- */
-export function panelShareAt(x: number, total: number, need: number, areaMin: number): number {
-  if (total <= 0) return PANEL_SHARE_MIN;
-  return panelWidth((total - x) / total, total, need, areaMin) / total;
-}
-
-/**
- * Whether a page reports `panel_covers` now (issue 170): only when what it
- * draws differs from what the core holds and from its own last report, so a
- * crossing is sent once, a report the page forgot (another Workspace drawn
- * since, or the connection lost) is sent again, and two pages that disagree
- * each send once rather than undoing each other forever.
- */
-export function panelCoversToSend(covers: boolean, core: boolean, lastSent: boolean | null): boolean {
-  return covers !== core && covers !== lastSent;
+export function dividerLanding(input: { divider: SideColumn; x: number; body: number; frame: ColumnFrame; sizes: ColumnSizes }): { views_width?: number; tools_width?: number } {
+  const { divider, x, body, frame, sizes } = input;
+  const views = frame.views ?? 0;
+  const tools = frame.tools ?? 0;
+  const dividers = (frame.views !== null ? sizes.divider : 0) + (frame.tools !== null ? sizes.divider : 0);
+  if (divider === "views") {
+    // The File Views column's right edge stays where Tools begins.
+    const right = body - tools - (frame.tools !== null ? sizes.divider : 0);
+    const width = clamp(right - x - sizes.divider, sizes.viewsMin, body - dividers - tools - sizes.agentMin);
+    return { views_width: width };
+  }
+  if (frame.views !== null) {
+    const pair = views + tools;
+    const toolsWidth = clamp(body - x - sizes.divider, sizes.toolsMin, pair - sizes.viewsMin);
+    return { views_width: pair - toolsWidth, tools_width: toolsWidth };
+  }
+  return { tools_width: clamp(body - x - sizes.divider, sizes.toolsMin, body - dividers - sizes.agentMin) };
 }
 
 export function workspaceViewOf(rest: SnapshotRest | null): WorkspaceView | null {
