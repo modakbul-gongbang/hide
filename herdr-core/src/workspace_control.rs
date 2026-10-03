@@ -72,6 +72,10 @@ pub enum Action {
     OpenBrowser {
         url: String,
         reveal: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area_id: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        new_target: bool,
     },
     Select {
         view_id: String,
@@ -319,7 +323,41 @@ pub fn local_file_path(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Caller, checkout_caller_id, local_file_path};
+    use super::{Action, Caller, checkout_caller_id, local_file_path};
+
+    #[test]
+    fn legacy_browser_open_decodes_and_serializes_without_target_options() {
+        let legacy = serde_json::json!({
+            "action": "open_browser",
+            "url": "https://example.test/page",
+            "reveal": false,
+        });
+        let action: Action = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(
+            action,
+            Action::OpenBrowser {
+                url: "https://example.test/page".into(),
+                reveal: false,
+                area_id: None,
+                new_target: false,
+            }
+        );
+        assert_eq!(serde_json::to_value(action).unwrap(), legacy);
+    }
+
+    #[test]
+    fn browser_open_target_options_round_trip() {
+        let action = Action::OpenBrowser {
+            url: "https://example.test/page".into(),
+            reveal: false,
+            area_id: Some("a1".into()),
+            new_target: true,
+        };
+        let wire = serde_json::to_value(&action).unwrap();
+        assert_eq!(wire["area_id"], "a1");
+        assert_eq!(wire["new_target"], true);
+        assert_eq!(serde_json::from_value::<Action>(wire).unwrap(), action);
+    }
 
     #[test]
     fn caller_ids_round_trip_and_pane_ids_are_left_alone() {
