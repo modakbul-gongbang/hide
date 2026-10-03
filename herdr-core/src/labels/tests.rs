@@ -847,10 +847,10 @@ fn a_read_that_panics_does_not_stop_the_servers_reads() {
 }
 
 #[test]
-fn saves_from_two_workers_at_once_leave_a_whole_file() {
+fn concurrent_workers_keep_local_records_on_disk_and_device_records_in_memory() {
     let harness = Harness::new();
     let store = harness.store();
-    let threads: Vec<_> = (0..8)
+    let mut threads: Vec<_> = (0..8)
         .map(|index| {
             let store = Arc::clone(&store);
             std::thread::spawn(move || {
@@ -865,12 +865,31 @@ fn saves_from_two_workers_at_once_leave_a_whole_file() {
             })
         })
         .collect();
+    let local = Arc::clone(&store);
+    threads.push(std::thread::spawn(move || {
+        for round in 0..20u64 {
+            local.save_target(
+                super::store::LOCAL_TARGET,
+                &std::collections::BTreeMap::from([(
+                    "local:p1".to_owned(),
+                    super::store::PaneRecord::first_seen(round, round),
+                )]),
+            );
+        }
+    }));
     for thread in threads {
         thread.join().unwrap();
     }
     let reopened = LabelStore::open(Some(harness.state.path()), None);
+    assert_eq!(reopened.target(super::store::LOCAL_TARGET).len(), 1);
+    assert_eq!(
+        reopened.target(super::store::LOCAL_TARGET),
+        store.target(super::store::LOCAL_TARGET),
+        "the final local write must survive reopening the whole file"
+    );
     for index in 0..8 {
-        assert_eq!(reopened.target(&format!("device:{index}")).len(), 1);
+        assert_eq!(store.target(&format!("device:{index}")).len(), 1);
+        assert!(reopened.target(&format!("device:{index}")).is_empty());
     }
 }
 
