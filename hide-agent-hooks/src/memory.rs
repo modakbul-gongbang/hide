@@ -95,6 +95,23 @@ pub fn project_memory_output_until(
     home: &Path,
     deadline: Instant,
 ) -> HookMemoryResult {
+    let expired = move || Instant::now() >= deadline;
+    project_memory_output_with_expiry(runtime, event, bytes, exceeded, home, expired)
+}
+
+// One per-invocation monotonic predicate covers open, retrieval and render.
+// Its clones share the same absolute end; once expired, it stays expired.
+fn project_memory_output_with_expiry<E>(
+    runtime: AgentRuntime,
+    event: HookEvent,
+    bytes: &[u8],
+    exceeded: bool,
+    home: &Path,
+    expired: E,
+) -> HookMemoryResult
+where
+    E: Fn() -> bool + Clone + Send + 'static,
+{
     let base = || HookMemoryResult {
         stdout: crate::runtime::hook_stdout(runtime, event),
         outcome: HookMemoryOutcome::Unavailable,
@@ -120,15 +137,15 @@ pub fn project_memory_output_until(
             ..base()
         };
     };
-    if Instant::now() >= deadline {
+    if expired() {
         return HookMemoryResult {
             outcome: HookMemoryOutcome::Deadline,
             ..base()
         };
     }
-    let Ok(store) = MemoryStore::open_hook_read_only_with_deadline(&database_path(home), deadline)
+    let Ok(store) = MemoryStore::open_hook_read_only_with_expiry(&database_path(home), expired.clone())
     else {
-        if Instant::now() >= deadline {
+        if expired() {
             return HookMemoryResult {
                 outcome: HookMemoryOutcome::Deadline,
                 ..base()
@@ -170,17 +187,14 @@ pub fn project_memory_output_until(
         }
         HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Stop => return base(),
     };
-    if Instant::now() >= deadline {
+    if expired() {
         return HookMemoryResult {
             outcome: HookMemoryOutcome::Deadline,
             ..base()
         };
     }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    let mut query = query;
-    query.deadline = remaining;
-    let Ok(injection) = store.retrieve(&query) else {
-        if Instant::now() >= deadline {
+    let Ok(injection) = store.retrieve_with_expiry(&query, &expired) else {
+        if expired() {
             return HookMemoryResult {
                 outcome: HookMemoryOutcome::Deadline,
                 ..base()
@@ -203,7 +217,7 @@ pub fn project_memory_output_until(
     ) else {
         return base();
     };
-    render(runtime, event, injection, &receipt_auth, deadline, base)
+    render(runtime, event, injection, &receipt_auth, &expired, base)
 }
 
 fn canonical_path_context(project: &hide_project::ProjectIdentity, cwd: &Path) -> PathBuf {
@@ -225,10 +239,10 @@ fn render(
     event: HookEvent,
     injection: Injection,
     receipt_auth: &str,
-    deadline: Instant,
+    expired: &impl Fn() -> bool,
     base: impl Fn() -> HookMemoryResult,
 ) -> HookMemoryResult {
-    if Instant::now() >= deadline {
+    if expired() {
         return HookMemoryResult {
             outcome: HookMemoryOutcome::Deadline,
             ..base()
@@ -288,9 +302,30 @@ mod tests {
     };
     use std::fs;
     use std::process::Command;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn invocation_clock() -> (Arc<AtomicU64>, impl Fn() -> bool + Clone + Send + 'static) {
+        let anchor = Instant::now();
+        let end = anchor + Duration::from_millis(HOOK_DEADLINE_MS);
+        let elapsed = Arc::new(AtomicU64::new(0));
+        let clock = Arc::clone(&elapsed);
+        let expired = move || anchor + Duration::from_millis(clock.load(Ordering::SeqCst)) >= end;
+        (elapsed, expired)
+    }
+
+    fn project_memory_output_with_frozen_time(
+        runtime: AgentRuntime,
+        event: HookEvent,
+        bytes: &[u8],
+        exceeded: bool,
+        home: &Path,
+    ) -> HookMemoryResult {
+        let (_elapsed, expired) = invocation_clock();
+        project_memory_output_with_expiry(runtime, event, bytes, exceeded, home, expired)
+    }
 
     #[test]
     fn oversized_input_is_drained_but_never_parsed() {
@@ -377,7 +412,7 @@ mod tests {
             "prompt": "zz--no-match-unrelated-query"
         }))
         .unwrap();
-        let result = project_memory_output(
+        let result = project_memory_output_with_frozen_time(
             AgentRuntime::Codex,
             HookEvent::UserPromptSubmit,
             &payload,
@@ -458,7 +493,7 @@ mod tests {
             "prompt": "durable hooks"
         }))
         .unwrap();
-        let result = project_memory_output(
+        let result = project_memory_output_with_frozen_time(
             AgentRuntime::Codex,
             HookEvent::UserPromptSubmit,
             &payload,
@@ -520,7 +555,7 @@ mod tests {
             "session_id": session_id
         }))
         .unwrap();
-        let start = project_memory_output(
+        let start = project_memory_output_with_frozen_time(
             AgentRuntime::Codex,
             HookEvent::SessionStart,
             &start_payload,
@@ -565,7 +600,7 @@ mod tests {
             "prompt": "durable hooks"
         }))
         .unwrap();
-        let prompt = project_memory_output(
+        let prompt = project_memory_output_with_frozen_time(
             AgentRuntime::Codex,
             HookEvent::UserPromptSubmit,
             &prompt_payload,
@@ -697,11 +732,13 @@ mod tests {
         assert_eq!(project.checkout_root, fs::canonicalize(&linked).unwrap());
         let path_context = canonical_path_context(&project, &linked_cwd);
         assert_eq!(path_context, project.root.join("crates/memory/src"));
+        let (_elapsed, expired) = invocation_clock();
         assert_eq!(
             store
-                .retrieve(
+                .retrieve_with_expiry(
                     &RetrievalQuery::prompt(&project.id, "zz-no-literal-match", vec![])
                         .with_path_context(path_context.to_string_lossy()),
+                    &expired,
                 )
                 .unwrap()
                 .outcome,
@@ -715,7 +752,7 @@ mod tests {
             "prompt": "zz-no-literal-match"
         }))
         .unwrap();
-        let result = project_memory_output(
+        let result = project_memory_output_with_frozen_time(
             AgentRuntime::Codex,
             HookEvent::UserPromptSubmit,
             &payload,
@@ -774,6 +811,7 @@ mod tests {
     #[test]
     fn empty_session_start_emits_an_internal_receipt_without_a_zero_item_message() {
         for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
+            let (_elapsed, expired) = invocation_clock();
             let result = render(
                 runtime,
                 HookEvent::SessionStart,
@@ -783,7 +821,7 @@ mod tests {
                     token_count: 0,
                 },
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                Instant::now() + Duration::from_secs(1),
+                &expired,
                 || HookMemoryResult {
                     stdout: crate::runtime::hook_stdout(runtime, HookEvent::SessionStart),
                     outcome: HookMemoryOutcome::Unavailable,
@@ -804,6 +842,150 @@ mod tests {
             assert!(!context.contains("Project Memory ready 0"));
             assert!(!context.contains("<hide-memory-context"));
         }
+    }
+
+    #[test]
+    fn expired_hook_keeps_only_base_context_before_opening_a_missing_database() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "cwd": project_root,
+            "session_id": "expired-session"
+        }))
+        .unwrap();
+        assert!(!database_path(&home).exists());
+        let (elapsed, expired) = invocation_clock();
+        elapsed.fetch_add(100, Ordering::SeqCst);
+
+        let result = project_memory_output_with_expiry(
+            AgentRuntime::Codex,
+            HookEvent::SessionStart,
+            &payload,
+            false,
+            &home,
+            expired,
+        );
+
+        assert_eq!(result.outcome, HookMemoryOutcome::Deadline);
+        let output: serde_json::Value =
+            serde_json::from_str(result.stdout.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            output["hookSpecificOutput"]["additionalContext"],
+            crate::runtime::PURPOSE_CONTEXT
+        );
+        let real_expired = project_memory_output_until(
+            AgentRuntime::Codex,
+            HookEvent::SessionStart,
+            &payload,
+            false,
+            &home,
+            Instant::now(),
+        );
+        assert_eq!(real_expired, result);
+    }
+
+    #[test]
+    fn render_omits_a_real_capsule_and_authenticated_receipt_at_the_invocation_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let path = database_path(&home);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut store = MemoryStore::open(&path).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, "local")
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        let body = "Keep the invocation deadline through rendering";
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "render-expiry-batch".into(),
+                    project_id: project.id.clone(),
+                    provider: "codex".into(),
+                    analysis_provider: "codex".into(),
+                    session_id: "render-source".into(),
+                    content_hash: "render-expiry-hash".into(),
+                    created_at_unix_ms: 1,
+                },
+                &[Candidate {
+                    text: body.into(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    direct_human_source: true,
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        drop(store);
+
+        let (elapsed, expired) = invocation_clock();
+        let reader = MemoryStore::open_hook_read_only_with_expiry(&path, expired.clone()).unwrap();
+        elapsed.fetch_add(99, Ordering::SeqCst);
+        let injection = reader
+            .retrieve_with_expiry(&RetrievalQuery::session_start(&project.id), &expired)
+            .unwrap();
+        assert_eq!(injection.outcome, InjectionOutcome::Provided);
+        assert_eq!(injection.items.len(), 1);
+        assert_eq!(injection.items[0].2, body);
+        let item_key = injection
+            .items
+            .iter()
+            .map(|(id, revision, _)| format!("{id}@{revision}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let receipt_auth = reader
+            .receipt_auth_tag(
+                &project.id,
+                "codex",
+                "render-session",
+                "SessionStart",
+                &item_key,
+            )
+            .unwrap();
+        assert!(
+            reader
+                .verify_receipt_auth(
+                    &project.id,
+                    "codex",
+                    "render-session",
+                    "SessionStart",
+                    &item_key,
+                    &receipt_auth,
+                )
+                .unwrap()
+        );
+        elapsed.fetch_add(1, Ordering::SeqCst);
+
+        let result = render(
+            AgentRuntime::Codex,
+            HookEvent::SessionStart,
+            injection,
+            &receipt_auth,
+            &expired,
+            || HookMemoryResult {
+                stdout: crate::runtime::hook_stdout(AgentRuntime::Codex, HookEvent::SessionStart),
+                outcome: HookMemoryOutcome::Unavailable,
+            },
+        );
+
+        assert_eq!(result.outcome, HookMemoryOutcome::Deadline);
+        let output: serde_json::Value = serde_json::from_str(&result.stdout.unwrap()).unwrap();
+        let context = output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert_eq!(context, crate::runtime::PURPOSE_CONTEXT);
+        assert!(!context.contains(body));
+        assert!(!context.contains("<hide-memory-context"));
+        assert!(!context.contains("<hide-memory-receipt"));
     }
 
     #[test]
