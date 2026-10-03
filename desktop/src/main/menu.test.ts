@@ -74,13 +74,13 @@ describe("the app menu (B9)", () => {
     expect("refused" in unusable ? null : unusable.registry).toBe(REGISTRY);
   });
 
-  it("shows Windows and Linux the Ctrl+Shift chords the window answers there, and none of macOS's own items", () => {
+  it("shows Windows and Linux the Ctrl+Shift and Alt+Shift chords the window answers there, and none of macOS's own items", () => {
     const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc" });
     const items = template.flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : []));
     const shortcut = (id: string) => items.find((item) => item.id === id)?.accelerator;
     expect(shortcut("new_tab")).toBe("Control+Shift+T");
-    expect(shortcut("reopen_closed_tab")).toBe("Control+Alt+Shift+T");
-    expect(shortcut("toggle_zoom")).toBe("Control+Alt+Shift+Return");
+    expect(shortcut("reopen_closed_tab")).toBe("Alt+Shift+T");
+    expect(shortcut("toggle_zoom")).toBe("Alt+Shift+Return");
     expect(shortcut("text_larger")).toBe("Control+=");
     expect(shortcut("settings")).toBe("Control+Shift+,");
     expect(items.some((item) => item.accelerator?.includes("Command"))).toBe(false);
@@ -91,7 +91,7 @@ describe("the app menu (B9)", () => {
     const resolved = menuBindings({ toggle_zoom: "command+shift+return" }, "pc");
     if ("refused" in resolved) throw new Error(resolved.refused);
     expect(resolved.diagnostic).toBeNull();
-    expect(menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc", registry: resolved.registry }).flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : [])).find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Control+Alt+Shift+Return");
+    expect(menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc", registry: resolved.registry }).flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : [])).find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Alt+Shift+Return");
   });
 
   it("leaves plain Ctrl keys on Windows and Linux to the edit roles and text size", () => {

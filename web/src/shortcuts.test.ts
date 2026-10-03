@@ -364,35 +364,35 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     for (const name of ["win32", "Win32", "Windows", "linux", "Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64)"]) expect(keySystemOf(name), name).toBe("pc");
   });
 
-  it("gives the desktop app ⌘ as Ctrl+Shift, ⇧⌘ as Ctrl+Shift+Alt, and the listed exceptions", () => {
+  it("gives the desktop app ⌘ as Ctrl+Shift, ⇧⌘ and ⌥⌘ as Alt+Shift, and the listed exceptions", () => {
     // The table docs/UI_BEHAVIOR.md (Keyboard shortcuts per system) prints.
     const pcSet: Record<string, string> = {
       new_tab: "Ctrl+Shift+T",
       close_tab: "Ctrl+Shift+W",
-      reopen_closed_tab: "Ctrl+Shift+Alt+T",
+      reopen_closed_tab: "Alt+Shift+T",
       recent_area_tab: "Ctrl+Tab",
       previous_recent_area_tab: "Ctrl+Shift+Tab",
       recent_panel: "",
       previous_recent_panel: "",
-      new_workspace: "Ctrl+Shift+Alt+N",
+      new_workspace: "Alt+Shift+N",
       start_agent: "Ctrl+Shift+N",
       recent_project: "Ctrl+Shift+`",
-      previous_recent_project: "Ctrl+Shift+Alt+`",
+      previous_recent_project: "Ctrl+Alt+Shift+`",
       search: "Ctrl+Shift+K",
       open_file: "Ctrl+Shift+P",
-      project_home: "Ctrl+Shift+Alt+H",
+      project_home: "Alt+Shift+H",
       toggle_left_sidebar: "Ctrl+Shift+B",
       toggle_sidebar_view: "",
       toggle_device_rail: "",
       toggle_explorer: "Ctrl+Shift+E",
-      toggle_right_panel: "Ctrl+Shift+Alt+B",
+      toggle_right_panel: "Alt+Shift+B",
       find_in_pane: "Ctrl+Shift+F",
       save_file: "Ctrl+Shift+S",
-      keep_open: "Ctrl+Shift+Alt+K",
+      keep_open: "Alt+Shift+K",
       split_right: "Ctrl+Shift+D",
-      split_down: "Ctrl+Shift+Alt+D",
-      toggle_zoom: "Ctrl+Shift+Alt+Enter",
-      close_pane: "Ctrl+Shift+Alt+W",
+      split_down: "Alt+Shift+D",
+      toggle_zoom: "Alt+Shift+Enter",
+      close_pane: "Alt+Shift+W",
       text_larger: "Ctrl+=",
       text_smaller: "Ctrl+-",
       text_reset: "Ctrl+0",
@@ -417,6 +417,15 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     expect(pc.some((command) => command.electron?.meta || command.browser?.meta)).toBe(false);
   });
 
+  it("presses no chord with more than three keys but the two that Chrome or a held cycle forces (operator decision 2026-10-03)", () => {
+    const heavy = pc.flatMap((command) =>
+      (["browser", "electron"] as const)
+        .filter((host) => { const chord = host === "electron" ? command.electron : command.browser; return chord && [chord.ctrl, chord.alt, chord.shift].filter(Boolean).length === 3; })
+        .map((host) => `${command.id} ${host}`),
+    );
+    expect(heavy.sort()).toEqual(["previous_recent_project browser", "previous_recent_project electron", "reopen_closed_tab browser"]);
+  });
+
   it("binds every chord once on each host, and claims none that Chrome or the system keeps", () => {
     for (const host of ["browser", "electron"] as const) {
       const shown = pc.map((command) => displayCommand(command.id, host, pc, "pc")).filter(Boolean);
@@ -425,12 +434,14 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     for (const command of pc) expect(command.browser && isChromeReserved(command.browser, "pc"), command.id).toBeFalsy();
     expect(isChromeReserved({ code: "KeyT", ctrl: true, shift: true }, "pc")).toBe(true);
     expect(isChromeReserved({ code: "Tab", alt: true }, "pc")).toBe(true);
+    expect(isChromeReserved({ code: "KeyT", alt: true, shift: true }, "pc")).toBe(true);
   });
 
   it("notes a browser chord as moved only where Chrome keeps the desktop chord on this system", () => {
-    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab"]);
+    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab"]);
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "new_tab")).toMatchObject({ chord: "Alt+T", moved: true, movedFrom: "Ctrl+Shift+T" });
-    expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "reopen_closed_tab")).toMatchObject({ chord: "Ctrl+Shift+Alt+T", moved: false });
+    // Chrome keeps Alt+Shift+T for its toolbar, and the macOS ⌥⇧T is those keys.
+    expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "reopen_closed_tab")).toMatchObject({ chord: "Ctrl+Alt+Shift+T", moved: true, movedFrom: "Alt+Shift+T" });
     // Every other browser chord is the desktop chord.
     const differs = pc.filter((command) => command.browser && command.electron && !command.moved && displayChord(command.browser, "pc") !== displayChord(command.electron, "pc"));
     expect(differs.map((command) => command.id)).toEqual([]);
@@ -439,7 +450,10 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
 
   it("answers the Ctrl+Shift chords and lets Ctrl, the Windows key and AltGr-free chords through", () => {
     expect(matchHost(pcPress("KeyT", { ctrl: true, shift: true }), pc, "electron")?.id).toBe("new_tab");
-    expect(matchHost(pcPress("KeyT", { ctrl: true, shift: true, alt: true }), pc, "electron")?.id).toBe("reopen_closed_tab");
+    expect(matchHost(pcPress("KeyT", { alt: true, shift: true }), pc, "electron")?.id).toBe("reopen_closed_tab");
+    expect(matchHost(pcPress("KeyT", { ctrl: true, shift: true, alt: true }), pc, "electron")).toBeNull();
+    expect(matchHost(pcPress("KeyT", { ctrl: true, shift: true, alt: true }), pc, "browser")?.id).toBe("reopen_closed_tab");
+    expect(matchHost(pcPress("Backquote", { ctrl: true, shift: true, alt: true }), pc, "electron")?.id).toBe("previous_recent_project");
     expect(matchHost(pcPress("Digit3", { ctrl: true, shift: true }), pc, "electron")?.id).toBe("select_tab_3");
     expect(matchHost(pcPress("Backquote", { ctrl: true, shift: true }), pc, "electron")?.id).toBe("recent_project");
     expect(matchHost(pcPress("KeyK", { ctrl: true, shift: true }), pc, "browser")?.id).toBe("search");
@@ -449,7 +463,7 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   });
 
   it("stores a chord as the macOS chord it stands for, so one set reads the same on both systems", () => {
-    const pressed = { code: "KeyR", ctrl: true, shift: true, alt: true };
+    const pressed = { code: "KeyR", alt: true, shift: true };
     expect(macChord(pressed, "pc")).toEqual({ code: "KeyR", meta: true, shift: true });
     expect(serializeStoredChord(pressed, "electron", "pc")).toBe("command+shift+r");
     expect(serializeStoredChord(pressed, "browser", "pc")).toBe("shift+meta+KeyR");
@@ -457,17 +471,25 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     expect(parseStoredChord("command+shift+r", "electron", "mac")).toEqual({ code: "KeyR", meta: true, shift: true });
     expect(serializeStoredChord({ code: "Tab", ctrl: true }, "electron", "pc")).toBe("control+tab");
     expect(serializeStoredChord({ code: "KeyR", meta: true, ctrl: true }, "electron", "pc")).toBeNull();
-    expect(modChord({ code: "Enter", meta: true, alt: true }, "pc")).toEqual({ code: "Enter", ctrl: true, shift: true, alt: true });
+    expect(modChord({ code: "Enter", meta: true, alt: true }, "pc")).toEqual({ code: "Enter", alt: true, shift: true });
+    expect(macChord({ code: "KeyR", ctrl: true, shift: true }, "pc")).toEqual({ code: "KeyR", meta: true });
+    expect(macChord({ code: "Backquote", ctrl: true, alt: true, shift: true }, "pc")).toEqual({ code: "Backquote", ctrl: true, alt: true, shift: true });
     expect(modChord({ code: "Tab", alt: true }, "pc")).toEqual({ code: "Tab", alt: true });
     // The operator's macOS set (2026-09-26) runs on Windows as the same keys through the rule.
     const { registry, diagnostic } = effectiveRegistry({ toggle_zoom: "command+shift+return", split_right: "command+d" }, "electron", "pc");
     expect(diagnostic).toBeNull();
-    expect(displayCommand("toggle_zoom", "electron", registry, "pc")).toBe("Ctrl+Shift+Alt+Enter");
-    expect(matchHost(pcPress("Enter", { ctrl: true, shift: true, alt: true }), registry, "electron")?.id).toBe("toggle_zoom");
+    expect(displayCommand("toggle_zoom", "electron", registry, "pc")).toBe("Alt+Shift+Enter");
+    expect(matchHost(pcPress("Enter", { alt: true, shift: true }), registry, "electron")?.id).toBe("toggle_zoom");
   });
 
-  it("refuses a desktop chord without Ctrl+Shift, one the system keeps, the Windows key, and a taken one", () => {
-    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true }, pc, "electron", "pc")).toBe("Include Ctrl+Shift so typing in a terminal stays typing.");
+  it("refuses a desktop chord without Ctrl+Shift or Alt+Shift, one the system keeps, the Windows key, and a taken one", () => {
+    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true }, pc, "electron", "pc")).toBe("Include Ctrl+Shift or Alt+Shift so typing in a terminal stays typing.");
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, pc, "electron", "pc")).toMatch(/Include/);
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true, shift: true }, pc, "electron", "pc")).toBeNull();
+    // Ctrl+Alt+Shift stands for no macOS chord, so a set holding it would be refused on a Mac.
+    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true, alt: true, shift: true }, pc, "electron", "pc")).toMatch(/Include/);
+    expect(bindingProblem("split_right", { code: "KeyD", alt: true, shift: true }, pc, "electron", "pc")).toBe("Alt+Shift+D is already Split down.");
+    expect(bindingProblem("split_right", { code: "KeyT", alt: true, shift: true }, pc, "browser", "pc")).toBe("Alt+Shift+T is kept by Chrome or the system.");
     expect(bindingProblem("recent_area_tab", { code: "Tab", alt: true }, pc, "electron", "pc")).toBe("Alt+Tab is kept by the system.");
     expect(bindingProblem("split_right", { code: "KeyR", meta: true }, pc, "electron", "pc")).toMatch(/Windows or Super key/);
     expect(bindingProblem("split_right", { code: "KeyT", ctrl: true, shift: true }, pc, "electron", "pc")).toBe("Ctrl+Shift+T is already New tab.");
@@ -475,13 +497,14 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     expect(bindingProblem("split_right", { code: "KeyC", ctrl: true, shift: true }, pc, "electron", "pc")).toBe("Ctrl+Shift+C copies a terminal's selection.");
     expect(bindingProblem("split_right", { code: "KeyV", ctrl: true, shift: true }, pc, "browser", "pc")).toBe("Ctrl+Shift+V pastes into a terminal.");
     expect(bindingProblem("recent_area_tab", { code: "KeyJ", ctrl: true }, pc, "electron", "pc")).toBeNull();
-    expect(bindingProblem("split_right", { code: "KeyT", ctrl: true }, pc, "browser", "pc")).toBe("Ctrl+T is kept by Chrome or the system and never reaches the page.");
+    expect(bindingProblem("split_right", { code: "KeyT", ctrl: true }, pc, "browser", "pc")).toBe("Ctrl+T is kept by Chrome or the system.");
     expect(bindingProblem("split_right", { code: "KeyR", shift: true }, pc, "browser", "pc")).toBe("Include Ctrl or Alt so typing in a terminal stays typing.");
   });
 
-  it("writes chords in words joined with +, in the order Ctrl, Shift, Alt as VS Code does", () => {
+  it("writes chords in words joined with +, in Windows' order Ctrl, Alt, Shift", () => {
     expect(displayChord({ code: "Enter", meta: true, alt: true }, "mac")).toBe("⌥⌘↩");
-    expect(displayChord({ code: "Enter", ctrl: true, shift: true, alt: true }, "pc")).toBe("Ctrl+Shift+Alt+Enter");
+    expect(displayChord({ code: "Enter", ctrl: true, shift: true, alt: true }, "pc")).toBe("Ctrl+Alt+Shift+Enter");
+    expect(displayChord({ code: "KeyD", shift: true, alt: true }, "pc")).toBe("Alt+Shift+D");
     expect(displayChord({ code: "ArrowUp", alt: true }, "pc")).toBe("Alt+Up");
     expect(displayChord({ code: "Slash", ctrl: true, shift: true }, "pc")).toBe("Ctrl+Shift+/");
     expect(displayChord({ code: "Delete" }, "pc")).toBe("Delete");

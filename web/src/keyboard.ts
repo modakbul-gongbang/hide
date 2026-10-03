@@ -375,7 +375,7 @@ export function installKeyboard(actions: Actions): () => void {
     if (event.isComposing || event.keyCode === 229) return;
     // AltGr types a character on Windows and Linux layouts, and Windows
     // reports it as Ctrl+Alt: a Polish Ń is AltGr+Shift+N, which would
-    // otherwise read as Ctrl+Shift+Alt+N, Add project.
+    // otherwise read as a Ctrl+Alt+Shift chord.
     if (system === "pc" && event.getModifierState?.("AltGraph")) return;
     // A Shortcuts row that is recording owns the next chord, Escape included:
     // no command runs while the operator is showing the recorder a key.

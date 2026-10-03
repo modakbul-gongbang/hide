@@ -5,8 +5,8 @@
 // answers is consumed there and never reaches the menu's accelerator. The
 // pane chords follow the operator's stored set, which the shell reports and
 // `menuBindings` resolves with the rules the shell's listener runs. The
-// chords are this system's: macOS's own, or the Ctrl+Shift set Windows and
-// Linux get from the same table (`systemRegistry`), so the menu shows the
+// chords are this system's: macOS's own, or the Ctrl+Shift and Alt+Shift set
+// Windows and Linux get from the same table (`systemRegistry`), so the menu shows the
 // keys the window answers.
 
 import type { MenuItemConstructorOptions } from "electron";

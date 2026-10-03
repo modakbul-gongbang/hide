@@ -1117,7 +1117,7 @@ Signing with a real identity, notarization, auto-update, installers, a tray item
 
 `web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
 The `⌘/` sheet is generated from the table.
-The table is written in macOS chords; `modChord` gives Windows and Linux theirs (⌘ is Ctrl+Shift, and a ⇧ or ⌥ added to ⌘ is Alt) and `PC_KEYS` the few exceptions, each with its reason, so every reader resolves `systemRegistry(system)` for the system the operator types on (`keySystem` in `web/src/host.ts`, `keySystemOf(process.platform)` in `desktop/src/main`).
+The table is written in macOS chords; `modChord` gives Windows and Linux theirs (⌘ is Ctrl+Shift, and ⌘ with a ⇧ or ⌥ is Alt+Shift) and `PC_KEYS` the few exceptions, each with its reason, so every reader resolves `systemRegistry(system)` for the system the operator types on (`keySystem` in `web/src/host.ts`, `keySystemOf(process.platform)` in `desktop/src/main`).
 A stored set keeps macOS chords (`macChord`), so one set means the same keys on either system; [UI_BEHAVIOR.md: Keyboard shortcuts per system](UI_BEHAVIOR.md#keyboard-shortcuts-per-system) owns the table on both systems and the terminal copy and interrupt keys (`web/src/keys.ts`).
 The close chord uses the page's recorded keyboard owner: the focused View display first, otherwise the owned visible pane, with tools, absent or retired owners producing a diagnostic and no close.
 The new tab chord reads the same owner (`newTabPolicy`): a drawn View area gets its New tab, an owned pane's Agent area gets an agent tab, and anything else the Agent active area.

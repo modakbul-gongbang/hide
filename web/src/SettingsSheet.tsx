@@ -1181,7 +1181,7 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
           host === "electron"
             ? system === "mac"
               ? "The macOS app's pane chords: this desktop app and the macOS app share them. Pane chords need ⌘; navigation can use ⌃ or ⌥ as well. A chord that macOS or the app menu keeps is refused before it is saved."
-              : "This desktop app's pane chords. Pane chords need Ctrl+Shift, so a plain Ctrl key stays the terminal's; navigation can use Ctrl or Alt as well. A chord the system keeps is refused before it is saved."
+              : "This desktop app's pane chords. Pane chords need Ctrl+Shift or Alt+Shift, so a plain Ctrl key stays the terminal's; navigation can use Ctrl or Alt as well. A chord the system keeps is refused before it is saved."
             : system === "mac"
               ? "These chords are this browser host's own; the macOS and desktop apps keep their own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
               : "These chords are this browser host's own; the desktop app keeps its own set. A chord needs Ctrl or Alt, and one Chrome or the system keeps is refused before it is saved."
@@ -1273,7 +1273,13 @@ function ShortcutRow({
       return;
     }
     const chord = chordFromEvent(event.nativeEvent);
-    const reason = bindingProblem(id, chord, registry, host, system);
+    // AltGr types a character on Windows and Linux layouts (Windows reports it
+    // as Ctrl+Alt), so a key pressed with it is never a chord, as the window
+    // listener already treats it.
+    const reason =
+      system === "pc" && event.nativeEvent.getModifierState?.("AltGraph")
+        ? "AltGr types a character, so it cannot start a chord."
+        : bindingProblem(id, chord, registry, host, system);
     setRecording(false);
     setProblem(reason);
     setDraft(reason ? null : chord);

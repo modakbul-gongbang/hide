@@ -66,7 +66,7 @@ Tag it `@flaky` with an `issue` annotation naming the issue that tracks the caus
 Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
 
 A web e2e test that exercises what differs by operating system is tagged `{ tag: "@platform" }` with a comment saying what, and a pull request runs those on macOS as well as on Linux: Trash, process ownership, file watching and saving, worktree paths, disk cleanup, terminal input and echo through the platform's Herdr, and the ⌘ chords and Korean input a Mac user types.
-Every web e2e presses its chords through `web/e2e/chords.ts`, which reads them from the shell's registry for the runner's system, so the Linux shards press the Ctrl+Shift chords Windows and Linux use and the macOS run presses the ⌘ ones; a spec spells a chord itself only when it binds one in Settings or presses one the shell must not answer.
+Every web e2e presses its chords through `web/e2e/chords.ts`, which reads them from the shell's registry for the runner's system, so the Linux shards press the Ctrl+Shift and Alt+Shift chords Windows and Linux use and the macOS run presses the ⌘ ones; a spec spells a chord itself only when it binds one in Settings or presses one the shell must not answer.
 Everything else is the same web shell on every system and runs on Linux only; the nightly workflow runs the whole suite on macOS, quarantined tests included, and, when it fails, opens one `bug` issue or comments on the one already open.
 Quarantined tests (`@flaky`) run only in shard 1 of the Linux lane and in the nightly run, never in the macOS `@platform` job.
 Run the macOS set locally with `pnpm --dir web e2e --grep @platform`.

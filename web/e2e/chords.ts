@@ -1,5 +1,5 @@
 // The keys a spec presses, as the machine it runs on presses them: macOS's
-// own chords on the macOS job and the Ctrl+Shift set on Linux, read from the
+// own chords on the macOS job and the Ctrl+Shift and Alt+Shift set on Linux, read from the
 // shell's registry (`src/shortcuts.ts`), so each system's job exercises that
 // system's chords and a spec never spells a chord the shell would not answer.
 // The browser under test runs on the same machine as the runner, so both

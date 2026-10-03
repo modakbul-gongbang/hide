@@ -408,8 +408,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // move; the global Recent Panels pair has no default chord), and the eight
     // Agent and View area commands (no default chord either) the 35th to 42nd.
     await expect(page.locator("[data-shortcut]")).toHaveCount(42);
-    // Chrome keeps seven desktop chords on macOS and four on Windows and Linux.
-    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(SYSTEM === "mac" ? 7 : 4);
+    // Chrome keeps seven desktop chords on macOS and five on Windows and Linux.
+    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(SYSTEM === "mac" ? 7 : 5);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-shortcut-sheet]")).toHaveCount(0);

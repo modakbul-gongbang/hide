@@ -26,7 +26,8 @@
 //
 // The table is written in macOS chords, and one rule gives every other
 // system its keys (`modChord`): ⌘ is Ctrl+Shift on Windows and Linux, as in
-// Windows Terminal, GNOME Terminal, WezTerm and kitty, so a plain Ctrl key
+// Windows Terminal, GNOME Terminal, WezTerm and kitty, and ⇧⌘ or ⌥⌘ is
+// Alt+Shift, the layer Windows Terminal puts its panes on, so a plain Ctrl key
 // (Ctrl+C, Ctrl+R, Ctrl+W, Ctrl+K) always reaches the shell and the agent
 // CLIs. `PC_KEYS` holds the few commands that keep a different chord there,
 // each with its reason; docs/UI_BEHAVIOR.md (Keyboard shortcuts per system)
@@ -56,26 +57,30 @@ export function keySystemOf(platform: string): KeySystem {
 
 /**
  * A macOS chord as `system` presses it: the one rule. ⌘ is Ctrl+Shift off
- * macOS; a ⇧ or ⌥ the macOS chord adds to ⌘ is Alt there, the layer kitty
- * and WezTerm put above Ctrl+Shift, because Shift is already held (⌘T is
- * Ctrl+Shift+T and ⇧⌘T Ctrl+Shift+Alt+T). A chord without ⌘ (⌃Tab, ⌥1) is
- * the same keys on every system.
+ * macOS; a ⇧ or ⌥ the macOS chord adds to ⌘ makes it Alt+Shift there, the
+ * layer Windows Terminal puts its panes on (⌘T is Ctrl+Shift+T and ⇧⌘T
+ * Alt+Shift+T), so no chord needs more than three keys and Ctrl alone never
+ * leaves the shell. A chord without ⌘ (⌃Tab, ⌥1) is the same keys on every
+ * system.
  */
 export function modChord(chord: Chord, system: KeySystem): Chord {
   if (system === "mac" || !chord.meta) return chord;
-  return chord.shift || chord.alt ? { code: chord.code, ctrl: true, shift: true, alt: true } : { code: chord.code, ctrl: true, shift: true };
+  return chord.shift || chord.alt ? { code: chord.code, alt: true, shift: true } : { code: chord.code, ctrl: true, shift: true };
 }
 
 /**
  * The macOS chord a press on `system` stands for, which is how a chord is
  * stored, so one stored set reads the same on every system; null for a
- * press holding the Windows or Super key, which the system keeps.
+ * press holding the Windows or Super key, which the system keeps. Alt+Shift
+ * is stored as ⇧⌘, the rule's chord on that layer, although ⌥⌘ and ⌥⇧ are
+ * the same keys there too.
  */
 export function macChord(chord: Chord, system: KeySystem): Chord | null {
   if (system === "mac") return chord;
   if (chord.meta) return null;
-  if (!chord.ctrl || !chord.shift) return chord;
-  return chord.alt ? { code: chord.code, meta: true, shift: true } : { code: chord.code, meta: true };
+  if (chord.ctrl && chord.shift && !chord.alt) return { code: chord.code, meta: true };
+  if (chord.alt && chord.shift && !chord.ctrl) return { code: chord.code, meta: true, shift: true };
+  return chord;
 }
 
 /** Copy and paste in a terminal, as macOS chords: ⌘C and ⌘V, which the rule makes Ctrl+Shift+C and Ctrl+Shift+V elsewhere. */
@@ -257,12 +262,19 @@ export const REGISTRY: readonly Command[] = [
  * The same keys hold in both hosts; a host without the command stays
  * without it, and an operator's own binding replaces the entry.
  */
-export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord: Chord; passthrough?: string }>>> = {
+export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browser?: Chord; passthrough?: string }>>> = {
   // Alt+Tab is the system's window switcher and never reaches an app, so the
   // cycle moves to ` under the rule (macOS keeps ⌘` for its own window cycle,
-  // which is why it uses ⌥Tab).
+  // which is why it uses ⌥Tab). Going back adds Alt to the Ctrl+Shift the
+  // cycle holds: a held cycle commits when its Ctrl is released, so the
+  // rule's Alt+Shift+` could not step back inside it, and GNOME keeps
+  // Alt+Shift+` (switch-group-backward) for itself.
   recent_project: { chord: { code: "Backquote", ctrl: true, shift: true } },
-  previous_recent_project: { chord: { code: "Backquote", ctrl: true, shift: true, alt: true } },
+  previous_recent_project: { chord: { code: "Backquote", ctrl: true, alt: true, shift: true } },
+  // Chrome keeps Alt+Shift+T (focus the toolbar) on Windows and Linux, and the
+  // macOS browser chord ⌥⇧T is those same keys there, so a browser tab
+  // reopens with the one free chord on that key.
+  reopen_closed_tab: { browser: { code: "KeyT", ctrl: true, alt: true, shift: true } },
   // Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser size
   // text with Ctrl and =, - or 0.
   text_larger: { chord: { code: "Equal", ctrl: true } },
@@ -273,7 +285,7 @@ export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord: Chord; passthr
   move_to_trash: { chord: { code: "Delete" }, passthrough: "Explorer only" },
 };
 
-/** Chords Chrome or the system never hands to a page, per system; a browser chord using one is a registry error. */
+/** Chords Chrome or the system keeps for itself, per system; a browser chord using one is a registry error. */
 const CHROME_RESERVED: Readonly<Record<KeySystem, readonly Chord[]>> = {
   mac: [
     { code: "Tab", meta: true },
@@ -291,7 +303,10 @@ const CHROME_RESERVED: Readonly<Record<KeySystem, readonly Chord[]>> = {
     { code: "Comma", meta: true },
   ],
   // Chrome's reserved commands on Windows and Linux (new and closed tabs and
-  // windows, tab switching, quit), and the system's window switcher.
+  // windows, tab switching, quit), its Alt+Shift keys (focus the toolbar,
+  // focus inactive dialogs, the feedback form, split view), which a page
+  // could take but a keyboard user relies on, and the system's window
+  // switcher.
   pc: [
     { code: "KeyT", ctrl: true },
     { code: "KeyW", ctrl: true },
@@ -302,6 +317,10 @@ const CHROME_RESERVED: Readonly<Record<KeySystem, readonly Chord[]>> = {
     { code: "KeyQ", ctrl: true, shift: true },
     { code: "Tab", ctrl: true },
     { code: "Tab", ctrl: true, shift: true },
+    { code: "KeyT", alt: true, shift: true },
+    { code: "KeyA", alt: true, shift: true },
+    { code: "KeyI", alt: true, shift: true },
+    { code: "KeyN", alt: true, shift: true },
     { code: "Tab", alt: true },
     { code: "Tab", alt: true, shift: true },
   ],
@@ -331,7 +350,7 @@ function pcCommand(command: Command): Command {
   const moved = command.moved && electron !== null && isChromeReserved(electron, "pc");
   return {
     ...command,
-    browser: command.moved && !moved ? electron : keys(command.browser),
+    browser: deviation?.browser ?? (command.moved && !moved ? electron : keys(command.browser)),
     electron,
     moved,
     ...(deviation?.passthrough ? { passthrough: deviation.passthrough } : {}),
@@ -499,7 +518,7 @@ const MACOS_RESERVED: readonly Chord[] = ["Tab", "KeyQ", "KeyH", "KeyM", "KeyS",
 const PC_RESERVED: readonly Chord[] = [{ code: "Tab", alt: true }, { code: "Tab", alt: true, shift: true }];
 
 /** The modifier every app chord holds on `system`, as the operator reads it. */
-const MOD_NAME: Readonly<Record<KeySystem, string>> = { mac: "⌘", pc: "Ctrl+Shift" };
+const MOD_NAME: Readonly<Record<KeySystem, string>> = { mac: "⌘", pc: "Ctrl+Shift or Alt+Shift" };
 
 /** The key a command's chord is stored under in `host`'s set. */
 export function storedKey(id: CommandId, host: HostKind): string {
@@ -546,7 +565,9 @@ export function bindingProblem(id: CommandId, chord: Chord, registry: readonly C
   const shown = displayChord(chord, system);
   if (system === "pc" && chord.meta) return "Leave out the Windows or Super key; the system keeps it.";
   if (host === "electron") {
-    const mod = system === "mac" ? !!chord.meta : !!(chord.ctrl && chord.shift);
+    // Exactly one of Ctrl and Alt: Ctrl+Alt+Shift is the rule's image of no
+    // macOS chord, so a set holding one would be refused on a Mac.
+    const mod = system === "mac" ? !!chord.meta : !!chord.shift && !!chord.ctrl !== !!chord.alt;
     if (!macosKeyName(chord.code)) return "Use one letter, digit or punctuation key, or Return.";
     if (!mod && !(isCycleCommand(id) && (chord.ctrl || chord.alt))) return `Include ${MOD_NAME[system]} so typing in a terminal stays typing.`;
     if (system === "mac" && MACOS_RESERVED.some((reserved) => chordEquals(reserved, chord))) return `${shown} is kept by macOS or the app menu.`;
@@ -554,7 +575,7 @@ export function bindingProblem(id: CommandId, chord: Chord, registry: readonly C
   } else {
     if (!BINDABLE_CODE.test(chord.code)) return "Use a letter, a digit, Return, an arrow or a punctuation key.";
     if (!chord.meta && !chord.ctrl && !chord.alt) return `Include ${system === "mac" ? "⌘, ⌥ or ⌃" : "Ctrl or Alt"} so typing in a terminal stays typing.`;
-    if (isChromeReserved(chord, system)) return `${shown} is kept by Chrome or ${system === "mac" ? "macOS" : "the system"} and never reaches the page.`;
+    if (isChromeReserved(chord, system)) return `${shown} is kept by Chrome or ${system === "mac" ? "macOS" : "the system"}.`;
   }
   if (chordEquals(chord, modChord(TERMINAL_COPY, system))) return `${shown} copies a terminal's selection.`;
   if (chordEquals(chord, modChord(TERMINAL_PASTE, system))) return `${shown} pastes into a terminal.`;
@@ -648,8 +669,8 @@ const MAC_GLYPHS: Record<string, string> = {
 };
 
 // Windows and Linux name keys in words and join a chord with "+", modifiers
-// first in the order Ctrl, Shift, Alt, so every app chord begins with the
-// same "Ctrl+Shift+".
+// first in Windows' order Ctrl, Alt, Shift, so a chord the rule makes begins
+// with "Ctrl+Shift+" or "Alt+Shift+".
 const PC_NAMES: Record<string, string> = {
   ...MAC_GLYPHS,
   ArrowUp: "Up",
@@ -666,10 +687,10 @@ function keyName(code: string, names: Record<string, string>): string {
   return names[code] ?? (code.startsWith("Key") ? code.slice(3) : code.startsWith("Digit") ? code.slice(5) : code);
 }
 
-/** The chord as the operator reads it on `system`: macOS glyphs in macOS modifier order ("⇧⌘T"), or "Ctrl+Shift+Alt+T". */
+/** The chord as the operator reads it on `system`: macOS glyphs in macOS modifier order ("⇧⌘T"), or words in Windows' order ("Alt+Shift+T"). */
 export function displayChord(chord: Chord, system: KeySystem): string {
   if (system === "pc") {
-    return [chord.ctrl && "Ctrl", chord.shift && "Shift", chord.alt && "Alt", chord.meta && "Win", keyName(chord.code, PC_NAMES)].filter(Boolean).join("+");
+    return [chord.ctrl && "Ctrl", chord.alt && "Alt", chord.shift && "Shift", chord.meta && "Win", keyName(chord.code, PC_NAMES)].filter(Boolean).join("+");
   }
   return `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}${keyName(chord.code, MAC_GLYPHS)}`;
 }
