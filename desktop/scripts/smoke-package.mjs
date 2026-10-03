@@ -129,12 +129,17 @@ check("Electron runs the bundled hcoord as Node", () => {
   return answer.value.hcoordVersion;
 });
 
-/** The bundled `hide`'s one JSON line, whatever its exit. */
+/**
+ * The bundled `hide`'s one JSON line, also when it exits non-zero (a refused
+ * connect prints its reason). A `hide` that had to be killed answered nothing:
+ * its output staying open past the bound is the failure, whatever it printed.
+ */
 function hide(args) {
   try {
     return JSON.parse(output(bundled("hide"), args, isolated));
   } catch (error) {
-    if (typeof error?.stdout === "string" && error.stdout.trim().startsWith("{")) return JSON.parse(error.stdout);
+    const exited = typeof error?.status === "number" && error.signal == null && error.code !== "ETIMEDOUT";
+    if (exited && typeof error.stdout === "string" && error.stdout.trim().startsWith("{")) return JSON.parse(error.stdout);
     throw new Error(`hide ${args.join(" ")}: ${error?.stderr || error?.message || error}`);
   }
 }
@@ -170,13 +175,20 @@ try {
   });
 } finally {
   // Asked whatever happened above: a daemon a failed connect left running is
-  // this run's too, and stopping none is not an error.
-  execFileSync(bundled("hide"), ["stop"], { env: isolated, stdio: "inherit", timeout: 30_000 });
-  if (connected?.ok === true) {
-    check("hide stop ends it", () => {
-      const status = hide(["status", "--json"]);
-      if (status.running !== false) throw new Error(JSON.stringify(status));
-    });
+  // this run's too, and stopping none is not an error. A failure here is
+  // reported, after the scratch folder is gone, beside any failure above.
+  try {
+    execFileSync(bundled("hide"), ["stop"], { env: isolated, stdio: "inherit", timeout: 30_000 });
+    if (connected?.ok === true) {
+      check("hide stop ends it", () => {
+        const status = hide(["status", "--json"]);
+        if (status.running !== false) throw new Error(JSON.stringify(status));
+      });
+    }
+  } catch (error) {
+    console.error(`hide stop failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
-  fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 }

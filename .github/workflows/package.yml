@@ -27,7 +27,10 @@ on:
       - contracts/herdr-bundle.json
       - scripts/fetch-herdr-runtime.*
       - scripts/verify-cargo.sh
+      - scripts/toolchain-env.sh
+      - hided/build.rs
       - .github/workflows/package.yml
+      - .github/workflows/release.yml
 
 permissions:
   contents: read

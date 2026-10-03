@@ -9,8 +9,8 @@ Each release also carries unsigned packages for Windows x64 and Linux x64, built
 - An Apple Silicon Mac with macOS 14 or later, or a Windows x64 or Linux x64 machine for the unsigned packages.
 - No Xcode is required to install or run hide.
 - For source builds only: a current stable Rust toolchain with Rust 2024 edition support, Node.js 22, and pnpm 10.
-- For source builds on Windows only: the Rust MSVC toolchain with the Visual Studio C++ build tools, Git for Windows (its `bash` runs the cargo wrapper), and PowerShell 7 (`pwsh` fetches the pinned Herdr).
-- For source builds on Linux only: `zsh`, `jq` and `curl`, which the Herdr fetch uses.
+- For source builds on Windows only: the Rust MSVC toolchain with the Visual Studio C++ build tools, Git for Windows, and PowerShell 7 (`pwsh` fetches the pinned Herdr); run the build from Git Bash, so `bash` is Git's and not the WSL launcher in `System32`.
+- For source builds on Linux only: `zsh`, `jq`, and `curl`, `shasum` and `awk` under `/usr/bin`, which the Herdr fetch uses.
 - For source builds only: network access for the pinned Rust crates, the npm packages, the Electron runtime download, and the pinned Herdr asset.
 - An agent CLI (Claude Code or Codex), installed and signed in, only if you want hide to launch that agent.
 
@@ -89,6 +89,7 @@ tar -xzf hide-v<version>-linux-x64.tar.gz
 
 Continue only when `sha256sum` prints `OK`.
 The tar keeps the files executable, so there is nothing to `chmod`; nothing is installed system-wide, and no menu entry is created.
+The app needs the libraries every Electron app does (GTK 3, NSS, ALSA), which a desktop distribution already has.
 Electron needs a sandbox on Linux: where the system lets an unprivileged process make user namespaces it needs nothing more, and where it does not (Ubuntu 24.04 and later restrict them through AppArmor), the app stops with a message about `chrome-sandbox`.
 Then make the bundled sandbox helper setuid root once, from the folder you unpacked:
 
@@ -105,6 +106,7 @@ sudo chmod 4755 hide-linux-x64/chrome-sandbox
 - Nothing is installed at first launch: the kit (the `hide` link, the agent hook entries and hcoord) is installed only by a daemon running from inside `hide.app` today, and This machine's row in Settings > Devices says so.
 - The app does not replace a `hided` that a previous version left running: a `hide` outside `hide.app` refuses a daemon of another build and the window shows the failure.
   Before replacing the folder with a newer version, stop the old daemon with the old folder's CLI: `hide-win32-x64\resources\hide.exe stop` on Windows, `hide-linux-x64/resources/hide stop` on Linux.
+- A package carries the device helper for its own system only, as the macOS app does: a Linux package installs it on a Linux x64 device, while no device runs the Windows one yet (Windows devices are not supported), so from Windows a device's files and Git stay unavailable.
 - Nothing updates itself, and uninstalling is deleting the folder; `~/.hide` (`%USERPROFILE%\.hide` on Windows) and the profile stay until you delete them.
 
 ## Build and install from source
