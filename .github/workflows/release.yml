@@ -105,18 +105,8 @@ jobs:
           pattern: hide-package-*
           path: packages
           merge-multiple: true
-      - name: Read every published release and draft without changing them
+      - name: Prepare an exact draft with append-only assets and enforced immutability
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p agents/runs/release
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            > agents/runs/release/pages.json
-      - name: Require this version of all three targets and an unpublished draft
-        run: node scripts/check-release-assets.mjs "$GITHUB_REF_NAME" packages agents/runs/release/pages.json
-      - name: Create draft release
-        uses: softprops/action-gh-release@v3
-        with:
-          draft: true
-          prerelease: false
-          files: packages/*
+          HIDE_RELEASE_POLICY_TOKEN: ${{ secrets.RELEASE_POLICY_TOKEN }}
+        run: node scripts/release-draft.mjs "$GITHUB_REF_NAME" "$GITHUB_SHA" packages

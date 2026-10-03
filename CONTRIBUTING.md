@@ -140,6 +140,8 @@ A release is a tag on a commit that is already on `main`, never on a branch.
 Pushing a stable `vX.Y.Z` tag runs `verify-cargo.sh test` and `verify-web.sh` again on macOS, then packages the app with `HIDE_VERSION=<version> pnpm --dir desktop package` on macOS, Windows and Linux runners.
 The last two use `package.yml`, which also unpacks and starts each package with `node desktop/scripts/smoke-package.mjs`.
 The [release asset gate](docs/BUILD.md#release-asset-gate) requires that version's `hide-v<version>-macos-arm64.zip`, `hide-v<version>-windows-x64.zip` and `hide-v<version>-linux-x64.tar.gz`, each with its verified `.sha256`, before draft preparation.
+Preparation also requires owner-enforced GitHub release immutability and a `RELEASE_POLICY_TOKEN` secret with Administration read access; absent or unverified prerequisites leave the build artifacts available and block release writes.
+The writer adds only missing assets to its exact verified draft and never deletes, overwrites, or publishes a release; legacy drafts require separate coverage review.
 A maintainer publishes only after reviewing separate installation, native first-launch and terminal input/output evidence on every supported system.
 A package checksum or headless daemon smoke check does not provide that native evidence.
 The macOS archive is ad-hoc signed, not notarized, so the first launch needs the Gatekeeper step [docs/INSTALL.md](docs/INSTALL.md) describes; the Windows and Linux packages are not signed, and the same guide gives the SmartScreen and sandbox steps.

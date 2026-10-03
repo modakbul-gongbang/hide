@@ -90,15 +90,30 @@ The suite runs the focus tests after every other one (`desktop/playwright.config
 ## Release asset gate
 
 The release workflow accepts only a stable `vX.Y.Z` tag whose commit is already an ancestor of protected `main`.
-It serializes runs of the same tag, waits for all three packaging jobs, then runs `node scripts/check-release-assets.mjs <tag> <directory> [release-pages.json]` before touching a GitHub release.
+It serializes runs of the same tag and waits for all three packaging jobs before `node scripts/release-draft.mjs <tag> <event-commit-sha> <directory>` prepares the draft.
+The file-only entrypoint is `node scripts/check-release-assets.mjs <tag> <directory> [release-pages.json]`.
 The directory must contain exactly that tag's macOS ARM64 ZIP, Windows x64 ZIP and Linux x64 TAR.GZ, and one SHA-256 sidecar per archive.
 The gate rejects a missing target, extra or mixed-version files, symbolic links, empty archives, an incorrectly named sidecar, and a mismatched digest; archive hashing streams bytes rather than retaining each package in memory.
-An existing release must be an unpublished, non-prerelease draft for that same tag, with only expected asset names and no duplicates.
-The authenticated release inventory is fully paginated and includes drafts; a tag lookup alone cannot establish that a draft is absent.
-Multiple releases for the same tag or an invalid inventory block the run.
-A failed upload can therefore retry the same draft, while a published release or a draft containing stale assets requires maintainer review and is left unchanged.
-An API lookup failure blocks the update instead of being treated as an absent release.
+Before any release write, the writer requires GitHub's immutable-release policy to report both `enabled: true` and `enforced_by_owner: true`, and checks that the current tag still resolves to the event commit.
+The workflow passes its contents-write token as `GH_TOKEN` and a separate `RELEASE_POLICY_TOKEN` repository secret as `HIDE_RELEASE_POLICY_TOKEN`; that credential needs Administration read access for the [policy endpoint](https://docs.github.com/en/rest/repos/repos#check-if-immutable-releases-are-enabled-for-a-repository).
+A missing credential, disabled or unenforced policy, moved tag, or API failure blocks preparation before writes; package workflow artifacts remain available.
+Policy setup and credentials are operator work, and must be complete before attempting a release.
+
+The authenticated release and asset inventories are fully paginated, with a 100-page and 16 MiB limit; a tag lookup alone cannot establish that a draft is absent.
+Multiple releases for the same tag, an invalid inventory, or a published release block the run.
+A new draft records its event commit and enforced-policy origin in its body; an existing draft must have that exact provenance record.
+Legacy drafts are not automatically reused because enabling immutability does not prove coverage of an older release.
+The provenance record describes this controlled writer's origin; it is not a cryptographic attestation or a defense against administrative bypass.
+
+The writer binds to that checked release ID, uploads only missing names, and skips an existing asset only when its uploaded state, size and SHA-256 digest match the local file.
+It never changes an existing release's metadata, deletes an asset, or overwrites a name.
+Mismatched assets, incomplete `starter` uploads and duplicate-name races stop for review; a retry resumes a matching partial draft without replacing completed bytes.
+The final read must still show the complete unpublished draft and matching bytes.
+[GitHub immutability](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) supplies the server protection if publication happens between a read and upload; a GET alone is not an atomic draft-state condition.
+The operational contract excludes concurrent owner-policy disabling and manual changes to the draft during preparation.
+Each request has a 30-second bound, JSON responses are limited to 8 MiB, and the workflow job has a ten-minute bound.
 
 This gate proves the asset set and digests, not installation, terminal input/output, native first launch, signing or notarization.
 The Windows and Linux package smoke checks cover bundled tools, daemon startup, the embedded shell and daemon shutdown; actual desktop and terminal checks on each supported system still need their own evidence before a maintainer publishes the draft.
 The release workflow prepares a draft only and never publishes it automatically.
+Its source guard does not establish that policy credentials are provisioned or that any current release is immutable; verify those live operational prerequisites before release work.
