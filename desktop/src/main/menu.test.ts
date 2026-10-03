@@ -24,7 +24,7 @@ describe("the app menu (B9)", () => {
   });
 
   it("lists the Agent and View area commands in the Pane menu, with no chord until one is set", () => {
-    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false });
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "mac" });
     const pane = template.find((menu) => menu.label === "Pane");
     const items = Array.isArray(pane?.submenu) ? pane.submenu : [];
     for (const id of ["focus_next_agent_area", "shrink_agent_area", "focus_next_view_area", "grow_view_area"]) {
@@ -35,7 +35,7 @@ describe("the app menu (B9)", () => {
 
   it("shows each item with its electron chord and sends its id when clicked", () => {
     const sent: string[] = [];
-    const template = menuTemplate({ appName: "hide", send: (id) => sent.push(id), developer: false });
+    const template = menuTemplate({ appName: "hide", send: (id) => sent.push(id), developer: false, system: "mac" });
     const items = template.flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : []));
     const newTab = items.find((item) => item.id === "new_tab");
     expect(newTab?.accelerator).toBe("Command+T");
@@ -55,21 +55,41 @@ describe("the app menu (B9)", () => {
   });
 
   it("shows the operator's macOS pane chords once the shell reports them", () => {
-    const resolved = menuBindings({ toggle_zoom: "command+shift+return", toggle_conversation: "command+option+c" });
+    const resolved = menuBindings({ toggle_zoom: "command+shift+return", toggle_conversation: "command+option+c" }, "mac");
     if ("refused" in resolved) throw new Error(resolved.refused);
     expect(resolved.diagnostic).toBeNull();
-    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, registry: resolved.registry });
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "mac", registry: resolved.registry });
     const items = template.flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : []));
     expect(items.find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Shift+Command+Return");
     expect(items.find((item) => item.id === "split_right")?.accelerator).toBe("Command+D");
   });
 
   it("refuses a report that is not a short string map, and runs the defaults for an unusable set", () => {
-    expect(menuBindings(null)).toEqual({ refused: "not a map" });
-    expect(menuBindings(["command+d"])).toEqual({ refused: "not a map" });
-    expect(menuBindings({ split_right: 4 })).toEqual({ refused: "not short strings" });
-    expect(menuBindings(Object.fromEntries(Array.from({ length: BINDINGS_CAP + 1 }, (_, index) => [`k${index}`, "command+d"])))).toEqual({ refused: "too many entries" });
-    const unusable = menuBindings({ split_right: "command+t" });
+    expect(menuBindings(null, "mac")).toEqual({ refused: "not a map" });
+    expect(menuBindings(["command+d"], "mac")).toEqual({ refused: "not a map" });
+    expect(menuBindings({ split_right: 4 }, "mac")).toEqual({ refused: "not short strings" });
+    expect(menuBindings(Object.fromEntries(Array.from({ length: BINDINGS_CAP + 1 }, (_, index) => [`k${index}`, "command+d"])), "mac")).toEqual({ refused: "too many entries" });
+    const unusable = menuBindings({ split_right: "command+t" }, "mac");
     expect("refused" in unusable ? null : unusable.registry).toBe(REGISTRY);
+  });
+
+  it("shows Windows and Linux the Ctrl+Shift chords the window answers there, and none of macOS's own items", () => {
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc" });
+    const items = template.flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : []));
+    const shortcut = (id: string) => items.find((item) => item.id === id)?.accelerator;
+    expect(shortcut("new_tab")).toBe("Control+Shift+T");
+    expect(shortcut("reopen_closed_tab")).toBe("Control+Alt+Shift+T");
+    expect(shortcut("toggle_zoom")).toBe("Control+Alt+Shift+Return");
+    expect(shortcut("text_larger")).toBe("Control+=");
+    expect(shortcut("settings")).toBe("Control+Shift+,");
+    expect(items.some((item) => item.accelerator?.includes("Command"))).toBe(false);
+    const roles = items.filter((item) => item.role).map((item) => item.role);
+    for (const role of ["services", "hide", "hideOthers", "unhide"]) expect(roles).not.toContain(role);
+    expect(roles).toContain("quit");
+    // A stored macOS chord reads as the same keys through the rule.
+    const resolved = menuBindings({ toggle_zoom: "command+shift+return" }, "pc");
+    if ("refused" in resolved) throw new Error(resolved.refused);
+    expect(resolved.diagnostic).toBeNull();
+    expect(menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc", registry: resolved.registry }).flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : [])).find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Control+Alt+Shift+Return");
   });
 });

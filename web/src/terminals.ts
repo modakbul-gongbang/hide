@@ -24,7 +24,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { mapModifiedKey } from "./keys";
+import { keySystem } from "./host";
+import { terminalKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
 import { inPlace, remoteControl, remoteTargetOfPane } from "./remote";
 import { bufferRow, selectionToText, type CellRow } from "./selection";
@@ -444,12 +445,22 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
       kind: "key",
       payload: { pane_id: paneId, bytes_base64: bytesBase64(bytes) },
     });
+  const system = keySystem();
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") return true;
-    const mapped = mapModifiedKey(event);
-    if (!mapped) return true;
+    const action = terminalKey(event, system, selectedText(instance) !== null);
+    if (!action) return true;
+    // The page's own paste (Ctrl+Shift+V) reaches xterm's paste handler, which
+    // wraps it in bracketed paste when the program asked for that.
+    if (action.kind === "paste") return false;
     event.preventDefault();
-    send(mapped);
+    if (action.kind === "bytes") send(action.bytes);
+    else {
+      // The copy event reaches `onCopy`, the selection's one clipboard owner;
+      // clearing the selection lets the next Ctrl+C interrupt again.
+      document.execCommand("copy");
+      term.clearSelection();
+    }
     return false;
   });
   term.onData((data) => send(new TextEncoder().encode(data)));

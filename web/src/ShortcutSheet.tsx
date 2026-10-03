@@ -2,7 +2,7 @@ import type { Actions } from "./actions";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
-import { hostKind } from "./host";
+import { hostKind, keySystem } from "./host";
 import { resolvedRegistry, sheetRows, storedBindings, type Command } from "./shortcuts";
 import { useShellStore } from "./store";
 
@@ -19,8 +19,9 @@ export function ShortcutSheet({ actions }: { actions: Actions }) {
   // The sheet reads the same effective registry the window listener runs, so
   // a rebound pane chord is what it lists (PRD S5 B9).
   const host = hostKind();
+  const system = keySystem();
   const stored = useShellStore((s) => storedBindings(s.rest?.ui_state, host));
-  const { registry, diagnostic } = resolvedRegistry(stored, host);
+  const { registry, diagnostic } = resolvedRegistry(stored, host, system);
   // The gate in App.tsx only mounts this component while the overlay is
   // "shortcuts", so the dialog is always open here; closing it (Escape, a
   // click outside, or the trigger elsewhere) toggles that overlay off.
@@ -41,7 +42,7 @@ export function ShortcutSheet({ actions }: { actions: Actions }) {
             <section key={group} className="mb-md">
               <h3 className="mb-xs text-caption uppercase text-muted-foreground">{group}</h3>
               <ul>
-                {sheetRows(group, registry, host).map((row) => (
+                {sheetRows(group, registry, host, system).map((row) => (
                   <li key={row.id} className="flex items-center gap-md py-xxs" data-shortcut={row.id}>
                     <span className="min-w-0 flex-1 truncate">{row.title}</span>
                     {host === "browser" && row.moved ? (

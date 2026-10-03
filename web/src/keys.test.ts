@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { COMMAND_DELETE, LINE_END, LINE_START, SHIFT_ENTER, mapModifiedKey } from "./keys";
+import { COMMAND_DELETE, LINE_END, LINE_START, SHIFT_ENTER, terminalKey } from "./keys";
 
 function event(partial: Partial<KeyboardEvent>): KeyboardEvent {
   return {
     key: "a",
+    code: "KeyA",
     shiftKey: false,
     metaKey: false,
     ctrlKey: false,
@@ -13,28 +14,51 @@ function event(partial: Partial<KeyboardEvent>): KeyboardEvent {
   } as KeyboardEvent;
 }
 
-describe("mapModifiedKey", () => {
+const bytes = (value: Uint8Array) => ({ kind: "bytes", bytes: value });
+
+describe("terminalKey on macOS", () => {
   it("maps Shift+Enter to ESC CR", () => {
-    expect(mapModifiedKey(event({ key: "Enter", shiftKey: true }))).toEqual(SHIFT_ENTER);
+    expect(terminalKey(event({ key: "Enter", code: "Enter", shiftKey: true }), "mac", false)).toEqual(bytes(SHIFT_ENTER));
   });
 
-  it("maps meta Backspace to ^U", () => {
-    expect(mapModifiedKey(event({ key: "Backspace", metaKey: true }))).toEqual(COMMAND_DELETE);
+  it("maps meta Backspace to ^U and meta arrows to line start and end", () => {
+    expect(terminalKey(event({ key: "Backspace", metaKey: true }), "mac", false)).toEqual(bytes(COMMAND_DELETE));
+    expect(terminalKey(event({ key: "ArrowLeft", metaKey: true }), "mac", false)).toEqual(bytes(LINE_START));
+    expect(terminalKey(event({ key: "ArrowRight", metaKey: true }), "mac", false)).toEqual(bytes(LINE_END));
   });
 
-  it("maps meta arrows to line start and end", () => {
-    expect(mapModifiedKey(event({ key: "ArrowLeft", metaKey: true }))).toEqual(LINE_START);
-    expect(mapModifiedKey(event({ key: "ArrowRight", metaKey: true }))).toEqual(LINE_END);
+  it("leaves copy, paste and Ctrl+C to the menu and the program", () => {
+    expect(terminalKey(event({ key: "c", code: "KeyC", metaKey: true }), "mac", true)).toBeNull();
+    expect(terminalKey(event({ key: "c", code: "KeyC", ctrlKey: true }), "mac", true)).toBeNull();
   });
 
-  it("skips mappings while composing", () => {
-    expect(
-      mapModifiedKey(event({ key: "Enter", shiftKey: true, isComposing: true }), true),
-    ).toBeNull();
+  it("skips mappings while composing and leaves plain keys alone", () => {
+    expect(terminalKey(event({ key: "Enter", shiftKey: true }), "mac", false, true)).toBeNull();
+    expect(terminalKey(event({ key: "Enter" }), "mac", false)).toBeNull();
+    expect(terminalKey(event({ key: "a" }), "mac", false)).toBeNull();
+  });
+});
+
+describe("terminalKey on Windows and Linux", () => {
+  const ctrlC = event({ key: "c", code: "KeyC", ctrlKey: true });
+
+  it("copies on Ctrl+C only while there is a selection, so Ctrl+C interrupts otherwise, as Windows Terminal does", () => {
+    expect(terminalKey(ctrlC, "pc", true)).toEqual({ kind: "copy" });
+    expect(terminalKey(ctrlC, "pc", false)).toBeNull();
   });
 
-  it("leaves plain keys alone", () => {
-    expect(mapModifiedKey(event({ key: "Enter" }))).toBeNull();
-    expect(mapModifiedKey(event({ key: "a" }))).toBeNull();
+  it("copies on Ctrl+Shift+C and pastes on Ctrl+Shift+V, by physical key on any layout", () => {
+    expect(terminalKey(event({ key: "C", code: "KeyC", ctrlKey: true, shiftKey: true }), "pc", true)).toEqual({ kind: "copy" });
+    expect(terminalKey(event({ key: "С", code: "KeyC", ctrlKey: true, shiftKey: true }), "pc", true)).toEqual({ kind: "copy" });
+    expect(terminalKey(event({ key: "C", code: "KeyC", ctrlKey: true, shiftKey: true }), "pc", false)).toBeNull();
+    expect(terminalKey(event({ key: "V", code: "KeyV", ctrlKey: true, shiftKey: true }), "pc", false)).toEqual({ kind: "paste" });
+  });
+
+  it("leaves Ctrl+V, Ctrl+Backspace and the arrows to the program, and keeps Shift+Enter", () => {
+    expect(terminalKey(event({ key: "v", code: "KeyV", ctrlKey: true }), "pc", false)).toBeNull();
+    expect(terminalKey(event({ key: "Backspace", code: "Backspace", ctrlKey: true }), "pc", false)).toBeNull();
+    expect(terminalKey(event({ key: "Backspace", code: "Backspace", ctrlKey: true, shiftKey: true }), "pc", false)).toBeNull();
+    expect(terminalKey(event({ key: "ArrowLeft", code: "ArrowLeft", metaKey: true }), "pc", false)).toBeNull();
+    expect(terminalKey(event({ key: "Enter", code: "Enter", shiftKey: true }), "pc", false)).toEqual(bytes(SHIFT_ENTER));
   });
 });

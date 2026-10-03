@@ -20,7 +20,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, WebC
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
-import { hostChord, isCycleCommand, matchHost, releaseModifier, REGISTRY, type Command, type CommandId } from "../../../web/src/shortcuts";
+import { hostChord, isCycleCommand, keySystemOf, matchHost, releaseModifier, systemRegistry, type Command, type CommandId } from "../../../web/src/shortcuts";
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
 import { appScheme, browserPartition, isPopup, loadable, MAX_LIVE_VIEWS, MAX_POPUPS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, popupBounds, remoteRequest, toBounds, viewKey, type PageZoom } from "./browserSync";
 import type { HostLog } from "./log";
@@ -68,7 +68,7 @@ export class BrowserViews {
   private asking: symbol | null = null;
   /** Contents whose app link the operator declined; they ask again only after their next navigation. */
   private readonly declined = new Set<number>();
-  private registry: readonly Command[] = REGISTRY;
+  private registry: readonly Command[] = systemRegistry(keySystemOf(process.platform));
   private cycleInput: { page: Page; release: string; cycleId: number } | null = null;
   private cycleSequence = 0;
 

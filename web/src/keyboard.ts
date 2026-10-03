@@ -21,7 +21,7 @@ import { agentCycle, agentOrigin, areaCycle, focusedCycleScope, focusedSurface, 
 import type { Actions } from "./actions";
 import { focusBrowserDisplay } from "./browserViews";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
-import { browserBridge, hostBridge, hostKind } from "./host";
+import { browserBridge, hostBridge, hostKind, keySystem } from "./host";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
 import { availableEntries, currentEntry, expectPane, expectSurface, observeEntries, observePane, observeProject, paneItem, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
 import { projectsOf, remoteContext, remoteView } from "./remote";
@@ -171,6 +171,7 @@ function advance(cycle: Cycle, backward: boolean): Cycle {
 export function installKeyboard(actions: Actions): () => void {
   const ui = () => useUiStore.getState();
   const host = hostKind();
+  const system = keySystem();
   const removeKeyboardOwner = installKeyboardOwner();
   const unsubscribeOwner = subscribeKeyboardOwner(() => {
     const rest = useShellStore.getState().rest;
@@ -228,7 +229,7 @@ export function installKeyboard(actions: Actions): () => void {
         if (!cycle) return;
         const next = advance(cycle, backward);
         if (!event) { endNativeCycle(); ui().setCycle(null); commitCycle(next, actions); return; }
-        const command = hostRegistry(rest?.ui_state, host).registry.find((row) => row.id === id);
+        const command = hostRegistry(rest?.ui_state, host, system).registry.find((row) => row.id === id);
         const chord = command && hostChord(command, host);
         const release = chord && releaseModifier(chord);
         if (!release) return;
@@ -317,7 +318,7 @@ export function installKeyboard(actions: Actions): () => void {
   let hint: HintState = idleHint();
   let timer: ReturnType<typeof setTimeout> | null = null;
   const publish = () => {
-    const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state, host);
+    const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state, host, system);
     ui().setHint(revealedFamily(hint, registry, host));
   };
   const setHint = (next: HintState) => {
@@ -372,6 +373,10 @@ export function installKeyboard(actions: Actions): () => void {
       endHold();
     }
     if (event.isComposing || event.keyCode === 229) return;
+    // AltGr types a character on Windows and Linux layouts, and Windows
+    // reports it as Ctrl+Alt: a Polish Ń is AltGr+Shift+N, which would
+    // otherwise read as Ctrl+Shift+Alt+N, Add project.
+    if (system === "pc" && event.getModifierState?.("AltGraph")) return;
     // A Shortcuts row that is recording owns the next chord, Escape included:
     // no command runs while the operator is showing the recorder a key.
     if (ui().recordingShortcut) return;
@@ -423,7 +428,7 @@ export function installKeyboard(actions: Actions): () => void {
       }
       return;
     }
-    const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state, host);
+    const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state, host, system);
     const command = matchHost(event, registry, host);
     if (!command) return;
     event.preventDefault();

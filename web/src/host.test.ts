@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { opensExternally } from "./host";
+import { keySystem, opensExternally } from "./host";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -11,5 +11,16 @@ describe("opensExternally", () => {
     vi.stubGlobal("navigator", { platform: "Win32", userAgent: "" });
     expect(opensExternally({ metaKey: false, ctrlKey: true })).toBe(true);
     expect(opensExternally({ metaKey: true, ctrlKey: false })).toBe(false);
+  });
+});
+
+describe("keySystem", () => {
+  it("follows the browser's platform, and the desktop app's OS when the host bridge is there", () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64", userAgent: "" });
+    expect(keySystem()).toBe("pc");
+    vi.stubGlobal("navigator", { platform: "", userAgent: "", userAgentData: { platform: "macOS" } });
+    expect(keySystem()).toBe("mac");
+    vi.stubGlobal("window", { hideHost: { kind: "electron", platform: "win32" } });
+    expect(keySystem()).toBe("pc");
   });
 });

@@ -3,15 +3,19 @@
 // the window listener read one table (desktop PRD D-04). A click sends the
 // command id to the shell over the bridge; a chord the shell's listener
 // answers is consumed there and never reaches the menu's accelerator. The
-// pane chords follow the operator's macOS set, which the shell reports and
-// `menuBindings` resolves with the rules the shell's listener runs.
+// pane chords follow the operator's stored set, which the shell reports and
+// `menuBindings` resolves with the rules the shell's listener runs. The
+// chords are this system's: macOS's own, or the Ctrl+Shift set Windows and
+// Linux get from the same table (`systemRegistry`), so the menu shows the
+// keys the window answers.
 
 import type { MenuItemConstructorOptions } from "electron";
-import { AREA_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
+import { AREA_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, systemRegistry, type Chord, type Command, type CommandId, type EffectiveRegistry, type KeySystem } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
   Enter: "Return",
   Backspace: "Backspace",
+  Delete: "Delete",
   Tab: "Tab",
   Backquote: "`",
   Minus: "-",
@@ -30,7 +34,7 @@ const KEY_NAMES: Record<string, string> = {
   ArrowRight: "Right",
 };
 
-/** A registry chord as an Electron accelerator ("Command+Shift+T"). */
+/** A registry chord as an Electron accelerator ("Shift+Command+T", "Control+Shift+T"). */
 export function accelerator(chord: Chord): string {
   const key = chord.code.startsWith("Key")
     ? chord.code.slice(3)
@@ -98,7 +102,7 @@ const BINDING_TEXT_CAP = 64;
  * bridge is checked here all the same: a plain map of short strings, then
  * the shell's own resolution, whose fallback to the defaults the menu shares.
  */
-export function menuBindings(reported: unknown): EffectiveRegistry | { refused: string } {
+export function menuBindings(reported: unknown, system: KeySystem): EffectiveRegistry | { refused: string } {
   if (typeof reported !== "object" || reported === null || Array.isArray(reported)) return { refused: "not a map" };
   const entries = Object.entries(reported);
   if (entries.length > BINDINGS_CAP) return { refused: "too many entries" };
@@ -107,7 +111,7 @@ export function menuBindings(reported: unknown): EffectiveRegistry | { refused: 
     if (typeof value !== "string" || key.length > BINDING_TEXT_CAP || value.length > BINDING_TEXT_CAP) return { refused: "not short strings" };
     stored[key] = value;
   }
-  return effectiveRegistry(stored, "electron");
+  return effectiveRegistry(stored, "electron", system);
 }
 
 function items(layout: readonly (CommandId | null)[], send: (id: CommandId) => void, registry: readonly Command[]): MenuItemConstructorOptions[] {
@@ -123,10 +127,14 @@ export function menuTemplate(options: {
   appName: string;
   send: (id: CommandId) => void;
   developer: boolean;
+  system: KeySystem;
   registry?: readonly Command[];
 }): MenuItemConstructorOptions[] {
-  const { appName, send, developer } = options;
-  const registry = options.registry ?? REGISTRY;
+  const { appName, send, developer, system } = options;
+  const registry = options.registry ?? systemRegistry(system);
+  // Services and hiding the app are macOS's own; Windows and Linux have neither.
+  const macOnly: MenuItemConstructorOptions[] =
+    system === "mac" ? [{ role: "services" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }] : [];
   return [
     {
       label: appName,
@@ -135,12 +143,7 @@ export function menuTemplate(options: {
         { type: "separator" },
         ...items(MENU_LAYOUT.app, send, registry),
         { type: "separator" },
-        { role: "services" },
-        { type: "separator" },
-        { role: "hide" },
-        { role: "hideOthers" },
-        { role: "unhide" },
-        { type: "separator" },
+        ...macOnly,
         { role: "quit" },
       ],
     },

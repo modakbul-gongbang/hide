@@ -6,9 +6,11 @@ import { AgentMark } from "./AgentMark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { hostKind } from "./host";
 import { ChildChipRow, ReturnToParent, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
-import { displayCommand, hostRegistry } from "./shortcuts";
+import { chordLabel, commandLabel } from "./shortcutLabels";
+import { keySystem } from "./host";
+import { TERMINAL_COPY, TERMINAL_PASTE } from "./keys";
+import { modChord } from "./shortcuts";
 import { sleepCaption, wakingLine } from "./sleep";
 import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
@@ -64,13 +66,13 @@ export function transportCaption(transport: TerminalPane | undefined, local = tr
 
 /** The chords the registry binds here for the terminal menu's commands, read when it opens. */
 function terminalMenuChords(): TerminalMenuContext["chords"] {
-  const host = hostKind();
-  const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state, host);
   return {
-    find: displayCommand("find_in_pane", host, registry),
-    splitRight: displayCommand("split_right", host, registry),
-    splitDown: displayCommand("split_down", host, registry),
-    zoom: displayCommand("toggle_zoom", host, registry),
+    copy: chordLabel(modChord(TERMINAL_COPY, keySystem())),
+    paste: chordLabel(modChord(TERMINAL_PASTE, keySystem())),
+    find: commandLabel("find_in_pane"),
+    splitRight: commandLabel("split_right"),
+    splitDown: commandLabel("split_down"),
+    zoom: commandLabel("toggle_zoom"),
   };
 }
 

@@ -23,6 +23,14 @@
 // none: the sheet says so and nothing is intercepted there. The number itself
 // is the screen order at the moment of the press, assigned by the web shell
 // (`numbering.ts`), and the hold hint (`hints.ts`) shows that order.
+//
+// The table is written in macOS chords, and one rule gives every other
+// system its keys (`modChord`): ⌘ is Ctrl+Shift on Windows and Linux, as in
+// Windows Terminal, GNOME Terminal, WezTerm and kitty, so a plain Ctrl key
+// (Ctrl+C, Ctrl+R, Ctrl+W, Ctrl+K) always reaches the shell and the agent
+// CLIs. `PC_KEYS` holds the few commands that keep a different chord there,
+// each with its reason; docs/UI_BEHAVIOR.md (Keyboard shortcuts per system)
+// lists the whole table on both systems.
 
 import type { HostKind } from "./host";
 
@@ -33,6 +41,56 @@ export type Chord = {
   shift?: boolean;
   ctrl?: boolean;
 };
+
+/**
+ * Which keyboard convention the operator's machine follows: macOS, whose app
+ * chords hold ⌘, or Windows and Linux, which have no ⌘ and whose terminal
+ * apps put app chords on Ctrl+Shift.
+ */
+export type KeySystem = "mac" | "pc";
+
+/** The system a platform name stands for: Node's `darwin`, the browser's `MacIntel` or `macOS`, or a user agent. */
+export function keySystemOf(platform: string): KeySystem {
+  return /mac|darwin|iphone|ipad/i.test(platform) ? "mac" : "pc";
+}
+
+/**
+ * A macOS chord as `system` presses it: the one rule. ⌘ is Ctrl+Shift off
+ * macOS; a ⇧ or ⌥ the macOS chord adds to ⌘ is Alt there, the layer kitty
+ * and WezTerm put above Ctrl+Shift, because Shift is already held (⌘T is
+ * Ctrl+Shift+T and ⇧⌘T Ctrl+Shift+Alt+T). A chord without ⌘ (⌃Tab, ⌥1) is
+ * the same keys on every system.
+ */
+export function modChord(chord: Chord, system: KeySystem): Chord {
+  if (system === "mac" || !chord.meta) return chord;
+  return chord.shift || chord.alt ? { code: chord.code, ctrl: true, shift: true, alt: true } : { code: chord.code, ctrl: true, shift: true };
+}
+
+/**
+ * The macOS chord a press on `system` stands for, which is how a chord is
+ * stored, so one stored set reads the same on every system; null for a
+ * press holding the Windows or Super key, which the system keeps.
+ */
+export function macChord(chord: Chord, system: KeySystem): Chord | null {
+  if (system === "mac") return chord;
+  if (chord.meta) return null;
+  if (!chord.ctrl || !chord.shift) return chord;
+  return chord.alt ? { code: chord.code, meta: true, shift: true } : { code: chord.code, meta: true };
+}
+
+/**
+ * A chord inside a text field, a palette, a board or a document, where no
+ * terminal holds the keyboard: the system's own command key, ⌘ on macOS and
+ * Ctrl elsewhere, as browsers and editors use it (⌘↵ is Ctrl+Enter there).
+ */
+export function fieldChord(code: string, system: KeySystem): Chord {
+  return system === "mac" ? { code, meta: true } : { code, ctrl: true };
+}
+
+/** Whether a press or a click holds the system's own command key (`fieldChord`). */
+export function holdsFieldModifier(event: { metaKey: boolean; ctrlKey: boolean }, system: KeySystem): boolean {
+  return system === "mac" ? event.metaKey : event.ctrlKey;
+}
 
 export type CommandId =
   | "new_tab"
@@ -138,23 +196,21 @@ export type Command = {
   browser: Chord | null;
   /** The Electron host's chord: the macOS chord, or the browser one where the macOS set has none. */
   electron: Chord | null;
-  /** True when the browser chord differs from the macOS chord because Chrome reserves the original. */
+  /** True when the browser chord differs from the desktop app's because Chrome keeps the desktop chord on this system. */
   moved: boolean;
-  /** The macOS chord the browser one replaced, for the sheet's note. */
-  movedFrom?: string;
   /** Not intercepted at the window: the chord reaches the terminal (⌘⌫ is ^U there) and its shell owner is a later stage. */
   passthrough?: string;
 };
 
 export const REGISTRY: readonly Command[] = [
-  { id: "new_tab", title: "New tab", group: "Tabs", browser: { code: "KeyT", alt: true }, electron: { code: "KeyT", meta: true }, moved: true, movedFrom: "⌘T" },
-  { id: "close_tab", title: "Close focused view or pane", group: "Tabs", browser: { code: "KeyW", alt: true }, electron: { code: "KeyW", meta: true }, moved: true, movedFrom: "⌘W" },
-  { id: "reopen_closed_tab", title: "Reopen closed tab", group: "Tabs", browser: { code: "KeyT", alt: true, shift: true }, electron: { code: "KeyT", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧T" },
+  { id: "new_tab", title: "New tab", group: "Tabs", browser: { code: "KeyT", alt: true }, electron: { code: "KeyT", meta: true }, moved: true },
+  { id: "close_tab", title: "Close focused view or pane", group: "Tabs", browser: { code: "KeyW", alt: true }, electron: { code: "KeyW", meta: true }, moved: true },
+  { id: "reopen_closed_tab", title: "Reopen closed tab", group: "Tabs", browser: { code: "KeyT", alt: true, shift: true }, electron: { code: "KeyT", meta: true, shift: true }, moved: true },
   ...numberedEntries(NUMBERED_FAMILIES[0]!),
   { id: "new_workspace", title: "Add project", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true, shift: true }, moved: false },
   { id: "start_agent", title: "Start agent", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true }, moved: false },
-  { id: "recent_area_tab", title: "Next recent Agent pane or View tab", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
-  { id: "previous_recent_area_tab", title: "Previous recent Agent pane or View tab", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
+  { id: "recent_area_tab", title: "Next recent Agent pane or View tab", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true },
+  { id: "previous_recent_area_tab", title: "Previous recent Agent pane or View tab", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true },
   { id: "recent_panel", title: "Next global recent panel", group: "Navigate", browser: null, electron: null, moved: false },
   { id: "previous_recent_panel", title: "Previous global recent panel", group: "Navigate", browser: null, electron: null, moved: false },
   { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: { code: "Tab", alt: true }, moved: false },
@@ -174,7 +230,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "split_right", title: "Split right", group: "Panes", browser: { code: "KeyD", meta: true }, electron: { code: "KeyD", meta: true }, moved: false },
   { id: "split_down", title: "Split down", group: "Panes", browser: { code: "KeyD", meta: true, shift: true }, electron: { code: "KeyD", meta: true, shift: true }, moved: false },
   { id: "toggle_zoom", title: "Zoom pane", group: "Panes", browser: { code: "Enter", meta: true, alt: true }, electron: { code: "Enter", meta: true, alt: true }, moved: false },
-  { id: "close_pane", title: "Close pane", group: "Panes", browser: { code: "KeyW", alt: true, shift: true }, electron: { code: "KeyW", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧W" },
+  { id: "close_pane", title: "Close pane", group: "Panes", browser: { code: "KeyW", alt: true, shift: true }, electron: { code: "KeyW", meta: true, shift: true }, moved: true },
   { id: "text_larger", title: "Larger text", group: "Panes", browser: { code: "Equal", meta: true }, electron: { code: "Equal", meta: true }, moved: false },
   { id: "text_smaller", title: "Smaller text", group: "Panes", browser: { code: "Minus", meta: true }, electron: { code: "Minus", meta: true }, moved: false },
   { id: "text_reset", title: "Reset text size", group: "Panes", browser: { code: "Digit0", meta: true }, electron: { code: "Digit0", meta: true }, moved: false },
@@ -187,26 +243,61 @@ export const REGISTRY: readonly Command[] = [
   { id: "grow_view_area", title: "Grow View area", group: "Panes", browser: null, electron: null, moved: false },
   { id: "shrink_view_area", title: "Shrink View area", group: "Panes", browser: null, electron: null, moved: false },
   { id: "move_to_trash", title: "Move to Trash", group: "Panes", browser: { code: "Backspace", meta: true }, electron: { code: "Backspace", meta: true }, moved: false, passthrough: "Explorer only; in a terminal ⌘⌫ clears the line" },
-  { id: "settings", title: "Settings", group: "Help", browser: { code: "Comma", alt: true }, electron: { code: "Comma", meta: true }, moved: true, movedFrom: "⌘," },
+  { id: "settings", title: "Settings", group: "Help", browser: { code: "Comma", alt: true }, electron: { code: "Comma", meta: true }, moved: true },
   { id: "shortcuts", title: "Keyboard shortcuts", group: "Help", browser: { code: "Slash", meta: true }, electron: { code: "Slash", meta: true }, moved: false },
 ];
 
-/** Chords Chrome or macOS never hands to a page; a browser chord using one is a registry error. */
-const CHROME_RESERVED: readonly Chord[] = [
-  { code: "Tab", meta: true },
-  { code: "KeyT", meta: true },
-  { code: "KeyW", meta: true },
-  { code: "KeyT", meta: true, shift: true },
-  { code: "KeyN", meta: true, shift: true },
-  { code: "KeyW", meta: true, shift: true },
-  { code: "Tab", ctrl: true },
-  { code: "Tab", ctrl: true, shift: true },
-  { code: "KeyN", meta: true },
-  { code: "KeyQ", meta: true },
-  { code: "KeyH", meta: true },
-  { code: "KeyM", meta: true },
-  { code: "Comma", meta: true },
-];
+const TEXT_SIZE_KEYS = "Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser size text with Ctrl and =, - or 0.";
+const RECENT_PROJECT_KEYS = "Alt+Tab is the system's window switcher on Windows and Linux and never reaches an app, so the cycle moves to ` under the Ctrl+Shift rule (macOS keeps ⌘` for its own window cycle, which is why it uses ⌥Tab).";
+
+/**
+ * The commands whose chord on Windows and Linux is not the rule's
+ * (`modChord`), each with why: a dominant convention there, or a chord the
+ * system keeps. The same keys hold in both hosts; a host without the command
+ * stays without it, and an operator's own binding replaces the entry.
+ */
+export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord: Chord; why: string; passthrough?: string }>>> = {
+  recent_project: { chord: { code: "Backquote", ctrl: true, shift: true }, why: RECENT_PROJECT_KEYS },
+  previous_recent_project: { chord: { code: "Backquote", ctrl: true, shift: true, alt: true }, why: RECENT_PROJECT_KEYS },
+  text_larger: { chord: { code: "Equal", ctrl: true }, why: TEXT_SIZE_KEYS },
+  text_smaller: { chord: { code: "Minus", ctrl: true }, why: TEXT_SIZE_KEYS },
+  text_reset: { chord: { code: "Digit0", ctrl: true }, why: TEXT_SIZE_KEYS },
+  move_to_trash: { chord: { code: "Delete" }, why: "Windows Explorer and the Linux file managers move a file to the Recycle Bin or Trash with Delete.", passthrough: "Explorer only" },
+};
+
+/** Chords Chrome or the system never hands to a page, per system; a browser chord using one is a registry error. */
+const CHROME_RESERVED: Readonly<Record<KeySystem, readonly Chord[]>> = {
+  mac: [
+    { code: "Tab", meta: true },
+    { code: "KeyT", meta: true },
+    { code: "KeyW", meta: true },
+    { code: "KeyT", meta: true, shift: true },
+    { code: "KeyN", meta: true, shift: true },
+    { code: "KeyW", meta: true, shift: true },
+    { code: "Tab", ctrl: true },
+    { code: "Tab", ctrl: true, shift: true },
+    { code: "KeyN", meta: true },
+    { code: "KeyQ", meta: true },
+    { code: "KeyH", meta: true },
+    { code: "KeyM", meta: true },
+    { code: "Comma", meta: true },
+  ],
+  // Chrome's reserved commands on Windows and Linux (new and closed tabs and
+  // windows, tab switching, quit), and the system's window switcher.
+  pc: [
+    { code: "KeyT", ctrl: true },
+    { code: "KeyW", ctrl: true },
+    { code: "KeyN", ctrl: true },
+    { code: "KeyT", ctrl: true, shift: true },
+    { code: "KeyN", ctrl: true, shift: true },
+    { code: "KeyW", ctrl: true, shift: true },
+    { code: "KeyQ", ctrl: true, shift: true },
+    { code: "Tab", ctrl: true },
+    { code: "Tab", ctrl: true, shift: true },
+    { code: "Tab", alt: true },
+    { code: "Tab", alt: true, shift: true },
+  ],
+};
 
 export function chordEquals(a: Chord, b: Chord): boolean {
   return (
@@ -218,8 +309,28 @@ export function chordEquals(a: Chord, b: Chord): boolean {
   );
 }
 
-export function isChromeReserved(chord: Chord): boolean {
-  return CHROME_RESERVED.some((reserved) => chordEquals(reserved, chord));
+export function isChromeReserved(chord: Chord, system: KeySystem): boolean {
+  return CHROME_RESERVED[system].some((reserved) => chordEquals(reserved, chord));
+}
+
+function pcCommand(command: Command): Command {
+  const deviation = PC_KEYS[command.id];
+  const keys = (chord: Chord | null) => chord && (deviation?.chord ?? modChord(chord, "pc"));
+  const electron = keys(command.electron);
+  return {
+    ...command,
+    browser: keys(command.browser),
+    electron,
+    moved: command.moved && electron !== null && isChromeReserved(electron, "pc"),
+    ...(deviation?.passthrough ? { passthrough: deviation.passthrough } : {}),
+  };
+}
+
+const PC_REGISTRY: readonly Command[] = REGISTRY.map(pcCommand);
+
+/** The registry as `system` presses it: the macOS table itself, or every chord through the rule and `PC_KEYS`. */
+export function systemRegistry(system: KeySystem): readonly Command[] {
+  return system === "mac" ? REGISTRY : PC_REGISTRY;
 }
 
 type KeyEventLike = Pick<KeyboardEvent, "code" | "metaKey" | "altKey" | "shiftKey" | "ctrlKey">;
@@ -372,17 +483,28 @@ export function serializeMacosChord(chord: Chord): string | null {
  */
 const MACOS_RESERVED: readonly Chord[] = ["Tab", "KeyQ", "KeyH", "KeyM", "KeyS", "KeyW", "Comma"].map((code) => ({ code, meta: true }));
 
+/** Chords Windows and Linux keep from the desktop app: the window switcher. */
+const PC_RESERVED: readonly Chord[] = [{ code: "Tab", alt: true }, { code: "Tab", alt: true, shift: true }];
+
+/** The modifier every app chord holds on `system`, as the operator reads it. */
+const MOD_NAME: Readonly<Record<KeySystem, string>> = { mac: "⌘", pc: "Ctrl+Shift" };
+
 /** The key a command's chord is stored under in `host`'s set. */
 export function storedKey(id: CommandId, host: HostKind): string {
   return host === "electron" ? (MACOS_KEYS[id] ?? id) : id;
 }
 
-export function parseStoredChord(text: string, host: HostKind): Chord | null {
-  return host === "electron" ? parseMacosChord(text) : parseChord(text);
+/** A stored chord as `system` presses it; a set stores macOS chords (`macChord`). */
+export function parseStoredChord(text: string, host: HostKind, system: KeySystem): Chord | null {
+  const chord = host === "electron" ? parseMacosChord(text) : parseChord(text);
+  return chord && modChord(chord, system);
 }
 
-export function serializeStoredChord(chord: Chord, host: HostKind): string | null {
-  return host === "electron" ? serializeMacosChord(chord) : serializeChord(chord);
+/** How a press on `system` is stored, or null when the set cannot hold it. */
+export function serializeStoredChord(chord: Chord, host: HostKind, system: KeySystem): string | null {
+  const stored = macChord(chord, system);
+  if (!stored) return null;
+  return host === "electron" ? serializeMacosChord(stored) : serializeChord(stored);
 }
 
 /** The stored maps the snapshot's `ui_state` carries, one per host. */
@@ -397,30 +519,36 @@ export function storedBindings(uiState: StoredShortcutSets, host: HostKind): Rec
 }
 
 function withChord(command: Command, chord: Chord, host: HostKind): Command {
-  return host === "electron" ? { ...command, electron: chord } : { ...command, browser: chord, moved: false, movedFrom: undefined };
+  return host === "electron" ? { ...command, electron: chord } : { ...command, browser: chord, moved: false };
 }
 
 /**
  * Why `chord` cannot become `id`'s binding on `host` in `registry`, or null
  * when it can. The same rules decide a stored set on load, so a chord the
  * editor refuses can never become effective by being written to the core
- * directly. The desktop host's rules are the macOS set's own.
+ * directly. `chord` and `registry` are the keys `system` presses; the
+ * desktop host's rules are the macOS set's own, with ⌘ read as Ctrl+Shift
+ * off macOS.
  */
-export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[], host: HostKind = "browser"): string | null {
+export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[], host: HostKind, system: KeySystem): string | null {
+  const shown = displayChord(chord, system);
+  if (system === "pc" && chord.meta) return "Leave out the Windows or Super key; the system keeps it.";
   if (host === "electron") {
+    const mod = system === "mac" ? !!chord.meta : !!(chord.ctrl && chord.shift);
     if (!macosKeyName(chord.code)) return "Use one letter, digit or punctuation key, or Return.";
-    if (!chord.meta && !(isCycleCommand(id) && (chord.ctrl || chord.alt))) return "Include ⌘ so typing in a terminal stays typing.";
-    if (MACOS_RESERVED.some((reserved) => chordEquals(reserved, chord))) return `${displayChord(chord)} is kept by macOS or the app menu.`;
+    if (!mod && !(isCycleCommand(id) && (chord.ctrl || chord.alt))) return `Include ${MOD_NAME[system]} so typing in a terminal stays typing.`;
+    if (system === "mac" && MACOS_RESERVED.some((reserved) => chordEquals(reserved, chord))) return `${shown} is kept by macOS or the app menu.`;
+    if (system === "pc" && PC_RESERVED.some((reserved) => chordEquals(reserved, chord))) return `${shown} is kept by the system.`;
   } else {
     if (!BINDABLE_CODE.test(chord.code)) return "Use a letter, a digit, Return, an arrow or a punctuation key.";
-    if (!chord.meta && !chord.ctrl && !chord.alt) return "Include ⌘, ⌥ or ⌃ so typing in a terminal stays typing.";
-    if (isChromeReserved(chord)) return `${displayChord(chord)} is kept by Chrome or macOS and never reaches the page.`;
+    if (!chord.meta && !chord.ctrl && !chord.alt) return `Include ${system === "mac" ? "⌘, ⌥ or ⌃" : "Ctrl or Alt"} so typing in a terminal stays typing.`;
+    if (isChromeReserved(chord, system)) return `${shown} is kept by Chrome or ${system === "mac" ? "macOS" : "the system"} and never reaches the page.`;
   }
   const taken = registry.find((command) => {
     const bound = command.id === id ? null : hostChord(command, host);
     return bound && chordEquals(bound, chord);
   });
-  if (taken) return `${displayChord(chord)} is already ${taken.title}.`;
+  if (taken) return `${shown} is already ${taken.title}.`;
   return null;
 }
 
@@ -434,54 +562,56 @@ export type EffectiveRegistry = { registry: readonly Command[]; diagnostic: stri
  * says why. Collisions are judged on the whole set, so two commands that
  * trade chords are one valid set.
  */
-export function effectiveRegistry(stored: Record<string, string> | null | undefined, host: HostKind = "browser"): EffectiveRegistry {
+export function effectiveRegistry(stored: Record<string, string> | null | undefined, host: HostKind, system: KeySystem): EffectiveRegistry {
   const which = host === "electron" ? "pane" : "browser";
+  const defaults = systemRegistry(system);
   const entries = Object.entries(stored ?? {}).filter(([key]) => !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
-  if (entries.length === 0) return { registry: REGISTRY, diagnostic: null };
-  let registry: Command[] = [...REGISTRY];
+  if (entries.length === 0) return { registry: defaults, diagnostic: null };
+  let registry: Command[] = [...defaults];
   const applied: [CommandId, Chord][] = [];
   for (const [key, text] of entries) {
     const id = EDITABLE_PANE_COMMANDS.find((command) => storedKey(command, host) === key);
-    if (!id) return { registry: REGISTRY, diagnostic: `Stored ${which} shortcuts name an unknown command (${key}); defaults are in use.` };
-    const chord = parseStoredChord(text, host);
-    if (!chord) return { registry: REGISTRY, diagnostic: `Stored ${which} shortcut for ${key} was not usable (unreadable chord); defaults are in use.` };
+    if (!id) return { registry: defaults, diagnostic: `Stored ${which} shortcuts name an unknown command (${key}); defaults are in use.` };
+    const chord = parseStoredChord(text, host, system);
+    if (!chord) return { registry: defaults, diagnostic: `Stored ${which} shortcut for ${key} was not usable (unreadable chord); defaults are in use.` };
     registry = registry.map((command) => (command.id === id ? withChord(command, chord, host) : command));
     applied.push([id, chord]);
   }
   for (const [id, chord] of applied) {
-    const problem = bindingProblem(id, chord, registry, host);
-    if (problem) return { registry: REGISTRY, diagnostic: `Stored ${which} shortcut for ${storedKey(id, host)} was not usable (${problem}); defaults are in use.` };
+    const problem = bindingProblem(id, chord, registry, host, system);
+    if (problem) return { registry: defaults, diagnostic: `Stored ${which} shortcut for ${storedKey(id, host)} was not usable (${problem}); defaults are in use.` };
   }
   return { registry, diagnostic: null };
 }
 
-const resolved = new Map<HostKind, { stored: Record<string, string> | null | undefined; value: EffectiveRegistry }>();
+const resolved = new Map<string, { stored: Record<string, string> | null | undefined; value: EffectiveRegistry }>();
 
 /**
  * `effectiveRegistry` for the stored set the snapshot carries now, computed
  * once per set: the store shares an unchanged section by reference, so a
  * keystroke reuses the last resolution instead of re-validating every chord.
  */
-export function resolvedRegistry(stored: Record<string, string> | null | undefined, host: HostKind = "browser"): EffectiveRegistry {
-  const last = resolved.get(host);
+export function resolvedRegistry(stored: Record<string, string> | null | undefined, host: HostKind, system: KeySystem): EffectiveRegistry {
+  const key = `${host}:${system}`;
+  const last = resolved.get(key);
   if (last && last.stored === stored) return last.value;
-  const value = effectiveRegistry(stored, host);
-  resolved.set(host, { stored, value });
+  const value = effectiveRegistry(stored, host, system);
+  resolved.set(key, { stored, value });
   return value;
 }
 
-/** The registry `host` runs: its column with its own stored set applied. */
-export function hostRegistry(uiState: StoredShortcutSets, host: HostKind): EffectiveRegistry {
-  return resolvedRegistry(storedBindings(uiState, host), host);
+/** The registry `host` runs on `system`: its column with its own stored set applied. */
+export function hostRegistry(uiState: StoredShortcutSets, host: HostKind, system: KeySystem): EffectiveRegistry {
+  return resolvedRegistry(storedBindings(uiState, host), host, system);
 }
 
-/** A command's default chord on `host`, before any stored set. */
-export function defaultChord(id: CommandId, host: HostKind): Chord | null {
-  const command = REGISTRY.find((row) => row.id === id);
+/** A command's default chord on `host` and `system`, before any stored set. */
+export function defaultChord(id: CommandId, host: HostKind, system: KeySystem): Chord | null {
+  const command = systemRegistry(system).find((row) => row.id === id);
   return command ? hostChord(command, host) : null;
 }
 
-const CODE_GLYPHS: Record<string, string> = {
+const MAC_GLYPHS: Record<string, string> = {
   Comma: ",",
   Period: ".",
   Semicolon: ";",
@@ -500,21 +630,41 @@ const CODE_GLYPHS: Record<string, string> = {
   Minus: "-",
   Slash: "/",
   Backspace: "⌫",
+  Delete: "⌦",
 };
 
-/** The chord as the operator reads it, in macOS modifier order. */
-export function displayChord(chord: Chord): string {
-  const key =
-    CODE_GLYPHS[chord.code] ??
-    (chord.code.startsWith("Key") ? chord.code.slice(3) : chord.code.startsWith("Digit") ? chord.code.slice(5) : chord.code);
-  return `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}${key}`;
+// Windows and Linux name keys in words and join a chord with "+", modifiers
+// first in the order Ctrl, Shift, Alt, so every app chord begins with the
+// same "Ctrl+Shift+".
+const PC_NAMES: Record<string, string> = {
+  ...MAC_GLYPHS,
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  Tab: "Tab",
+  Enter: "Enter",
+  Backspace: "Backspace",
+  Delete: "Delete",
+};
+
+function keyName(code: string, names: Record<string, string>): string {
+  return names[code] ?? (code.startsWith("Key") ? code.slice(3) : code.startsWith("Digit") ? code.slice(5) : code);
 }
 
-/** A command's chord on `host` as the operator reads it, or "" when it has none. */
-export function displayCommand(id: CommandId, host: HostKind, registry: readonly Command[] = REGISTRY): string {
+/** The chord as the operator reads it on `system`: macOS glyphs in macOS modifier order ("⇧⌘T"), or "Ctrl+Shift+Alt+T". */
+export function displayChord(chord: Chord, system: KeySystem): string {
+  if (system === "pc") {
+    return [chord.ctrl && "Ctrl", chord.shift && "Shift", chord.alt && "Alt", chord.meta && "Win", keyName(chord.code, PC_NAMES)].filter(Boolean).join("+");
+  }
+  return `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}${keyName(chord.code, MAC_GLYPHS)}`;
+}
+
+/** A command's chord on `host` in `registry` (the keys `system` presses) as the operator reads it, or "" when it has none. */
+export function displayCommand(id: CommandId, host: HostKind, registry: readonly Command[], system: KeySystem): string {
   const command = registry.find((row) => row.id === id);
   const chord = command ? hostChord(command, host) : null;
-  return chord ? displayChord(chord) : "";
+  return chord ? displayChord(chord, system) : "";
 }
 
 /**
@@ -542,15 +692,16 @@ export function familyModifiers(family: NumberedFamily, registry: readonly Comma
   return shared ? modifiers : null;
 }
 
-/** One line of the ⌘/ sheet: a command, or a numbered family folded into one row with its range. */
+/** One line of the shortcut sheet: a command, or a numbered family folded into one row with its range. */
 export type SheetRow = { id: CommandId; title: string; chord: string | null; moved: boolean; movedFrom?: string; passthrough?: string };
 
 /**
  * The sheet's rows for `group` on `host`, in registry order, with each
  * numbered family folded into one row ("Select tab 1-9", "⌘1 … ⌘9"), or a
- * null chord where the host has none (B3, B4).
+ * null chord where the host has none (B3, B4). A moved browser row names the
+ * desktop chord Chrome keeps.
  */
-export function sheetRows(group: Command["group"], registry: readonly Command[], host: HostKind): SheetRow[] {
+export function sheetRows(group: Command["group"], registry: readonly Command[], host: HostKind, system: KeySystem): SheetRow[] {
   const rows: SheetRow[] = [];
   const folded = new Set<NumberedFamily>();
   for (const command of registry) {
@@ -558,7 +709,8 @@ export function sheetRows(group: Command["group"], registry: readonly Command[],
     const numbered = numberedCommand(command.id);
     if (!numbered) {
       const chord = hostChord(command, host);
-      rows.push({ id: command.id, title: command.title, chord: chord ? displayChord(chord) : null, moved: command.moved, movedFrom: command.movedFrom, passthrough: command.passthrough });
+      const movedFrom = command.moved && command.electron ? displayChord(command.electron, system) : undefined;
+      rows.push({ id: command.id, title: command.title, chord: chord ? displayChord(chord, system) : null, moved: command.moved, movedFrom, passthrough: command.passthrough });
       continue;
     }
     if (folded.has(numbered.family)) continue;
@@ -568,7 +720,7 @@ export function sheetRows(group: Command["group"], registry: readonly Command[],
     rows.push({
       id: command.id,
       title: `${spec.title} ${DIGITS[0]}-${DIGITS[DIGITS.length - 1]}`,
-      chord: chords ? `${displayChord(chords[0]!)} … ${displayChord(chords[chords.length - 1]!)}` : null,
+      chord: chords ? `${displayChord(chords[0]!, system)} … ${displayChord(chords[chords.length - 1]!, system)}` : null,
       moved: false,
     });
   }

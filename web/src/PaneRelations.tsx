@@ -206,8 +206,8 @@ export type TerminalMenuContext = {
   zoomed: boolean;
   /** Panes in the tab, the zoomed one's hidden siblings included. */
   paneCount: number;
-  /** The chords the registry binds here; "" draws none. */
-  chords: { find: string; splitRight: string; splitDown: string; zoom: string };
+  /** The chords the registry and the terminal bind here; "" draws none. */
+  chords: { copy: string; paste: string; find: string; splitRight: string; splitDown: string; zoom: string };
 };
 
 /**
@@ -217,9 +217,9 @@ export type TerminalMenuContext = {
 export function terminalMenuItems(pane: PaneRow, title: string, context: TerminalMenuContext): MenuEntry<PaneMenuId>[] {
   const { chords } = context;
   const items: MenuEntry<PaneMenuId>[] = [];
-  if (context.selection) items.push({ id: "copy", label: "Copy", unavailable: null, shortcut: "⌘C" });
+  if (context.selection) items.push({ id: "copy", label: "Copy", unavailable: null, shortcut: chords.copy });
   items.push(
-    { id: "paste", label: "Paste", unavailable: null, shortcut: "⌘V" },
+    { id: "paste", label: "Paste", unavailable: null, shortcut: chords.paste },
     { id: "select_all", label: "Select all", unavailable: null },
     { id: "find", label: "Find", unavailable: null, shortcut: chords.find },
     { id: "split_right", label: "Split right", unavailable: null, separated: true, shortcut: chords.splitRight },

@@ -13,6 +13,7 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
 import { useFileSource } from "./viewers/useFileBytes";
+import { commandLabel } from "./shortcutLabels";
 
 // The document surface (PRD B3-B7; S7 B4, B5, A9, A10). The core owns the
 // documents and the displays that show them; this draws one display - its
@@ -319,14 +320,14 @@ function EditorHeader({
         </Hint>
       ) : null}
       {file ? (
-        <Hint label="Find in document" shortcut="⌘F">
+        <Hint label="Find in document" shortcut={commandLabel("find_in_pane")}>
           <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={!editable} onClick={() => actions.requestEditorFind(display.id)}>
             Find
           </Button>
         </Hint>
       ) : null}
       {display.preview ? (
-        <Hint label="Keep open" shortcut="⌘⇧K">
+        <Hint label="Keep open" shortcut={commandLabel("keep_open")}>
           <Button variant="ghost" size="sm" className="text-muted-foreground" data-editor-preview="true" onClick={() => actions.keepViewOpen(display.id)}>
             preview
           </Button>
@@ -404,6 +405,7 @@ function FileBody({
         findTarget={findTarget}
         held={hold === "held"}
         onDraft={(contents) => draftEdited(tab.id, contents, actions)}
+        onSave={() => actions.saveFile(tab.id)}
       />
     </div>
   );
