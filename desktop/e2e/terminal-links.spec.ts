@@ -137,9 +137,20 @@ async function metaClick(page: Page, point: { x: number; y: number }): Promise<v
  * the printed rows stay where the probe reads them.
  */
 async function showFileViews(page: Page, paneId: string): Promise<void> {
+  const before = await paneCols(page, paneId);
   await page.locator('[data-column-toggle="views"][aria-pressed="false"]').click();
   await expect(page.locator('[data-column="views"]')).toBeVisible();
-  const cols = () => page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)?.cols ?? 0, paneId);
+  await narrowed(page, paneId, before);
+}
+
+function paneCols(page: Page, paneId: string): Promise<number> {
+  return page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)?.cols ?? 0, paneId);
+}
+
+/** Waits for the pane to narrow from `before`, then to hold its new width across two reads. */
+async function narrowed(page: Page, paneId: string, before: number): Promise<void> {
+  const cols = () => paneCols(page, paneId);
+  await expect.poll(cols, { timeout: 10_000 }).toBeLessThan(before);
   let seen = -1;
   await expect
     .poll(async () => {
@@ -296,11 +307,16 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await expect(page.locator(".cm-activeLine").first()).toHaveText("// line 7", { timeout: 20_000 });
   expect(sent.get("reveal_path")).toBe(2);
 
-  // A folder is revealed in the Explorer.
+  // A folder is revealed in the Explorer: Tools turns on beside the pane,
+  // which narrows and rewraps once before the next row is read (PRD
+  // three-column-panel D-02).
   point = await pointOf(page, paneId, "./src", { offset: 1 });
   await hoverLink(page, paneId, point);
+  const beforeFolder = await paneCols(page, paneId);
   await page.mouse.click(point.x, point.y);
   await expect(page.locator(`[data-explorer-row="${path.join(checkout, "src")}"][data-selected="true"]`)).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-column="tools"]')).toBeVisible();
+  await narrowed(page, paneId, beforeFolder);
   expect(sent.get("reveal_path")).toBe(3);
 
   // A path the terminal wrapped is one link from its second row.
