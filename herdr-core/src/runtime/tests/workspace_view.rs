@@ -113,11 +113,16 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
     assert_eq!(runtime.snapshot.browser_scopes[0].device_id, "local");
     assert_eq!(runtime.snapshot.browser_scopes[0].path, path);
     assert_eq!(runtime.snapshot.browser_scopes[0].area_id, "a1");
+    let original_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
     let published = runtime.snapshot.browser_views_revision;
     runtime.sync_workspace_view();
     assert_eq!(
         runtime.snapshot.browser_views_revision, published,
         "unchanged scope does not publish again"
+    );
+    assert_eq!(
+        runtime.snapshot.browser_scopes[0].incarnation,
+        original_incarnation
     );
 
     runtime.snapshot.navigator.workspaces.clear();
@@ -158,6 +163,11 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
         "reconnected checkout gets fresh inventory"
     );
     assert_eq!(runtime.snapshot.browser_scopes.len(), 1);
+    let regranted_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
+    assert_ne!(
+        regranted_incarnation, original_incarnation,
+        "revoke/regrant cannot preserve a capability even if no intervening frame was sent"
+    );
 
     let store = runtime.workspace_views.as_mut().unwrap();
     store
@@ -173,6 +183,10 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
         runtime.snapshot.browser_scopes.len(),
         1,
         "closing the final page preserves an authorized empty area"
+    );
+    assert_eq!(
+        runtime.snapshot.browser_scopes[0].incarnation, regranted_incarnation,
+        "page closure does not retire the still-authorized area"
     );
 }
 

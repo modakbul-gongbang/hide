@@ -247,6 +247,9 @@ pub struct BrowserAreaScopeRow {
     pub device_id: String,
     pub path: String,
     pub area_id: String,
+    /// Stable while authority remains present; a regrant gets a new value
+    /// even when the shell never receives the intervening revocation.
+    pub incarnation: u64,
 }
 
 /// Agent tab identities only; pane contents remain in checkout.tabs.

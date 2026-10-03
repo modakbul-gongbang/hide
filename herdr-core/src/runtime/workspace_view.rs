@@ -604,6 +604,24 @@ impl Runtime {
         if let Some(store) = self.workspace_views.as_ref()
             && self.snapshot.browser_views_revision != Some(store.generation)
         {
+            // Retain authority across ordinary layout changes, but not
+            // across a revoke/regrant coalesced into one outgoing frame.
+            // This bounded map is rebuilt only on a changed generation.
+            let incarnations: HashMap<_, _> = self
+                .snapshot
+                .browser_scopes
+                .iter()
+                .map(|scope| {
+                    (
+                        (
+                            scope.device_id.as_str(),
+                            scope.path.as_str(),
+                            scope.area_id.as_str(),
+                        ),
+                        scope.incarnation,
+                    )
+                })
+                .collect();
             let mut displays = Vec::new();
             let mut scopes = Vec::new();
             for view in store.views.workspaces.iter().filter(|view| {
@@ -617,6 +635,14 @@ impl Runtime {
                         device_id: view.device_id.clone(),
                         path: view.path.clone(),
                         area_id: area.id.clone(),
+                        incarnation: incarnations
+                            .get(&(
+                                view.device_id.as_str(),
+                                view.path.as_str(),
+                                area.id.as_str(),
+                            ))
+                            .copied()
+                            .unwrap_or(store.generation),
                     });
                     displays.extend(
                         area.displays

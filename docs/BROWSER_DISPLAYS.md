@@ -75,7 +75,9 @@ Close and select bind the authenticated area into the core action and recheck th
 A page moved after the query is refused without changing its selection or closing it; shell renderers and terminal displays cannot be selected or closed by this route.
 The app has one retry identity per launch registration, so retransmitting a completed close returns its receipt after the page is gone.
 The core also publishes positive area scopes separately from its browser inventory, including empty areas of connected catalog checkouts.
+Each scope has an incarnation that remains stable during ordinary layout changes and changes after authority is revoked and granted again.
 The shell forwards these scopes through the existing native sync; a missing scope grants no CDP authority.
+Capabilities pin that incarnation, so a coalesced snapshot that hides the intermediate revocation cannot revive an old connection URL.
 Unregistering a checkout, disconnecting its device or removing its area permanently revokes existing capabilities, so registering it again requires a fresh connection URL.
 Closing an area's final page retains its area scope and allows a fresh target there without reviving an expired checkout capability.
 
