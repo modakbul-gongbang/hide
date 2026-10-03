@@ -26,6 +26,12 @@ use hide_platform::fs::space;
 const ROLE: &str = "HIDE_PLATFORM_FS_ROLE";
 const HELD: &str = "HIDE_PLATFORM_FS_HELD";
 
+/// How long a lock taken again after its holder was dropped may wait. Tests
+/// in this file run on threads of one process and some start children; a
+/// child started while a lock is held keeps a copy of its descriptor until it
+/// starts its program, and the lock is free only once that copy is closed.
+const RELEASED_WITHIN: Duration = Duration::from_secs(10);
+
 fn folder() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
@@ -255,7 +261,7 @@ fn an_exclusive_lock_on_a_folder_keeps_every_other_lock_out_until_it_is_dropped(
         ));
     }
     drop(held);
-    locked(lock::lock_dir(&second, Mode::Exclusive, Duration::ZERO, &never).unwrap());
+    locked(lock::lock_dir(&second, Mode::Exclusive, RELEASED_WITHIN, &never).unwrap());
 }
 
 #[test]
@@ -273,7 +279,7 @@ fn shared_locks_on_a_folder_admit_each_other_and_keep_an_exclusive_one_out() {
         Waited::TimedOut
     ));
     drop((first, second));
-    locked(lock::lock_dir(&three, Mode::Exclusive, Duration::ZERO, &never).unwrap());
+    locked(lock::lock_dir(&three, Mode::Exclusive, RELEASED_WITHIN, &never).unwrap());
 }
 
 #[test]
@@ -294,7 +300,7 @@ fn a_lock_on_a_file_is_taken_through_the_file_that_stays_open() {
         Waited::TimedOut
     ));
     drop(held);
-    locked(lock::lock_file(open(), Mode::Exclusive, Duration::ZERO, &never).unwrap());
+    locked(lock::lock_file(open(), Mode::Exclusive, RELEASED_WITHIN, &never).unwrap());
 }
 
 #[test]

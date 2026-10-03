@@ -1,7 +1,11 @@
 //! Advisory locks on files and folders, held by an open descriptor.
 //!
 //! The lock lives as long as the [`Lock`] and ends with the process that
-//! holds it, so a crash never leaves one behind. It orders cooperating
+//! holds it, so a crash never leaves one behind. On Unix it belongs to the
+//! open file, not the descriptor: a child started while the lock is held has
+//! a copy of the descriptor until it starts its program (descriptors are
+//! close-on-exec), so a drop in that moment frees the lock when the child
+//! starts its program, not at once. It orders cooperating
 //! programs and stops nobody else from opening the file. A shared lock admits
 //! other shared locks; an exclusive lock admits none.
 //!
