@@ -1220,20 +1220,109 @@ A notification's title is the task name and its body 내 확인 대기 or 끝 wi
 A revoked phone shows "이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요." and drops its own push subscription.
 The app follows the phone's light or dark setting, draws text a quarter larger than the desktop, and keeps every control at least 44 points tall.
 
+## Keyboard shortcuts per system
+
+Web owner: `web/src/shortcuts.ts` (the registry, the rule and its exceptions), `web/src/keys.ts` (terminal keys), `web/src/shortcutLabels.ts` (every chord a screen prints), `web/src/keyboard.ts` (the window listener); desktop owner: `desktop/src/main/menu.ts` (the menu's accelerators); test owners: `web/src/shortcuts.test.ts`, `web/src/keys.test.ts`, `desktop/src/main/menu.test.ts`, and `web/e2e/chords.ts`, through which every web e2e presses its chords as the runner's system does.
+
+The rest of this document writes chords as macOS has them; this section is how Windows and Linux press each one.
+Which system applies is the one the operator types on: the desktop app's, or the browser's for a browser tab, whatever system the daemon runs on.
+
+### The rule
+
+On Windows and Linux every ⌘ is Ctrl+Shift, as in Windows Terminal, GNOME Terminal, WezTerm and kitty, so a plain Ctrl key always reaches the shell and the agent CLIs (Ctrl+C, Ctrl+R, Ctrl+W, Ctrl+K, Ctrl+D and the rest).
+A ⇧ or ⌥ that a macOS chord adds to ⌘ is Alt there, the layer kitty and WezTerm put above Ctrl+Shift, because Shift is already held: ⌘T is Ctrl+Shift+T and ⇧⌘T is Ctrl+Shift+Alt+T.
+A chord without ⌘ is the same keys on every system: ⌃Tab is Ctrl+Tab and ⌥1 is Alt+1.
+Chords are written in words joined with `+`, in the order Ctrl, Shift, Alt, as VS Code writes them, so every app chord begins with the same `Ctrl+Shift+`.
+AltGr types a character on Windows and Linux layouts (Windows reports it as Ctrl+Alt), and a key pressed with it is never a chord.
+A stored chord set keeps macOS chords, so a set a Mac saved means the same keys through the rule on Windows and Linux; on those systems a desktop pane chord needs Ctrl+Shift, a browser chord Ctrl or Alt, and the Windows or Super key is refused because the system keeps it.
+
+### Exceptions
+
+Each exception has a dominant convention on Windows and Linux, or a chord the system keeps, behind it.
+
+- Text size is Ctrl and =, - or 0, as in Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser.
+- The recent project cycle is Ctrl+Shift+` (previous Ctrl+Shift+Alt+`): Alt+Tab is the system's window switcher on Windows and Linux and never reaches an app, so the cycle moves to ` under the rule, the key macOS keeps for its own window cycle.
+- Move to Trash in the Explorer is Delete, as in Windows Explorer and the Linux file managers.
+- Inside a text field, a palette, a board or a document, no terminal holds the keyboard, so the system's own command key applies: ⌘↵ is Ctrl+Enter (send a form, open a ⌘P result to the side, open a pull request on GitHub), ⌘-click is Ctrl-click (a link, a pull request, an issue), and Ctrl+S saves the document in front as well as Ctrl+Shift+S.
+- Tab digits follow the rule (Ctrl+Shift+1-9, as in WezTerm): Windows Terminal, GNOME Terminal and the browsers each use a different modifier, so no convention outweighs the rule.
+
+### In a terminal
+
+| Action | macOS | Windows and Linux |
+| --- | --- | --- |
+| Copy the selection | `⌘C` | `Ctrl+Shift+C`, or `Ctrl+C` while text is selected |
+| Interrupt the program | `⌃C` | `Ctrl+C` with nothing selected |
+| Paste | `⌘V` | `Ctrl+Shift+V` |
+| Delete to the line start, go to the line start or end | `⌘⌫`, `⌘←`, `⌘→` (sent as ^U, ^A, ^E) | the system's own `Ctrl+Backspace`, `Home` and `End`, which the terminal sends as typed |
+| A newline the agent keeps in its prompt | `⇧↩` | `Shift+Enter` |
+
+Ctrl+C copies only while text is selected and clears the selection as it copies, as Windows Terminal does, so the next Ctrl+C interrupts; with nothing selected it reaches the program.
+Every other plain Ctrl key reaches the program.
+
+### Every command
+
+The hold hint follows the same table: holding Ctrl+Shift alone in the desktop app on Windows and Linux floats the tab numbers, and holding Alt alone the Agents-list numbers.
+A command marked none has no chord until the operator binds one in Settings, Shortcuts, where it can be bound; the browser tab's moved chords are the ones Chrome keeps for itself on that system.
+
+| Command | Desktop app, macOS | Desktop app, Windows and Linux | Browser tab, macOS | Browser tab, Windows and Linux |
+| --- | --- | --- | --- | --- |
+| New tab | `⌘T` | `Ctrl+Shift+T` | `⌥T` | `Alt+T` |
+| Close focused view or pane | `⌘W` | `Ctrl+Shift+W` | `⌥W` | `Alt+W` |
+| Reopen closed tab | `⇧⌘T` | `Ctrl+Shift+Alt+T` | `⌥⇧T` | `Shift+Alt+T` |
+| Select tab 1-9 | `⌘1 … ⌘9` | `Ctrl+Shift+1 … Ctrl+Shift+9` | none | none |
+| Add project | `⇧⌘N` | `Ctrl+Shift+Alt+N` | none | none |
+| Start agent | `⌘N` | `Ctrl+Shift+N` | none | none |
+| Next recent Agent pane or View tab | `⌃⇥` | `Ctrl+Tab` | `` ⌥` `` | `` Alt+` `` |
+| Previous recent Agent pane or View tab | `⌃⇧⇥` | `Ctrl+Shift+Tab` | `` ⌥⇧` `` | `` Shift+Alt+` `` |
+| Next global recent panel | none | none | none | none |
+| Previous global recent panel | none | none | none | none |
+| Next recent project (exception) | `⌥⇥` | `` Ctrl+Shift+` `` | `⌥⇥` | `` Ctrl+Shift+` `` |
+| Previous recent project (exception) | `⌥⇧⇥` | `` Ctrl+Shift+Alt+` `` | `⌥⇧⇥` | `` Ctrl+Shift+Alt+` `` |
+| Select agent 1-9 | `⌥1 … ⌥9` | `Alt+1 … Alt+9` | none | none |
+| Search | `⌘K` | `Ctrl+Shift+K` | `⌘K` | `Ctrl+Shift+K` |
+| Open file | `⌘P` | `Ctrl+Shift+P` | `⌘P` | `Ctrl+Shift+P` |
+| Project home | `⇧⌘H` | `Ctrl+Shift+Alt+H` | `⇧⌘H` | `Ctrl+Shift+Alt+H` |
+| Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |
+| Toggle sidebar view | none | none | none | none |
+| Toggle device rail | none | none | none | none |
+| Toggle tools | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
+| Toggle side panel | `⇧⌘B` | `Ctrl+Shift+Alt+B` | `⇧⌘B` | `Ctrl+Shift+Alt+B` |
+| Find in pane | `⌘F` | `Ctrl+Shift+F` | `⌘F` | `Ctrl+Shift+F` |
+| Save file | `⌘S` | `Ctrl+Shift+S` | `⌘S` | `Ctrl+Shift+S` |
+| Keep open | `⇧⌘K` | `Ctrl+Shift+Alt+K` | `⇧⌘K` | `Ctrl+Shift+Alt+K` |
+| Split right | `⌘D` | `Ctrl+Shift+D` | `⌘D` | `Ctrl+Shift+D` |
+| Split down | `⇧⌘D` | `Ctrl+Shift+Alt+D` | `⇧⌘D` | `Ctrl+Shift+Alt+D` |
+| Zoom pane | `⌥⌘↩` | `Ctrl+Shift+Alt+Enter` | `⌥⌘↩` | `Ctrl+Shift+Alt+Enter` |
+| Close pane | `⇧⌘W` | `Ctrl+Shift+Alt+W` | `⌥⇧W` | `Shift+Alt+W` |
+| Larger text (exception) | `⌘=` | `Ctrl+=` | `⌘=` | `Ctrl+=` |
+| Smaller text (exception) | `⌘-` | `Ctrl+-` | `⌘-` | `Ctrl+-` |
+| Reset text size (exception) | `⌘0` | `Ctrl+0` | `⌘0` | `Ctrl+0` |
+| Focus next Agent area | none | none | none | none |
+| Focus previous Agent area | none | none | none | none |
+| Grow Agent area | none | none | none | none |
+| Shrink Agent area | none | none | none | none |
+| Focus next View area | none | none | none | none |
+| Focus previous View area | none | none | none | none |
+| Grow View area | none | none | none | none |
+| Shrink View area | none | none | none | none |
+| Move to Trash (exception) | `⌘⌫` | `Delete` | `⌘⌫` | `Delete` |
+| Settings | `⌘,` | `Ctrl+Shift+,` | `⌥,` | `Alt+,` |
+| Keyboard shortcuts | `⌘/` | `Ctrl+Shift+/` | `⌘/` | `Ctrl+Shift+/` |
+
 ## Keycaps, tooltips, and icon buttons
 
 Every icon-only control has a tooltip and an accessible name carrying the same words as the tooltip.
 A chorded tooltip reads the label followed by the shortcut chord; a chordless control shows only the label.
 There is no native platform tooltip layered underneath the shared one; the shared tooltip is the only tooltip in the main shell.
 Tooltip hover has a short reveal delay, and an exact modifier hold reveals shortcut hints faster than a hover tooltip does.
-In the desktop app, holding ⌘ alone floats each tab's number at its top right in the agent tab strip in front, and holding ⌥ alone floats each Agents-list row's number at its top right: a keycap in the popover colors with a border, a small shadow and one mono digit, positioned over the tab or row rather than in it, so a title, an inline Rename field, a row's time, and its fold slot never move.
+In the desktop app, holding ⌘ alone (Ctrl+Shift on Windows and Linux) floats each tab's number at its top right in the agent tab strip in front, and holding ⌥ alone floats each Agents-list row's number at its top right: a keycap in the popover colors with a border, a small shadow and one mono digit, positioned over the tab or row rather than in it, so a title, an inline Rename field, a row's time, and its fold slot never move.
 The number is the screen order at that moment, first to ninth, left to right for tabs and top to bottom for the rows the Agents list draws (a folded parent's descendants are not rows), and an item past the ninth carries none.
 While Projects is on screen the same hold shows those Agents-list numbers, since ⌥n still selects by them, each once: on the agent's raised row, else on its row under the checkout that owns its pane.
 The hint appears only after a short hold of the exact modifier; releasing it before then shows nothing, so a ⌘C never flashes numbers.
 Releasing the modifier, adding another, pressing any key during the hold (including the numbered chord itself), losing the window, hiding the page, or opening a sheet, menu, dialog, palette, or cycle clears the numbers at once; the same modifiers still held after that show nothing until they are released and held again.
 The keycaps and the hover tooltip never share space: a tooltip hangs beside its trigger and a keycap sits inside the trigger's own box.
 In the desktop app a tooltip avoids the browser pages on screen: it opens on its usual side, else the opposite one, else across, whichever first fits the window clear of every page, because a page is drawn over the shell (Browser displays).
-A browser host has no numbered chords, so holding ⌘ or ⌥ there shows nothing.
+A browser host has no numbered chords, so holding ⌘ or ⌥ (Ctrl+Shift or Alt on Windows and Linux) there shows nothing.
 Pane focus, active tab, tab order, zoom state, and disappearing anchors all update which controls can show a hint or tooltip; pointer exit, mouse down, scroll, key down, losing key window status, and anchor removal all dismiss an open tooltip.
 
 Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action, except in the sheet that closes an agent with the agents it spawned.
