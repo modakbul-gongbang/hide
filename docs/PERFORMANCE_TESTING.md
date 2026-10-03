@@ -245,6 +245,7 @@ Each sync also compares borrowed identities for at most 256 saved Workspace layo
 A scope transition advances that same generation and rebuilds the inventory; removed or disconnected checkouts retain their saved layouts but retain no native page authority.
 Positive area scopes are collected in that same pass (at most 256 Workspaces times six areas), with no allocation or extra notification on unchanged generations.
 Changed generations build one bounded map of the previous scopes to retain their incarnations; missing scopes receive the current generation on regrant, so coalesced revocations cannot preserve old capabilities.
+Session and catalog mutation boundaries use that same borrowed comparison and immediately discard revoked scope incarnations; only a scope transition allocates a bounded checkout set and advances the generation, without a tree reconcile or another notification.
 The daemon's gateway registration retains at most four app process identities; each discovery or action checks those bounded identities outside the Runtime mutex.
 Discovery and browser actions share eight admission permits; exceeding the cap reports `browser_control_busy` rather than queuing more work.
 Discovery does loopback HTTP outside the core owner thread, with no proxy or redirect, an eight-second deadline and a 16 KiB answer cap.

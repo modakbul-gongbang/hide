@@ -122,6 +122,7 @@ impl Runtime {
             // its View tabs back.
             self.restore_front_when_ready();
         }
+        changed |= self.refresh_browser_inventory_scope();
         changed
     }
 

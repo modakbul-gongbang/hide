@@ -740,7 +740,8 @@ impl Runtime {
             .and_then(|workspace| self.worktree_catalog.project(&workspace.path))
             .cloned();
         self.refresh_card();
-        before_catalog != self.worktree_catalog
+        self.refresh_browser_inventory_scope()
+            || before_catalog != self.worktree_catalog
             || before_navigator != self.snapshot.navigator
             || before_git != self.snapshot.git_worktrees
             || before_remote != self.snapshot.git_worktrees_remote

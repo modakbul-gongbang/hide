@@ -78,6 +78,7 @@ The core also publishes positive area scopes separately from its browser invento
 Each scope has an incarnation that remains stable during ordinary layout changes and changes after authority is revoked and granted again.
 The shell forwards these scopes through the existing native sync; a missing scope grants no CDP authority.
 Capabilities pin that incarnation, so a coalesced snapshot that hides the intermediate revocation cannot revive an old connection URL.
+The core records loss of authority when a session or checkout catalog is updated, before another worker update or snapshot read can hide it.
 Unregistering a checkout, disconnecting its device or removing its area permanently revokes existing capabilities, so registering it again requires a fresh connection URL.
 Closing an area's final page retains its area scope and allows a fresh target there without reviving an expired checkout capability.
 

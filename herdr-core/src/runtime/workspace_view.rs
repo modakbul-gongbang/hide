@@ -581,26 +581,7 @@ impl Runtime {
         if self.track_view_bookmarks() {
             self.reconcile_view_displays();
         }
-        // Compare borrowed identities without allocating on unchanged input.
-        // Only a catalog/liveness transition advances the inventory generation.
-        let scope_changed = self.workspace_views.as_ref().is_some_and(|store| {
-            !self.browser_inventory_scope().eq(store
-                .browser_inventory_scope
-                .iter()
-                .map(|key| (key.0.as_str(), key.1.as_str())))
-        });
-        if scope_changed {
-            let scope = self
-                .browser_inventory_scope()
-                .map(|(device, path)| (device.to_owned(), path.to_owned()))
-                .collect();
-            let store = self
-                .workspace_views
-                .as_mut()
-                .expect("scope requires a store");
-            store.browser_inventory_scope = scope;
-            store.generation += 1;
-        }
+        self.refresh_browser_inventory_scope();
         if let Some(store) = self.workspace_views.as_ref()
             && self.snapshot.browser_views_revision != Some(store.generation)
         {
@@ -662,6 +643,42 @@ impl Runtime {
             self.snapshot.browser_views_revision = Some(store.generation);
         }
         self.publish_workspace_view(front.as_ref());
+    }
+
+    /// Records authority transitions before an asynchronous catalog/session
+    /// update can be coalesced with a later regrant. This does not reconcile
+    /// the front tree or publish another notification.
+    pub(super) fn refresh_browser_inventory_scope(&mut self) -> bool {
+        // Compare borrowed identities without allocating on unchanged input.
+        let changed = self.workspace_views.as_ref().is_some_and(|store| {
+            !self.browser_inventory_scope().eq(store
+                .browser_inventory_scope
+                .iter()
+                .map(|key| (key.0.as_str(), key.1.as_str())))
+        });
+        if !changed {
+            return false;
+        }
+        let scope: Vec<_> = self
+            .browser_inventory_scope()
+            .map(|(device, path)| (device.to_owned(), path.to_owned()))
+            .collect();
+        let allowed: HashSet<_> = scope
+            .iter()
+            .map(|key| (key.0.as_str(), key.1.as_str()))
+            .collect();
+        // Forget the old incarnation at the authority boundary, even if no
+        // snapshot read occurs before the same checkout becomes live again.
+        self.snapshot
+            .browser_scopes
+            .retain(|row| allowed.contains(&(row.device_id.as_str(), row.path.as_str())));
+        let store = self
+            .workspace_views
+            .as_mut()
+            .expect("scope requires a store");
+        store.browser_inventory_scope = scope;
+        store.generation += 1;
+        true
     }
 
     /// Positive page authority follows the current connected catalog, never

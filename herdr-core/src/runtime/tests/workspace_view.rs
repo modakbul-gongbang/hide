@@ -190,6 +190,119 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
     );
 }
 
+#[test]
+fn browser_authority_regrant_survives_coalesced_session_updates() {
+    let (runtime, _, directory) = strip_checkout("browser-authority-regrant");
+    let path = directory.to_string_lossy().into_owned();
+    let mut runtime = with_views(runtime, &directory.join("views.json"));
+    with_tabs(&mut runtime, &directory);
+    let store = runtime.workspace_views.as_mut().unwrap();
+    let layout = &mut store.views.entry("local", &path).layout;
+    let browser = layout.new_browser_display("https://example.test/scoped", 1);
+    layout.insert("a1", browser, 1).unwrap();
+    store.generation += 1;
+    let initial = runtime.snapshot_delta_payload(0, 0);
+    assert_eq!(runtime.snapshot.browser_views.len(), 1);
+    let initial_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
+
+    assert!(runtime.ingest_session(Err(SessionFetchError::Unreachable(
+        "fixture connection lost".into()
+    ))));
+    assert!(runtime.snapshot.browser_scopes.is_empty());
+    // No snapshot is read between the failure and recovery, as with two
+    // worker updates under one latched notification.
+    with_tabs(&mut runtime, &directory);
+    let recovered = runtime.snapshot_delta_payload(initial.revision, 0);
+    assert_ne!(
+        runtime.snapshot.browser_scopes[0].incarnation, initial_incarnation,
+        "a native client must observe a new grant even without an absent frame"
+    );
+    let recovered_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
+    with_tabs(&mut runtime, &directory);
+    runtime.snapshot_delta_payload(recovered.revision, 0);
+    assert_eq!(
+        runtime.snapshot.browser_scopes[0].incarnation, recovered_incarnation,
+        "unchanged session updates preserve authority"
+    );
+
+    assert!(runtime.ingest_session(Err(SessionFetchError::Unreachable(
+        "fixture connection lost again".into()
+    ))));
+    let revoked = runtime.snapshot_delta_payload(recovered.revision, 0);
+    let wire: serde_json::Value =
+        serde_json::from_slice(&serialize_snapshot_delta(&revoked).unwrap()).unwrap();
+    assert_eq!(wire["rest"]["browser_scopes"], serde_json::json!([]));
+    assert_eq!(wire["rest"]["browser_views"], serde_json::json!([]));
+}
+
+#[test]
+fn browser_authority_records_remote_session_and_catalog_revocations_before_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = "/browser-authority-remote-fixture";
+    let mut runtime = with_views_only(runtime(), &directory.path().join("views.json"));
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: "mini".into(),
+        state: "connecting".into(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let mut project = workspace(
+        "remote-workspace",
+        "Remote fixture",
+        path,
+        vec![checkout("remote-workspace", "remote-checkout", path, None)],
+    );
+    project.device_id = "mini".into();
+    project.remote_target_id = Some("mini".into());
+    let raw = RemoteSessionSnapshot {
+        workspaces: vec![project],
+        agents: Vec::new(),
+        active_tab_ids: Default::default(),
+        focused_workspace_id: None,
+        focused_checkout_id: None,
+        focused_tab_id: None,
+        focused_pane_id: None,
+        pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
+    };
+    let store = runtime.workspace_views.as_mut().unwrap();
+    store.views.entry("mini", path);
+    store.generation += 1;
+    assert!(runtime.ingest_remote_session("mini", Ok(raw.clone())));
+    let initial = runtime.snapshot_delta_payload(0, 0);
+    assert_eq!(runtime.snapshot.browser_scopes.len(), 1);
+    let initial_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
+
+    assert!(runtime.ingest_remote_session(
+        "mini",
+        Err(SessionFetchError::Unreachable("fixture device lost".into()))
+    ));
+    assert!(runtime.snapshot.browser_scopes.is_empty());
+    assert!(runtime.ingest_remote_session("mini", Ok(raw.clone())));
+    let recovered = runtime.snapshot_delta_payload(initial.revision, 0);
+    let recovered_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
+    assert_ne!(recovered_incarnation, initial_incarnation);
+
+    runtime
+        .device_raw_sessions
+        .get_mut("mini")
+        .unwrap()
+        .workspaces
+        .clear();
+    assert!(runtime.refresh_device_catalog("mini"));
+    assert!(runtime.snapshot.browser_scopes.is_empty());
+    runtime.device_raw_sessions.insert("mini".into(), raw);
+    assert!(runtime.refresh_device_catalog("mini"));
+    runtime.snapshot_delta_payload(recovered.revision, 0);
+    assert_ne!(
+        runtime.snapshot.browser_scopes[0].incarnation, recovered_incarnation,
+        "a catalog loss/regrant also retires the old grant before a read"
+    );
+}
+
 fn with_tabs(runtime: &mut Runtime, directory: &Path) {
     let tabs = ["w-order:t1", "w-order:t2"];
     assert!(runtime.ingest_session(Ok(tab_order_payload(
