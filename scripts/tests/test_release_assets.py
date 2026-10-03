@@ -1,10 +1,13 @@
 """The #343 release contract rejects incomplete, mixed or published packages."""
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
 import unittest
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,7 +28,17 @@ class ReleaseAssetsTest(unittest.TestCase):
             "hide-v1.2.3-linux-x64.tar.gz",
         ]
         for name in self.names:
-            data = f"fixture for {name}".encode()
+            stream = io.BytesIO()
+            payload = f"fixture for {name}".encode()
+            if name.endswith(".zip"):
+                with zipfile.ZipFile(stream, "w") as archive:
+                    archive.writestr("fixture.txt", payload)
+            else:
+                with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+                    entry = tarfile.TarInfo("fixture.txt")
+                    entry.size = len(payload)
+                    archive.addfile(entry, io.BytesIO(payload))
+            data = stream.getvalue()
             (self.directory / name).write_bytes(data)
             (self.directory / f"{name}.sha256").write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
 
