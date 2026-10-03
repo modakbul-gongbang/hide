@@ -23,6 +23,10 @@ A claim is verified by the check that observes what a caller of the behavior obs
 
 Run the Rust lanes through `scripts/verify-cargo.sh`, never a bare `cargo test` from an agent's pane: the pane carries `HERDR_SOCKET_PATH` for the operator's Herdr, and on 2026-10-02 two daemon tests followed the operator's live Herdr with the real HOME, where the label worker reads the operator's conversations, because the core then took that variable over the socket a test handed it; the core no longer does, it takes its home from hided rather than from the process `HOME`, and the script clears every `HERDR_*` variable first.
 
+For a file-persistence claim, run the platform's public contract and OS fault regressions through `bash scripts/verify-cargo.sh test -p hide-platform` on each supported system.
+The durable writer's regressions observe returned phases and causes, installed bytes and identity, retained cleanup residue, and Windows's unsupported access modes; unit faults are scoped to the test thread at the OS boundary and exercise the public writer without replacing owned helpers.
+A readable file or legacy `sync_dir` success alone proves no durable acknowledgement, and a file-parent barrier does not prove persistence of a newly created ancestor chain or recovery of the caller's state after an uncertain replacement.
+
 A scenario someone would check by hand becomes a spec when it can.
 Playwright drives the renderer over its own connection rather than through OS input, so a spec needs no keyboard focus and cannot type into another app.
 Manual QA covers what a spec cannot reach yet, and the pull request's Evidence says the check was manual.
