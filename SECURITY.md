@@ -16,9 +16,15 @@ Fixes ship as a normal release; the advisory is published once the release is ou
 
 ## What hide does not do
 
-hide never asks for credentials.
-Remote machines are reached through the operator's existing SSH configuration, and the app stores no secret of its own.
-A report that finds it doing otherwise is in scope.
+Hide delegates provider sign-in to the installed agent CLIs and remote authentication to the operator's existing SSH configuration.
+It does not ask the operator to paste a provider API key or an SSH password into the app.
+For Codex usage status, hide reads the installed CLI's existing `auth.json` access token and account ID and sends a bearer-authenticated request to the provider's usage endpoint.
+Hide does generate and store its own authentication material, including the daemon's local client token, phone pairing credentials and Project Memory receipt keys.
+Treat local state, app databases, pairing information and run artifacts as private; do not attach them unredacted to a public issue or pull request.
+A report that exposes credentials, bypasses an authentication boundary, or discloses private local content is in scope.
+
+Project Memory and background labels can send bounded session content through the user's authenticated provider CLI.
+The current disclosure, local redaction and provider boundary are documented in [AI providers](docs/AI_PROVIDERS.md); do not assume that local storage makes all analysis offline.
 
 ## Supported versions
 
