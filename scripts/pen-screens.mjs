@@ -3198,6 +3198,20 @@ function buildWorkspace(tokens) {
     if (!parent) throw new Error(`Workspace supplemental parent ${state.parent} is missing`);
     parent.children.push(...state.children);
   }
+  // Frozen screen states keep their own overrides, while inherited master
+  // colors need local tokens for the importing document's current theme.
+  for (const node of nodes(result)) {
+    if (node.type !== 'ref') continue;
+    if (!node.ref.startsWith(`${ALIAS}:`)) throw new Error(`Workspace reference ${node.ref} must use ${ALIAS}`);
+    const auto = themedOverrides(node.ref.slice(ALIAS.length + 1));
+    for (const [prop, value] of Object.entries(auto.top)) if (!Object.hasOwn(node, prop)) node[prop] = value;
+    for (const [key, props] of Object.entries(auto.descendants)) {
+      const address = key.split('/').map(part => `${ALIAS}:${part}`).join('/');
+      const patch = node.descendants?.[address] ?? {};
+      const missing = Object.entries(props).filter(([prop]) => !Object.hasOwn(patch, prop));
+      if (missing.length) (node.descendants ??= {})[address] = {...patch, ...Object.fromEntries(missing)};
+    }
+  }
   return result;
 }
 

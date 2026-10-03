@@ -57350,7 +57350,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -58096,7 +58097,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -58842,7 +58844,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -59588,7 +59591,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -60332,7 +60336,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -61078,7 +61083,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -61822,7 +61828,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -62566,7 +62573,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -63310,7 +63318,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "0"
+                      "content": "0",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -64054,7 +64063,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -64798,7 +64808,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -65548,7 +65559,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -66298,7 +66310,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -67074,7 +67087,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -67820,7 +67834,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -68570,7 +68585,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -69338,7 +69354,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -70109,7 +70126,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -70877,7 +70895,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -71645,7 +71664,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary",
@@ -72416,7 +72436,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -73182,7 +73203,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -73567,6 +73589,9 @@
                             },
                             "hideui:view-tab-close": {
                               "enabled": true
+                            },
+                            "hideui:view-tab-close/hideui:ZIZFR": {
+                              "fill": "$--subtle-foreground"
                             }
                           }
                         },
@@ -73589,6 +73614,9 @@
                             },
                             "hideui:view-tab-dirty": {
                               "fill": "$--warning"
+                            },
+                            "hideui:view-tab-close/hideui:ZIZFR": {
+                              "fill": "$--subtle-foreground"
                             }
                           }
                         }
@@ -73666,6 +73694,9 @@
                             },
                             "hideui:view-tab-close": {
                               "enabled": true
+                            },
+                            "hideui:view-tab-close/hideui:ZIZFR": {
+                              "fill": "$--subtle-foreground"
                             }
                           }
                         },
@@ -73688,6 +73719,9 @@
                             },
                             "hideui:view-tab-dirty": {
                               "fill": "$--warning"
+                            },
+                            "hideui:view-tab-close/hideui:ZIZFR": {
+                              "fill": "$--subtle-foreground"
                             }
                           }
                         }
@@ -74146,7 +74180,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -75011,7 +75046,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -75757,7 +75793,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -76503,7 +76540,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -77249,7 +77287,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -77993,7 +78032,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -78739,7 +78779,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -79483,7 +79524,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -80227,7 +80269,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -80971,7 +81014,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "0"
+                      "content": "0",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -81715,7 +81759,8 @@
                       "enabled": true
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -82459,7 +82504,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -83209,7 +83255,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -83959,7 +84006,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -84735,7 +84783,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -85481,7 +85530,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -86231,7 +86281,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -86999,7 +87050,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -87770,7 +87822,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -88538,7 +88591,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -89306,7 +89360,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary",
@@ -90077,7 +90132,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -90843,7 +90899,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": "$--secondary"
@@ -91228,6 +91285,9 @@
                             },
                             "hideui:view-tab-close": {
                               "enabled": true
+                            },
+                            "hideui:view-tab-close/hideui:ZIZFR": {
+                              "fill": "$--subtle-foreground"
                             }
                           }
                         },
@@ -91250,6 +91310,9 @@
                             },
                             "hideui:view-tab-dirty": {
                               "fill": "$--warning"
+                            },
+                            "hideui:view-tab-close/hideui:ZIZFR": {
+                              "fill": "$--subtle-foreground"
                             }
                           }
                         }
@@ -91327,6 +91390,9 @@
                             },
                             "hideui:view-tab-close": {
                               "enabled": true
+                            },
+                            "hideui:view-tab-close/hideui:ZIZFR": {
+                              "fill": "$--subtle-foreground"
                             }
                           }
                         },
@@ -91349,6 +91415,9 @@
                             },
                             "hideui:view-tab-dirty": {
                               "fill": "$--warning"
+                            },
+                            "hideui:view-tab-close/hideui:ZIZFR": {
+                              "fill": "$--subtle-foreground"
                             }
                           }
                         }
@@ -91807,7 +91876,8 @@
                       "enabled": false
                     },
                     "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
-                      "content": "1"
+                      "content": "1",
+                      "fill": "$--primary-foreground"
                     },
                     "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
                       "fill": []
@@ -115062,7 +115132,8 @@
                                           "width": 292
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -115091,6 +115162,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -115305,7 +115382,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -115316,6 +115394,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -115413,7 +115497,8 @@
                                               "width": 274
                                             },
                                             "hideui:TS5x9": {
-                                              "enabled": false
+                                              "enabled": false,
+                                              "stroke": "$--border"
                                             },
                                             "hideui:IXwZI": {
                                               "opacity": 0
@@ -115424,6 +115509,12 @@
                                             },
                                             "hideui:yfur4": {
                                               "width": 20
+                                            },
+                                            "hideui:TS5x9/hideui:xXuNa": {
+                                              "fill": "$--subtle-foreground"
+                                            },
+                                            "hideui:TS5x9/hideui:n8L5dm": {
+                                              "fill": "$--destructive"
                                             }
                                           }
                                         },
@@ -116093,7 +116184,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -116122,6 +116214,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -116216,7 +116314,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -116245,6 +116344,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -116338,7 +116443,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -116367,6 +116473,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -116460,7 +116572,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -116471,6 +116584,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -116563,7 +116682,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -116574,6 +116694,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -116664,7 +116790,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": true
+                                          "enabled": true,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -116675,6 +116802,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -117463,7 +117596,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:IXwZI": {
                                   "opacity": 0
@@ -117474,6 +117608,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -117568,7 +117708,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:checkout-error": {
                                   "enabled": false
@@ -117597,6 +117738,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -117691,7 +117838,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:checkout-error": {
                                   "enabled": false
@@ -117720,6 +117868,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -117814,7 +117968,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:checkout-error": {
                                   "enabled": false
@@ -117843,6 +117998,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -117936,7 +118097,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:IXwZI": {
                                   "opacity": 0
@@ -117947,6 +118109,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             }
@@ -118519,7 +118687,8 @@
                                       "width": 274
                                     },
                                     "hideui:TS5x9": {
-                                      "enabled": false
+                                      "enabled": false,
+                                      "stroke": "$--border"
                                     },
                                     "hideui:checkout-error": {
                                       "enabled": false
@@ -118548,6 +118717,12 @@
                                     },
                                     "hideui:yfur4": {
                                       "width": 20
+                                    },
+                                    "hideui:TS5x9/hideui:xXuNa": {
+                                      "fill": "$--subtle-foreground"
+                                    },
+                                    "hideui:TS5x9/hideui:n8L5dm": {
+                                      "fill": "$--destructive"
                                     }
                                   }
                                 }
@@ -121416,7 +121591,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -121427,6 +121603,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -121521,7 +121703,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -121550,6 +121733,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -121643,7 +121832,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -121654,6 +121844,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -123120,7 +123316,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -123131,6 +123328,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -123226,7 +123429,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -123255,6 +123459,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -123349,7 +123559,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -123378,6 +123589,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -125636,7 +125853,8 @@
                                           "width": 292
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -125665,6 +125883,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -125879,7 +126103,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -125890,6 +126115,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -125987,7 +126218,8 @@
                                               "width": 274
                                             },
                                             "hideui:TS5x9": {
-                                              "enabled": false
+                                              "enabled": false,
+                                              "stroke": "$--border"
                                             },
                                             "hideui:IXwZI": {
                                               "opacity": 0
@@ -125998,6 +126230,12 @@
                                             },
                                             "hideui:yfur4": {
                                               "width": 20
+                                            },
+                                            "hideui:TS5x9/hideui:xXuNa": {
+                                              "fill": "$--subtle-foreground"
+                                            },
+                                            "hideui:TS5x9/hideui:n8L5dm": {
+                                              "fill": "$--destructive"
                                             }
                                           }
                                         },
@@ -126667,7 +126905,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -126696,6 +126935,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -126790,7 +127035,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -126819,6 +127065,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -126912,7 +127164,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -126941,6 +127194,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -127034,7 +127293,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -127045,6 +127305,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -127137,7 +127403,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -127148,6 +127415,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -127238,7 +127511,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": true
+                                          "enabled": true,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -127249,6 +127523,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -128037,7 +128317,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:IXwZI": {
                                   "opacity": 0
@@ -128048,6 +128329,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -128142,7 +128429,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:checkout-error": {
                                   "enabled": false
@@ -128171,6 +128459,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -128265,7 +128559,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:checkout-error": {
                                   "enabled": false
@@ -128294,6 +128589,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -128388,7 +128689,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:checkout-error": {
                                   "enabled": false
@@ -128417,6 +128719,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -128510,7 +128818,8 @@
                                   "width": 274
                                 },
                                 "hideui:TS5x9": {
-                                  "enabled": false
+                                  "enabled": false,
+                                  "stroke": "$--border"
                                 },
                                 "hideui:IXwZI": {
                                   "opacity": 0
@@ -128521,6 +128830,12 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 }
                               }
                             }
@@ -129093,7 +129408,8 @@
                                       "width": 274
                                     },
                                     "hideui:TS5x9": {
-                                      "enabled": false
+                                      "enabled": false,
+                                      "stroke": "$--border"
                                     },
                                     "hideui:checkout-error": {
                                       "enabled": false
@@ -129122,6 +129438,12 @@
                                     },
                                     "hideui:yfur4": {
                                       "width": 20
+                                    },
+                                    "hideui:TS5x9/hideui:xXuNa": {
+                                      "fill": "$--subtle-foreground"
+                                    },
+                                    "hideui:TS5x9/hideui:n8L5dm": {
+                                      "fill": "$--destructive"
                                     }
                                   }
                                 }
@@ -131990,7 +132312,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -132001,6 +132324,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -132095,7 +132424,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -132124,6 +132454,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -132217,7 +132553,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -132228,6 +132565,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -133694,7 +134037,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:IXwZI": {
                                           "opacity": 0
@@ -133705,6 +134049,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -133800,7 +134150,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -133829,6 +134180,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -133923,7 +134280,8 @@
                                           "width": 274
                                         },
                                         "hideui:TS5x9": {
-                                          "enabled": false
+                                          "enabled": false,
+                                          "stroke": "$--border"
                                         },
                                         "hideui:checkout-error": {
                                           "enabled": false
@@ -133952,6 +134310,12 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
