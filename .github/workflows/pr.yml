@@ -150,6 +150,13 @@ jobs:
           cargo test --locked -p hided --test opener_lifecycle
           cargo test --locked -p hide-host --lib workspace_bridge
           cargo test --locked -p hided --test handshake
+      - name: Agent hooks, their Windows entries run through PowerShell
+        # The hook file writer, the entries Claude Code and Codex run on
+        # Windows, and the helper's stdin deadline. It stands on its own, so
+        # it runs whatever the step above answered.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: cargo test --locked -p hide-agent-hooks
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The proof below stands on its own, so it runs whatever the step
