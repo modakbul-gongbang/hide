@@ -569,7 +569,7 @@ fn finish_running_pane_focus(runtime: &mut Runtime, result: Result<(), &str>) {
             layout.focused_pane_id = control.target_id.clone();
             layout
         })
-        .map_err(str::to_owned);
+        .map_err(|message| live::ControlFailure::Definite(message.to_owned()));
     runtime.ingest_pane_focus_completion(control, result, 8);
 }
 
@@ -1547,6 +1547,68 @@ fn superseded_same_pane_failure_cannot_fail_a_newer_correlated_request() {
         !runtime
             .ingest_pane_focus_completion(first, Err("late duplicate".into()), 9)
             .0
+    );
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "succeeded"
+    );
+}
+
+#[test]
+fn unknown_pane_focus_ends_the_automatic_burst_without_claiming_success() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    let first = runtime.pane_focus_in_flight.clone().unwrap();
+    runtime.dispatch_json(&correlated_pane_focus_event("w1:p1", "latest"));
+    let (changed, successor) = runtime.ingest_pane_focus_completion(
+        first,
+        Err(live::ControlFailure::Ambiguous(
+            "pane.focus result is unknown: response timed out".into(),
+        )),
+        5_000,
+    );
+    assert!(changed);
+    assert!(
+        successor.is_none(),
+        "an unknown effect cannot release its queue"
+    );
+    assert!(runtime.pane_focus_in_flight.is_none());
+    assert!(runtime.pending_pane_focus.is_none());
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    let request = runtime
+        .snapshot()
+        .status
+        .pane_focus_request
+        .as_ref()
+        .unwrap();
+    assert_eq!(request.request_id, "latest");
+    assert_eq!(request.phase, "failed");
+    assert!(request.retryable);
+    assert!(request.message.as_ref().unwrap().contains("unknown"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.unknown"), 1);
+    assert_eq!(diagnostic_count(&runtime, "pane.focus"), 0);
+    assert_eq!(
+        runtime.snapshot().status.last_error.as_ref().unwrap().kind,
+        "pane.focus_unknown"
+    );
+
+    // Ending the wait cannot cancel the old mutation. A later external move
+    // is followed, and an explicit new selection begins a new burst.
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p2")));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+    runtime.dispatch_json(&correlated_pane_focus_event("w1:p1", "retry"));
+    assert_eq!(
+        runtime.pane_focus_in_flight.as_ref().unwrap().target_id,
+        "w1:p1"
     );
     finish_running_pane_focus(&mut runtime, Ok(()));
     assert_eq!(

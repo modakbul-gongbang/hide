@@ -37,7 +37,7 @@ use crate::sidebar::{
 };
 use crate::workspace;
 use hide_herdr_client::{
-    ApiConnector, ApiError, LocalSocketConnector, request_with_connector,
+    ApiConnector, ApiError, LocalSocketConnector, request_small_response, request_with_connector,
     request_with_correlation_id,
 };
 #[cfg(test)]
@@ -2065,21 +2065,53 @@ fn fetch_pane_layout(
 fn execute_pane_focus(
     connector: &dyn ApiConnector,
     pane_id: &str,
-) -> Result<PaneLayoutSnapshot, String> {
-    mutation_request(connector, "pane.focus", wire::pane_target_params(pane_id)?)
-        .map_err(|error| error.message().to_owned())?;
-    let layout = fetch_pane_layout(connector, pane_id)?;
-    let workspace = control_request(
+) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    execute_pane_focus_with_timeout(connector, pane_id, Duration::from_secs(5))
+}
+
+fn execute_pane_focus_with_timeout(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    response_timeout: Duration,
+) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    // These three responses share the established absolute read deadline and
+    // 64 KiB frame cap. A lost mutation response has a different outcome from
+    // an authoritative read failing after Herdr already acknowledged it.
+    request_small_response(
+        connector,
+        "pane.focus",
+        wire::pane_target_params(pane_id)?,
+        response_timeout,
+    )
+    .map_err(|error| match error {
+        ApiError::Remote { code, message } => {
+            ControlFailure::Definite(format!("pane.focus was refused: {code}: {message}"))
+        }
+        ApiError::Transport(message) | ApiError::Malformed(message) => {
+            ControlFailure::Ambiguous(format!("pane.focus result is unknown: {message}"))
+        }
+    })?;
+    let layout = request_small_response(
+        connector,
+        "pane.layout",
+        wire::pane_layout_params(pane_id)?,
+        response_timeout,
+    )
+    .map_err(|error| format!("pane.layout failed: {error}"))?;
+    let layout = project_layout(&wire::pane_layout(layout)?)?;
+    let workspace = request_small_response(
         connector,
         "workspace.get",
         wire::workspace_target_params(&layout.workspace_id)?,
-    )?;
+        response_timeout,
+    )
+    .map_err(|error| format!("workspace.get failed: {error}"))?;
     let active_tab_id = wire::workspace_active_tab(workspace)?;
     if layout.focused_pane_id != pane_id || active_tab_id != layout.tab_id {
-        return Err(format!(
+        return Err(ControlFailure::Definite(format!(
             "Herdr did not confirm pane {pane_id}: pane {} is focused in tab {}, and workspace {} shows tab {active_tab_id}",
             layout.focused_pane_id, layout.tab_id, layout.workspace_id
-        ));
+        )));
     }
     Ok(layout)
 }
@@ -5456,6 +5488,60 @@ mod tests {
                 herdr.methods(),
                 ["pane.focus", "pane.layout", "workspace.get"]
             );
+        }
+    }
+
+    #[test]
+    fn pane_focus_rejects_trickling_and_over_cap_mutation_responses_as_unknown() {
+        use hide_platform::ipc::LocalListener;
+
+        for over_cap in [false, true] {
+            let root = tempfile::Builder::new().prefix("hpf-").tempdir().unwrap();
+            let socket = root.path().join("peer.sock");
+            let listener = LocalListener::bind(&socket).unwrap();
+            let closer = listener.closer();
+            let server = thread::spawn(move || {
+                let Ok(mut stream) = listener.accept() else {
+                    return None;
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = String::new();
+                BufReader::new(&mut stream).read_line(&mut request).unwrap();
+                let request: Value = serde_json::from_str(&request).unwrap();
+                if over_cap {
+                    let _ = stream.write_all(&vec![b' '; 64 * 1024 + 1]);
+                } else {
+                    // Progress defeats a per-read timeout. The peer itself is
+                    // bounded so a regressed client still ends and fails.
+                    let end = Instant::now() + Duration::from_millis(500);
+                    while Instant::now() < end && stream.write_all(b" ").is_ok() {
+                        thread::park_timeout(Duration::from_millis(5));
+                    }
+                }
+                Some(request)
+            });
+            let timeout = if over_cap {
+                Duration::from_secs(5)
+            } else {
+                Duration::from_millis(50)
+            };
+            let result = execute_pane_focus_with_timeout(
+                &LocalSocketConnector::new(&socket),
+                "w1:p2",
+                timeout,
+            );
+            closer.close();
+            let request = server.join().unwrap().expect("focus request reached peer");
+            assert_eq!(request["method"], "pane.focus");
+            let error = result.expect_err("unfinished response must be rejected");
+            assert!(error.is_ambiguous());
+            assert!(error.message().contains(if over_cap {
+                "exceeds 64 KiB"
+            } else {
+                "timed out"
+            }));
         }
     }
 

@@ -9,7 +9,7 @@ impl Runtime {
     pub(crate) fn ingest_pane_focus_completion(
         &mut self,
         control: PendingPaneFocusControl,
-        result: Result<PaneLayoutSnapshot, String>,
+        result: Result<PaneLayoutSnapshot, live::ControlFailure>,
         elapsed_ms: u128,
     ) -> (bool, Option<(LiveContext, PendingPaneFocusControl)>) {
         if self.pane_focus_in_flight.as_ref() != Some(&control) {
@@ -22,7 +22,10 @@ impl Runtime {
                 .pending_pane_focus
                 .as_ref()
                 .is_some_and(|pending| pending.pane_control_serial == Some(control.serial));
-        let phase = if !current_connection {
+        let unknown = result.as_ref().is_err_and(|error| error.is_ambiguous());
+        let phase = if unknown {
+            "unknown"
+        } else if !current_connection {
             "stale_connection"
         } else if !latest {
             "superseded"
@@ -39,8 +42,33 @@ impl Runtime {
             "connection_generation": control.live_generation,
             "phase": phase,
             "duration_ms": elapsed_ms,
-            "message": result.as_ref().err(),
+            "message": result.as_ref().err().map(live::ControlFailure::message),
         }));
+        if unknown {
+            let error = result.expect_err("ambiguous focus result");
+            // A read deadline ends our wait, not Herdr's external effect.
+            // Abort this entire automatic burst instead of running a successor
+            // that the unknown older mutation might later overwrite.
+            if let Some(pending) = self.pending_pane_focus.take() {
+                let message = format!(
+                    "{}; focus for {} is unconfirmed and no queued focus was sent. Select the pane again to retry.",
+                    error.message(),
+                    pending.target_id
+                );
+                self.finish_pane_focus_request(
+                    pending.request_id.as_deref(),
+                    &pending.target_id,
+                    "failed",
+                    Some(message.clone()),
+                    true,
+                );
+                self.push_diagnostic("pane.focus.unknown", message.clone());
+                self.set_error("pane.focus_unknown", message, true);
+            } else {
+                self.push_diagnostic("pane.focus.unknown", error.message());
+            }
+            return (true, None);
+        }
         if latest {
             let pending = self.pending_pane_focus.take().expect("latest focus intent");
             match result {
@@ -71,7 +99,8 @@ impl Runtime {
                         ),
                     );
                 }
-                Err(message) => {
+                Err(error) => {
+                    let message = error.message().to_owned();
                     self.finish_pane_focus_request(
                         pending.request_id.as_deref(),
                         &pending.target_id,

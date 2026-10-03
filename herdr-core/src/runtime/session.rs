@@ -2514,7 +2514,7 @@ impl Runtime {
             if let Some((context, control)) = self.begin_pane_focus_control()
                 && let Err(message) = live::spawn_pane_focus(context, control.clone())
             {
-                self.ingest_pane_focus_completion(control, Err(message), 0);
+                self.ingest_pane_focus_completion(control, Err(message.into()), 0);
                 return;
             }
         } else {
