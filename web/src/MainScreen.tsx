@@ -12,13 +12,15 @@ import { AgentGraph, GraphFilterControls } from "./GraphView";
 import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
 import { lensHandlers } from "./OverviewLenses";
 import { agentsTile, scopeAgents } from "./overviewLens";
+import { RequestView } from "./RequestView";
+import { requestRows } from "./requestList";
 import { allProjectsStats, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
 import { frontDeviceId } from "./devices";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
-import { toggledFold, useUiStore, type MainView } from "./ui";
+import { NO_REQUEST_LENS, toggledFold, useUiStore, type MainView, type RequestLens } from "./ui";
 import { hostBridge } from "./host";
 import { commandLabel } from "./shortcutLabels";
 
@@ -35,6 +37,7 @@ import { commandLabel } from "./shortcutLabels";
 // answer says why on its own section, with Retry where retrying can help.
 
 const VIEWS: readonly { view: MainView; label: string }[] = [
+  { view: "requests", label: "요청" },
   { view: "tasks", label: "Tasks" },
   { view: "agents", label: "Agents" },
   { view: "projects", label: "Projects" },
@@ -66,6 +69,9 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const projects = useMemo(() => boardProjects(rest, agents, deviceId), [rest, agents, deviceId]);
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
+  const rows = useMemo(() => requestRows(lensAgents, projects.flatMap((project) => project.agents)), [lensAgents, projects]);
+  // The request view's expanded rows and fold, this screen's own page state.
+  const [requestLens, setRequestLens] = useState<RequestLens>(NO_REQUEST_LENS);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
   const boards = view !== "projects";
@@ -99,8 +105,10 @@ export function MainScreen({ actions }: { actions: Actions }) {
       setFolds((open) => [...open, ...projects.map(({ workspace }) => foldId("empty", workspace.id)).filter((id) => !open.includes(id))]);
     },
   };
-  // The Agents tab keeps the count of agents whose turn it is, the Agents tile's badge.
+  // The Agents tab keeps the count of agents whose turn it is, the Agents tile's badge;
+  // the 요청 tab the rows to answer, the 요청 tile's.
   const waiting = agentsTile(lensAgents, { state: "ready" }).badge?.count ?? 0;
+  const answering = rows.filter((row) => row.verb === "answer").length;
   const lensActions = lensHandlers(actions, {
     openIssue: (_owner, task) => {
       setView("tasks");
@@ -152,6 +160,11 @@ export function MainScreen({ actions }: { actions: Actions }) {
             {VIEWS.map((choice) => (
               <TabsTrigger key={choice.view} value={choice.view} data-main-tab={choice.view}>
                 {choice.label}
+                {choice.view === "requests" && answering > 0 ? (
+                  <span className="text-caption text-warning" data-requests-answer={answering} aria-label={`답할 것 ${answering}`}>
+                    {answering}
+                  </span>
+                ) : null}
                 {choice.view === "agents" && waiting > 0 ? (
                   <span className="text-caption text-warning" data-agents-waiting={waiting} aria-label={`${waiting}개가 내 차례`}>
                     {waiting}
@@ -178,7 +191,9 @@ export function MainScreen({ actions }: { actions: Actions }) {
           </div>
         ))
       ) : null}
-      {view === "tasks" ? (
+      {view === "requests" ? (
+        <RequestView rows={rows} scope="all" lens={requestLens} onLens={(patch) => setRequestLens((lens) => ({ ...lens, ...patch }))} handlers={lensActions} actions={actions} />
+      ) : view === "tasks" ? (
         <IssuesView
           board={tasks}
           scope="all"

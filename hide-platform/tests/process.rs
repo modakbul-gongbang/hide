@@ -14,8 +14,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use hide_platform::process::{
-    OwnedChild, cwd_of, descends_from, detach, is_alive, kill_tree, measure_tree, parent_of,
-    start_time, terminate, terminate_group,
+    OwnedChild, RUN_OUTPUT_CAP, RunFailure, cwd_of, descends_from, detach, is_alive, kill_tree,
+    measure_tree, parent_of, run_to_end, start_time, terminate, terminate_group,
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
@@ -82,6 +82,19 @@ fn child_role() {
             }
             println!("READY {}", child.id());
             let _ = child.wait();
+        }
+        // Says something on both outputs and exits with a code of its own.
+        "speak" => {
+            println!("SPOKE out");
+            eprintln!("SPOKE err");
+            std::process::exit(3);
+        }
+        // Writes far past the output cap, then exits.
+        "flood" => {
+            let line = "x".repeat(1023);
+            for _ in 0..512 {
+                println!("{line}");
+            }
         }
         // A short-lived parent that starts a detached `sleep` and exits, as
         // `hide connect` starts its daemon.
@@ -454,4 +467,75 @@ fn killing_by_pid_reaches_the_group_of_a_leader_that_already_exited() {
         "the orphan survived"
     );
     drop(child);
+}
+
+fn run_role(
+    role: &str,
+    deadline: Duration,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Result<hide_platform::process::Finished, RunFailure> {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+        .env(ROLE, role);
+    run_to_end(&mut command, deadline, stop)
+}
+
+#[test]
+fn a_child_run_to_its_end_answers_its_code_and_both_outputs() {
+    let _serial = serial();
+    let finished = run_role(
+        "speak",
+        Duration::from_secs(30),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(finished.code, Some(3));
+    assert!(finished.stdout.contains("SPOKE out"));
+    assert!(finished.stderr.contains("SPOKE err"));
+}
+
+#[test]
+fn a_child_that_writes_past_the_cap_is_read_to_its_end_and_kept_to_the_cap() {
+    let _serial = serial();
+    let finished = run_role(
+        "flood",
+        Duration::from_secs(30),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(finished.code, Some(0));
+    assert_eq!(finished.stdout.len(), RUN_OUTPUT_CAP);
+}
+
+#[test]
+fn a_child_past_its_deadline_is_ended_with_its_tree() {
+    let _serial = serial();
+    let started = Instant::now();
+    let failure = run_role(
+        "tree",
+        Duration::from_millis(500),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert!(matches!(failure, RunFailure::TimedOut), "{failure:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn a_raised_stop_ends_the_child_before_its_deadline() {
+    let _serial = serial();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let raiser = {
+        let stop = std::sync::Arc::clone(&stop);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        })
+    };
+    let started = Instant::now();
+    let failure = run_role("sleep", Duration::from_secs(60), &stop).unwrap_err();
+    raiser.join().unwrap();
+    assert!(matches!(failure, RunFailure::Stopped), "{failure:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
 }

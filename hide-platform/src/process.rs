@@ -23,6 +23,8 @@
 //!   from a later process that reused it.
 //! - [`measure_tree`] counts a process's descendants and sums their resident
 //!   memory, reading the kernel's tables and forking nothing.
+//! - [`run_to_end`] answers a child's exit code and capped output, or ends the
+//!   child's whole tree when its deadline passes or the caller stops waiting.
 //! - A pid that names no process a caller may signal (0 and 1) is refused with
 //!   `InvalidInput` by every function that ends a process, so a damaged pid
 //!   file cannot reach the caller's own group or the init process.
@@ -156,6 +158,117 @@ impl std::fmt::Debug for OwnedChild {
             .field("id", &self.child.id())
             .finish_non_exhaustive()
     }
+}
+
+/// The most output [`run_to_end`] keeps from one stream; the rest is read and
+/// dropped, because a child that writes forever must not grow its caller
+/// (engineering rule 15).
+pub const RUN_OUTPUT_CAP: usize = 64 * 1024;
+
+/// What a child [`run_to_end`] waited for answered.
+#[derive(Debug)]
+pub struct Finished {
+    /// `None` when a signal ended it.
+    pub code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl Finished {
+    pub fn succeeded(&self) -> bool {
+        self.code == Some(0)
+    }
+
+    /// The last non-empty line of standard error, for a one-sentence reason.
+    pub fn last_error_line(&self) -> String {
+        self.stderr
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .to_owned()
+    }
+}
+
+/// Why [`run_to_end`] has no answer. The child and everything it started are
+/// ended in every case but `Start`.
+#[derive(Debug)]
+pub enum RunFailure {
+    Start(io::Error),
+    Wait(io::Error),
+    /// The deadline passed first.
+    TimedOut,
+    /// The caller raised `stop` first.
+    Stopped,
+}
+
+/// Runs `command` as an [`OwnedChild`] with no input and both outputs read
+/// (each capped at [`RUN_OUTPUT_CAP`]), and waits at most `deadline`, or until
+/// `stop` is raised; nothing it started outlives the call. The caller sets the
+/// program, arguments and environment.
+pub fn run_to_end(
+    command: &mut Command,
+    deadline: std::time::Duration,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Result<Finished, RunFailure> {
+    use std::process::Stdio;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = OwnedChild::spawn(command).map_err(RunFailure::Start)?;
+    let stdout = child.take_stdout().map(drain_capped);
+    let stderr = child.take_stderr().map(drain_capped);
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if stop.load(Ordering::Relaxed) => break Err(RunFailure::Stopped),
+            Ok(None) if started.elapsed() >= deadline => break Err(RunFailure::TimedOut),
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(error) => break Err(RunFailure::Wait(error)),
+        }
+    };
+    if status.is_err() {
+        let _ = child.kill_tree();
+        let _ = child.wait();
+    }
+    // The tree is gone either way, so the pipes close and the readers end.
+    let stdout = stdout
+        .map(|reader| reader.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stderr = stderr
+        .map(|reader| reader.join().unwrap_or_default())
+        .unwrap_or_default();
+    let status = status?;
+    // A grandchild left behind after a normal exit is ended too; a child run
+    // to its end never means to leave anything running.
+    let _ = child.kill_tree();
+    Ok(Finished {
+        code: status.code(),
+        stdout,
+        stderr,
+    })
+}
+
+fn drain_capped(mut stream: impl io::Read + Send + 'static) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    let room = RUN_OUTPUT_CAP.saturating_sub(kept.len());
+                    kept.extend_from_slice(&buffer[..read.min(room)]);
+                }
+            }
+        }
+        String::from_utf8_lossy(&kept).into_owned()
+    })
 }
 
 /// Makes `command` start a child that no signal sent to this process's group,

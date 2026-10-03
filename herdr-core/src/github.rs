@@ -253,7 +253,7 @@ fn read_project(
             "--limit",
             PULL_REQUEST_LIMIT,
             "--json",
-            "number,title,statusCheckRollup,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,closingIssuesReferences",
+            "number,title,statusCheckRollup,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,createdAt,closedAt,closingIssuesReferences",
         ],
     ) {
         Ok(listed) => listed,
@@ -1207,6 +1207,10 @@ struct GhPullRequest {
     merged_at: Option<String>,
     updated_at: Option<String>,
     #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    closed_at: Option<String>,
+    #[serde(default)]
     closing_issues_references: Vec<GhIssueReference>,
 }
 
@@ -1422,6 +1426,8 @@ fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {
         is_draft: listed.is_draft,
         merged_at_unix_ms: listed.merged_at.as_deref().and_then(parse_rfc3339_ms),
         updated_at_unix_ms: listed.updated_at.as_deref().and_then(parse_rfc3339_ms),
+        created_at_unix_ms: listed.created_at.as_deref().and_then(parse_rfc3339_ms),
+        closed_at_unix_ms: listed.closed_at.as_deref().and_then(parse_rfc3339_ms),
     })
 }
 

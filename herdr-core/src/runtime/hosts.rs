@@ -441,7 +441,10 @@ impl Runtime {
                 self.home_helper_ready(device_id);
                 // Every connection brings the device's kit up to this build
                 // without asking (B10, B13, B19).
-                self.queue_device_kit(device_id, super::KitJob::Apply(hide_kit::Scope::Automatic));
+                self.queue_device_kit(
+                    device_id,
+                    super::KitJob::Apply(hide_kit::Scope::automatic()),
+                );
             }
             Err(error) => {
                 let message = error.to_string();

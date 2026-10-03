@@ -11,7 +11,9 @@
 //! A changed choice rebuilds the router before the next job; the job already
 //! running finishes on the router it started with (B17). `shutdown` cancels
 //! the running request, which ends its provider child, and joins the thread,
-//! so no request or provider process outlives the daemon (B22).
+//! so no request or provider process outlives the daemon (B22). With agent
+//! summaries off (PRD overview-request-view D-11) a queued job is answered
+//! as stopped without running, and `cancel_running` ends the one running.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -38,6 +40,8 @@ pub(crate) type RouterFactory = Box<dyn Fn(&AiSettings) -> Arc<AiRouter> + Send>
 pub(crate) struct LabelAnalyzer {
     queue: Mutex<Option<Sender<AnalysisJob>>>,
     cancel: CancelToken,
+    /// The running job's own token, cancelled on shutdown too.
+    running: Arc<Mutex<Option<CancelToken>>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -55,14 +59,19 @@ impl LabelAnalyzer {
     ) -> Result<Self, String> {
         let (sender, receiver) = channel();
         let cancel = CancelToken::new();
-        let thread_cancel = cancel.clone();
+        let running = Arc::new(Mutex::new(None));
+        let thread = Running {
+            stopping: cancel.clone(),
+            job: Arc::clone(&running),
+        };
         let worker = std::thread::Builder::new()
             .name("herdr-core-labels-analyzer".to_owned())
-            .spawn(move || run(receiver, settings, router, thread_cancel))
+            .spawn(move || run(receiver, settings, router, thread))
             .map_err(|error| format!("label analyzer could not be started: {error}"))?;
         Ok(Self {
             queue: Mutex::new(Some(sender)),
             cancel,
+            running,
             worker: Mutex::new(Some(worker)),
         })
     }
@@ -81,9 +90,17 @@ impl LabelAnalyzer {
         }
     }
 
+    /// Ends the request running now, if any; it is answered as stopped.
+    pub(crate) fn cancel_running(&self) {
+        if let Some(job) = lock(&self.running).as_ref() {
+            job.cancel();
+        }
+    }
+
     /// Cancels the running request, answers the queued ones and joins.
     pub(crate) fn shutdown(&self) {
         self.cancel.cancel();
+        self.cancel_running();
         self.queue
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -107,21 +124,36 @@ impl Drop for LabelAnalyzer {
     }
 }
 
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// What the analyzer thread is stopped by: the daemon stopping, or the one
+/// job it runs being cancelled.
+struct Running {
+    stopping: CancelToken,
+    job: Arc<Mutex<Option<CancelToken>>>,
+}
+
 fn run(
     receiver: Receiver<AnalysisJob>,
     settings: SettingsSource,
     build: RouterFactory,
-    cancel: CancelToken,
+    running: Running,
 ) {
     let mut router: Option<(AiSettings, Arc<AiRouter>)> = None;
     while let Ok(job) = receiver.recv() {
-        if cancel.is_cancelled() {
+        let current = settings();
+        if running.stopping.is_cancelled() || !current.agent_summary {
             (job.done)(Err(AnalysisFailure::Stopped));
             continue;
         }
-        let current = settings();
+        // The switch is not the router's: turning it does not rebuild one.
+        let same_router = |built_for: &AiSettings| {
+            built_for.provider == current.provider && built_for.models == current.models
+        };
         let active = match router.as_ref() {
-            Some((built_for, router)) if *built_for == current => Arc::clone(router),
+            Some((built_for, router)) if same_router(built_for) => Arc::clone(router),
             _ => {
                 if router.is_some() {
                     crate::diagnostic!(json!({
@@ -135,6 +167,13 @@ fn run(
                 built
             }
         };
+        let cancel = CancelToken::new();
+        *lock(&running.job) = Some(cancel.clone());
+        // A shutdown or the switch turned off between the checks above and
+        // the token's install found no token to cancel; look once more.
+        if running.stopping.is_cancelled() || !settings().agent_summary {
+            cancel.cancel();
+        }
         // The outcome must arrive whatever happens on this thread: a panic
         // that escaped would leave the pane in flight forever.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -145,6 +184,7 @@ fn run(
                 "analysis_worker_panicked".to_owned(),
             ))
         });
+        lock(&running.job).take();
         (job.done)(result);
     }
 }

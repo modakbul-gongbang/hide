@@ -261,6 +261,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await other.locator('[data-main-tab="projects"]').click();
     await other.locator("[data-main-project]", { hasText: "fixture" }).click();
         const [, second] = herdr.panes;
+    // A Project opens on its request view; the graph is the Agents tile.
+    await other.locator('[data-overview-screen] [data-lens-tile-button="agents"]').click();
     await other.locator(`[data-overview-screen] [data-graph-open="${second}"]`).click();
     await expect(other.locator("[data-workspace-screen]")).toBeVisible();
     await expect(other.locator(`[data-pane-view="${second}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });

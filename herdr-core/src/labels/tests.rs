@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 
 use super::DeviceTranscripts;
 use super::analyzer::LabelAnalyzer;
+use super::facts::Requester;
+use super::input::OperatorInput;
 use super::store::{LOCAL_TARGET, LabelStore};
 use super::worker::{
     LabelWorker, LocalTranscripts, ObservedAgent, ReadFailure, TranscriptSource, WorkerConfig,
@@ -27,6 +29,8 @@ use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 struct Scripted {
     answers: Mutex<VecDeque<Value>>,
     calls: AtomicUsize,
+    /// How many of the next requests run out of time.
+    timeouts: AtomicUsize,
     /// While set, an answer waits for `release`.
     held: Mutex<bool>,
     released: Condvar,
@@ -37,16 +41,27 @@ impl Scripted {
         Arc::new(Self {
             answers: Mutex::new(VecDeque::new()),
             calls: AtomicUsize::new(0),
+            timeouts: AtomicUsize::new(0),
             held: Mutex::new(false),
             released: Condvar::new(),
         })
     }
 
-    fn answer(&self, task: &str, attention: &str, expected_reply: &str) {
+    /// A v5 answer: `end` is the turn's end, and a question's `line` is the
+    /// reply it asks for, any other's the goal's progress.
+    fn answer(&self, goal: &str, end: &str, reply: &str) {
+        let line = if end == "question" {
+            reply.to_owned()
+        } else {
+            format!("{goal} 진행")
+        };
         self.answers.lock().unwrap().push_back(json!({
-            "task": task, "task_changed": true, "progress": format!("{task} 진행"),
-            "expected_reply": expected_reply, "attention": attention,
+            "goal": goal, "goal_changed": true, "line": line, "end": end,
         }));
+    }
+
+    fn time_out(&self, times: usize) {
+        self.timeouts.store(times, Ordering::SeqCst);
     }
 
     fn calls(&self) -> usize {
@@ -75,6 +90,15 @@ impl AiBackend for Scripted {
     }
     fn execute(&self, _: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self
+            .timeouts
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(AiError::Timeout);
+        }
         let mut held = self.held.lock().unwrap();
         while *held {
             // A provider child ends when its request is cancelled.
@@ -120,6 +144,7 @@ struct Harness {
     locks: tempfile::TempDir,
     backend: Arc<Scripted>,
     analyzer: Arc<LabelAnalyzer>,
+    input: Arc<OperatorInput>,
 }
 
 impl Harness {
@@ -147,6 +172,7 @@ impl Harness {
             locks: tempfile::tempdir().unwrap(),
             backend,
             analyzer: Arc::new(analyzer),
+            input: Arc::default(),
         }
     }
 
@@ -191,6 +217,7 @@ impl Harness {
             WorkerConfig {
                 target: target.to_owned(),
                 lock_path: Some(self.locks.path().join(lock_name)),
+                input: Arc::clone(&self.input),
             },
             store,
             Arc::clone(&self.analyzer),
@@ -285,7 +312,7 @@ fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
         "native-a",
         &[("user", "파서 버그 고쳐줘"), ("assistant", "고쳤습니다")],
     );
-    harness.backend.answer("파서 버그 수정 작업", "none", "");
+    harness.backend.answer("파서 버그 수정 작업", "done", "");
     let idle = agent(&path, "idle", 3);
 
     observe(&mut worker, &idle);
@@ -318,7 +345,7 @@ fn an_agent_listed_before_its_pane_is_still_read_and_named() {
         "native-a",
         &[("user", "새 창 에이전트 요청"), ("assistant", "끝났습니다")],
     );
-    harness.backend.answer("새 창 에이전트 작업", "none", "");
+    harness.backend.answer("새 창 에이전트 작업", "done", "");
     let idle = agent(&path, "idle", 1);
 
     // Herdr's agent list already has the pane; its pane list does not yet.
@@ -405,9 +432,9 @@ fn another_session_shows_nothing_of_the_last_one_until_it_is_proven() {
         "native-b",
         &[("user", "세션 B 요청"), ("assistant", "B 끝")],
     );
-    harness.backend.answer("세션 A의 작업 이름", "none", "");
-    harness.backend.answer("세션 B의 작업 이름", "none", "");
-    harness.backend.answer("다시 세션 A의 작업", "none", "");
+    harness.backend.answer("세션 A의 작업 이름", "done", "");
+    harness.backend.answer("세션 B의 작업 이름", "done", "");
+    harness.backend.answer("다시 세션 A의 작업", "done", "");
 
     let on_a = agent(&a, "idle", 1);
     observe(&mut worker, &on_a);
@@ -454,8 +481,8 @@ fn an_analysis_that_lands_after_the_session_changed_is_dropped() {
         "native-b",
         &[("user", "세션 B 요청"), ("assistant", "B 끝")],
     );
-    harness.backend.answer("늦게 도착한 A 작업", "none", "");
-    harness.backend.answer("세션 B의 작업 이름", "none", "");
+    harness.backend.answer("늦게 도착한 A 작업", "done", "");
+    harness.backend.answer("세션 B의 작업 이름", "done", "");
     harness.backend.hold();
 
     let on_a = agent(&a, "idle", 1);
@@ -484,7 +511,7 @@ fn a_restart_restores_the_label_with_no_read_and_no_request() {
         "native-a",
         &[("user", "재시작 전 요청"), ("assistant", "완료")],
     );
-    harness.backend.answer("재시작 전에 붙은 작업", "none", "");
+    harness.backend.answer("재시작 전에 붙은 작업", "done", "");
     let idle = agent(&path, "idle", 5);
     {
         let (mut worker, woken, _) = harness.worker(harness.store());
@@ -553,7 +580,7 @@ fn an_imported_label_shows_only_for_the_session_it_was_proven_for() {
 fn a_second_daemon_on_the_same_server_stands_by_and_shows_no_labels() {
     let harness = Harness::new();
     let path = harness.session("a", "native-a", &[("user", "요청"), ("assistant", "끝")]);
-    harness.backend.answer("첫 데몬이 붙인 작업", "none", "");
+    harness.backend.answer("첫 데몬이 붙인 작업", "done", "");
     let idle = agent(&path, "idle", 1);
     let (mut first, woken, _) = harness.worker(harness.store());
     observe(&mut first, &idle);
@@ -583,7 +610,7 @@ fn a_second_daemon_on_the_same_server_stands_by_and_shows_no_labels() {
 fn a_shutdown_answers_the_running_request_without_recording_it() {
     let harness = Harness::new();
     let path = harness.session("a", "native-a", &[("user", "요청"), ("assistant", "끝")]);
-    harness.backend.answer("기록되면 안 되는 작업", "none", "");
+    harness.backend.answer("기록되면 안 되는 작업", "done", "");
     harness.backend.hold();
     let idle = agent(&path, "idle", 1);
     let store = harness.store();
@@ -598,7 +625,7 @@ fn a_shutdown_answers_the_running_request_without_recording_it() {
     harness.analyzer.shutdown();
     settle(&mut worker, &woken);
     let record = &store.target(LOCAL_TARGET)["w1:p1"];
-    assert_eq!(record.task, None);
+    assert_eq!(record.goal, None);
     assert_eq!(
         record.analysis_turn_end, None,
         "the turn is asked again next time"
@@ -608,14 +635,27 @@ fn a_shutdown_answers_the_running_request_without_recording_it() {
 #[test]
 fn the_providers_answer_is_judged_before_it_is_shown() {
     let question_without_reply = super::context_label::parse_text(
-        r#"{"task":"배포 방식 결정 작업","task_changed":true,"progress":"선택지 정리","expected_reply":"","attention":"question"}"#,
+        r#"{"goal":"배포 방식 결정 작업","goal_changed":true,"line":"","end":"question"}"#,
     )
     .unwrap();
-    assert!(
-        !question_without_reply.question,
+    assert_eq!(
+        question_without_reply.end,
+        super::analysis::LabelEnd::Done,
         "a question needs a reply to ask for"
     );
-    assert!(super::context_label::parse_text(r#"{"task":"짧음"}"#).is_err());
+    let long = super::context_label::parse_text(
+        r#"{"goal":"배포 방식 결정 작업","goal_changed":false,"line":"이 줄은 사십 자를 훌쩍 넘기는 아주 긴 결과 문장이라서 화면 한 줄에 맞게 반드시 잘려야 합니다","end":"done"}"#,
+    )
+    .unwrap();
+    assert_eq!(long.line.chars().count(), 40);
+    assert!(super::context_label::parse_text(r#"{"goal":"짧음"}"#).is_err());
+    assert!(
+        super::context_label::parse_text(
+            r#"{"goal":"배포 방식 결정 작업","goal_changed":true,"line":"","end":"stuck"}"#
+        )
+        .is_err(),
+        "an end outside the five is refused"
+    );
 }
 
 /// A helper from before protocol 12, which does not know the call.
@@ -674,7 +714,7 @@ fn a_device_panes_label_is_read_through_its_helper() {
             ("assistant", "돌렸습니다"),
         ],
     );
-    harness.backend.answer("미니 배치 실행 작업", "none", "");
+    harness.backend.answer("미니 배치 실행 작업", "done", "");
     let helper: Arc<dyn crate::host_access::HostChannel> =
         Arc::new(HelperAt(harness.home.path().to_path_buf()));
     let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
@@ -697,8 +737,8 @@ fn a_disconnected_device_keeps_its_label_and_catches_up_after_it_returns() {
         "native-d",
         &[("user", "첫 요청"), ("assistant", "첫 답")],
     );
-    harness.backend.answer("첫 번째 기기 작업", "none", "");
-    harness.backend.answer("두 번째 기기 작업", "none", "");
+    harness.backend.answer("첫 번째 기기 작업", "done", "");
+    harness.backend.answer("두 번째 기기 작업", "done", "");
     let connected = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let helper: Arc<dyn crate::host_access::HostChannel> =
         Arc::new(HelperAt(harness.home.path().to_path_buf()));
@@ -877,5 +917,263 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         imported.keys().cloned().collect::<Vec<_>>(),
         ["w9:p1"],
         "only the named home's label state is imported"
+    );
+}
+
+/// `2026-10-01T00:00:<second>Z`, the time `Harness::session` stamps a turn.
+fn turn_at(second: u64) -> u64 {
+    1_790_812_800_000 + second * 1_000
+}
+
+#[test]
+fn a_request_the_operator_submitted_is_theirs_and_survives_a_restart_without_a_read() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, source) = harness.worker(Arc::clone(&store));
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "요청 보기 만들어줘"),
+            ("assistant", "만들었습니다\nPR을 열었어요"),
+            ("user", "HCOORD_REQUEST r1 from ci-lead (p9)\nCI 다시 봐줘"),
+        ],
+    );
+    harness.backend.answer("요청 보기", "done", "");
+    harness.input.record("w1:p1", turn_at(0) - 300, false);
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+
+    let facts = store.target(LOCAL_TARGET)["w1:p1"].facts.clone();
+    let operator = facts.operator_request.as_ref().unwrap();
+    assert_eq!(operator.text, "요청 보기 만들어줘");
+    assert_eq!(operator.requester, Requester::Operator);
+    assert!(operator.first);
+    let other = facts.other_request.as_ref().unwrap();
+    assert_eq!(other.requester, Requester::Named("ci-lead".to_owned()));
+    assert_eq!(
+        facts.reply.as_ref().unwrap().text,
+        "만들었습니다\nPR을 열었어요"
+    );
+
+    // A restarted daemon has no submits and reads nothing for an unchanged
+    // pane; what it shows is what was stored.
+    drop(worker);
+    let reads = source.reads.load(Ordering::SeqCst);
+    let (mut restarted, woken, source) = harness.worker(harness.store());
+    observe(&mut restarted, &idle);
+    settle(&mut restarted, &woken);
+    assert_eq!(
+        source.reads.load(Ordering::SeqCst),
+        0,
+        "{reads} reads before"
+    );
+    assert_eq!(harness.store().target(LOCAL_TARGET)["w1:p1"].facts, facts);
+}
+
+#[test]
+fn a_message_no_submit_explains_is_another_agents() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let path = harness.session("a", "native-a", &[("user", "이 테스트 돌려줘")]);
+    harness.backend.answer("테스트", "done", "");
+    let working = agent(&path, "working", 1);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    let facts = store.target(LOCAL_TARGET)["w1:p1"].facts.clone();
+    assert!(facts.operator_request.is_none());
+    assert_eq!(facts.other_request.unwrap().requester, Requester::Agent);
+}
+
+/// Takes results and the provider waits that came due until nothing is
+/// left, so a retry made on the next tick is taken too.
+fn settle_with_ticks(worker: &mut LabelWorker, woken: &Receiver<()>) {
+    for _ in 0..4 {
+        settle(worker, woken);
+        worker.tick(Instant::now());
+    }
+    settle(worker, woken);
+}
+
+/// PRD overview-request-view D-09, B22: a turn another agent started never
+/// moves the goal, and the operator's next request may.
+#[test]
+fn only_a_turn_the_operator_started_moves_the_goal() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let first = [("user", "요청 보기 만들어줘"), ("assistant", "만들었어요")];
+    let path = harness.session("a", "native-a", &first);
+    harness.input.record("w1:p1", turn_at(0) - 300, false);
+    harness.backend.answer("요청 보기 화면 만들기", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    settle(&mut worker, &woken);
+
+    let by_agent = [
+        first[0],
+        first[1],
+        ("user", "HCOORD_REQUEST r1 from ci-lead (p9)\nCI 다시 봐줘"),
+    ];
+    harness.session("a", "native-a", &by_agent);
+    harness.backend.answer("CI 다시 보는 작업", "working", "");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 2);
+    assert_eq!(
+        task(shown(&worker, &working)).as_deref(),
+        Some("요청 보기 화면 만들기")
+    );
+
+    let by_operator = [
+        by_agent[0],
+        by_agent[1],
+        by_agent[2],
+        ("assistant", "다시 돌렸어요"),
+        ("user", "이제 설정 화면도 새로 만들어줘"),
+    ];
+    harness.session("a", "native-a", &by_operator);
+    harness.input.record("w1:p1", turn_at(4) - 300, false);
+    harness
+        .backend
+        .answer("요청 보기와 설정 화면", "working", "");
+    let working = agent(&path, "working", 6);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &working)).as_deref(),
+        Some("요청 보기와 설정 화면")
+    );
+}
+
+/// D-33, B20: a turn's end that ran out of time is asked once more; a second
+/// timeout leaves the row on its facts and asks nothing else.
+#[test]
+fn a_turn_end_that_timed_out_is_asked_once_more_and_no_more() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "고쳐줘"), ("assistant", "고쳤어요")],
+    );
+    harness.backend.time_out(1);
+    harness.backend.answer("파서 버그 수정 작업", "done", "");
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle_with_ticks(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 2);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("파서 버그 수정 작업")
+    );
+
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[("user", "고쳐줘"), ("assistant", "고쳤어요")],
+    );
+    harness.backend.time_out(5);
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle_with_ticks(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 2, "one retry, not more");
+    let record = &store.target(LOCAL_TARGET)["w1:p1"];
+    assert_eq!(record.end, None);
+    assert!(record.analysis_turn_end.is_some(), "the turn is parked");
+}
+
+/// D-11, B21: turning agent summaries off ends the running request, asks
+/// for nothing and takes every AI field off the row; turning them back on
+/// shows the stored label and asks for the current turn only.
+#[test]
+fn turning_summaries_off_ends_the_request_and_on_asks_for_the_current_turn() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let first = [("user", "파서 버그 고쳐줘"), ("assistant", "고쳤습니다")];
+    let path = harness.session("a", "native-a", &first);
+    harness.backend.answer("파서 버그 수정 작업", "done", "");
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert!(shown(&worker, &idle).is_some());
+
+    harness.session(
+        "a",
+        "native-a",
+        &[first[0], first[1], ("user", "테스트도 돌려줘")],
+    );
+    harness.backend.hold();
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while harness.backend.calls() < 2 {
+        assert!(Instant::now() < deadline, "the turn was not asked");
+        let _ = woken.recv_timeout(Duration::from_millis(50));
+        worker.drain(Instant::now());
+    }
+    assert!(worker.set_summaries(false, Instant::now()));
+    settle(&mut worker, &woken);
+    harness.backend.release();
+    assert_eq!(shown(&worker, &working), None, "no AI field while off");
+    worker.tick(Instant::now());
+    assert_eq!(harness.backend.calls(), 2, "nothing is asked while off");
+    let record = &store.target(LOCAL_TARGET)["w1:p1"];
+    assert_eq!(record.goal.as_deref(), Some("파서 버그 수정 작업"));
+
+    harness.backend.answer("파서 버그 수정 작업", "working", "");
+    assert!(worker.set_summaries(true, Instant::now()));
+    assert_eq!(
+        task(shown(&worker, &working)).as_deref(),
+        Some("파서 버그 수정 작업")
+    );
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 3, "the current turn, once");
+}
+
+/// D-19: a transcript that starts over is judged again against the submits
+/// still kept, so the operator's request stays the operator's.
+#[test]
+fn a_restarted_transcript_keeps_the_operators_request_the_operators() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let turns = [
+        ("user", "요청 보기 만들어줘"),
+        ("assistant", "만들었어요"),
+        ("assistant", "테스트도 돌렸어요"),
+    ];
+    let path = harness.session("a", "native-a", &turns);
+    harness.input.record("w1:p1", turn_at(0) - 300, false);
+    harness.backend.answer("요청 보기 화면 만들기", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    settle(&mut worker, &woken);
+    let requester = |store: &LabelStore| {
+        store.target(LOCAL_TARGET)["w1:p1"]
+            .facts
+            .operator_request
+            .as_ref()
+            .map(|request| request.requester.clone())
+    };
+    assert_eq!(requester(&store), Some(Requester::Operator));
+
+    // The same file, shorter: the reader starts it over.
+    harness.session("a", "native-a", &turns[..2]);
+    harness.backend.answer("요청 보기 화면 만들기", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 4));
+    settle_with_ticks(&mut worker, &woken);
+    assert_eq!(requester(&store), Some(Requester::Operator));
+    assert!(
+        store.target(LOCAL_TARGET)["w1:p1"]
+            .facts
+            .other_request
+            .is_none(),
+        "the request is not read as another agent's"
     );
 }

@@ -139,12 +139,40 @@ fn the_machine_names_itself_the_same_way_twice() {
     assert_eq!(host::machine_id().unwrap(), id);
 }
 
+/// The account's home from the password database. macOS keeps the Trash
+/// there whatever `HOME` says, and a sealed suite runs with a private `HOME`,
+/// so looking under `HOME` misses an item the system did trash.
+#[cfg(target_os = "macos")]
+fn account_home() -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: getpwuid_r writes only into `entry` and `buffer`, both owned
+    // here and alive while `pw_dir` (which points into `buffer`) is read.
+    unsafe {
+        let mut entry: libc::passwd = std::mem::zeroed();
+        let mut buffer = vec![0 as libc::c_char; 16 * 1024];
+        let mut found = std::ptr::null_mut();
+        let status = libc::getpwuid_r(
+            libc::getuid(),
+            &mut entry,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut found,
+        );
+        assert!(
+            status == 0 && !found.is_null(),
+            "this account has no password entry"
+        );
+        let dir = std::ffi::CStr::from_ptr(entry.pw_dir);
+        PathBuf::from(std::ffi::OsStr::from_bytes(dir.to_bytes()))
+    }
+}
+
 /// Where the system keeps an item it trashed, found and removed again so the
 /// test leaves the account's Trash as it found it.
 fn take_back_from_the_trash(name: &str) -> bool {
     #[cfg(target_os = "macos")]
     {
-        let kept = host::home_dir().unwrap().join(".Trash").join(name);
+        let kept = account_home().join(".Trash").join(name);
         let found = kept.symlink_metadata().is_ok();
         if found {
             fs::remove_file(&kept).unwrap();

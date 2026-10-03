@@ -245,6 +245,7 @@ export function kitConsentTerms(helperRoot: string | null, cliDir: string | null
   return [
     `Hide copies its helper, the hide command, its hook helper and hcoord into ${root}, and replaces them there when this version of Hide needs newer ones.`,
     `It links hide and hcoord in ${cliDir ?? "the account's command folder"}, adds its own entries to ~/.claude/settings.json and ~/.codex/hooks.json, and installs hcoord at ~/.hide/hcoord/bin/hcoord with the device's Node, moving an existing ~/.hcoord there. It keeps its records in ~/.hide and takes the folders of an older Hide layout away. Another tool's entries and files are left as they are.`,
+    "Codex를 pane마다 실행: Codex의 백그라운드 데몬을 끈다 (codex features disable daemon_auto_start). 떠 있는 데몬은 멈추지 않고, 새로 여는 Codex부터 적용된다. Settings › Devices의 그 줄에서 다시 켤 수 있다.",
     "The helper runs only while Hide holds the SSH connection, serves registered projects, and manages the device's Home (~/hide and its project links). Agent labels for the device's panes are made on this Mac from conversations the helper reads, and hcoord keeps its own daemon.",
     "Every move to the Trash or worktree removal still asks you for its target each time. A part you take away stays away until you press Reinstall.",
     "Removing the device takes Hide's parts and its helper folder off it again; hcoord and the records in ~/.hide stay. A different SSH identity asks again.",
@@ -284,7 +285,23 @@ export function kitPartLine(part: KitComponent): { text: string; tone: "ok" | "w
       return { text: "Failed", tone: "error" };
     case "absent":
       return { text: "Not on this machine", tone: "muted" };
+    case "off":
+      return { text: "꺼짐", tone: "muted" };
   }
+}
+
+/**
+ * The parts the operator switches on and off from their row rather than
+ * taking away by hand (PRD overview-request-view D-24). A part with nothing
+ * to switch on that machine, or one that could not be read, shows no switch.
+ */
+export const KIT_SWITCHED_PARTS: readonly KitComponentId[] = ["codex_per_pane"];
+
+export function kitPartSwitch(part: KitComponent): { on: boolean } | null {
+  if (!KIT_SWITCHED_PARTS.includes(part.id)) return null;
+  if (part.state === "installed") return { on: true };
+  if (part.state === "off" || part.state === "not_installed") return { on: false };
+  return null;
 }
 
 /** Whether Reinstall would change this part: the same four states the core repairs (B8). */

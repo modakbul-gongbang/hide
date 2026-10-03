@@ -444,6 +444,7 @@ impl Runtime {
         let Some(context) = self.live.clone() else {
             return false;
         };
+        let codex_daemon = self.codex_daemon_for_pane(pane_id);
         let Some(record) = self.snapshot.ui_state.agent_sleep.records.get_mut(pane_id) else {
             return false;
         };
@@ -483,6 +484,7 @@ impl Runtime {
             mode,
             args,
             cwd: record.cwd.clone(),
+            codex_daemon,
         };
         crate::diagnostic!(serde_json::json!({
             "component": "agent_sleep",

@@ -6,12 +6,12 @@
 //! that matches is the one shown; nothing falls through to an empty value or
 //! an invented cause (PRD B21, B32, D-64).
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
-use hide_platform::process::OwnedChild;
+use hide_platform::process::run_to_end;
 use serde::{Deserialize, Serialize};
 
 use crate::install::{HookStatus, InstallFailure, status};
@@ -325,7 +325,7 @@ const RUNTIME_VERSION_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 /// writes, read from its `--version` within a short bound.
 pub fn runtime_compatibility(runtime: AgentRuntime, home: &Path) -> MemoryCompatibility {
     let minimum = minimum_memory_version(runtime);
-    let Some(binary) = resolve_runtime_binary(runtime, home) else {
+    let Some(binary) = runtime_binary(runtime, home) else {
         return MemoryCompatibility::UpdateRequired {
             installed_version: None,
             minimum_version: minimum.to_owned(),
@@ -356,7 +356,7 @@ fn minimum_memory_version(runtime: AgentRuntime) -> &'static str {
     }
 }
 
-fn resolve_runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathBuf> {
+pub(crate) fn runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathBuf> {
     let name = match runtime {
         AgentRuntime::ClaudeCode => "claude",
         AgentRuntime::Codex => "codex",
@@ -377,35 +377,21 @@ fn resolve_runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathBuf>
 }
 
 fn version_output(binary: &Path, timeout: Duration) -> Option<String> {
-    let mut child = OwnedChild::spawn(
-        Command::new(binary)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped()),
+    let finished = run_to_end(
+        Command::new(binary).arg("--version"),
+        timeout,
+        &AtomicBool::new(false),
     )
     .ok()?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut output = String::new();
-                child.take_stdout()?.read_to_string(&mut output).ok()?;
-                if output.trim().is_empty() {
-                    child.take_stderr()?.read_to_string(&mut output).ok()?;
-                }
-                return status.success().then(|| output.trim().to_owned());
-            }
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Ok(None) | Err(_) => {
-                let _ = child.kill_tree();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    }
+    let output = if finished.stdout.trim().is_empty() {
+        finished.stderr
+    } else {
+        finished.stdout
+    };
+    finished
+        .code
+        .is_some_and(|code| code == 0)
+        .then(|| output.trim().to_owned())
 }
 
 fn parse_version(output: &str) -> Option<String> {
