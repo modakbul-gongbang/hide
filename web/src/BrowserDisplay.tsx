@@ -2,7 +2,7 @@ import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon, XIcon } from "lucide-react
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { addressShown, addressUrl, clearBrowserAttachments, hostKey, noteBrowserAttachment, notePageState, parseWorkspaceKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
+import { addressShown, addressUrl, clearBrowserAttachments, hostKey, mountBrowserAttachments, noteBrowserAttachment, notePageState, parseWorkspaceKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
 import { NewTabBody } from "./components/new-tab-body";
 import { changedFiles } from "./newTab";
 import { useUiStore } from "./ui";
@@ -216,9 +216,10 @@ export function BrowserHost({ actions }: { actions: Actions }) {
         if (located && (current.layout.active_area !== located.area.id || located.area.active !== event.id)) latest.current.focusView(event.id);
       }
     });
+    const unmountAttachments = mountBrowserAttachments();
     return () => {
       unsubscribe();
-      clearBrowserAttachments();
+      unmountAttachments();
     };
     // `record` reads everything through the stores and refs.
   }, []);

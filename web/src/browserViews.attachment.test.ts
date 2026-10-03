@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { BrowserHost } from "./BrowserDisplay";
-import { hostKey, syncBrowserFront, useBrowserStore } from "./browserViews";
+import { hostKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
 import type { BrowserHostEvent, BrowserSync, HostBridge } from "./host";
 import { TooltipProvider } from "./components/ui/tooltip";
 import type { ViewDisplaySnapshot, ViewLayoutSnapshot } from "./snapshot";
@@ -22,11 +22,22 @@ const browserCanvas = vi.hoisted(() => {
 const listeners = new Set<(event: BrowserHostEvent) => void>();
 const frames: FrameRequestCallback[] = [];
 const sent: BrowserSync[] = [];
+const nativeAttached = new Set<string>();
+let replayAttachments = false;
+let lastNativeEpoch: string | undefined;
 const bridge: HostBridge = {
   kind: "electron", platform: "darwin", onCommand: () => () => {}, reportBindings() {},
   revealPath() {}, pickFolder: async () => null, probePaths: async () => [], openPath() {},
   browser: {
-    sync: (state: BrowserSync) => { sent.push(state); },
+    sync: (state: BrowserSync) => {
+      sent.push(state);
+      if (!replayAttachments || state.attachment_epoch === undefined || state.attachment_epoch === lastNativeEpoch) return;
+      lastNativeEpoch = state.attachment_epoch;
+      for (const row of state.retained) {
+        const event: BrowserHostEvent = { kind: "attached", workspace: row.workspace, id: row.id, attached: nativeAttached.has(hostKey(row.workspace, row.id)) };
+        for (const listener of listeners) listener(event);
+      }
+    },
     capture: async () => null, endCycle() {}, command() {},
     onEvent: (listener: (event: BrowserHostEvent) => void) => {
       listeners.add(listener);
@@ -53,6 +64,16 @@ function attach(workspace = local, attached = true): void {
   emit({ kind: "attached", workspace: workspaceKey(workspace), id: "d1", attached });
 }
 
+function flush(): void {
+  act(() => { for (const callback of frames.splice(0)) callback(0); });
+}
+
+function latestEpoch(): string {
+  const epoch = sent.at(-1)?.attachment_epoch;
+  expect(epoch).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i);
+  return epoch!;
+}
+
 beforeAll(() => {
   window.hideHost = bridge;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -62,6 +83,10 @@ beforeAll(() => {
   root = createRoot(container);
 });
 beforeEach(() => {
+  replayAttachments = false;
+  nativeAttached.clear();
+  lastNativeEpoch = undefined;
+  act(() => root.render(null));
   act(() => {
     useShellStore.setState({ connection: "live" });
     root.render(createElement(BrowserHost, { actions }));
@@ -153,12 +178,14 @@ describe("native browser attachment facts", () => {
   });
 
   it("syncs authoritative areas for both displayed and retained inventory", () => {
-    for (const callback of frames.splice(0)) callback(0);
+    flush();
     expect(sent.at(-1)).toEqual({
       workspace: workspaceKey(local),
       displays: [{ id: "d1", area_id: "a1", url: "https://example.test/", load: 1, rect: null, visible: false }],
       retained: inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id, area_id: row.area_id })),
+      attachment_epoch: expect.any(String),
     });
+    latestEpoch();
     expect(listeners.size).toBe(1);
   });
 
@@ -189,5 +216,105 @@ describe("native browser attachment facts", () => {
     act(() => root.render(null));
     expect(listeners.size).toBe(0);
     expect(useBrowserStore.getState().attached).toEqual({});
+  });
+
+  it("keeps the mount epoch across geometry and duplicate live notifications", () => {
+    flush();
+    const epoch = latestEpoch();
+    const count = sent.length;
+    syncBrowserFront(local, layout, inventory);
+    flush();
+    act(() => useShellStore.getState().setConnection("live"));
+    flush();
+    expect(sent).toHaveLength(count);
+    syncBrowserFront(local, { root: { area: { id: "a2", active: "d1", displays: [{ id: "d1", kind: "browser", url: "https://example.test/", load: 1 }] } } } as unknown as ViewLayoutSnapshot,
+      inventory.map((row) => row.path === local.path && row.device_id === local.device_id ? { ...row, area_id: "a2" } : row));
+    flush();
+    expect(latestEpoch()).toBe(epoch);
+    expect(sent.at(-1)?.displays[0]?.area_id).toBe("a2");
+    const slot = document.createElement("div");
+    container.append(slot);
+    let width = 320;
+    const measure = vi.spyOn(slot, "getBoundingClientRect").mockImplementation(() => ({ x: 0, y: 0, left: 0, top: 0, width, height: 240, right: width, bottom: 240, toJSON: () => ({}) }));
+    const unregister = registerBrowserSlot("d1", slot);
+    try {
+      flush();
+      expect(sent.at(-1)?.displays[0]?.rect?.width).toBe(320);
+      width = 480;
+      syncBrowserFront(local, layout, inventory);
+      flush();
+      expect(sent.at(-1)?.displays[0]?.rect?.width).toBe(480);
+      expect(latestEpoch()).toBe(epoch);
+    } finally {
+      unregister();
+      measure.mockRestore();
+      slot.remove();
+    }
+  });
+
+  it("rehydrates actual retained attachment facts on reconnect with unchanged geometry", () => {
+    replayAttachments = true;
+    nativeAttached.add(hostKey(workspaceKey(local), "d1"));
+    flush();
+    const mountedEpoch = latestEpoch();
+    expect(useBrowserStore.getState().attached).toEqual({ [hostKey(workspaceKey(local), "d1")]: true });
+    const geometry = sent.at(-1)?.displays;
+    act(() => useShellStore.getState().setConnection("reconnecting"));
+    expect(useBrowserStore.getState().attached).toEqual({});
+    act(() => useShellStore.getState().setConnection("gone"));
+    const count = sent.length;
+    flush();
+    expect(sent).toHaveLength(count);
+    act(() => useShellStore.getState().setConnection("live"));
+    flush();
+    const reconnectEpoch = latestEpoch();
+    expect(reconnectEpoch).not.toBe(mountedEpoch);
+    expect(sent.at(-1)?.displays).toEqual(geometry);
+    expect(useBrowserStore.getState().attached).toEqual({ [hostKey(workspaceKey(local), "d1")]: true });
+    act(() => useShellStore.getState().setConnection("live"));
+    flush();
+    expect(latestEpoch()).toBe(reconnectEpoch);
+    act(() => useShellStore.getState().setConnection("gone"));
+    nativeAttached.clear();
+    act(() => useShellStore.getState().setConnection("live"));
+    flush();
+    expect(latestEpoch()).not.toBe(reconnectEpoch);
+    expect(useBrowserStore.getState().attached).toEqual({});
+  });
+
+  it("creates a new epoch on remount and releases connection observation on unmount", () => {
+    replayAttachments = true;
+    nativeAttached.add(hostKey(workspaceKey(local), "d1"));
+    flush();
+    const mountedEpoch = latestEpoch();
+    act(() => root.render(null));
+    flush();
+    expect(listeners.size).toBe(0);
+    expect(useBrowserStore.getState().attached).toEqual({});
+    const count = sent.length;
+    act(() => {
+      useShellStore.getState().setConnection("gone");
+      useShellStore.getState().setConnection("live");
+    });
+    flush();
+    expect(sent).toHaveLength(count);
+    act(() => root.render(createElement(BrowserHost, { actions })));
+    syncBrowserFront(local, layout, inventory);
+    flush();
+    expect(latestEpoch()).not.toBe(mountedEpoch);
+    expect(listeners.size).toBe(1);
+    expect(useBrowserStore.getState().attached).toEqual({ [hostKey(workspaceKey(local), "d1")]: true });
+  });
+
+  it("mounts with a fresh epoch while disconnected and renews it once on becoming live", () => {
+    act(() => root.render(null));
+    act(() => useShellStore.getState().setConnection("gone"));
+    act(() => root.render(createElement(BrowserHost, { actions })));
+    syncBrowserFront(local, layout, inventory);
+    flush();
+    const mountedEpoch = latestEpoch();
+    act(() => useShellStore.getState().setConnection("live"));
+    flush();
+    expect(latestEpoch()).not.toBe(mountedEpoch);
   });
 });
