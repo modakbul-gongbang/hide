@@ -6,6 +6,7 @@ mod agent_start;
 mod ai;
 mod changes;
 mod checkout_owner;
+pub mod delivery;
 mod device_catalog;
 pub mod diagnostics;
 mod disk;

@@ -28,8 +28,8 @@ mod catalog;
 mod conversation_cursor;
 mod label_owner;
 pub mod label_transcript;
-pub mod session_activity;
 pub mod search;
+pub mod session_activity;
 
 pub use label_owner::{ConfirmedLabelSession, confirm_label_session, label_reference_token};
 
