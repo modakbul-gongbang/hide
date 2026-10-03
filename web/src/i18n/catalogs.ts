@@ -5,6 +5,8 @@ import { commonCatalogs, commonEnglish } from "./resources/common";
 import { agentPresentationCatalogs, agentPresentationEnglish } from "./resources/agentPresentation";
 import { devicesCatalogs, devicesEnglish } from "./resources/devices";
 import { issueSettingsCatalogs, issueSettingsEnglish } from "./resources/issueSettings";
+import { historyCatalogs, historyEnglish } from "./resources/history";
+import { sessionsCatalogs, sessionsEnglish } from "./resources/sessions";
 import { issuesCatalogs, issuesEnglish } from "./resources/issues";
 import { mobileCatalogs, mobileEnglish } from "./resources/mobile";
 import { mobileSetupCatalogs, mobileSetupEnglish } from "./resources/mobileSetup";
@@ -18,6 +20,8 @@ import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
 
 export const english = {
+  ...historyEnglish,
+  ...sessionsEnglish,
   ...agentPresentationEnglish,
   ...commonEnglish,
   ...commandsEnglish,
@@ -42,6 +46,8 @@ export type MessageKey = keyof typeof english;
 export const catalogs = {
   en: english,
   ko: {
+    ...historyCatalogs.ko,
+    ...sessionsCatalogs.ko,
     ...agentPresentationCatalogs.ko,
     ...commonCatalogs.ko,
     ...commandsCatalogs.ko,
@@ -61,6 +67,8 @@ export const catalogs = {
     ...overviewCatalogs.ko,
   },
   "zh-CN": {
+    ...historyCatalogs["zh-CN"],
+    ...sessionsCatalogs["zh-CN"],
     ...agentPresentationCatalogs["zh-CN"],
     ...commonCatalogs["zh-CN"],
     ...commandsCatalogs["zh-CN"],
@@ -80,6 +88,8 @@ export const catalogs = {
     ...overviewCatalogs["zh-CN"],
   },
   ja: {
+    ...historyCatalogs.ja,
+    ...sessionsCatalogs.ja,
     ...agentPresentationCatalogs.ja,
     ...commonCatalogs.ja,
     ...commandsCatalogs.ja,
