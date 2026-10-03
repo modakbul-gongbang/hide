@@ -4,6 +4,7 @@ import { commandsEnglish } from "./resources/commands";
 import { commonEnglish } from "./resources/common";
 import { mobileEnglish } from "./resources/mobile";
 import { nativeEnglish } from "./resources/native";
+import { settingsEnglish } from "./resources/settings";
 import { validateCatalogs } from "./schema";
 
 describe("interface resources", () => {
@@ -12,7 +13,7 @@ describe("interface resources", () => {
   });
 
   it("keeps domain keys separate so composition cannot overwrite a message", () => {
-    const keys = [commonEnglish, commandsEnglish, nativeEnglish, mobileEnglish].flatMap((schema) => Object.keys(schema));
+    const keys = [commonEnglish, commandsEnglish, nativeEnglish, mobileEnglish, settingsEnglish].flatMap((schema) => Object.keys(schema));
     expect(new Set(keys).size).toBe(keys.length);
   });
 });

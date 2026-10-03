@@ -2,6 +2,7 @@ import { commandsCatalogs, commandsEnglish } from "./resources/commands";
 import { commonCatalogs, commonEnglish } from "./resources/common";
 import { mobileCatalogs, mobileEnglish } from "./resources/mobile";
 import { nativeCatalogs, nativeEnglish } from "./resources/native";
+import { settingsCatalogs, settingsEnglish } from "./resources/settings";
 import type { Catalogs } from "./schema";
 
 export const english = {
@@ -9,13 +10,14 @@ export const english = {
   ...commandsEnglish,
   ...nativeEnglish,
   ...mobileEnglish,
+  ...settingsEnglish,
 } as const;
 
 export type MessageKey = keyof typeof english;
 
 export const catalogs = {
   en: english,
-  ko: { ...commonCatalogs.ko, ...commandsCatalogs.ko, ...nativeCatalogs.ko, ...mobileCatalogs.ko },
-  "zh-CN": { ...commonCatalogs["zh-CN"], ...commandsCatalogs["zh-CN"], ...nativeCatalogs["zh-CN"], ...mobileCatalogs["zh-CN"] },
-  ja: { ...commonCatalogs.ja, ...commandsCatalogs.ja, ...nativeCatalogs.ja, ...mobileCatalogs.ja },
+  ko: { ...commonCatalogs.ko, ...commandsCatalogs.ko, ...nativeCatalogs.ko, ...mobileCatalogs.ko, ...settingsCatalogs.ko },
+  "zh-CN": { ...commonCatalogs["zh-CN"], ...commandsCatalogs["zh-CN"], ...nativeCatalogs["zh-CN"], ...mobileCatalogs["zh-CN"], ...settingsCatalogs["zh-CN"] },
+  ja: { ...commonCatalogs.ja, ...commandsCatalogs.ja, ...nativeCatalogs.ja, ...mobileCatalogs.ja, ...settingsCatalogs.ja },
 } satisfies Catalogs<typeof english>;
