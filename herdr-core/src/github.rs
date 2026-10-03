@@ -1710,6 +1710,7 @@ mod tests {
 
     /// A fixture `gh` answers at once; a one-second deadline read a loaded
     /// machine's slow shell start as a timeout, the network category.
+    #[cfg(unix)]
     const FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
 
     #[test]

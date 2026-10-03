@@ -17,7 +17,7 @@ use crate::model::EditorDocumentSnapshot;
 /// handle is held so that identity cannot be reused by another folder while
 /// the daemon runs. A client that supplies none has its requests pin the
 /// root when they first open it.
-type PinnedIdentity = (PathBuf, Option<(u64, u64)>);
+type PinnedIdentity = (PathBuf, Option<RootIdentity>);
 
 #[derive(Clone, Debug, Default)]
 pub struct FileRoots {
@@ -44,17 +44,10 @@ impl FileRoots {
         let mut opened = Vec::with_capacity(roots.len());
         let mut identities = Vec::with_capacity(roots.len());
         for (path, file) in roots {
-            #[cfg(unix)]
-            let identity = {
-                use std::os::unix::fs::MetadataExt;
-                file.metadata()
-                    .ok()
-                    .map(|metadata| (metadata.dev(), metadata.ino()))
-            };
-            #[cfg(not(unix))]
-            let identity = None;
+            let dir = Dir::from_std_file(file);
+            let identity = hide_host::root::identity_of(&dir).ok();
             identities.push((path.clone(), identity));
-            opened.push((path, Arc::new(Dir::from_std_file(file))));
+            opened.push((path, Arc::new(dir)));
         }
         Self {
             roots: Arc::new(opened),
@@ -69,9 +62,7 @@ impl FileRoots {
             .iter()
             .filter(|(root, _)| path.starts_with(root))
             .max_by_key(|(root, _)| root.components().count())
-            .and_then(|(root, identity)| {
-                identity.map(|(device, inode)| (root.clone(), RootIdentity { device, inode }))
-            })
+            .and_then(|(root, identity)| identity.map(|identity| (root.clone(), identity)))
     }
 }
 

@@ -10,10 +10,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use notify::{RecursiveMode, Watcher};
+use hide_platform::watch::{Change, Changes, Watcher};
 
 use crate::model::{
     ProjectWorktreesSnapshot, UnpushedSnapshot, WorktreeCatalogSnapshot,
@@ -87,56 +86,30 @@ type ProjectAnswer = (PathBuf, Option<ProjectWorktreesSnapshot>);
 const GIT_WATCH_CAP: usize = 64;
 const GIT_WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// One OS watcher for the local repositories in this reader. The callback
-/// records only bounded project identities; the coordinator drains them after
-/// a quiet window and lets its existing background reader do the Git work.
+/// One OS watcher for the local repositories in this reader. The coordinator
+/// drains its bounded queue on each wake, keeps only the projects whose Git
+/// facts changed, and lets its existing background reader do the Git work
+/// once a project has been quiet for [`GIT_WATCH_DEBOUNCE`].
 /// The Explorer watcher in hided polls only the selected checkout's visible
 /// directories, so it cannot observe every registered project's Git refs
 /// without idle polling and another daemon-to-core event path.
 struct GitWatch {
-    watcher: Option<notify::RecommendedWatcher>,
-    roots: Arc<Mutex<BTreeMap<PathBuf, Vec<PathBuf>>>>,
-    pending: Arc<Mutex<BTreeMap<PathBuf, Instant>>>,
+    watch: Option<(Watcher, Changes)>,
+    /// Each watched Git common directory and the projects that share it.
+    roots: BTreeMap<PathBuf, Vec<PathBuf>>,
+    /// Projects whose Git facts changed, with the last time they did.
+    pending: BTreeMap<PathBuf, Instant>,
     registered: BTreeMap<PathBuf, PathBuf>,
     requested_roots: Vec<PathBuf>,
 }
 
 impl GitWatch {
     fn new() -> Self {
-        let roots = Arc::new(Mutex::new(BTreeMap::<PathBuf, Vec<PathBuf>>::new()));
-        let pending = Arc::new(Mutex::new(BTreeMap::<PathBuf, Instant>::new()));
-        let callback_roots = Arc::clone(&roots);
-        let callback_pending = Arc::clone(&pending);
-        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            match event {
-                // inotify reports a read as an Access event, and the `git`
-                // commands this reader runs read `HEAD` and `index`; counting
-                // those as changes made every read schedule the next one.
-                Ok(event) if matches!(event.kind, notify::EventKind::Access(_)) => {}
-                Ok(event) => {
-                    let roots = callback_roots
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner());
-                    let mut pending = callback_pending
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner());
-                    for path in &event.paths {
-                        for (common, projects) in roots.iter() {
-                            if path.strip_prefix(common).is_ok_and(git_fact_path) {
-                                for project in projects {
-                                    pending.insert(project.clone(), Instant::now());
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(error) => crate::diagnostic!(serde_json::json!({
-                    "component": "worktrees", "kind": "git_watch.failed", "message": error.to_string()
-                })),
-            }
-        });
-        let watcher = match watcher {
-            Ok(watcher) => Some(watcher),
+        // Only Git's facts reach the queue: object writes during a fetch or
+        // a gc are dropped where the system reports them, so they neither
+        // fill the queue nor overflow it into a re-read of every project.
+        let watch = match Watcher::keeping(git_fact_path) {
+            Ok(watch) => Some(watch),
             Err(error) => {
                 crate::diagnostic!(serde_json::json!({
                     "component": "worktrees", "kind": "git_watch.start_failed", "message": error.to_string()
@@ -145,9 +118,9 @@ impl GitWatch {
             }
         };
         Self {
-            watcher,
-            roots,
-            pending,
+            watch,
+            roots: BTreeMap::new(),
+            pending: BTreeMap::new(),
             registered: BTreeMap::new(),
             requested_roots: Vec::new(),
         }
@@ -176,7 +149,7 @@ impl GitWatch {
                 "projects": projects.len(), "cap": GIT_WATCH_CAP
             }));
         }
-        let Some(watcher) = self.watcher.as_mut() else {
+        let Some((watcher, _)) = self.watch.as_mut() else {
             return;
         };
         if desired == self.registered {
@@ -190,7 +163,7 @@ impl GitWatch {
         let mut registered = BTreeMap::new();
         for (project, common) in desired {
             if !previous_common.contains(&common)
-                && let Err(error) = watcher.watch(&common, RecursiveMode::Recursive)
+                && let Err(error) = watcher.watch(&common)
             {
                 crate::diagnostic!(serde_json::json!({
                     "component": "worktrees", "kind": "git_watch.project_failed",
@@ -207,37 +180,62 @@ impl GitWatch {
                 .or_default()
                 .push(project.clone());
         }
-        *self.roots.lock().unwrap_or_else(|error| error.into_inner()) = roots;
+        self.roots = roots;
         self.registered = registered;
         self.pending
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
             .retain(|project, _| self.registered.contains_key(project));
     }
 
-    fn settled(&self) -> Vec<PathBuf> {
+    /// Moves what the watcher reported into `pending`: a changed Git fact
+    /// marks the projects of its repository, and lost reports (an overflow,
+    /// or a watch the system ended) mark every watched project, because any
+    /// of them may have changed.
+    fn collect(&mut self) {
+        let Some((_, changes)) = self.watch.as_ref() else {
+            return;
+        };
+        while let Some(change) = changes.try_recv() {
+            match change {
+                Change::Path { path, at } => {
+                    for (common, projects) in &self.roots {
+                        if path.strip_prefix(common).is_ok_and(git_fact_path) {
+                            for project in projects {
+                                self.pending.insert(project.clone(), at);
+                            }
+                        }
+                    }
+                }
+                Change::Overflow { reason, at } => {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "worktrees", "kind": "git_watch.overflow",
+                        "message": reason, "projects": self.registered.len()
+                    }));
+                    for project in self.registered.keys() {
+                        self.pending.insert(project.clone(), at);
+                    }
+                }
+            }
+        }
+    }
+
+    fn settled(&mut self) -> Vec<PathBuf> {
+        self.collect();
         let now = Instant::now();
-        let mut pending = self
+        let settled: Vec<_> = self
             .pending
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let settled: Vec<_> = pending
             .iter()
             .filter(|(_, last)| now.duration_since(**last) >= GIT_WATCH_DEBOUNCE)
             .map(|(project, _)| project.clone())
             .collect();
         for project in &settled {
-            pending.remove(project);
+            self.pending.remove(project);
         }
         settled
     }
 
-    fn has_pending(&self) -> bool {
-        !self
-            .pending
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .is_empty()
+    fn has_pending(&mut self) -> bool {
+        self.collect();
+        !self.pending.is_empty()
     }
 }
 

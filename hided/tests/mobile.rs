@@ -2,6 +2,9 @@
 //! `tailscale` CLI (PRD mobile-companion B1-B10, B13-B18, B36, B37). The fake
 //! keeps its whole state in files in the test's own folder, so nothing here
 //! reaches the machine's Tailscale.
+// A daemon starts only where it can listen for panes locally, which Windows
+// cannot yet (#315).
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -454,9 +457,7 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
         !phones.contains(&credential),
         "only the credential's hash is stored"
     );
-    let mode = std::fs::metadata(dir.path().join("state/phones.json")).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    assert_eq!(mode.permissions().mode() & 0o777, 0o600);
+    assert!(hide_platform::fs::private::is_private(&dir.path().join("state/phones.json")).unwrap());
     // A crash: the process goes without its graceful stop.
     let _ = paired.close(None).await;
     drop(shell);

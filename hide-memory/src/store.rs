@@ -1986,20 +1986,12 @@ fn hex_decode(value: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-#[cfg(unix)]
+/// Makes the database file private before SQLite first opens it, so there
+/// is no moment it is readable by another account.
 fn prepare_database_file(path: &Path) -> Result<(), MemoryError> {
-    use std::fs::OpenOptions;
-    use std::io::ErrorKind;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-    {
+    match hide_platform::fs::private::create_new_file(path) {
         Ok(_) => {}
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => {
             return Err(MemoryError::InvalidState(format!(
                 "database_create:{}",
@@ -2010,15 +2002,9 @@ fn prepare_database_file(path: &Path) -> Result<(), MemoryError> {
     enforce_database_permissions(path)
 }
 
-#[cfg(not(unix))]
-fn prepare_database_file(_path: &Path) -> Result<(), MemoryError> {
-    Ok(())
-}
-
-#[cfg(unix)]
+/// The database and the journal files SQLite made beside it are the
+/// account's alone.
 fn enforce_database_permissions(path: &Path) -> Result<(), MemoryError> {
-    use std::os::unix::fs::PermissionsExt;
-
     for candidate in [
         path.to_path_buf(),
         PathBuf::from(format!("{}-wal", path.display())),
@@ -2027,21 +2013,14 @@ fn enforce_database_permissions(path: &Path) -> Result<(), MemoryError> {
         if !candidate.exists() {
             continue;
         }
-        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o600)).map_err(
-            |error| {
-                MemoryError::InvalidState(format!(
-                    "database_permissions:{}:{}",
-                    candidate.display(),
-                    error.kind()
-                ))
-            },
-        )?;
+        hide_platform::fs::private::restrict_to_owner(&candidate).map_err(|error| {
+            MemoryError::InvalidState(format!(
+                "database_permissions:{}:{}",
+                candidate.display(),
+                error.kind()
+            ))
+        })?;
     }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn enforce_database_permissions(_path: &Path) -> Result<(), MemoryError> {
     Ok(())
 }
 

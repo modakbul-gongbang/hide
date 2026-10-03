@@ -1,8 +1,8 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+use hide_platform::fs::{Access, atomic, private};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 2;
@@ -24,13 +24,9 @@ pub struct DaemonState {
 }
 
 /// The state folder, and any parent made with it such as `~/.hide`, is made
-/// 0700: it holds the daemon's token. An existing folder keeps its mode.
+/// private: it holds the daemon's token. An existing folder keeps its mode.
 fn create_private_dir(dir: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
+    private::create_dir_all(dir)
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {
@@ -41,20 +37,12 @@ pub fn lock_path(dir: &Path) -> PathBuf {
     dir.join("hided.lock")
 }
 
+/// Writes the state whole and private: a reader sees the previous state or
+/// this one, never part of either.
 pub fn write_state(dir: &Path, state: &DaemonState) -> io::Result<PathBuf> {
     create_private_dir(dir)?;
     let path = state_path(dir);
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&path)?;
-    file.write_all(serde_json::to_vec_pretty(state)?.as_slice())?;
-    file.sync_all()?;
-    let mut permissions = file.metadata()?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(&path, permissions)?;
+    atomic::write_file(&path, &serde_json::to_vec_pretty(state)?, Access::Private)?;
     Ok(path)
 }
 
@@ -85,20 +73,9 @@ pub fn forget_daemon(dir: &Path, pid: u32) {
 /// running daemon until the one to attach to answers. The file persists;
 /// the lock is released with the returned handle.
 pub fn lock_connect(dir: &Path) -> io::Result<File> {
-    use std::os::fd::AsRawFd;
     create_private_dir(dir)?;
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(dir.join("connect.lock"))?;
-    // SAFETY: flock on a descriptor `file` owns; dropping it releases.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
+    let file = private::open_own_file(&dir.join("connect.lock"), true)?;
+    file.lock()?;
     Ok(file)
 }
 
@@ -135,12 +112,9 @@ pub fn host_id(dir: &Path) -> io::Result<String> {
     getrandom::getrandom(&mut bytes).expect("getrandom");
     let id = format!("host-{}", hex::encode(bytes));
     let staging = dir.join(format!("host-id.{}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&staging)?;
+    // A start that died here left its staging file; this pid is ours now.
+    let _ = fs::remove_file(&staging);
+    let mut file = private::create_new_file(&staging)?;
     file.write_all(id.as_bytes())?;
     file.sync_all()?;
     // Another start that won the race keeps its id; this one reads it.
@@ -164,26 +138,15 @@ fn is_host_id(text: &str) -> bool {
 
 pub fn acquire_lock(dir: &Path) -> io::Result<File> {
     create_private_dir(dir)?;
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(lock_path(dir))?;
-    let result = unsafe { libc::flock(use_raw_fd(&file), libc::LOCK_EX | libc::LOCK_NB) };
-    if result != 0 {
-        return Err(io::Error::new(
+    let file = private::open_own_file(&lock_path(dir), true)?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(fs::TryLockError::WouldBlock) => Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "another hide instance holds the lock",
-        ));
+        )),
+        Err(fs::TryLockError::Error(error)) => Err(error),
     }
-    Ok(file)
-}
-
-fn use_raw_fd(file: &File) -> i32 {
-    use std::os::fd::AsRawFd;
-    file.as_raw_fd()
 }
 
 #[cfg(test)]
@@ -191,7 +154,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn state_file_is_mode_600() {
+    fn state_file_is_private() {
         let dir = tempfile::tempdir().unwrap();
         let path = write_state(
             dir.path(),
@@ -205,8 +168,7 @@ mod tests {
             },
         )
         .unwrap();
-        let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        assert!(private::is_private(&path).unwrap());
     }
 
     #[test]

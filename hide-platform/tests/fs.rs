@@ -21,6 +21,7 @@ use hide_platform::fs::link;
 use hide_platform::fs::lock::{self, Mode, Waited};
 use hide_platform::fs::permissions::{self, Permissions};
 use hide_platform::fs::private;
+use hide_platform::fs::space;
 
 const ROLE: &str = "HIDE_PLATFORM_FS_ROLE";
 const HELD: &str = "HIDE_PLATFORM_FS_HELD";
@@ -94,6 +95,28 @@ fn a_private_folder_is_the_current_accounts_alone() {
     // folder it made from one it found.
     let error = private::create_dir(&made).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+}
+
+#[test]
+fn private_folders_are_made_down_to_the_last_and_an_existing_one_is_left_alone() {
+    let outer = folder();
+    let deep = outer.path().join("state").join("hide").join("attachments");
+    private::create_dir_all(&deep).unwrap();
+    for made in [
+        outer.path().join("state"),
+        outer.path().join("state").join("hide"),
+        deep.clone(),
+    ] {
+        assert!(private::is_private(&made).unwrap(), "{}", made.display());
+    }
+    private::create_dir_all(&deep).unwrap();
+    let shared = outer.path().join("shared");
+    fs::create_dir(&shared).unwrap();
+    widen(&shared, false);
+    private::create_dir_all(&shared).unwrap();
+    assert!(!private::is_private(&shared).unwrap());
+    fs::write(outer.path().join("file"), "").unwrap();
+    assert!(private::create_dir_all(&outer.path().join("file")).is_err());
 }
 
 #[test]
@@ -939,4 +962,168 @@ fn a_folder_is_known_to_tell_case_apart_or_not_by_asking_the_folder() {
     }
     assert_eq!(names(&holding), ["Readme.md"]);
     assert!(fs::read_dir(&named).unwrap().next().is_none());
+}
+
+// ---- own and regular files -----------------------------------------------
+
+#[test]
+fn an_own_file_is_made_private_keeps_what_it_holds_and_must_exist_to_be_read() {
+    let outer = folder();
+    let path = outer.path().join("generator.lock");
+    assert_eq!(
+        private::open_own_file(&path, false).unwrap_err().kind(),
+        ErrorKind::NotFound
+    );
+    {
+        use std::io::Write;
+        let mut file = private::open_own_file(&path, true).unwrap();
+        file.write_all(b"held").unwrap();
+    }
+    assert!(private::is_private(&path).unwrap());
+    private::open_own_file(&path, true).unwrap();
+    let mut held = String::new();
+    private::open_own_file(&path, false)
+        .unwrap()
+        .read_to_string(&mut held)
+        .unwrap();
+    assert_eq!(held, "held");
+}
+
+#[test]
+fn a_link_planted_at_an_own_files_name_is_neither_followed_nor_accepted() {
+    let outer = folder();
+    let target = outer.path().join("operator.json");
+    fs::write(&target, "kept").unwrap();
+    let at = outer.path().join("generator.lock");
+    if file_link(&target, &at) {
+        assert!(private::open_own_file(&at, true).is_err());
+        assert!(private::open_own_file(&at, false).is_err());
+        assert_eq!(read(&target), "kept");
+    }
+    let folder_at = outer.path().join("folder.lock");
+    link::create_link(outer.path(), &folder_at).unwrap();
+    assert!(private::open_own_file(&folder_at, true).is_err());
+    // A hard link is a second name of the target itself.
+    let hard = outer.path().join("hard.lock");
+    fs::hard_link(&target, &hard).unwrap();
+    assert!(private::open_own_file(&hard, true).is_err());
+    assert!(private::open_own_file(&hard, false).is_err());
+    assert_eq!(read(&target), "kept");
+}
+
+#[test]
+fn only_a_regular_file_opens_as_one_and_a_link_at_its_name_is_not_followed() {
+    let outer = folder();
+    let file = outer.path().join("image.png");
+    fs::write(&file, "pixels").unwrap();
+    let mut contents = String::new();
+    hide_platform::fs::open_regular(&file)
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+    assert_eq!(contents, "pixels");
+    assert_eq!(
+        hide_platform::fs::open_regular(outer.path())
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidInput
+    );
+    let at = outer.path().join("link.png");
+    if file_link(&file, &at) {
+        assert!(hide_platform::fs::open_regular(&at).is_err());
+    }
+    #[cfg(unix)]
+    {
+        // A pipe would block a plain open until a writer came.
+        let pipe = outer.path().join("pipe");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&pipe)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            hide_platform::fs::open_regular(&pipe).unwrap_err().kind(),
+            ErrorKind::InvalidInput
+        );
+    }
+}
+
+#[test]
+fn a_stamp_holds_through_a_read_and_moves_with_a_write() {
+    let outer = folder();
+    let path = outer.path().join("attachment");
+    fs::write(&path, "first").unwrap();
+    let mut file = File::open(&path).unwrap();
+    let before = identity::stamp_of(&file).unwrap();
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).unwrap();
+    assert_eq!(identity::stamp_of(&file).unwrap(), before);
+    fs::write(&path, "second, longer").unwrap();
+    assert_ne!(identity::stamp_of(&file).unwrap(), before);
+}
+
+// ---- space ---------------------------------------------------------------
+
+#[test]
+fn a_file_takes_at_least_its_bytes_and_a_second_name_is_the_same_file() {
+    let outer = folder();
+    let file = outer.path().join("data");
+    fs::write(&file, vec![7u8; 65536]).unwrap();
+    let usage = space::usage_nofollow(&file).unwrap();
+    assert!(usage.allocated >= 65536, "{usage:?}");
+    assert_eq!(usage.links, 1);
+    assert!(!usage.is_dir);
+    let alias = outer.path().join("alias");
+    fs::hard_link(&file, &alias).unwrap();
+    let second = space::usage_nofollow(&alias).unwrap();
+    assert_eq!(second.id, usage.id);
+    assert_eq!(second.links, 2);
+    assert!(space::usage_nofollow(outer.path()).unwrap().is_dir);
+}
+
+#[test]
+fn a_link_to_a_folder_is_measured_as_itself_and_is_not_a_folder() {
+    let outer = folder();
+    let target = outer.path().join("target");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("big"), vec![1u8; 65536]).unwrap();
+    let at = outer.path().join("link");
+    link::create_link(Path::new("target"), &at).unwrap();
+    let usage = space::usage_nofollow(&at).unwrap();
+    assert!(!usage.is_dir, "{usage:?}");
+    assert_ne!(usage.id, space::usage_nofollow(&target).unwrap().id);
+}
+
+#[test]
+fn the_volume_a_folder_is_on_has_room_and_a_missing_one_has_no_answer() {
+    let outer = folder();
+    assert!(space::free_bytes(outer.path()).unwrap() > 0);
+    assert!(space::free_bytes(&outer.path().join("missing")).is_err());
+}
+
+#[test]
+fn an_open_file_knows_the_path_it_is_at_even_after_a_rename() {
+    let outer = folder();
+    let first = outer.path().join("first.txt");
+    fs::write(&first, "contents").unwrap();
+    let file = File::open(&first).unwrap();
+    let folder_handle = hide_platform::fs::open_dir(outer.path()).unwrap();
+    let folder_path = identity::path_of(&folder_handle).unwrap();
+    assert!(identity::same_file(&folder_path, outer.path()).unwrap());
+    // A file's answer is its folder's answer and its name, so a boundary can
+    // compare the two by prefix.
+    assert_eq!(
+        identity::path_of(&file).unwrap(),
+        folder_path.join("first.txt")
+    );
+    let second = outer.path().join("second.txt");
+    // Windows renames an open file only when it was opened sharing delete,
+    // which `File::open` does.
+    fs::rename(&first, &second).unwrap();
+    assert_eq!(
+        identity::path_of(&file).unwrap(),
+        folder_path.join("second.txt")
+    );
 }

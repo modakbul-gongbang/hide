@@ -11,7 +11,8 @@ pub struct EnvironmentVariableSpec {
     pub absent_behavior: &'static str,
 }
 
-pub const HOME_KEY: &str = "HOME";
+/// `HOME`, or `USERPROFILE` on Windows.
+pub const HOME_KEY: &str = hide_platform::host::HOME_VARIABLE;
 pub const SSH_AUTH_SOCK_KEY: &str = "SSH_AUTH_SOCK";
 pub const HERDR_SOCKET_PATH_KEY: &str = "HERDR_SOCKET_PATH";
 pub const CODEX_HOME_KEY: &str = "CODEX_HOME";
@@ -162,7 +163,7 @@ mod tests {
     #[test]
     fn registry_is_enumerable_and_does_not_expose_values() {
         assert_eq!(REGISTRY.len(), 4);
-        assert_eq!(REGISTRY[0].key, "HOME");
+        assert_eq!(REGISTRY[0].key, hide_platform::host::HOME_VARIABLE);
         let secret_like_value = OsString::from("/private/tmp/private-agent.sock");
         let report = validate_with(|key| match key {
             SSH_AUTH_SOCK_KEY | HERDR_SOCKET_PATH_KEY => Some(secret_like_value.clone()),

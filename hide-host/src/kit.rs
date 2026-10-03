@@ -43,10 +43,12 @@ pub fn handle(action: KitAction, cli_dir: &str, herdr_socket: Option<&str>) -> H
         )
     })?;
     let (root, version) = install_layout(&executable)?;
-    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+    let home = hide_platform::host::home_dir().map_err(|error| {
         HostError::new(
             ErrorCode::Unsupported,
-            "HOME is not set, so the helper cannot tell where to install",
+            format!(
+                "The home folder is unknown ({error}), so the helper cannot tell where to install"
+            ),
         )
     })?;
     run(
@@ -106,7 +108,22 @@ pub fn run(
     let cli_dir = expand(cli_dir, home)?;
     let herdr_socket = match herdr_socket {
         Some(socket) => expand(socket, home)?,
-        None => home.join(".config/herdr/herdr.sock"),
+        // Herdr's default for this placement's home, in Herdr's own order.
+        None => {
+            let variables = |name: &str| {
+                if name == hide_platform::host::HOME_VARIABLE {
+                    Some(home.as_os_str().to_owned())
+                } else {
+                    std::env::var_os(name)
+                }
+            };
+            hide_platform::host::herdr_socket_default_from(&variables).map_err(|error| {
+                HostError::new(
+                    ErrorCode::Unsupported,
+                    format!("Herdr's default socket has no location: {error}"),
+                )
+            })?
+        }
     };
     let target = || {
         hide_kit::device_target(

@@ -32,7 +32,6 @@
 //! thread so it fails the test instead of only dying in the log.
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,6 +42,7 @@ use serde_json::Value;
 
 use crate::wire;
 use hide_herdr_client::LocalSocketConnector;
+use hide_platform::ipc::{LocalListener, LocalStream};
 
 static NEXT_FAKE_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -61,7 +61,8 @@ impl FakeHerdr {
     /// `name` labels the socket directory so a failure names the test that
     /// left it behind. A Unix socket path has a hard length limit, so the
     /// directory sits directly under `/tmp` however deep the test's other
-    /// fixtures are.
+    /// fixtures are; Windows names a pipe after the path and has no such
+    /// limit.
     pub(crate) fn start(
         name: &str,
         mut respond: impl FnMut(&str, &Value) -> Value + Send + 'static,
@@ -76,14 +77,19 @@ impl FakeHerdr {
         name: &str,
         mut respond: impl FnMut(&str, &Value) -> Result<Value, (String, String)> + Send + 'static,
     ) -> Self {
-        let root = PathBuf::from("/tmp").join(format!(
+        let temporary = if cfg!(unix) {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        let root = temporary.join(format!(
             "herdr-core-fake-{name}-{}-{}",
             std::process::id(),
             NEXT_FAKE_ID.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&root).expect("create fake herdr socket directory");
         let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let listener = LocalListener::bind(&socket_path).expect("bind fake herdr socket");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let stopping = Arc::new(AtomicBool::new(false));
         let server = {
@@ -93,12 +99,13 @@ impl FakeHerdr {
                 .name(format!("fake-herdr-{name}"))
                 .spawn(move || {
                     loop {
-                        let (mut stream, _) = listener.accept().expect("accept fake herdr request");
+                        let stream = listener.accept().expect("accept fake herdr request");
                         if stopping.load(Ordering::Acquire) {
                             return;
                         }
                         let mut line = String::new();
-                        BufReader::new(stream.try_clone().expect("clone fake herdr stream"))
+                        let mut stream = BufReader::new(stream);
+                        stream
                             .read_line(&mut line)
                             .expect("read fake herdr request");
                         if line.trim().is_empty() {
@@ -120,7 +127,8 @@ impl FakeHerdr {
                             }),
                         };
                         requests.lock().unwrap().push(request.clone());
-                        writeln!(stream, "{response}").expect("write fake herdr response");
+                        writeln!(stream.get_mut(), "{response}")
+                            .expect("write fake herdr response");
                     }
                 })
                 .expect("spawn fake herdr thread")
@@ -187,7 +195,7 @@ impl Drop for FakeHerdr {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
         // One connection wakes the blocking accept so the loop sees the flag.
-        let _ = UnixStream::connect(&self.socket_path);
+        let _ = LocalStream::connect(&self.socket_path);
         let outcome = self.server.take().map(JoinHandle::join);
         let _ = std::fs::remove_dir_all(&self.root);
         if matches!(outcome, Some(Err(_))) && !std::thread::panicking() {

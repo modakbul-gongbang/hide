@@ -70,12 +70,7 @@ enum Command {
     },
 }
 
-#[cfg(unix)]
-type DirectoryIdentity = (u64, u64);
-#[cfg(windows)]
-type DirectoryIdentity = (u32, u64);
-#[cfg(not(any(unix, windows)))]
-type DirectoryIdentity = ();
+type DirectoryIdentity = hide_platform::fs::identity::FileId;
 
 struct Watched {
     directory: Dir,
@@ -84,34 +79,11 @@ struct Watched {
     dirty: Option<Instant>,
 }
 
-fn directory_identity(metadata: &cap_std::fs::Metadata) -> Option<DirectoryIdentity> {
-    #[cfg(unix)]
-    {
-        use cap_std::fs::MetadataExt;
-        Some((metadata.dev(), metadata.ino()))
-    }
-    #[cfg(windows)]
-    {
-        use cap_std::fs::MetadataExt;
-        metadata.volume_serial_number().zip(metadata.file_index())
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = metadata;
-        None
-    }
-}
-
 impl Watched {
     fn from_file(file: File) -> std::io::Result<Self> {
+        let identity = hide_platform::fs::identity::file_id_of(&file)?;
         let directory = Dir::from_std_file(file);
         let metadata = directory.dir_metadata()?;
-        let identity = directory_identity(&metadata).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "directory identity unavailable",
-            )
-        })?;
         Ok(Self {
             directory,
             identity,

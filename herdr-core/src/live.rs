@@ -2495,13 +2495,13 @@ fn run_agent_fork_with_registration(
 }
 
 fn register_fork_lineage(parent_pane_id: &str, child_pane_id: &str) -> Result<(), String> {
-    let home = std::env::var_os("HOME").ok_or_else(|| {
-        "HOME is unavailable, so the hcoord command cannot register the fork".to_owned()
+    let home = hide_platform::host::home_dir().map_err(|error| {
+        format!("The home folder is unavailable ({error}), so the hcoord command cannot register the fork")
     })?;
     // The command the kit installs in hcoord's home (PRD hide-home-layout
     // D-08), relocated with hcoord when HCOORD_HOME is set.
     let binary = hide_kit::layout::hcoord_command(&hide_kit::layout::hcoord_home(
-        Path::new(&home),
+        &home,
         hide_kit::layout::hcoord_home_override().as_deref(),
     ));
     register_fork_lineage_with_binary(
@@ -3240,7 +3240,6 @@ enum TerminalWriterCommand {
     },
     Input {
         line: String,
-        trace: Option<crate::model::TerminalInputTrace>,
     },
     Release {
         line: String,
@@ -3520,11 +3519,7 @@ impl TerminalSession {
             .map_err(|error| format!("terminal session reader could not be started: {error}"))
     }
 
-    pub fn write_bytes(
-        &self,
-        bytes: &[u8],
-        trace: Option<crate::model::TerminalInputTrace>,
-    ) -> Result<(), String> {
+    pub fn write_bytes(&self, bytes: &[u8]) -> Result<(), String> {
         let Some(writer) = self.writer.as_ref() else {
             return Err(format!(
                 "Pane {} is read-only because another client owns terminal control",
@@ -3533,7 +3528,7 @@ impl TerminalSession {
         };
         let line = terminal_input_line(bytes)?;
         writer
-            .send(TerminalWriterCommand::Input { line, trace })
+            .send(TerminalWriterCommand::Input { line })
             .map_err(|_| "terminal control input channel is closed".to_owned())
     }
 
@@ -3571,21 +3566,6 @@ impl TerminalSession {
     }
 }
 
-fn monotonic_ns() -> u64 {
-    let mut time = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    #[cfg(target_os = "macos")]
-    let clock = libc::CLOCK_UPTIME_RAW;
-    #[cfg(not(target_os = "macos"))]
-    let clock = libc::CLOCK_MONOTONIC;
-    // Both ends of a macOS input interval use CLOCK_UPTIME_RAW.
-    let result = unsafe { libc::clock_gettime(clock, &mut time) };
-    assert_eq!(result, 0, "monotonic clock unavailable");
-    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
-}
-
 fn spawn_terminal_control_writer(
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
@@ -3608,7 +3588,7 @@ fn spawn_terminal_control_writer(
                     },
                 };
 
-                let (line, release_acknowledgement, is_release, trace) = match command {
+                let (line, release_acknowledgement, is_release) = match command {
                     TerminalWriterCommand::Scroll(mut request) => {
                         // The shell has already converted precise trackpad
                         // movement into whole rows. Combine only wheels that
@@ -3654,43 +3634,17 @@ fn spawn_terminal_control_writer(
                                 return;
                             }
                         };
-                        (line, None, false, None)
+                        (line, None, false)
                     }
-                    TerminalWriterCommand::Resize { line } => (line, None, false, None),
-                    TerminalWriterCommand::Input { line, trace } => (line, None, false, trace),
+                    TerminalWriterCommand::Resize { line }
+                    | TerminalWriterCommand::Input { line } => (line, None, false),
                     TerminalWriterCommand::Release { line, acknowledged } => {
-                        (line, Some(acknowledged), true, None)
+                        (line, Some(acknowledged), true)
                     }
                 };
                 let result = stdin
                     .write_all(line.as_bytes())
                     .and_then(|()| stdin.flush());
-                if let Some(trace) = trace {
-                    // Stamp completion before waiting on Runtime to publish it.
-                    let elapsed =
-                        monotonic_ns().saturating_sub(trace.started_ns) as f64 / 1_000_000.0;
-                    let sent = crate::model::TerminalInputSent {
-                        id: trace.id,
-                        milliseconds: elapsed,
-                        outcome: if result.is_ok() {
-                            "completed"
-                        } else {
-                            "write_failed"
-                        }
-                        .to_owned(),
-                    };
-                    if let Some(runtime) = runtime.upgrade() {
-                        let changed = runtime
-                            .lock()
-                            .map(|mut r| {
-                                r.ingest_terminal_input_sent(&writer_pane, generation, sent)
-                            })
-                            .unwrap_or(false);
-                        if changed {
-                            notifier.notify();
-                        }
-                    }
-                }
                 if let Some(acknowledgement) = release_acknowledgement {
                     let _ = acknowledgement.send(());
                 }
@@ -3920,13 +3874,13 @@ pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use serde_json::json;
 
     use super::*;
     use crate::fake_herdr::FakeHerdr;
 
+    // The fixture is a shell script.
+    #[cfg(unix)]
     #[test]
     fn a_hung_hcoord_link_is_killed_without_closing_the_started_fork() {
         let directory = tempfile::tempdir().expect("create hcoord fixture directory");
@@ -4191,8 +4145,11 @@ mod tests {
         assert!(ensure_complete_tab_restore(3, 3).is_ok());
     }
 
+    // A folder is made untraversable through its mode bits.
+    #[cfg(unix)]
     #[test]
     fn file_reopen_distinguishes_metadata_failure_from_a_missing_file() {
+        use std::os::unix::fs::PermissionsExt;
         let root =
             std::env::temp_dir().join(format!("hide-file-metadata-denied-{}", std::process::id()));
         let denied = root.join("denied");
@@ -4687,7 +4644,6 @@ mod tests {
         writer
             .send(TerminalWriterCommand::Input {
                 line: terminal_input_line(b"x").unwrap(),
-                trace: None,
             })
             .unwrap();
         let scroll = received.recv_timeout(Duration::from_secs(1)).unwrap();

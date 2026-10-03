@@ -14,7 +14,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -166,11 +165,7 @@ impl Attachments {
         for folder in [&dir, &clipboard_root] {
             // The staged bytes are the operator's own files and screenshots;
             // the directories stay private like the state file itself.
-            if let Err(error) = std::fs::DirBuilder::new()
-                .mode(0o700)
-                .recursive(true)
-                .create(folder)
-            {
+            if let Err(error) = hide_platform::fs::private::create_dir_all(folder) {
                 eprintln!(
                     "{}",
                     serde_json::json!({
@@ -272,12 +267,8 @@ impl Attachments {
         make_room(&mut state, 0, None, true)?;
         // `create_new` means an existing file (a case-insensitive collision,
         // or a path staged by another run) is never truncated.
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|_| "stage_failed")?;
+        let file =
+            hide_platform::fs::private::create_new_file(&path).map_err(|_| "stage_failed")?;
         // An abandoned stage would otherwise hold its file descriptor for the
         // daemon's life; the oldest open one goes instead.
         while state.open.len() >= MAX_OPEN_UPLOADS {
@@ -530,7 +521,6 @@ impl Attachments {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     fn attachments() -> (tempfile::TempDir, Attachments) {
         let dir = tempfile::tempdir().unwrap();
@@ -695,14 +685,12 @@ mod tests {
         service.begin(0, "r1", "shot.png", 1, false).unwrap();
         service.write("r1", &[1], true).unwrap();
         let staged = service.commit(&["r1".to_owned()], false).unwrap();
-        let file_mode = std::fs::metadata(&staged[0]).unwrap().permissions().mode() & 0o777;
-        assert_eq!(file_mode, 0o600, "a staged file is the operator's own");
-        let dir_mode = std::fs::metadata(dir.path().join("attachments"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(dir_mode, 0o700);
+        use hide_platform::fs::private::is_private;
+        assert!(
+            is_private(Path::new(&staged[0])).unwrap(),
+            "a staged file is the operator's own"
+        );
+        assert!(is_private(&dir.path().join("attachments")).unwrap());
     }
 
     #[test]

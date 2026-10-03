@@ -445,12 +445,12 @@ mod tests {
         // Swapped for a link.
         std::fs::write(root.join(".gitignore"), "target/\ntarget\n").unwrap();
         std::fs::remove_dir(&target).unwrap();
-        std::os::unix::fs::symlink(std::env::temp_dir(), &target).unwrap();
+        hide_platform::fs::link::create_link(&std::env::temp_dir(), &target).unwrap();
         assert_eq!(
             verify_folder(&root, &target, Layer::BuildCache, None),
             Err(FolderRefusal::Symlink)
         );
-        std::fs::remove_file(&target).unwrap();
+        hide_platform::fs::link::remove_link(&target).unwrap();
         assert_eq!(
             verify_folder(&root, &target, Layer::BuildCache, None),
             Err(FolderRefusal::NotFound)

@@ -219,21 +219,34 @@ impl Payload {
     }
 }
 
+/// A package keeps the mode bits it has here, which the device's copy gets.
+/// A system without mode bits has nothing to give it, so the package is
+/// refused there rather than installed with a guessed mode.
 fn read_package(relative: &str, path: &Path) -> Result<Package, String> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::io::Read;
     let unreadable = |error: std::io::Error| {
         format!("The package {} could not be read: {error}", path.display())
     };
-    let metadata = std::fs::metadata(path).map_err(unreadable)?;
-    if !metadata.is_file() {
+    let mut file = std::fs::File::open(path).map_err(unreadable)?;
+    if !file.metadata().map_err(unreadable)?.is_file() {
         return Err(format!("The package {} is not a file", path.display()));
     }
-    let bytes = std::fs::read(path).map_err(unreadable)?;
+    let mode = hide_platform::fs::permissions::Permissions::of(&file)
+        .map_err(unreadable)?
+        .unix_mode()
+        .ok_or_else(|| {
+            format!(
+                "The package {} has no file mode on this system to install it with",
+                path.display()
+            )
+        })?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(unreadable)?;
     Ok(Package {
         relative: relative.to_owned(),
         digest: hex_digest(&bytes),
         bytes,
-        executable: metadata.permissions().mode() & 0o111 != 0,
+        executable: mode & 0o111 != 0,
     })
 }
 
@@ -1732,6 +1745,7 @@ mod tests {
         assert!(packages.find("macos", other_arch).is_ok());
     }
 
+    #[cfg(unix)]
     fn write(path: &Path, bytes: &[u8], mode: u32) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1739,6 +1753,7 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
     }
 
+    #[cfg(unix)]
     fn relative(payload: &Payload) -> Vec<(String, bool)> {
         let mut files = payload
             .files
@@ -1751,6 +1766,8 @@ mod tests {
 
     /// The kit's parts follow the helper's rule, each on its own: a build
     /// that lacks one still installs the helper and names what it left out.
+    // A payload is made only where files have modes (`read_package`).
+    #[cfg(unix)]
     #[test]
     fn a_device_payload_carries_every_kit_part_the_build_has() {
         let directory = tempfile::tempdir().unwrap();
@@ -1809,6 +1826,7 @@ mod tests {
 
     /// Any change to any part is a new version folder on the device, so a
     /// hook never runs a mix of two builds.
+    #[cfg(unix)]
     #[test]
     fn the_payload_version_follows_every_file_and_mode() {
         let directory = tempfile::tempdir().unwrap();

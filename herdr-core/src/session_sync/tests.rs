@@ -1,5 +1,4 @@
 use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -7,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::model::{CoreOptions, SCHEMA_VERSION};
 use hide_herdr_client::HERDR_PROTOCOL_REVISION;
+use hide_platform::ipc::{LocalListener, LocalStream};
 
 fn snapshot() -> Value {
     json!({
@@ -314,17 +314,29 @@ fn worktree_events_invalidate_the_change_driven_reader_once() {
     assert!(outcome.refresh_worktrees);
 }
 
-fn accept_request(listener: &UnixListener) -> (UnixStream, Value) {
-    let (stream, _) = listener.accept().expect("accept request");
-    let mut line = String::new();
-    std::io::BufReader::new(stream.try_clone().expect("clone request stream"))
-        .read_line(&mut line)
-        .expect("read request");
-    let request = serde_json::from_str(&line).expect("request JSON");
-    (stream, request)
+/// Where a test's socket folder goes: directly under `/tmp` on Unix, whose
+/// socket paths have a hard length limit, and the temporary folder on
+/// Windows, which names a pipe after the path.
+fn socket_parent() -> std::path::PathBuf {
+    if cfg!(unix) {
+        Path::new("/tmp").to_path_buf()
+    } else {
+        std::env::temp_dir()
+    }
 }
 
-fn write_result(stream: &mut UnixStream, request: &Value, result: Value) {
+fn accept_request(listener: &LocalListener) -> (LocalStream, Value) {
+    let stream = listener.accept().expect("accept request");
+    let mut line = String::new();
+    // The client writes one line and then only reads, so nothing past the
+    // line is left in the reader's buffer when the stream is taken back.
+    let mut reader = std::io::BufReader::new(stream);
+    reader.read_line(&mut line).expect("read request");
+    let request = serde_json::from_str(&line).expect("request JSON");
+    (reader.into_inner(), request)
+}
+
+fn write_result(stream: &mut LocalStream, request: &Value, result: Value) {
     writeln!(stream, "{}", json!({"id": request["id"], "result": result})).expect("write response");
 }
 
@@ -337,7 +349,7 @@ fn write_result(stream: &mut UnixStream, request: &Value, result: Value) {
 /// out of three with no change to the code under test. Each interleaved
 /// refresh is answered with an empty list, which is what the coordinator
 /// expects and what leaves its projection untouched.
-fn accept_request_for(listener: &UnixListener, method: &str) -> (UnixStream, Value) {
+fn accept_request_for(listener: &LocalListener, method: &str) -> (LocalStream, Value) {
     for _ in 0..32 {
         let (mut stream, request) = accept_request(listener);
         if request["method"] == method {
@@ -1591,14 +1603,14 @@ fn focus_events_move_the_projected_focused_workspace() {
 /// listening first is what keeps an event between the two from being lost.
 #[test]
 fn coordinator_rebuilds_from_a_fresh_snapshot_after_a_clean_disconnect() {
-    let root = Path::new("/tmp").join(format!(
+    let root = socket_parent().join(format!(
         "herdr-core-session-rebuild-contract-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&root).expect("create socket directory");
     let socket_path = root.join("herdr.sock");
     let state_path = root.join("state.json");
-    let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
+    let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");
     let rebuilt = Arc::new(AtomicBool::new(false));
     let rebuilt_from_server = Arc::clone(&rebuilt);
     let server = thread::spawn(move || {
@@ -1681,14 +1693,14 @@ fn coordinator_rebuilds_from_a_fresh_snapshot_after_a_clean_disconnect() {
 /// navigator stops listing the closed tab without waiting for a deadline.
 #[test]
 fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
-    let root = Path::new("/tmp").join(format!(
+    let root = socket_parent().join(format!(
         "herdr-core-session-active-tab-read-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&root).expect("create socket directory");
     let socket_path = root.join("herdr.sock");
     let state_path = root.join("state.json");
-    let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
+    let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");
     let read_answered = Arc::new(AtomicBool::new(false));
     let read_answered_from_server = Arc::clone(&read_answered);
     let server = thread::spawn(move || {
@@ -1765,14 +1777,14 @@ fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
 
 #[test]
 fn coordinator_recovers_a_stream_error_with_one_fresh_snapshot_and_stops_its_reader() {
-    let root = Path::new("/tmp").join(format!(
+    let root = socket_parent().join(format!(
         "herdr-core-session-stream-error-contract-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&root).expect("create socket directory");
     let socket_path = root.join("herdr.sock");
     let state_path = root.join("state.json");
-    let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
+    let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");
     let server = thread::spawn(move || {
         let (mut first_subscription, first_subscribe_request) =
             accept_request_for(&listener, "events.subscribe");

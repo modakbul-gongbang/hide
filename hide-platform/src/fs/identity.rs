@@ -66,6 +66,23 @@ pub fn link_count(handle: &impl Handle) -> io::Result<u64> {
     sys::link_count(handle)
 }
 
+/// What a file looks like now, to tell whether it changed between two looks:
+/// its length, when its contents were last written and when anything about
+/// it last changed. Equal stamps mean no change the filesystem recorded came
+/// between them; the change time catches a write whose author set the write
+/// time back.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Stamp {
+    len: u64,
+    written: (i64, i64),
+    changed: (i64, i64),
+}
+
+/// The stamp of an open file.
+pub fn stamp_of(handle: &impl Handle) -> io::Result<Stamp> {
+    sys::stamp_of(handle)
+}
+
 /// Whether the two paths lead to one file.
 pub fn same_file(left: &Path, right: &Path) -> io::Result<bool> {
     Ok(file_id(left)? == file_id(right)?)
@@ -77,6 +94,16 @@ pub fn same_file(left: &Path, right: &Path) -> io::Result<bool> {
 /// without it.
 pub fn canonical(path: &Path) -> io::Result<PathBuf> {
     sys::canonical(path)
+}
+
+/// The path the open file or folder is at now, as the system spells it:
+/// after a rename it is the new path. On Windows it keeps the `\\?\`
+/// prefix whatever its length, so two answers compare by prefix (a file
+/// under a folder starts with the folder's answer), which [`canonical`]'s
+/// shortened spelling does not promise. A file that was removed while open
+/// has none on Linux (`NotFound`).
+pub fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
+    sys::path_of(handle)
 }
 
 /// Whether `folder` tells `Name` from `name`. It is a property of the folder
@@ -208,7 +235,7 @@ mod sys {
     use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
 
-    use super::{FileId, Handle};
+    use super::{FileId, Handle, Stamp};
 
     fn id(metadata: &fs::Metadata) -> FileId {
         FileId::new(metadata.dev(), u128::from(metadata.ino()))
@@ -233,6 +260,15 @@ mod sys {
 
     pub(super) fn link_count(handle: &impl Handle) -> io::Result<u64> {
         Ok(metadata_of(handle)?.nlink())
+    }
+
+    pub(super) fn stamp_of(handle: &impl Handle) -> io::Result<Stamp> {
+        let metadata = metadata_of(handle)?;
+        Ok(Stamp {
+            len: metadata.len(),
+            written: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
     }
 
     pub(super) fn entry_id(dir: &impl Handle, name: &std::ffi::OsStr) -> io::Result<FileId> {
@@ -267,6 +303,42 @@ mod sys {
     pub(super) fn canonical(path: &Path) -> io::Result<PathBuf> {
         fs::canonicalize(path)
     }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
+        use std::ffi::CStr;
+        use std::os::fd::AsRawFd;
+        use std::os::unix::ffi::OsStrExt;
+        let mut path = [0 as libc::c_char; libc::PATH_MAX as usize];
+        // SAFETY: the buffer is writable for PATH_MAX bytes, which F_GETPATH
+        // needs, and the descriptor is borrowed for the call.
+        if unsafe {
+            libc::fcntl(
+                handle.as_fd().as_raw_fd(),
+                libc::F_GETPATH,
+                path.as_mut_ptr(),
+            )
+        } == -1
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: F_GETPATH wrote a NUL-terminated path.
+        let bytes = unsafe { CStr::from_ptr(path.as_ptr()) }.to_bytes();
+        Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
+        use std::os::fd::AsRawFd;
+        let path = fs::read_link(format!("/proc/self/fd/{}", handle.as_fd().as_raw_fd()))?;
+        if path.to_string_lossy().ends_with(" (deleted)") {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the open file was removed",
+            ));
+        }
+        Ok(path)
+    }
 }
 
 #[cfg(windows)]
@@ -274,35 +346,19 @@ mod sys {
     use std::fs;
     use std::io;
     use std::mem::MaybeUninit;
-    use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::{Path, PathBuf};
 
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo,
-        GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FILE_ID_INFO, FileBasicInfo, FileIdInfo,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, GetFileSizeEx,
     };
 
-    use super::{FileId, Handle};
-
-    /// A handle that asks no access, which is all identity needs and which
-    /// no other open file can refuse.
-    fn open_for_query(path: &Path, follow: bool) -> io::Result<fs::File> {
-        let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
-        if !follow {
-            flags |= FILE_FLAG_OPEN_REPARSE_POINT;
-        }
-        fs::OpenOptions::new()
-            .access_mode(0)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(flags)
-            .open(path)
-    }
+    use super::{FileId, Handle, Stamp};
 
     pub(super) fn id_of_path(path: &Path, follow: bool) -> io::Result<FileId> {
-        id_of_handle(&open_for_query(path, follow)?)
+        id_of_handle(&crate::fs::open_for_query(path, follow)?)
     }
 
     pub(super) fn id_of_handle(handle: &impl Handle) -> io::Result<FileId> {
@@ -361,12 +417,50 @@ mod sys {
         Ok(u64::from(unsafe { info.assume_init() }.nNumberOfLinks))
     }
 
+    pub(super) fn stamp_of(handle: &impl Handle) -> io::Result<Stamp> {
+        let raw = handle.as_handle().as_raw_handle();
+        let mut info = MaybeUninit::<FILE_BASIC_INFO>::zeroed();
+        // SAFETY: `raw` is an open handle borrowed for the call, and `info` is
+        // a writable FILE_BASIC_INFO of the size passed.
+        if unsafe {
+            GetFileInformationByHandleEx(
+                raw,
+                FileBasicInfo,
+                info.as_mut_ptr().cast(),
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the call succeeded and filled the structure.
+        let info = unsafe { info.assume_init() };
+        let mut length = 0i64;
+        // SAFETY: as above, with a writable i64.
+        if unsafe { GetFileSizeEx(raw, &mut length) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Stamp {
+            len: u64::try_from(length).unwrap_or(0),
+            // Windows keeps both times in 100 ns units in one number.
+            written: (info.LastWriteTime, 0),
+            changed: (info.ChangeTime, 0),
+        })
+    }
+
     pub(super) fn canonical(path: &Path) -> io::Result<PathBuf> {
-        let real = fs::canonicalize(path)?;
-        Ok(real
-            .to_str()
+        Ok(short(fs::canonicalize(path)?))
+    }
+
+    pub(super) fn path_of(handle: &impl Handle) -> io::Result<PathBuf> {
+        crate::fs::path_of(handle)
+    }
+
+    /// The path without the `\\?\` prefix wherever it means the same.
+    fn short(real: PathBuf) -> PathBuf {
+        real.to_str()
             .and_then(super::strip_verbatim)
-            .map_or(real, PathBuf::from))
+            .map_or(real, PathBuf::from)
     }
 }
 

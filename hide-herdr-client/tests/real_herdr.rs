@@ -215,3 +215,43 @@ fn the_pinned_herdr_answers_a_request_and_streams_events_over_the_local_stream()
         "{shutdown_after:?}"
     );
 }
+
+/// The socket `hide_platform::host` names as Herdr's default is the one the
+/// pinned Herdr itself uses when nothing overrides it. The child inherits
+/// this process's home and config variables and none of Herdr's own, and is
+/// only asked for its status, which starts and creates nothing. Run by hand,
+/// point HOME (USERPROFILE on Windows) at a short empty folder so the answer
+/// never names the operator's socket.
+#[test]
+#[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
+fn the_default_socket_is_the_one_the_pinned_herdr_uses() {
+    let bin = PathBuf::from(
+        std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
+    );
+    let mut command = Command::new(&bin);
+    for (key, _) in std::env::vars_os() {
+        let key = key.to_string_lossy().to_uppercase();
+        if key.starts_with("HERDR_") || key.starts_with("HIDE_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
+        .args(["status", "server", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("herdr status server");
+    let status: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "herdr status server --json is not JSON ({error}): {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    let socket = status["socket"]
+        .as_str()
+        .expect("the status names a socket");
+    assert_eq!(
+        PathBuf::from(socket),
+        hide_platform::host::herdr_socket_default().unwrap()
+    );
+}

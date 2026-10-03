@@ -19,9 +19,6 @@ use serde_json::Value;
 
 use super::store::ServeRecord;
 
-/// Where the macOS app installs its CLI.
-pub const APP_BUNDLE_CLI: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
-
 /// How long one `tailscale` command may take before it counts as failed.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -31,7 +28,8 @@ pub const DOWNLOAD_URL: &str = "https://tailscale.com/download";
 pub const ADMIN_DNS_URL: &str = "https://login.tailscale.com/admin/dns";
 
 /// Which tailscale CLI to run. A pinned path is the only one tried (and a
-/// missing pinned path reads as not installed); otherwise the app bundle's CLI,
+/// missing pinned path reads as not installed); otherwise the CLI where the
+/// system's Tailscale app installs it (`hide_platform::host::tailscale_cli`),
 /// then `tailscale` on PATH.
 #[derive(Clone, Debug)]
 pub struct CliSource {
@@ -44,13 +42,14 @@ impl CliSource {
         if let Some(pinned) = &self.pinned {
             return pinned.is_file().then(|| pinned.clone());
         }
-        let bundle = Path::new(APP_BUNDLE_CLI);
-        if bundle.is_file() {
-            return Some(bundle.to_path_buf());
+        if let Ok(installed) = hide_platform::host::tailscale_cli()
+            && installed.is_file()
+        {
+            return Some(installed);
         }
         self.search_path
             .as_deref()
-            .and_then(|path| crate::env::first_on_path(path, "tailscale"))
+            .and_then(|path| hide_platform::host::find_program(path.as_ref(), "tailscale"))
     }
 }
 

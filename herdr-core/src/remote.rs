@@ -1776,7 +1776,7 @@ impl RusshRemoteClient {
         &self,
         helper_path: &str,
         pane_id: &str,
-    ) -> RemoteResult<hide_host::workspace_bridge::PaneIdentity> {
+    ) -> RemoteResult<hide_host::pane_peer::PaneIdentity> {
         let socket = self.herdr_socket_path()?;
         let output = self.exec_read_only(RemoteReadCommand::WorkspacePane {
             helper_path: helper_path.to_owned(),
@@ -3267,7 +3267,13 @@ async fn authenticate(session: &mut Handle<KnownHostHandler>, host: &SshAlias) -
                 )
             })?,
     };
-    let mut agent = AgentClient::connect_uds(socket).await.map_err(|error| {
+    // OpenSSH's agent listens on a Unix socket, and on Windows on a named
+    // pipe (`\\.\pipe\openssh-ssh-agent`), which the same setting names.
+    #[cfg(unix)]
+    let connected = AgentClient::connect_uds(socket).await;
+    #[cfg(windows)]
+    let connected = AgentClient::connect_named_pipe(socket).await;
+    let mut agent = connected.map_err(|error| {
         remote_error(
             "remote-auth",
             &host.host_id,

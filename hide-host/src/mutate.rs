@@ -191,7 +191,7 @@ pub fn trash(root: &Root, relative: &Path, expected_inode: Option<u64>) -> HostR
             format!("{item} changed while the prompt was open; nothing was moved"),
         ))
     } else {
-        match move_to_trash(&stage.path().join(&name)) {
+        match hide_platform::host::trash(&stage.path().join(&name)) {
             Ok(()) => return Ok(Changed {}),
             Err(reason) => put_back(HostError::new(
                 ErrorCode::Unsupported,
@@ -278,27 +278,4 @@ fn stage_is_inside(stage: &Path, root: &Dir) -> io::Result<bool> {
         }
     }
     Ok(false)
-}
-
-/// Moves the item to the Trash through `NSFileManager` rather than through
-/// Finder, which is the crate's default. The Finder route runs `osascript`
-/// and asks macOS for Automation permission on first use, which an SSH
-/// session cannot answer; the file-manager route needs no permission and no
-/// subprocess. What it gives up is Finder's "Put Back" on some systems; the
-/// item is still in the Trash and restores by dragging it out.
-fn move_to_trash(path: &Path) -> Result<(), String> {
-    // Only the macOS branch below mutates the context.
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut context = trash::TrashContext::default();
-    #[cfg(target_os = "macos")]
-    {
-        use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        context.set_delete_method(DeleteMethod::NsFileManager);
-    }
-    context.delete(path).map_err(|error| match error {
-        trash::Error::CouldNotAccess { .. } => "it is not accessible".to_owned(),
-        trash::Error::TargetedRoot => "it is a volume root".to_owned(),
-        trash::Error::Unknown { description } | trash::Error::Os { description, .. } => description,
-        other => other.to_string(),
-    })
 }

@@ -107,10 +107,14 @@ fn run_hook(arguments: &[String]) {
     // reads out of the hook file; the report's own source is fixed in
     // `report::metadata_source`, because Herdr refuses the marker's `@`.
     let socket_path = report::socket_path(&home);
-    let outcome = report::report(&socket_path, &pane_id, counters);
+    let outcome = match &socket_path {
+        Ok(path) => report::report(path, &pane_id, counters),
+        Err(error) => Err(error.clone()),
+    };
     // The outcome is written down rather than surfaced here: a hook's
     // stderr reaches nobody, and the record is what `doctor` and Settings
     // show (engineering rule 10).
+    let socket_path = socket_path.unwrap_or_default();
     let _ = report::record_outcome(&home, &pane_id, event, &socket_path, &outcome);
 }
 
@@ -202,9 +206,7 @@ fn run_doctor(arguments: &[String]) -> Result<String, String> {
 }
 
 fn home_directory() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
+    hide_platform::host::home_dir().ok()
 }
 
 fn argument_value(flag: &str, arguments: &[String]) -> Option<String> {

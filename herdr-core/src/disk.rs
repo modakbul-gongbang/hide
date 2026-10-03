@@ -6,13 +6,14 @@
 //! makes again, or an ignored folder nothing vouches for.
 
 use std::collections::{BTreeMap, HashSet};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hide_host::index::IgnoreRules;
+use hide_platform::fs::identity::FileId;
+use hide_platform::fs::space;
 
 use crate::disk_layers::{FolderTally, Layer, Siblings, Tally, base_rules, layer_of, rules_in};
 use crate::model::DiskUsageSnapshot;
@@ -33,7 +34,7 @@ const REQUEST_TIME_LIMIT: Duration = Duration::from_secs(300);
 struct RequestBudget {
     started: std::time::Instant,
     visited: usize,
-    seen: HashSet<(u64, u64)>,
+    seen: HashSet<FileId>,
     entry_limit: usize,
     seen_limit: usize,
     time_limit: Duration,
@@ -159,20 +160,8 @@ pub(crate) fn read(request: &DiskRequest) -> Vec<DiskUsageSnapshot> {
 }
 
 /// Bytes free to an unprivileged writer on the volume holding `path`.
-// The block count is 32-bit on macOS and 64-bit elsewhere.
-#[allow(clippy::useless_conversion)]
 pub(crate) fn volume_free_bytes(path: &Path) -> Option<u64> {
-    use std::os::unix::ffi::OsStrExt;
-    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    // SAFETY: `c_path` is a NUL-terminated path and `stat` is a valid out pointer.
-    let status = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
-    if status != 0 {
-        return None;
-    }
-    // SAFETY: statvfs returned 0, so it filled the struct.
-    let stat = unsafe { stat.assume_init() };
-    u64::from(stat.f_bavail).checked_mul(stat.f_frsize)
+    space::free_bytes(path).ok()
 }
 
 /// Where a walked entry is counted.
@@ -311,7 +300,7 @@ fn measure_root(
         if path != *root && root_set.contains(&path) {
             continue;
         }
-        let metadata = match std::fs::symlink_metadata(&path) {
+        let usage = match space::usage_nofollow(&path) {
             Ok(value) => value,
             Err(error) => {
                 failure = Some(Failure::incomplete(error));
@@ -319,13 +308,10 @@ fn measure_root(
             }
         };
         // Only a file with several links can be reached twice.
-        if metadata.nlink() > 1
-            && !metadata.is_dir()
-            && !budget.seen.insert((metadata.dev(), metadata.ino()))
-        {
+        if usage.links > 1 && !usage.is_dir && !budget.seen.insert(usage.id) {
             continue;
         }
-        let allocated = metadata.blocks().saturating_mul(512);
+        let allocated = usage.allocated;
         bytes = bytes.saturating_add(allocated);
         match bucket {
             Bucket::Source => tally.source_bytes = tally.source_bytes.saturating_add(allocated),
@@ -344,7 +330,7 @@ fn measure_root(
                 .entry(name.as_os_str().to_string_lossy().into_owned())
                 .or_default() += allocated;
         }
-        if metadata.is_dir() {
+        if usage.is_dir {
             match std::fs::read_dir(&path) {
                 Ok(entries) => {
                     let mut descendants = Vec::new();
@@ -473,18 +459,14 @@ mod tests {
         std::fs::write(root.join("main-data"), vec![1; 8192]).unwrap();
         std::fs::write(root.join("linked/data"), vec![2; 16384]).unwrap();
         std::fs::write(root.join(".git/data"), vec![3; 32768]).unwrap();
-        use std::os::unix::fs::MetadataExt;
-        let expected: u64 = [
+        let expected = allocated(&[
             root.clone(),
             root.join("linked"),
             root.join(".git"),
             root.join("main-data"),
             root.join("linked/data"),
             root.join(".git/data"),
-        ]
-        .iter()
-        .map(|p| std::fs::metadata(p).unwrap().blocks() * 512)
-        .sum();
+        ]);
         let measurements = read(&DiskRequest {
             paths: vec![root.clone(), root.join("linked"), root.join(".git")],
             generation: 0,
@@ -500,25 +482,22 @@ mod tests {
 
     #[test]
     fn hardlinks_count_once_and_symlinks_do_not_escape_or_cycle() {
-        use std::os::unix::fs::{MetadataExt, symlink};
+        use hide_platform::fs::link::create_link;
         let root = fixture("links");
         let outside = fixture("outside");
         std::fs::create_dir_all(root.join("linked")).unwrap();
         std::fs::write(root.join("linked/data"), vec![2; 16384]).unwrap();
         std::fs::hard_link(root.join("linked/data"), root.join("alias")).unwrap();
         std::fs::write(outside.join("secret"), vec![3; 65536]).unwrap();
-        symlink(&outside, root.join("escape")).unwrap();
-        symlink(&root, root.join("cycle")).unwrap();
-        let expected: u64 = [
+        create_link(&outside, &root.join("escape")).unwrap();
+        create_link(&root, &root.join("cycle")).unwrap();
+        let expected = allocated(&[
             root.clone(),
             root.join("linked"),
             root.join("linked/data"),
             root.join("escape"),
             root.join("cycle"),
-        ]
-        .iter()
-        .map(|p| std::fs::symlink_metadata(p).unwrap().blocks() * 512)
-        .sum();
+        ]);
         let values = read(&DiskRequest {
             paths: vec![root.clone(), root.join("linked")],
             generation: 0,
@@ -530,13 +509,7 @@ mod tests {
         );
         assert_eq!(
             values[1].total_bytes,
-            Some(
-                std::fs::metadata(root.join("linked")).unwrap().blocks() * 512
-                    + std::fs::metadata(root.join("linked/data"))
-                        .unwrap()
-                        .blocks()
-                        * 512
-            )
+            Some(allocated(&[root.join("linked"), root.join("linked/data")]))
         );
         let alias = read(&DiskRequest {
             paths: vec![root.join("escape")],
@@ -588,10 +561,9 @@ mod tests {
     }
 
     fn allocated(paths: &[PathBuf]) -> u64 {
-        use std::os::unix::fs::MetadataExt;
         paths
             .iter()
-            .map(|p| std::fs::symlink_metadata(p).unwrap().blocks() * 512)
+            .map(|p| space::usage_nofollow(p).unwrap().allocated)
             .sum()
     }
 

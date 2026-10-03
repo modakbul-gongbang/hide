@@ -13,14 +13,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use hide_herdr_client::{LocalSocketConnector, request_with_connector};
 use hide_platform::fs::private;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::pane_peer;
 
-const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_CONTROL_LINE: u64 = 4096;
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
@@ -42,57 +40,12 @@ pub struct Init {
     pub origin_port: u16,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct PaneIdentity {
-    pub terminal_id: String,
-    pub shell_pid: i32,
-    pub shell_started: u64,
-}
-
 #[derive(Deserialize)]
 struct Bootstrap {
     pane_id: String,
     nonce: String,
     #[serde(default)]
     one_shot: bool,
-}
-
-pub fn inspect(socket: &Path, pane_id: &str) -> Result<PaneIdentity, &'static str> {
-    if !socket.is_absolute() || pane_id.is_empty() || pane_id.len() > 256 {
-        return Err("invalid_request");
-    }
-    let connector = LocalSocketConnector::new(socket);
-    let process = request_with_connector(
-        &connector,
-        "pane.process_info",
-        json!({"pane_id":pane_id}),
-        HERDR_TIMEOUT,
-    )
-    .map_err(|_| "pane_unavailable")?;
-    let shell = process
-        .pointer("/process_info/shell_pid")
-        .and_then(Value::as_u64)
-        .filter(|pid| *pid > 0 && *pid <= i32::MAX as u64)
-        .ok_or("pane_unavailable")? as i32;
-    let started = pane_peer::process_start(shell).ok_or("pane_unavailable")?;
-    let pane = request_with_connector(
-        &connector,
-        "pane.get",
-        json!({"pane_id":pane_id}),
-        HERDR_TIMEOUT,
-    )
-    .map_err(|_| "pane_unavailable")?;
-    let terminal_id = pane
-        .pointer("/pane/terminal_id")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or("pane_unavailable")?
-        .to_owned();
-    Ok(PaneIdentity {
-        terminal_id,
-        shell_pid: shell,
-        shell_started: started,
-    })
 }
 
 fn validate_dir(path: &Path) -> io::Result<()> {
@@ -234,7 +187,7 @@ fn serve_client(
         {
             return Err("invalid_nonce".to_owned());
         }
-        let identity = inspect(&init.herdr_socket, &request.pane_id)?;
+        let identity = pane_peer::inspect(&init.herdr_socket, &request.pane_id)?;
         if !pane_peer::descends_from(peer, identity.shell_pid) {
             return Err("caller_not_in_pane".to_owned());
         }

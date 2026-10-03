@@ -12,7 +12,6 @@ pub(super) struct EventEnvelope {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct KeyPayload {
-    pub(super) input_trace: Option<crate::model::TerminalInputTrace>,
     pub(super) pane_id: String,
     pub(super) bytes_base64: String,
 }
@@ -1540,11 +1539,7 @@ impl Runtime {
                         remote_pane_source_id(target_id, &payload.pane_id).is_some()
                     })
                 {
-                    self.write_terminal_control(
-                        &payload.pane_id,
-                        &payload.bytes_base64,
-                        payload.input_trace,
-                    );
+                    self.write_terminal_control(&payload.pane_id, &payload.bytes_base64);
                 } else {
                     // Fixture mode has no PTY behind the pane; the loopback
                     // echo is the whole byte bridge.
@@ -2883,7 +2878,6 @@ impl Runtime {
                     self.write_terminal_control(
                         &payload.pane_id,
                         &live::encode_base64(bytes.as_bytes()),
-                        None,
                     );
                     return self.snapshot.status.last_error.is_some();
                 }

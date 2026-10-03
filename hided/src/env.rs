@@ -1,7 +1,10 @@
 //! Single registry for every environment key this crate reads.
 
+use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+
+use hide_platform::host;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EnvKey {
@@ -15,12 +18,16 @@ pub const HERDR_SOCKET_PATH: &str = "HERDR_SOCKET_PATH";
 pub const HERDR_BIN_PATH: &str = "HERDR_BIN_PATH";
 pub const PATH: &str = "PATH";
 pub const XDG_STATE_HOME: &str = "XDG_STATE_HOME";
+pub const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
+pub const APPDATA: &str = "APPDATA";
+pub const PATHEXT: &str = "PATHEXT";
 pub const HIDE_STATE_DIR: &str = "HIDE_STATE_DIR";
 pub const HIDE_KEEP_ALIVE: &str = "HIDE_KEEP_ALIVE";
 pub const HIDE_VITE_ORIGIN: &str = "HIDE_VITE_ORIGIN";
 pub const HIDE_PORT: &str = "HIDE_PORT";
 pub const HIDE_IDLE_SECS: &str = "HIDE_IDLE_SECS";
-pub const HOME: &str = "HOME";
+/// `HOME`, or `USERPROFILE` on Windows.
+pub const HOME: &str = host::HOME_VARIABLE;
 pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
 pub const HIDE_HOST_HELPER_ROOT: &str = "HIDE_HOST_HELPER_ROOT";
 pub const HIDE_HOST_CLI_DIR: &str = "HIDE_HOST_CLI_DIR";
@@ -33,8 +40,8 @@ pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
         key: HERDR_SOCKET_PATH,
         required: false,
-        format: "absolute Unix-domain socket path",
-        absent_behavior: "Core starts without a Herdr socket and the sidebar shows that state",
+        format: "absolute local socket path (a named pipe's name on Windows)",
+        absent_behavior: "The socket Herdr's default session uses (see XDG_CONFIG_HOME) when it exists; otherwise core starts without a Herdr socket and the sidebar shows that state",
     },
     EnvKey {
         key: HERDR_BIN_PATH,
@@ -45,14 +52,32 @@ pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
         key: PATH,
         required: false,
-        format: "colon-separated executable search path",
+        format: "the system's executable search path (colon-separated, semicolons on Windows)",
         absent_behavior: "Only HERDR_BIN_PATH can name the herdr binary",
+    },
+    EnvKey {
+        key: PATHEXT,
+        required: false,
+        format: "Windows only: semicolon-separated extensions a program on PATH may have",
+        absent_behavior: "A program on PATH is found as .COM, .EXE, .BAT or .CMD",
     },
     EnvKey {
         key: XDG_STATE_HOME,
         required: false,
         format: "absolute directory path",
         absent_behavior: "State lives under $HOME/.hide/state; a set value keeps $XDG_STATE_HOME/hide and moves nothing",
+    },
+    EnvKey {
+        key: XDG_CONFIG_HOME,
+        required: false,
+        format: "absolute directory path",
+        absent_behavior: "Herdr's default socket is under ~/.config/herdr (%APPDATA%\\herdr on Windows), as Herdr itself resolves it",
+    },
+    EnvKey {
+        key: APPDATA,
+        required: false,
+        format: "Windows only: absolute directory path",
+        absent_behavior: "Herdr's default socket on Windows is under %USERPROFILE%\\AppData\\Roaming\\herdr",
     },
     EnvKey {
         key: HIDE_STATE_DIR,
@@ -124,7 +149,7 @@ pub const REGISTRY: &[EnvKey] = &[
         key: HIDE_TAILSCALE_BIN,
         required: false,
         format: "absolute path of the tailscale CLI Settings > Mobile runs; a path that does not exist reads as Tailscale not installed",
-        absent_behavior: "The macOS app bundle's CLI (/Applications/Tailscale.app/Contents/MacOS/Tailscale), then `tailscale` on PATH; isolated verification sets it so no test reaches the account's own Tailscale",
+        absent_behavior: "The CLI the system's Tailscale app installs (/Applications/Tailscale.app/Contents/MacOS/Tailscale on macOS, %ProgramFiles%\\Tailscale\\tailscale.exe on Windows), then `tailscale` on PATH; isolated verification sets it so no test reaches the account's own Tailscale",
     },
     EnvKey {
         key: HOME,
@@ -205,6 +230,18 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
             PathBuf::new()
         }
     };
+    // What `hide_platform::host` resolves the default socket from, read
+    // through this registry like every other key.
+    let host_values: Vec<(&str, Option<OsString>)> = [HOME, XDG_CONFIG_HOME, APPDATA]
+        .into_iter()
+        .map(|key| (key, read(key).map(OsString::from)))
+        .collect();
+    let host_variables = |key: &str| {
+        host_values
+            .iter()
+            .find(|(known, _)| *known == key)
+            .and_then(|(_, value)| value.clone())
+    };
     let herdr_socket_path = match read(HERDR_SOCKET_PATH) {
         Some(value) if value.is_empty() => {
             errors.push(EnvError {
@@ -214,10 +251,10 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
             None
         }
         Some(value) => Some(value),
-        None => {
-            let default = home.join(".config/herdr/herdr.sock");
-            default.exists().then(|| default.display().to_string())
-        }
+        None => host::herdr_socket_default_from(&host_variables)
+            .ok()
+            .filter(|default| default.exists())
+            .map(|default| default.display().to_string()),
     };
     let herdr_bin_path = match read(HERDR_BIN_PATH) {
         Some(value) if value.is_empty() => {
@@ -228,7 +265,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
             None
         }
         Some(value) => Some(PathBuf::from(value)),
-        None => read(PATH).and_then(|path| first_on_path(&path, "herdr")),
+        None => read(PATH).and_then(|path| host::find_program(path.as_ref(), "herdr")),
     };
     let hide_state_dir = read(HIDE_STATE_DIR);
     if hide_state_dir.as_deref() == Some("") {
@@ -447,13 +484,6 @@ pub fn herdr_bin_error(env: &Env) -> Option<String> {
     })
 }
 
-pub(crate) fn first_on_path(path: &str, name: &str) -> Option<PathBuf> {
-    path.split(':')
-        .filter(|dir| !dir.is_empty())
-        .map(|dir| Path::new(dir).join(name))
-        .find(|candidate| candidate.is_file())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,7 +506,7 @@ mod tests {
 
     #[test]
     fn defaults_state_dir_under_home() {
-        let env = from_map(&[("HOME", "/Users/example")]).unwrap();
+        let env = from_map(&[(HOME, "/Users/example")]).unwrap();
         assert_eq!(env.state_dir, PathBuf::from("/Users/example/.hide/state"));
         assert_eq!(
             env.legacy_state_dir.as_deref(),
@@ -504,16 +534,29 @@ mod tests {
     #[test]
     fn herdr_bin_path_wins_over_path_lookup() {
         let dir = tempfile::tempdir().unwrap();
-        let on_path = dir.path().join("herdr");
+        let on_path = dir
+            .path()
+            .join(if cfg!(windows) { "herdr.exe" } else { "herdr" });
         std::fs::write(&on_path, b"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&on_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let env = from_map(&[
-            ("HOME", "/Users/example"),
-            ("PATH", &format!("/nonexistent:{}", dir.path().display())),
+            (HOME, "/Users/example"),
+            (
+                "PATH",
+                &std::env::join_paths([Path::new("/nonexistent"), dir.path()])
+                    .unwrap()
+                    .into_string()
+                    .unwrap(),
+            ),
         ])
         .unwrap();
         assert_eq!(env.herdr_bin_path.as_deref(), Some(on_path.as_path()));
         let env = from_map(&[
-            ("HOME", "/Users/example"),
+            (HOME, "/Users/example"),
             ("PATH", &dir.path().display().to_string()),
             ("HERDR_BIN_PATH", "/opt/herdr/bin/herdr"),
         ])
@@ -522,7 +565,7 @@ mod tests {
             env.herdr_bin_path.as_deref(),
             Some(Path::new("/opt/herdr/bin/herdr"))
         );
-        let err = from_map(&[("HOME", "/Users/example"), ("HERDR_BIN_PATH", "")]).unwrap_err();
+        let err = from_map(&[(HOME, "/Users/example"), ("HERDR_BIN_PATH", "")]).unwrap_err();
         assert_eq!(err[0].key, HERDR_BIN_PATH);
     }
 
@@ -531,7 +574,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let gone = dir.path().join("herdr-runtime/herdr");
         let env = from_map(&[
-            ("HOME", "/Users/example"),
+            (HOME, "/Users/example"),
             ("HERDR_BIN_PATH", &gone.display().to_string()),
         ])
         .unwrap();
@@ -547,13 +590,13 @@ mod tests {
             std::fs::set_permissions(&runnable, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         let env = from_map(&[
-            ("HOME", "/Users/example"),
+            (HOME, "/Users/example"),
             ("HERDR_BIN_PATH", &runnable.display().to_string()),
         ])
         .unwrap();
         assert_eq!(herdr_bin_error(&env), None);
 
-        let env = from_map(&[("HOME", "/Users/example"), ("PATH", "/nonexistent")]).unwrap();
+        let env = from_map(&[(HOME, "/Users/example"), ("PATH", "/nonexistent")]).unwrap();
         assert_eq!(
             herdr_bin_error(&env),
             None,
@@ -564,7 +607,7 @@ mod tests {
     #[test]
     fn vite_origin_must_be_loopback() {
         let err = from_map(&[
-            ("HOME", "/Users/example"),
+            (HOME, "/Users/example"),
             ("HIDE_VITE_ORIGIN", "http://example.com"),
         ])
         .unwrap_err();
@@ -584,20 +627,19 @@ mod tests {
             "/a\nb",
         ] {
             let err =
-                from_map(&[("HOME", "/Users/example"), (HIDE_HOST_HELPER_ROOT, bad)]).unwrap_err();
+                from_map(&[(HOME, "/Users/example"), (HIDE_HOST_HELPER_ROOT, bad)]).unwrap_err();
             assert_eq!(err[0].key, HIDE_HOST_HELPER_ROOT, "{bad}");
         }
         for good in ["~/.cache/hide-test/helper", "/tmp/hide-verify/helper"] {
-            let env =
-                from_map(&[("HOME", "/Users/example"), (HIDE_HOST_HELPER_ROOT, good)]).unwrap();
+            let env = from_map(&[(HOME, "/Users/example"), (HIDE_HOST_HELPER_ROOT, good)]).unwrap();
             assert_eq!(env.host_helper_root.as_deref(), Some(good));
-            let env = from_map(&[("HOME", "/Users/example"), (HIDE_HOST_CLI_DIR, good)]).unwrap();
+            let env = from_map(&[(HOME, "/Users/example"), (HIDE_HOST_CLI_DIR, good)]).unwrap();
             assert_eq!(env.host_cli_dir.as_deref(), Some(good));
         }
-        let err = from_map(&[("HOME", "/Users/example"), (HIDE_HOST_CLI_DIR, "bin")]).unwrap_err();
+        let err = from_map(&[(HOME, "/Users/example"), (HIDE_HOST_CLI_DIR, "bin")]).unwrap_err();
         assert_eq!(err[0].key, HIDE_HOST_CLI_DIR);
         assert_eq!(
-            from_map(&[("HOME", "/Users/example")])
+            from_map(&[(HOME, "/Users/example")])
                 .unwrap()
                 .host_helper_root,
             None
@@ -607,7 +649,7 @@ mod tests {
     #[test]
     fn open_command_is_validated_at_boot() {
         let err = from_map(&[
-            ("HOME", "/Users/example"),
+            (HOME, "/Users/example"),
             (HIDE_OPEN_COMMAND, "relative-opener"),
         ])
         .unwrap_err();
@@ -616,7 +658,7 @@ mod tests {
         #[cfg(unix)]
         {
             let env = from_map(&[
-                ("HOME", "/Users/example"),
+                (HOME, "/Users/example"),
                 (HIDE_OPEN_COMMAND, executable.to_str().unwrap()),
             ])
             .unwrap();
@@ -625,7 +667,7 @@ mod tests {
         #[cfg(windows)]
         {
             let err = from_map(&[
-                ("HOME", "/Users/example"),
+                (HOME, "/Users/example"),
                 (HIDE_OPEN_COMMAND, executable.to_str().unwrap()),
             ])
             .unwrap_err();

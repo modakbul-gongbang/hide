@@ -650,7 +650,7 @@ impl Runtime {
                 bytes.extend_from_slice(&pending.queued);
                 let pane_id = pending.pane_id.clone();
                 if let Some(session) = self.terminal_sessions.get(&pane_id) {
-                    if session.write_bytes(&bytes, None).is_err() {
+                    if session.write_bytes(&bytes).is_err() {
                         self.fail_attachment(
                             "Terminal input was not accepted. Check the connection and retry.",
                             true,
@@ -722,7 +722,6 @@ mod tests {
         KeyPayload {
             pane_id: pane.to_owned(),
             bytes_base64: live::encode_base64(bytes),
-            input_trace: None,
         }
     }
 

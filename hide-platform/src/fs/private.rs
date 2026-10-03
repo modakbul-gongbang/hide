@@ -18,6 +18,27 @@ pub fn create_dir(path: &Path) -> io::Result<()> {
     sys::create_dir(path)
 }
 
+/// Makes the folder `path` and any missing folder above it, each private, the
+/// way `fs::create_dir_all` makes them open. A folder that is already there
+/// is left as it is, so the caller checks one it did not make before
+/// trusting it.
+pub fn create_dir_all(path: &Path) -> io::Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        create_dir_all(parent)?;
+    }
+    match sys::create_dir(path) {
+        // Another process made it between the look and the make.
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        made => made,
+    }
+}
+
 /// Makes the file `path`, private and open for writing. It must not exist.
 pub fn create_new_file(path: &Path) -> io::Result<fs::File> {
     sys::open_file(path, true)
@@ -27,6 +48,29 @@ pub fn create_new_file(path: &Path) -> io::Result<fs::File> {
 /// private when it does not exist. An existing file keeps what it has.
 pub fn open_or_create_file(path: &Path) -> io::Result<fs::File> {
     sys::open_file(path, false)
+}
+
+/// Opens the account's own file `path` for reading, and for writing too when
+/// `create` asks for it to be made, private, if it is not there. The name
+/// itself is opened, never what a symbolic link at it leads to, and only a
+/// regular file the current account owns and that has no other name is
+/// accepted (`PermissionDenied` otherwise): the file may sit in a folder
+/// other accounts write, where a planted link would have its target written
+/// or read, or a planted pipe would block.
+pub fn open_own_file(path: &Path, create: bool) -> io::Result<fs::File> {
+    let file = sys::open_own(path, create)?;
+    // A second name would be another account's hard link to one of this
+    // account's files, planted where the caller looks.
+    if !file.metadata()?.is_file()
+        || !handle_owned_by_current_user(&file)?
+        || super::identity::link_count(&file)? != 1
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "the file is not the account's own regular file with one name",
+        ));
+    }
+    Ok(file)
 }
 
 /// Makes an existing file or folder private: 0700 for a folder or a file its
@@ -86,6 +130,17 @@ mod sys {
         options.open(path)
     }
 
+    pub(super) fn open_own(path: &Path, create: bool) -> io::Result<fs::File> {
+        let mut options = fs::OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        if create {
+            options.write(true).create(true).truncate(false).mode(0o600);
+        }
+        options.open(path)
+    }
+
     pub(super) fn restrict_to_owner(path: &Path) -> io::Result<()> {
         let metadata = fs::metadata(path)?;
         // A file that ran for its owner still does.
@@ -129,7 +184,8 @@ mod sys {
 
     use widestring::U16CString;
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_SUCCESS, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
+        CloseHandle, ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+        LocalFree,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -145,8 +201,9 @@ mod sys {
         TokenOwner, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_ALWAYS,
+        CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        OPEN_ALWAYS, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -335,16 +392,59 @@ mod sys {
 
     pub(super) fn open_file(path: &Path, new: bool) -> io::Result<fs::File> {
         let descriptor = private_descriptor(false)?;
+        create_file(
+            path,
+            GENERIC_WRITE,
+            Some(&descriptor),
+            if new { CREATE_NEW } else { OPEN_ALWAYS },
+            FILE_ATTRIBUTE_NORMAL,
+        )
+    }
+
+    pub(super) fn open_own(path: &Path, create: bool) -> io::Result<fs::File> {
+        // A link at the name is opened as itself, and refused by the caller
+        // as a file that is not regular.
+        if create {
+            let descriptor = private_descriptor(false)?;
+            create_file(
+                path,
+                GENERIC_READ | GENERIC_WRITE,
+                Some(&descriptor),
+                OPEN_ALWAYS,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+            )
+        } else {
+            create_file(
+                path,
+                GENERIC_READ,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+            )
+        }
+    }
+
+    /// `CreateFileW`, sharing everything, with the private descriptor for a
+    /// file it makes.
+    fn create_file(
+        path: &Path,
+        access: u32,
+        descriptor: Option<&Descriptor>,
+        disposition: u32,
+        flags: u32,
+    ) -> io::Result<fs::File> {
         let name = wide(path)?;
-        // SAFETY: `name` is NUL-terminated and the attributes outlive the call.
+        let attributes = descriptor.map_or(null(), |descriptor| &descriptor.attributes);
+        // SAFETY: `name` is NUL-terminated and the attributes, when given,
+        // outlive the call.
         let handle = unsafe {
             CreateFileW(
                 name.as_ptr(),
-                GENERIC_WRITE,
+                access,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                &descriptor.attributes,
-                if new { CREATE_NEW } else { OPEN_ALWAYS },
-                FILE_ATTRIBUTE_NORMAL,
+                attributes,
+                disposition,
+                flags,
                 null_mut(),
             )
         };

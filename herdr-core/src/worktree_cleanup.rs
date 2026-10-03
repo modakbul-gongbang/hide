@@ -2166,7 +2166,7 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("precious"), "keep").unwrap();
         std::fs::remove_dir_all(main.join("node_modules")).unwrap();
-        std::os::unix::fs::symlink(&outside, main.join("node_modules")).unwrap();
+        hide_platform::fs::link::create_link(&outside, &main.join("node_modules")).unwrap();
         // A file Git tracks appeared in an ignored folder.
         std::fs::write(main.join("dist/keep.txt"), "tracked on purpose").unwrap();
         track_in_ignored(main, "dist/keep.txt");

@@ -104,7 +104,7 @@ The CLI search order, and `HIDE_CLI_PATH`, are documented in [ARCHITECTURE.md](A
 
 Panes attach to a Herdr server.
 When none answers on the socket hide uses, the app starts the Herdr it bundles (`hide.app/Contents/Resources/herdr`) there before it connects, and that server restores the saved workspaces and resumes the agents Herdr can resume, as a server `herdr` starts from a terminal does.
-The default socket is `~/.config/herdr/herdr.sock`; set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket.
+The default socket is the one Herdr itself uses: `$XDG_CONFIG_HOME/herdr/herdr.sock` when that is set, otherwise `~/.config/herdr/herdr.sock`; set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket.
 A server already running on that socket is used as it is; hide never stops or replaces it, and a server the app started keeps running after the app quits.
 
 Authentication is not bundled: SSH, Herdr, Claude Code, and Codex continue to own their own sign-in state and credentials.

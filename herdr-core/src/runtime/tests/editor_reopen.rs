@@ -1269,8 +1269,12 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
 fn explorer_trash_refuses_an_item_replaced_while_the_prompt_was_open() {
     let (mut runtime, root) = explorer_runtime();
     let lib = root.join("src/lib.rs");
-    let shown =
-        std::os::unix::fs::MetadataExt::ino(&std::fs::symlink_metadata(&lib).expect("fixture"));
+    let shown = u64::try_from(
+        hide_platform::fs::identity::file_id_nofollow(&lib)
+            .expect("fixture")
+            .index(),
+    )
+    .expect("a 64-bit file number");
     std::fs::rename(&lib, root.join("src/old.rs")).expect("keep the shown inode alive");
     std::fs::write(&lib, "rewritten").expect("replacement");
 
