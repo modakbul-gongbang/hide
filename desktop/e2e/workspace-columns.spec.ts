@@ -31,7 +31,7 @@ async function nativeCapture(app: ElectronApplication, page: Page, name: string)
   });
   const geometry = await page.evaluate(() => ({
     body: document.querySelector<HTMLElement>("[data-column-row=true]")!.clientWidth,
-    columns: [...document.querySelectorAll<HTMLElement>("[data-column]")].map((column) => ({ name: column.dataset.column, width: column.clientWidth, visible: column.checkVisibility() })),
+    columns: Array.from(document.querySelectorAll<HTMLElement>("[data-column]")).map((column) => ({ name: column.dataset.column, width: column.clientWidth, visible: column.checkVisibility() })),
   }));
   const captured = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.window.split(":")[1]!, path.join(dir, `${name}.png`)], { encoding: "utf8" });
   expect(captured.status, captured.stderr).toBe(0);
@@ -89,6 +89,8 @@ test("Workspace columns preserve geometry, dock once on release and show native 
   try {
     const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
     fs.writeFileSync(path.join(checkout, "notes.md"), "# 작업 기록\n\n한글과 English를 나란히 읽습니다.\n");
+    const longName = "한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md";
+    fs.writeFileSync(path.join(checkout, longName), "# 긴 제목의 작업 기록\n\n한글과 English가 함께 있는 파일을 읽습니다.\n");
     ({ app } = await launchShell(run.env));
     const page = await app.firstWindow();
     const sent = countSent(page);
@@ -184,6 +186,25 @@ test("Workspace columns preserve geometry, dock once on release and show native 
     const driven = await echo(page, herdr, pane, "driven");
     await nativeCapture(app, page, "columns-driven-terminal");
     if (dir) fs.writeFileSync(path.join(dir, "columns-echo.json"), JSON.stringify({ identity, toggles, divider: { resizeDuringDrag: 0, resizeAfterRelease, panesShown, restoredViewsWidth: 596 }, load: spawnSync("uptime", { encoding: "utf8" }).stdout.trim(), workload: "two visible shell panes; idle cat and driven line every 8ms in measured pane; 20 markers per phase; no baseline or speed claim", idle, driven }, null, 2));
+    if (dir) {
+      await showExplorer(page);
+      await page.locator(`[data-explorer-row$="/${longName}"]`).click();
+      await expect(page.locator("[data-view-tab-bar]")).toContainText(longName);
+      for (const theme of ["dark", "light"] as const) {
+        await page.locator("[data-open-settings]").click();
+        await page.locator('[data-settings-tab="appearance"]').click();
+        await page.locator(`[data-theme-option="${theme}"]`).click();
+        await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
+        await page.keyboard.press("Escape");
+        await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+        await nativeCapture(app, page, `columns-${theme}-long-title`);
+        await page.locator('[data-column-toggle="views"]').click();
+        await expect(workspace).toHaveAttribute("data-file-views", "off");
+        await nativeCapture(app, page, `columns-${theme}-tools-only`);
+        await page.locator('[data-column-toggle="views"]').click();
+        await expect(workspace).toHaveAttribute("data-file-views", "shown");
+      }
+    }
   } finally {
     await app?.close().catch(() => undefined);
     run.cleanup();
