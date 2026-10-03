@@ -2,12 +2,15 @@
 
 hide supports Apple Silicon Macs running macOS 14 or later.
 You can install a published release when one is available or build the same app bundle from source today.
+Each release also carries unsigned packages for Windows x64 and Linux x64, built from the same source; [Windows and Linux](#windows-and-linux) says how to install one and what it does not do yet.
 
 ## Requirements
 
-- An Apple Silicon Mac with macOS 14 or later.
+- An Apple Silicon Mac with macOS 14 or later, or a Windows x64 or Linux x64 machine for the unsigned packages.
 - No Xcode is required to install or run hide.
 - For source builds only: a current stable Rust toolchain with Rust 2024 edition support, Node.js 22, and pnpm 10.
+- For source builds on Windows only: the Rust MSVC toolchain with the Visual Studio C++ build tools, Git for Windows (its `bash` runs the cargo wrapper), and PowerShell 7 (`pwsh` fetches the pinned Herdr).
+- For source builds on Linux only: `zsh`, `jq` and `curl`, which the Herdr fetch uses.
 - For source builds only: network access for the pinned Rust crates, the npm packages, the Electron runtime download, and the pinned Herdr asset.
 - An agent CLI (Claude Code or Codex), installed and signed in, only if you want hide to launch that agent.
 
@@ -53,6 +56,57 @@ xattr -dr com.apple.quarantine /Applications/hide.app
 open /Applications/hide.app
 ```
 
+## Windows and Linux
+
+The Windows and Linux packages are not signed.
+Each is a folder in an archive: `hide-win32-x64` in `hide-v<version>-windows-x64.zip`, and `hide-linux-x64` in `hide-v<version>-linux-x64.tar.gz`, each with a `.sha256` file beside it on the Releases page.
+The folder holds the Electron app at its top and, in its `resources` folder, the same `hided`, `hide`, `hide-agent-hooks`, device helper, pinned Herdr and hcoord the macOS app carries; on Windows those are `.exe` files, and Herdr's ConPTY runtime is the `conpty` folder beside `herdr.exe`.
+
+### Install on Windows
+
+Download both files for the same version, then check the archive in PowerShell from the folder that holds them:
+
+```powershell
+(Get-FileHash -Algorithm SHA256 .\hide-v<version>-windows-x64.zip).Hash.ToLower()
+Get-Content .\hide-v<version>-windows-x64.zip.sha256
+```
+
+Continue only when the first line printed is the hash at the start of the second.
+Extract the zip (Extract All in File Explorer), move the `hide-win32-x64` folder where you keep programs, and open `hide.exe` inside it.
+
+Windows SmartScreen warns about an unsigned app it has not seen before, and the first launch stops at "Windows protected your PC".
+Choose **More info**, check that the dialog names the app `hide.exe` with an unknown publisher, then choose **Run anyway**.
+
+### Install on Linux
+
+Download both files for the same version, then check and unpack the archive from the folder that holds them:
+
+```sh
+sha256sum -c hide-v<version>-linux-x64.tar.gz.sha256
+tar -xzf hide-v<version>-linux-x64.tar.gz
+./hide-linux-x64/hide
+```
+
+Continue only when `sha256sum` prints `OK`.
+The tar keeps the files executable, so there is nothing to `chmod`; nothing is installed system-wide, and no menu entry is created.
+Electron needs a sandbox on Linux: where the system lets an unprivileged process make user namespaces it needs nothing more, and where it does not (Ubuntu 24.04 and later restrict them through AppArmor), the app stops with a message about `chrome-sandbox`.
+Then make the bundled sandbox helper setuid root once, from the folder you unpacked:
+
+```sh
+sudo chown root:root hide-linux-x64/chrome-sandbox
+sudo chmod 4755 hide-linux-x64/chrome-sandbox
+```
+
+### What differs from the macOS app
+
+- Closing the last window quits the app on Windows and Linux, as other apps there do; on macOS the app keeps running with no window until you quit it.
+  Either way `hided` keeps running after the app is gone, as [First launch](#first-launch) describes.
+- The app's profile is `%APPDATA%\hide-desktop` on Windows and `~/.config/hide-desktop` on Linux, instead of `~/Library/Application Support/hide-desktop`.
+- Nothing is installed at first launch: the kit (the `hide` link, the agent hook entries and hcoord) is installed only by a daemon running from inside `hide.app` today, and This machine's row in Settings > Devices says so.
+- The app does not replace a `hided` that a previous version left running: a `hide` outside `hide.app` refuses a daemon of another build and the window shows the failure.
+  Before replacing the folder with a newer version, stop the old daemon with the old folder's CLI: `hide-win32-x64\resources\hide.exe stop` on Windows, `hide-linux-x64/resources/hide stop` on Linux.
+- Nothing updates itself, and uninstalling is deleting the folder; `~/.hide` (`%USERPROFILE%\.hide` on Windows) and the profile stay until you delete them.
+
 ## Build and install from source
 
 Clone the repository and build the release bundle:
@@ -69,6 +123,7 @@ Omit it to build from a checkout that a Git tag matching `v[0-9]*` already descr
 
 Packaging builds the web shell and hcoord, builds the release `hided`, `hide`, `hide-agent-hooks` and `hide-host-helper` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
 It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes `desktop/out/hide-v<version>-macos-arm64.zip` with a `.sha256` sidecar.
+The same command on Windows x64 writes `desktop/out/hide-win32-x64/` and `hide-v<version>-windows-x64.zip`, and on Linux x64 `desktop/out/hide-linux-x64/` and `hide-v<version>-linux-x64.tar.gz`, each with its `.sha256` and unsigned; each system builds only its own package.
 
 Install the app into the system Applications directory and launch the installed bundle:
 
