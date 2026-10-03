@@ -1182,6 +1182,9 @@ fn publish_worktrees(
     let changed = guard.ingest_worktrees_answer(answer.catalog, answer.removals, current);
     drop(guard);
     drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
     Some(changed)
 }
 
