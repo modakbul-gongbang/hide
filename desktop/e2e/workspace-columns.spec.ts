@@ -114,6 +114,18 @@ test("Workspace columns preserve geometry, dock once on release and show native 
     // A Tools call in a wide body must not override File Views-first
     // fallback later. Only a call made in the two-column body replaces it.
     await bodyWidth(app, page, 1600);
+    // Tools trades with File Views here, whose 640px leaves 280px above
+    // its minimum; the accessible maximum must describe that same range.
+    await expect(page.locator('[data-column-divider="tools"]')).toHaveAttribute("aria-valuemax", "635");
+    const toolsDivider = page.locator('[data-column-divider="tools"]');
+    const beforeToolKeys = await stableCount(() => sent.get("terminal_resize") ?? 0);
+    await toolsDivider.press("ArrowLeft");
+    await expect(toolsDivider).toHaveAttribute("aria-valuenow", "387");
+    await expect.poll(() => page.locator('[data-column="views"]').evaluate((element) => element.clientWidth)).toBe(608);
+    await toolsDivider.press("ArrowRight");
+    await expect(toolsDivider).toHaveAttribute("aria-valuenow", "355");
+    await expect.poll(() => page.locator('[data-column="views"]').evaluate((element) => element.clientWidth)).toBe(640);
+    expect(await stableCount(() => sent.get("terminal_resize") ?? 0)).toBe(beforeToolKeys);
     await page.locator('[data-tool-tab="explorer"]').click();
     await bodyWidth(app, page, 1100);
     await expect(workspace).toHaveAttribute("data-file-views", "shown");

@@ -273,6 +273,9 @@ function ColumnDivider({ workspace, column, frame, body, sizes, setGuide, action
     target.addEventListener("pointercancel", end);
     target.addEventListener("lostpointercapture", end);
   };
+  // Tools trades with File Views while both show; its accessible range
+  // must use that neighbour's spare width, like dividerLanding does.
+  const spare = column === "tools" && frame.views !== null ? frame.views - sizes.viewsMin : (frame.agents ?? 0) - sizes.agentMin;
   const min = column === "views" ? sizes.viewsMin : sizes.toolsMin;
   return (
     <div
@@ -281,7 +284,7 @@ function ColumnDivider({ workspace, column, frame, body, sizes, setGuide, action
       aria-label={`Resize ${name}`}
       aria-valuenow={width}
       aria-valuemin={min}
-      aria-valuemax={width + Math.max(0, (frame.agents ?? 0) - sizes.agentMin)}
+      aria-valuemax={width + Math.max(0, spare)}
       tabIndex={0}
       data-column-divider={column}
       className="group relative z-10 flex w-sm shrink-0 cursor-col-resize justify-center bg-background outline-none"
