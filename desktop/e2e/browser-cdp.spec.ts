@@ -25,13 +25,18 @@ let sequence = 0;
 let fileCanary: string;
 let fileUrl: string;
 let pendingPreload: ServerResponse | null = null;
+/** Two native attempts during the lease and two after it. */
+const MAX_DOWNLOAD_REQUESTS = 4;
+let downloadRequests = 0;
 
-type Reply = { id?: number; result?: Record<string, unknown>; error?: { code: number; message: string } };
+type Reply = { id?: number; sessionId?: string; result?: Record<string, unknown>; error?: { code: number; message: string } };
 type Capability = { cdp_http_url: string; browser_ws_url: string };
 type Target = { id: string; type: string; url: string; webSocketDebuggerUrl: string };
 type CoreView = { view_id: string; area_id: string; kind: string; target: string; active_area: boolean; selected: boolean };
 type AuthoritySync = BrowserSync & { authorized_scopes: { workspace: string; area_id: string; incarnation: number }[] };
 type Send = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<Reply>;
+type TargetEvent = { method: string; parentSessionId: string | null; sessionId: string; targetId: string; type: string | null; url: string | null };
+type FrameTree = { frame: { id: string; name?: string; url: string }; childFrames?: FrameTree[] };
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 /** Each raw connection and request has a deadline and closes on every path. */
@@ -148,12 +153,36 @@ async function excludedRendererIds(foreignUrl: string): Promise<string[]> {
   }, foreignUrl);
 }
 
+async function ownedFrameProvenance(parentUrl: string, childUrl: string) {
+  return app!.evaluate(({ BrowserWindow }, { parentUrl, childUrl }) => {
+    const windows = BrowserWindow.getAllWindows().filter((window) => window.getParentWindow() === null);
+    if (windows.length !== 1) throw new Error("Expected exactly one candidate main window");
+    const contents = windows[0]!.contentView.children.flatMap((view) => {
+      const page = (view as { webContents?: Electron.WebContents }).webContents;
+      return page?.getURL() === parentUrl ? [page] : [];
+    });
+    if (contents.length !== 1) throw new Error("Expected exactly one owned fixture WebContents");
+    const parent = contents[0]!.mainFrame;
+    const children = parent.framesInSubtree.filter((frame) => !frame.isDestroyed() && frame.url === childUrl);
+    if (children.length !== 1 || !children[0]!.parent) throw new Error("Expected exactly one owned cross-site child frame");
+    const identity = (frame: Electron.WebFrameMain) => ({ processId: frame.processId, routingId: frame.routingId, osProcessId: frame.osProcessId, name: frame.name });
+    return { contentsId: contents[0]!.id, parent: identity(parent), child: identity(children[0]!), childParent: identity(children[0]!.parent!) };
+  }, { parentUrl, childUrl });
+}
+
 test.beforeAll(async () => {
   herdr = await startHerdr({ agents: false });
   fileCanary = path.join(herdr.root, "outside-cdp-canary.html");
   fs.writeFileSync(fileCanary, '<title>Forbidden file canary</title><h1>FORBIDDEN_CDP_FILE_CONTENT</h1>');
   fileUrl = pathToFileURL(fileCanary).href;
   server = createServer((request, response) => {
+    if (request.url === "/owned-download") {
+      if (downloadRequests === MAX_DOWNLOAD_REQUESTS) { response.writeHead(429); response.end("Fixture download request limit exceeded"); return; }
+      downloadRequests++;
+      response.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": 'attachment; filename="owned-download.txt"' });
+      response.end("OWNED_DOWNLOAD_FIXTURE");
+      return;
+    }
     if (request.url === "/file-redirect") { response.writeHead(302, { location: fileUrl }); response.end(); return; }
     if (request.url === "/pending-preload") {
       if (pendingPreload) { response.writeHead(503); response.end(); return; }
@@ -173,7 +202,7 @@ test.afterAll(async () => {
   herdr?.stop();
   await new Promise<void>((resolve) => server?.close(() => resolve()));
 });
-test.beforeEach(() => { run = isolate(herdr, "browser-cdp"); });
+test.beforeEach(() => { run = isolate(herdr, "browser-cdp"); downloadRequests = 0; });
 test.afterEach(async () => {
   pendingPreload?.end();
   pendingPreload = null;
@@ -212,22 +241,15 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
   await expect(page.locator("output")).toHaveText("한글 scoped input");
   const cdp = await context.newCDPSession(page);
   const childUrl = `${origin.replace("127.0.0.1", "localhost")}/cross-site`;
-  const childEvents: { type: string; url: string; sessionObserved: boolean; targetObserved: boolean }[] = [];
-  let overflow = false;
-  const attached = (event: { sessionId: string; targetInfo: { type: string; url: string; targetId: string } }) => {
-    if (event.targetInfo.type !== "iframe") return;
-    if (childEvents.length === 8) { overflow = true; return; }
-    childEvents.push({ type: event.targetInfo.type, url: event.targetInfo.url, sessionObserved: typeof event.sessionId === "string" && event.sessionId.length > 0, targetObserved: /^iframe-/.test(event.targetInfo.targetId) });
-  };
-  cdp.on("Target.attachedToTarget", attached);
+  const childName = "scoped-oopif-child";
   try {
-    await cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
-    await page.evaluate((url) => {
+    await page.evaluate(({ url, name }) => {
       const frame = document.createElement("iframe");
       frame.id = "cross-site";
+      frame.name = name;
       frame.src = url;
       document.body.append(frame);
-    }, childUrl);
+    }, { url: childUrl, name: childName });
     const frame = page.frameLocator("#cross-site");
     await frame.getByRole("textbox", { name: "Name" }).fill("descendant input");
     await frame.getByRole("button", { name: "Apply" }).click();
@@ -235,34 +257,18 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
     // Cross-site interaction alone can succeed in one renderer. Attest the
     // actual frame tree of this exact candidate WebContents before claiming
     // an OOPIF, without adding site-isolation flags or touching another app.
-    const provenance = await app.evaluate(({ BrowserWindow }, { parentUrl, childUrl }) => {
-      const windows = BrowserWindow.getAllWindows().filter((window) => window.getParentWindow() === null);
-      if (windows.length !== 1) throw new Error("Expected exactly one candidate main window");
-      const contents = windows[0]!.contentView.children.flatMap((view) => {
-        const page = (view as { webContents?: Electron.WebContents }).webContents;
-        return page?.getURL() === parentUrl ? [page] : [];
-      });
-      if (contents.length !== 1) throw new Error("Expected exactly one owned fixture WebContents");
-      const parent = contents[0]!.mainFrame;
-      const children = parent.framesInSubtree.filter((frame) => !frame.isDestroyed() && frame.url === childUrl);
-      if (children.length !== 1 || !children[0]!.parent) throw new Error("Expected exactly one owned cross-site child frame");
-      const identity = (frame: Electron.WebFrameMain) => ({ processId: frame.processId, routingId: frame.routingId, osProcessId: frame.osProcessId });
-      return { contentsId: contents[0]!.id, parent: identity(parent), child: identity(children[0]!), childParent: identity(children[0]!.parent!) };
-    }, { parentUrl: `${origin}/fixture`, childUrl });
+    const provenance = await ownedFrameProvenance(`${origin}/fixture`, childUrl);
     const evidenceDir = path.join(REPO, "agents", "runs", "browser-control");
     fs.mkdirSync(evidenceDir, { recursive: true });
-    const record = () => fs.writeFileSync(path.join(evidenceDir, "oopif-renderer-provenance.json"), JSON.stringify({ candidatePid: app!.process().pid, ...provenance, childEvents, overflow }, null, 2));
-    record();
+    fs.writeFileSync(path.join(evidenceDir, "oopif-renderer-provenance.json"), JSON.stringify({ candidatePid: app.process().pid, ...provenance }, null, 2));
     expect(provenance.childParent).toEqual(provenance.parent);
+    expect(provenance.child.name).toBe(childName);
+    expect(provenance.contentsId).toBe(Number(inventory[0]!.id.slice("page-".length)));
     expect(provenance.child.processId, "Electron default used one renderer; this run cannot prove OOPIF isolation").not.toBe(provenance.parent.processId);
     expect(provenance.child.osProcessId).not.toBe(provenance.parent.osProcessId);
-    await expect.poll(() => childEvents.some((event) => event.url === childUrl && event.sessionObserved && event.targetObserved), { timeout: 10_000 }).toBe(true);
-    expect(overflow, "Scoped iframe event witness exceeded its eight-event cap").toBe(false);
-    record();
     await expect(cdp.send("Browser.close")).rejects.toThrow();
     await expect(browser.newContext()).rejects.toThrow();
   } finally {
-    cdp.off("Target.attachedToTarget", attached);
     await cdp.detach();
   }
   const candidate = await app.evaluate(({ BrowserWindow }) => {
@@ -283,6 +289,97 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
     const views = BrowserWindow.getAllWindows()[0]!.contentView.children;
     return views.filter((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url).length;
   }, `${origin}/fixture`)).toBe(1);
+  // A standard flattened raw connection now owns the debugger. Record exact
+  // parent/child protocol IDs, execute in that child session, and retire the
+  // frame through its parent. No private Playwright transport or nested
+  // protocol workaround is needed to address an attached descendant.
+  await withCdp(result.browser_ws_url, async (send, socket) => {
+    const events: TargetEvent[] = [];
+    const proof: Record<string, unknown> = {};
+    let overflow = false, malformed = false;
+    const observed = (data: Buffer) => {
+      try {
+        const event = JSON.parse(data.toString()) as { method?: string; sessionId?: string; params?: { sessionId?: string; targetId?: string; targetInfo?: { targetId: string; type: string; url: string } } };
+        if (event.method !== "Target.attachedToTarget" && event.method !== "Target.detachedFromTarget") return;
+        if (events.length === 8) { overflow = true; return; }
+        const params = event.params;
+        const targetId = params?.targetInfo?.targetId ?? params?.targetId;
+        if (typeof params?.sessionId !== "string" || typeof targetId !== "string") { malformed = true; return; }
+        events.push({ method: event.method, parentSessionId: event.sessionId ?? null, sessionId: params.sessionId, targetId, type: params.targetInfo?.type ?? null, url: params.targetInfo?.url ?? null });
+      } catch { malformed = true; }
+    };
+    const evidence = path.join(REPO, "agents", "runs", "browser-control", "oopif-renderer-provenance.json");
+    const native = JSON.parse(fs.readFileSync(evidence, "utf8")) as Record<string, unknown>;
+    const record = () => fs.writeFileSync(evidence, JSON.stringify({ ...native, scoped: { events, overflow, malformed, ...proof } }, null, 2));
+    socket.on("message", observed);
+    try {
+      const attached = await send("Target.attachToTarget", { targetId: inventory[0]!.id, flatten: true });
+      expect(attached.error).toBeUndefined();
+      const parentSessionId = attached.result!.sessionId as string;
+      expect(typeof parentSessionId).toBe("string");
+      const parentAttachment = events.find((event) => event.method === "Target.attachedToTarget" && event.sessionId === parentSessionId);
+      expect(parentAttachment).toMatchObject({ parentSessionId: null, targetId: inventory[0]!.id, type: "page", url: `${origin}/fixture` });
+      proof.parentAttachment = parentAttachment;
+      expect((await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, parentSessionId)).error).toBeUndefined();
+      const childAttachment = () => events.find((event) => event.method === "Target.attachedToTarget" && event.parentSessionId === parentSessionId && event.type === "iframe");
+      await expect.poll(() => childAttachment() !== undefined, { timeout: 10_000 }).toBe(true);
+      const child = childAttachment()!;
+      expect(child.targetId).toMatch(/^iframe-/);
+      expect(child.sessionId).not.toBe(parentSessionId);
+      proof.childAttachment = child;
+      const expression = "({href:location.href,name:window.name,isTop:window===window.top,heading:document.querySelector('h1')?.textContent})";
+      const identity = { href: childUrl, name: childName, isTop: false, heading: "Scoped browser fixture" };
+      let childRuntime: Reply | undefined;
+      await expect.poll(async () => {
+        childRuntime = await send("Runtime.evaluate", { expression, returnByValue: true }, child.sessionId);
+        expect(childRuntime.error).toBeUndefined();
+        expect(childRuntime.sessionId).toBe(child.sessionId);
+        return childRuntime.result;
+      }, { timeout: 10_000 }).toMatchObject({ result: { value: identity } });
+      proof.childRuntime = childRuntime;
+      const nativeDuringChildSession = await ownedFrameProvenance(`${origin}/fixture`, childUrl);
+      proof.nativeDuringChildSession = nativeDuringChildSession;
+      expect(nativeDuringChildSession.contentsId).toBe(Number(inventory[0]!.id.slice("page-".length)));
+      expect(nativeDuringChildSession.childParent).toEqual(nativeDuringChildSession.parent);
+      expect(nativeDuringChildSession.child.name).toBe(childName);
+      expect(nativeDuringChildSession.child.processId, "Electron default used one renderer during the child session; OOPIF proof is unavailable").not.toBe(nativeDuringChildSession.parent.processId);
+      expect(nativeDuringChildSession.child.osProcessId).not.toBe(nativeDuringChildSession.parent.osProcessId);
+      const childInfo = await send("Target.getTargetInfo", {}, child.sessionId);
+      expect(childInfo.error).toBeUndefined();
+      expect(childInfo.result).toMatchObject({ targetInfo: { targetId: child.targetId, type: "iframe" } });
+      const parentTree = await send("Page.getFrameTree", {}, parentSessionId);
+      const childTree = await send("Page.getFrameTree", {}, child.sessionId);
+      expect(parentTree.error).toBeUndefined();
+      expect(childTree.error).toBeUndefined();
+      const owned = (parentTree.result as { frameTree: FrameTree }).frameTree.childFrames?.filter((frame) => frame.frame.name === childName && frame.frame.url === childUrl);
+      expect(owned).toHaveLength(1);
+      const childFrame = (childTree.result as { frameTree: FrameTree }).frameTree.frame;
+      expect(childFrame).toMatchObject({ id: owned![0]!.frame.id, name: childName, url: childUrl });
+      proof.frameMapping = { parentFrameId: (parentTree.result as { frameTree: FrameTree }).frameTree.frame.id, childFrameId: childFrame.id, childTargetId: child.targetId, childSessionId: child.sessionId, parentSessionId };
+      record();
+      const removed = await send("Runtime.evaluate", { expression: "document.querySelector('#cross-site').remove(); 'removed'", returnByValue: true }, parentSessionId);
+      expect(removed.result).toMatchObject({ result: { value: "removed" } });
+      const detached = () => events.find((event) => event.method === "Target.detachedFromTarget" && event.parentSessionId === parentSessionId && event.sessionId === child.sessionId && event.targetId === child.targetId);
+      await expect.poll(() => detached() !== undefined, { timeout: 10_000 }).toBe(true);
+      proof.detached = detached();
+      const staleRuntime = await send("Runtime.evaluate", { expression, returnByValue: true }, child.sessionId);
+      expect(staleRuntime.error).toBeDefined();
+      expect(staleRuntime.result).toBeUndefined();
+      expect(staleRuntime.sessionId).toBe(child.sessionId);
+      const staleDetach = await send("Target.detachFromTarget", { sessionId: child.sessionId }, parentSessionId);
+      expect(staleDetach.error).toBeDefined();
+      expect(staleDetach.result).toBeUndefined();
+      proof.retirementRefusals = { runtime: staleRuntime, detach: staleDetach };
+      const parentRuntime = await send("Runtime.evaluate", { expression, returnByValue: true }, parentSessionId);
+      expect(parentRuntime.result).toMatchObject({ result: { value: { href: `${origin}/fixture`, isTop: true, heading: "Scoped browser fixture" } } });
+      proof.parentRuntime = parentRuntime;
+      expect(overflow, "Scoped target event witness exceeded its eight-event cap").toBe(false);
+      expect(malformed, "Scoped target event witness received an invalid event").toBe(false);
+    } finally {
+      socket.off("message", observed);
+      record();
+    }
+  });
   expect((await browserCommand(result.browser_ws_url, "Browser.getVersion", {})).error).toBeUndefined();
 });
 
@@ -638,4 +735,86 @@ test("browser CDP: the owned native iframe request is causally canceled before f
     expect(result.bodies.join("\n")).not.toContain("FORBIDDEN_CDP_FILE_CONTENT");
     expect(refusals()[0]).not.toHaveProperty("url");
   });
+});
+
+test("browser CDP: controlled downloads are always canceled and log once after disconnect", async () => {
+  const launched = await launch(run.env);
+  app = launched.app;
+  await enterWorkspace(launched.page, "fixture");
+  const opened = await fromPane(["browser", "open", `${origin}/download-guard`, "--reveal", "--wait"]);
+  const displayId = (opened.result as { view_id: string }).view_id;
+  const capability = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
+  const inventory = await targets(capability);
+  expect(inventory).toHaveLength(1);
+  const contentsId = Number(inventory[0]!.id.slice("page-".length));
+  const downloadDir = path.join(run.root, "downloads");
+  fs.mkdirSync(downloadDir);
+  const refusals = () => hostLog(run.env).filter((line) => line.event === "browser.download_refused" && line.reason === "cdp_filesystem_boundary" && line.display_id === displayId);
+  const configuredPath = await app.evaluate(({ app: candidateApp, webContents }, { contentsId, downloadDir }) => {
+    const contents = webContents.fromId(contentsId);
+    if (!contents || contents.isDestroyed()) throw new Error("Expected the owned candidate download page");
+    candidateApp.setPath("downloads", downloadDir);
+    if (candidateApp.getPath("downloads") !== downloadDir) throw new Error("The candidate download path is not confined");
+    contents.session.setDownloadPath(downloadDir);
+    const root = globalThis as { cdpDownloadProbe?: { count: number; unrefused: number; overflow: boolean; cleanup: () => void } };
+    if (root.cdpDownloadProbe) throw new Error("The candidate download witness already has an owner");
+    const probe = { count: 0, unrefused: 0, overflow: false, cleanup: () => contents.session.off("will-download", observe) };
+    // The production listener is installed before this observer. It only
+    // observes cancellation; a regression can write to this private sink.
+    const observe = (event: Electron.Event, _item: Electron.DownloadItem, owner: Electron.WebContents) => {
+      if (probe.count === 8) probe.overflow = true;
+      else {
+        probe.count++;
+        if (!event.defaultPrevented || owner.id !== contents.id) probe.unrefused++;
+      }
+    };
+    root.cdpDownloadProbe = probe;
+    contents.session.on("will-download", observe);
+    return candidateApp.getPath("downloads");
+  }, { contentsId, downloadDir });
+  const witness = () => app!.evaluate(() => {
+    const probe = (globalThis as { cdpDownloadProbe?: { count: number; unrefused: number; overflow: boolean } }).cdpDownloadProbe;
+    if (!probe) throw new Error("The candidate download witness ended");
+    return { count: probe.count, unrefused: probe.unrefused, overflow: probe.overflow };
+  });
+  const nativeAttempts = () => app!.evaluate(({ webContents }, { contentsId, url }) => {
+    const contents = webContents.fromId(contentsId);
+    if (!contents || contents.isDestroyed()) throw new Error("The owned download generation ended");
+    for (let attempt = 0; attempt < 2; attempt++) contents.downloadURL(url);
+  }, { contentsId, url: `${origin}/owned-download` });
+  try {
+    expect(configuredPath).toBe(downloadDir);
+    expect(refusals()).toHaveLength(0);
+    await withCdp(capability.browser_ws_url, async (send) => {
+      const attached = await send("Target.attachToTarget", { targetId: inventory[0]!.id, flatten: true });
+      expect(attached.error).toBeUndefined();
+      const installed = await send("Runtime.evaluate", {
+        expression: "addEventListener('scoped-download-attempt', () => { const anchor=document.createElement('a'); anchor.href='data:text/plain,OWNED_DOWNLOAD_FIXTURE'; anchor.download='owned-runtime-download.txt'; document.body.append(anchor); anchor.click(); anchor.remove(); }); 'installed'",
+        returnByValue: true,
+      }, attached.result!.sessionId as string);
+      expect(installed.result).toMatchObject({ result: { value: "installed" } });
+      await nativeAttempts();
+      await expect.poll(witness).toEqual({ count: 2, unrefused: 0, overflow: false });
+      expect(refusals()).toHaveLength(1);
+    });
+    await expect.poll(() => app!.evaluate(({ webContents }, id) => webContents.fromId(id)?.debugger.isAttached(), contentsId)).toBe(false);
+    await app.evaluate(async ({ webContents }, id) => {
+      const contents = webContents.fromId(id);
+      if (!contents || contents.isDestroyed()) throw new Error("The owned download generation ended");
+      await contents.executeJavaScript("dispatchEvent(new Event('scoped-download-attempt'))", true);
+    }, contentsId);
+    await expect.poll(witness).toEqual({ count: 3, unrefused: 0, overflow: false });
+    await nativeAttempts();
+    await expect.poll(witness).toEqual({ count: 5, unrefused: 0, overflow: false });
+    expect(downloadRequests).toBe(MAX_DOWNLOAD_REQUESTS);
+    expect(refusals()).toHaveLength(1);
+    for (const key of ["url", "path", "filename", "token", "contents"]) expect(refusals()[0]).not.toHaveProperty(key);
+    expect(fs.readdirSync(downloadDir)).toEqual([]);
+  } finally {
+    await app.evaluate(() => {
+      const root = globalThis as { cdpDownloadProbe?: { cleanup: () => void } };
+      root.cdpDownloadProbe?.cleanup();
+      delete root.cdpDownloadProbe;
+    });
+  }
 });
