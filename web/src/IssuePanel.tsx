@@ -14,6 +14,8 @@ import type { IssueDetail } from "./snapshot";
 import { useShellStore } from "./store";
 import { CardAgentRow, EDIT_HINT, IssueLabelView, IssueMenu, ReviewMarks, START_HINT, TaskGlyph, neighbourCard, type BoardHandlers } from "./TaskBoards";
 import { useEscapeLayer } from "./components/ui/layer";
+import { holdsCommandKey } from "./host";
+import { fieldLabel } from "./shortcutLabels";
 
 // The issue panel beside the Issues board (PRD overview-lenses-issues D-08,
 // B10-B19): one skeleton whatever the source, the head, the properties, what
@@ -402,7 +404,7 @@ function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCar
     actions.updateLocalIssue(id, card.task.key, title, text);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === "Enter" && event.metaKey) {
+    if (event.key === "Enter" && holdsCommandKey(event)) {
       event.preventDefault();
       save();
     }
@@ -428,7 +430,7 @@ function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCar
       <div className="flex items-center gap-xs">
         <Button size="sm" onClick={save} disabled={saving} data-issue-editor-save="true">
           저장
-          <Kbd>⌘↵</Kbd>
+          <Kbd>{fieldLabel("Enter")}</Kbd>
         </Button>
         <Button variant="ghost" size="sm" onClick={onCancel} data-issue-editor-cancel="true">
           취소

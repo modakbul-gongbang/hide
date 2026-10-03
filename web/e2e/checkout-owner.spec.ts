@@ -5,6 +5,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
+import { chord } from "./chords";
 
 // PRD checkout-workspace-binding B1, B2, B13: a tab Hide creates goes to the
 // checkout's owner Herdr workspace, never to the workspace its other tabs sit
@@ -30,8 +31,8 @@ function tabCount(herdr: HerdrFixture, workspaceId: string): number {
 /** Two new-tab chords in the fixture's agent pane, the second before the first lands. */
 async function twoQuickNewTabs(page: import("@playwright/test").Page): Promise<void> {
   await page.locator("[data-terminal-host]").first().click();
-  await page.keyboard.press("Alt+KeyT");
-  await page.keyboard.press("Alt+KeyT");
+  await page.keyboard.press(chord("new_tab"));
+  await page.keyboard.press(chord("new_tab"));
 }
 
 test("A new tab in a Git checkout goes to the workspace Herdr binds to it, not the unbound one it was asked from", async ({ page }) => {

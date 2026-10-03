@@ -15,6 +15,7 @@ import path from "node:path";
 import { claudeProjects, labelAgent, setFixtureSession, writeFixtureTranscript, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { rest, screenshot } from "./wire";
+import { chord, commandLabel } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -67,7 +68,7 @@ async function openMenu(page: Page, row: Locator, name: string): Promise<Locator
 }
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await page.locator('[data-settings-tab="appearance"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
@@ -112,7 +113,7 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     // no OS file manager, so its reveal is absent; a row Herdr shows without a
     // registration still offers Pin and Remove project….
     let menu = await openMenu(page, projectRow, "repo actions");
-    expect(await menuLines(menu)).toEqual(["Open Overview", "New worktree…", "New tab in main ⌥T", "─", "Copy path", "─", "Pin", "Remove project…"]);
+    expect(await menuLines(menu)).toEqual(["Open Overview", "New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "─", "Pin", "Remove project…"]);
     await screenshot(page, "sidebar-menus-project-dark");
     await menu.locator('[data-menu-item="pin"]').click();
     await expect(menu).toHaveCount(0);
@@ -136,7 +137,7 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     };
     await expect
       .poll(checkoutLines, { timeout: 30_000 })
-      .toEqual(["Open", "New tab here ⌥T", "─", "Set purpose…", "Set as default checkout", "Copy branch name", "Copy path", "─", "Delete worktree…"]);
+      .toEqual(["Open", `New tab here ${commandLabel("new_tab")}`, "─", "Set purpose…", "Set as default checkout", "Copy branch name", "Copy path", "─", "Delete worktree…"]);
     menu = await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
     await screenshot(page, "sidebar-menus-checkout-dark");
     await page.keyboard.press("Escape");

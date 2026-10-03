@@ -16,7 +16,7 @@
 // handler, which replaces xterm's confirm dialog.
 
 import type { IBufferRange, ILink, ILinkHandler, Terminal } from "@xterm/xterm";
-import { hostBridge, opensExternally, type ProbedPath } from "./host";
+import { hostBridge, holdsCommandKey, type ProbedPath } from "./host";
 import { remoteTargetOfPane } from "./remote";
 import { bufferRow, type CellRow } from "./selection";
 import type { SnapshotRest } from "./snapshot";
@@ -196,7 +196,7 @@ export type LinkState = { hovered: boolean };
 function open(actions: TerminalLinkActions, resolved: Resolved, event: MouseEvent, selecting: boolean): void {
   // A press that dragged across the link selected its text; the release is not a click.
   if (selecting) return;
-  const external = opensExternally(event);
+  const external = holdsCommandKey(event);
   const { target, found } = resolved;
   if (target.kind === "url") actions.openLink(target.url, external);
   else if (found) actions.openTerminalPath(found, target.line, target.column, external);

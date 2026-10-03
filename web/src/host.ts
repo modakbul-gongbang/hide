@@ -7,6 +7,7 @@
 // never reaches the host any other way (desktop PRD B11).
 
 import { revealLabel, type RevealHost } from "./revealExternal";
+import { holdsFieldModifier, keySystemOf, type KeySystem } from "./shortcuts";
 
 export type HostKind = "browser" | "electron";
 
@@ -104,13 +105,26 @@ export function hostBridge(): HostBridge | null {
 }
 
 /**
- * Whether a click asks for the operating system rather than the shell: ⌘ on
- * macOS, Ctrl elsewhere, where ⌘ does not exist and Ctrl-click is not the
- * context menu.
+ * The keyboard convention of the machine the operator types on: the desktop
+ * app's OS, or the browser's. The shell's chords, their glyphs and its
+ * field chords all follow it (`shortcuts.ts`).
  */
-export function opensExternally(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
-  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/u.test(navigator.platform || navigator.userAgent);
-  return mac ? event.metaKey : event.ctrlKey;
+export function keySystem(): KeySystem {
+  const bridge = hostBridge();
+  if (bridge) return keySystemOf(bridge.platform);
+  if (typeof navigator === "undefined") return "pc";
+  const agent = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return keySystemOf(agent.userAgentData?.platform || navigator.platform || navigator.userAgent);
+}
+
+/**
+ * Whether a press or a click holds the system's own command key: ⌘ on macOS,
+ * Ctrl elsewhere (`fieldChord`), as ⌘↵ in a palette does and as a click that
+ * asks for the operating system rather than the shell does (Ctrl-click is
+ * not the context menu off macOS).
+ */
+export function holdsCommandKey(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
+  return holdsFieldModifier(event, keySystem());
 }
 
 /** The OS file manager item's host: its label on this OS, or null in a plain browser tab, which has none. */

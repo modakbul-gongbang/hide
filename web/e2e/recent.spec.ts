@@ -13,6 +13,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { held, label } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 test.use({ actionTimeout: 15_000 });
@@ -55,7 +56,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await page.locator('[data-shortcut-record="recent_panel"]').click();
     await page.keyboard.press("Alt+KeyG");
     await page.locator('[data-shortcut-apply="recent_panel"]').click();
-    await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText("⌥G");
+    await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText(label({ code: "KeyG", alt: true }));
     await page.keyboard.press("Escape");
 
     // plan.txt pinned in the fixture Workspace's View area, the keyboard in it.
@@ -100,14 +101,15 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
     await expect.poll(() => sent.get("focus_tab") ?? 0).toBe(focusTabs + 1);
 
-    // ⌥Tab: Recent Projects puts fixture first, on the display it was left on.
+    // ⌥Tab (Ctrl+Shift+` off macOS): Recent Projects puts fixture first, on the display it was left on.
     const beforeProjects = sent.get("focus_checkout") ?? 0;
-    await page.keyboard.down("Alt");
-    await page.keyboard.press("Tab");
+    const projects = held("recent_project");
+    for (const key of projects.modifiers) await page.keyboard.down(key);
+    await page.keyboard.press(projects.key);
     await expect(page.locator("[data-cycle=projects]")).toContainText("Recent Projects");
     await expect(cycleRow).toContainText("plan.txt");
     await screenshot(page, "recent-projects");
-    await page.keyboard.up("Alt");
+    for (const key of projects.modifiers.toReversed()) await page.keyboard.up(key);
     await expect.poll(() => sent.get("focus_checkout") ?? 0).toBe(beforeProjects + 1);
     expect(last.get("focus_checkout")).toMatchObject({ display_id: display });
     await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[data-view-area]") !== null)).toBe(true);

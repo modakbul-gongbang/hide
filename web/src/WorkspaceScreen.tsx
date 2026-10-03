@@ -19,9 +19,8 @@ import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { shownTool } from "./viewLayout";
 import { PANEL_STATES, panelCoversToSend, panelFrame, panelShareAt, panelWidth, workspaceViewOf, type PanelFrame, type PanelSizes, type PanelState, type Tool, type WorkspaceView } from "./workspace";
-import { hostKind } from "./host";
 import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
-import { displayCommand } from "./shortcuts";
+import { commandLabel } from "./shortcutLabels";
 
 // A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13; issue 170): one
 // checkout's agent column (its toolbar, then its Herdr tabs and their panes),
@@ -263,7 +262,7 @@ function PanelToggle({ view, actions }: { view: WorkspaceView; actions: Actions 
   const views = count > 0 ? `${count} ${count === 1 ? "view" : "views"} open` : undefined;
   // One name for the control, its state in aria-pressed; the tooltip says what a press does.
   return (
-    <Hint label={on ? "Hide side panel" : views ? `Show side panel, ${views}` : "Show side panel"} shortcut={displayCommand("toggle_right_panel", hostKind())}>
+    <Hint label={on ? "Hide side panel" : views ? `Show side panel, ${views}` : "Show side panel"} shortcut={commandLabel("toggle_right_panel")}>
       <Button
         variant={on ? "secondary" : "ghost"}
         size="icon-sm"

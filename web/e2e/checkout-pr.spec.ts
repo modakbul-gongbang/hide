@@ -17,6 +17,7 @@ import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, rest, rowGeometry, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -85,7 +86,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string): Prom
 }
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await page.locator('[data-settings-tab="appearance"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();

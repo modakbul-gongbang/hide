@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { advanceHint, clearHint, HINT_DELAY_MS, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type Modifiers } from "./hints";
-import { REGISTRY } from "./shortcuts";
+import { REGISTRY, systemRegistry } from "./shortcuts";
 
 const meta: Modifiers = { ...NO_MODIFIERS, meta: true };
 const alt: Modifiers = { ...NO_MODIFIERS, alt: true };
@@ -53,6 +53,15 @@ describe("the hold hint state (electron-digit-shortcuts-hints D-03, D-04)", () =
     expect(revealedFamily(tabs, REGISTRY, "browser")).toBeNull();
     expect(revealedFamily(agents, REGISTRY, "browser")).toBeNull();
     expect(revealedFamily(holdModifiers(idleHint(), meta, 0), REGISTRY, "electron")).toBeNull();
+  });
+
+  it("reveals the tab numbers on a held Ctrl+Shift on Windows and Linux, and nothing on Ctrl alone", () => {
+    const pc = systemRegistry("pc");
+    const held = (modifiers: Modifiers) => advanceHint(holdModifiers(idleHint(), modifiers, 0), HINT_DELAY_MS);
+    expect(revealedFamily(held({ ...NO_MODIFIERS, ctrl: true, shift: true }), pc, "electron")).toBe("tabs");
+    expect(revealedFamily(held(alt), pc, "electron")).toBe("agents");
+    expect(revealedFamily(held({ ...NO_MODIFIERS, ctrl: true }), pc, "electron")).toBeNull();
+    expect(revealedFamily(held(meta), pc, "electron")).toBeNull();
   });
 
   it("reads the modifiers off a key event", () => {

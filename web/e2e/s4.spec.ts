@@ -9,6 +9,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { countSent, registerFolder, screenshot, showExplorer, showTool } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -65,9 +66,9 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
     // ⌘⇧B closes the side panel with its tool, and brings it back on the
     // same tool (issue 170).
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await showExplorer(page);
 

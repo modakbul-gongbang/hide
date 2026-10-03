@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { finishFixtureTurn, labelAgent, setFixtureLifecycle, spawnAgent, startHerdr, type FixtureLabel, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -135,7 +136,7 @@ test("the close sheet counts and brightens what needs the operator, stays live w
         await expect(sheet).toHaveCount(0);
       }
       await page.locator(`[data-terminal-host="${target}"]`).click();
-      await page.keyboard.press("Alt+KeyW");
+      await page.keyboard.press(chord("close_tab"));
       await expect(summary).toHaveAttribute("data-subtree-summary", "진행 중 1 · 답 대기 1 · 확인 안 한 결과 1", { timeout: 3_000 });
     }).toPass({ timeout: 30_000, intervals: [500] });
     await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 4개를 닫을까요?");
@@ -205,7 +206,7 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
 
     const sheet = page.locator("[data-confirm-subtree]");
     await page.locator(`[data-terminal-host="${target}"]`).click();
-    await page.keyboard.press("Alt+KeyW");
+    await page.keyboard.press(chord("close_tab"));
     await expect(sheet).toBeVisible();
     await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 2개를 닫을까요?");
     await expect(sheet.locator("[data-subtree-row]")).toHaveCount(3);
@@ -228,7 +229,7 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
 
     // Enter closes the subtree as one event, deepest first, target last.
     await page.locator(`[data-terminal-host="${target}"]`).click();
-    await page.keyboard.press("Alt+KeyW");
+    await page.keyboard.press(chord("close_tab"));
     await expect(sheet.locator("[data-subtree-close-all]")).toBeFocused();
     closeWatch = await watchCloseOrder(herdr, [target, child, grandchild]);
     await page.keyboard.press("Enter");
@@ -240,7 +241,7 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
 
     // Close only closes just the target; its child becomes the operator's.
     await page.locator(`[data-terminal-host="${keeper}"]`).click();
-    await page.keyboard.press("Alt+KeyW");
+    await page.keyboard.press(chord("close_tab"));
     await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 1개를 닫을까요?");
     await sheet.locator("[data-subtree-close-only]").click();
     await expect.poll(async () => (await livePanes(herdr)).has(keeper), { timeout: 20_000 }).toBe(false);
@@ -277,7 +278,7 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     // The working state has to be in before the close asks: a quiet pane would close at once.
     await expect(page.locator(`[data-pane="${target}"] [data-agent-status-mark="Working"]`)).toBeVisible({ timeout: 30_000 });
     await page.locator(`[data-terminal-host="${target}"]`).click();
-    await page.keyboard.press("Alt+KeyW");
+    await page.keyboard.press(chord("close_tab"));
     await expect(row).toHaveAttribute("data-stop-work-state", "active");
     await expect(confirm.getByRole("heading")).toHaveText("Stop the active pane?");
     await expect(subtree).toHaveCount(0);
