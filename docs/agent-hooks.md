@@ -75,7 +75,7 @@ The doorbell itself carries manual `hide inbox` guidance; a missing or failed ho
 This delivery path has its own bounded private diagnostics and does not extend Memory's in-process budget described below.
 [delivery.md](delivery.md#safe-intake-and-manual-fallback) owns these intake, failure and confirmation rules.
 
-The prompt path performs no provider or embedding call, transcript scan, child-process launch, or database write.
+The Memory lookup itself performs no provider or embedding call, transcript scan, child-process launch, or database write.
 Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context and still exit zero.
 The caller-visible deadline is 100 ms from process launch, including stdin collection and SQLite work, and candidate, item, and token counts are hard bounded.
 The helper gives its in-process work 75 ms so process startup, scheduling, stdout flush, and teardown stay inside that caller-visible limit.

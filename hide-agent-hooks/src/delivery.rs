@@ -126,7 +126,13 @@ struct Diagnostics {
 
 /// Eight fixed causes, private storage and a nonblocking cross-process lock.
 /// A hook with no pane can still record its failure without recording its cwd.
-pub fn diagnose(home: &Path, cause: &'static str) {
+pub fn diagnose(home: &Path, cause: &'static str) -> bool {
+    const CAUSES: [&str; 8] = [
+        "cli", "deadline", "format", "confirm", "ledger", "capacity", "identity", "stdout",
+    ];
+    if !CAUSES.contains(&cause) {
+        return false;
+    }
     let path = diagnostic_path(home);
     let result = (|| -> std::io::Result<bool> {
         let parent = path
@@ -151,7 +157,12 @@ pub fn diagnose(home: &Path, cause: &'static str) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Diagnostics::default(),
             Err(error) => return Err(error),
         };
-        if state.last.len() > 8 {
+        if state.last.len() > 8
+            || state
+                .last
+                .keys()
+                .any(|cause| !CAUSES.contains(&cause.as_str()))
+        {
             return Err(std::io::Error::other("diagnostic capacity"));
         }
         let now = SystemTime::now()
@@ -173,11 +184,16 @@ pub fn diagnose(home: &Path, cause: &'static str) {
         fs::atomic::write_file(&path, &bytes, fs::Access::Private)?;
         Ok(true)
     })();
-    if !matches!(result, Ok(false)) {
+    // Emit only after the cross-process claim is persisted. Damaged or
+    // unavailable throttle storage cannot authorize an unthrottled log.
+    if matches!(result, Ok(true)) {
         eprintln!(
             "{}",
             serde_json::json!({"component":"delivery_hook","kind":"intake.failed","code":cause,"diagnostic_saved":result.is_ok()})
         );
+        true
+    } else {
+        false
     }
 }
 
@@ -186,4 +202,51 @@ fn diagnostic_path(home: &Path) -> PathBuf {
         .parent()
         .expect("counter directory has a parent")
         .join("delivery-diagnostics.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_claim_precedes_output_and_repeated_cause_is_suppressed() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(diagnose(home.path(), "cli"));
+        assert!(!diagnose(home.path(), "cli"));
+        assert!(diagnose(home.path(), "deadline"));
+        let stored = std::fs::read(diagnostic_path(home.path())).unwrap();
+        let state: Diagnostics = serde_json::from_slice(&stored).unwrap();
+        assert_eq!(state.last.len(), 2);
+        assert!(hide_platform::fs::private::is_private(&diagnostic_path(home.path())).unwrap());
+        assert!(
+            !String::from_utf8(stored)
+                .unwrap()
+                .contains(&home.path().display().to_string())
+        );
+    }
+
+    #[test]
+    fn corrupt_or_unavailable_diagnostic_storage_never_bypasses_throttle() {
+        for damaged in [
+            b"damaged private bytes".as_slice(),
+            b"{\"last\":{\"unknown\":0}}".as_slice(),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let path = diagnostic_path(home.path());
+            private::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::atomic::write_file(&path, damaged, fs::Access::Private).unwrap();
+            for _ in 0..3 {
+                assert!(!diagnose(home.path(), "cli"));
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), damaged);
+        }
+        let home = tempfile::tempdir().unwrap();
+        let path = diagnostic_path(home.path());
+        private::create_dir_all(path.parent().unwrap()).unwrap();
+        // A real invalid store shape fails before an output claim.
+        private::create_dir_all(&path).unwrap();
+        assert!(!diagnose(home.path(), "cli"));
+        assert!(!diagnose(home.path(), "unexpected"));
+        assert!(path.is_dir());
+    }
 }
