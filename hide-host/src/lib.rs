@@ -26,10 +26,6 @@ pub mod register;
 pub mod root;
 pub mod save;
 pub mod serve;
-// The pane bootstrap helper of a device listens on a Unix socket and attests
-// the invoking pane by its kernel peer pid; its Windows form is the
-// remote-device helper, which has no Unix socket to stand on.
-#[cfg(unix)]
 pub mod workspace_bridge;
 pub mod worktrees;
 

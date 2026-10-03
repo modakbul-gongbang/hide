@@ -953,11 +953,18 @@ fn answer_bootstrap(
             }
             issued
         });
-    let answer = match &result {
-        Ok((path, _)) => json!({"ok": true, "reference": path}),
-        Err(reason) => json!({"ok": false, "reason": reason}),
+    // The reference crosses in the wire spelling, as the device bridge's
+    // does; one without it is refused and withdrawn like an undelivered one.
+    let wire = match &result {
+        Ok((path, _)) => hide_platform::path::to_wire(path).ok(),
+        Err(_) => None,
     };
-    if writeln!(stream, "{answer}").is_err()
+    let answer = match (&result, &wire) {
+        (Ok(_), Some(reference)) => json!({"ok": true, "reference": reference}),
+        (Ok(_), None) => json!({"ok": false, "reason": "reference_unavailable"}),
+        (Err(reason), _) => json!({"ok": false, "reason": reason}),
+    };
+    if (writeln!(stream, "{answer}").is_err() || wire.is_none())
         && let Ok((path, true)) = result
         && let Ok(bytes) = fs::read(path)
         && let Ok(reference) = serde_json::from_slice::<Reference>(&bytes)
