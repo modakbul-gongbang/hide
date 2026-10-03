@@ -105,7 +105,7 @@ pub fn spawn_worktree_preflight(
         let Some(removal) = request else { return; };
         let result = crate::host_access::call_as::<()>(target.host.as_ref(),
             hide_host::protocol::Call::WorktreeRemovalCheck { removal }, HOST_REMOVE_TIMEOUT)
-            .map_err(|error| format!("Worktree preflight refused: {error}. No panes were closed. Refresh and review before deleting."));
+            .map_err(|error| format!("{}. No panes were closed.", error.trim_end_matches('.')));
         crate::diagnostic!(serde_json::json!({"component":"worktree_removal", "kind":"preflight_finished", "id":id, "accepted":result.is_ok()}));
         if let Ok(mut guard) = runtime.lock() {
             guard.ingest_worktree_preflight_result(id, outside, result);

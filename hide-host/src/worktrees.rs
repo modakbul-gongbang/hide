@@ -834,7 +834,7 @@ fn scan_ignored_repositories(
 
 fn ignored_scan_failure(reason: &str) -> String {
     format!(
-        "Ignored repository scan unavailable: {reason}. Check folder access and repository metadata, then refresh before deleting; Hide could not confirm every ignored repository."
+        "Ignored repository scan unavailable: {reason}. Check folder access and repository metadata, then refresh before deleting."
     )
 }
 
@@ -1563,6 +1563,7 @@ fn check_confirmed_removal(request: &ConfirmedRemoval, panes_closed: bool) -> Re
     let root = Path::new(&request.repository_root);
     let target = Path::new(&request.checkout_path);
     let stopped = |detail: String| {
+        let detail = detail.trim_end_matches('.');
         format!(
             "Worktree removal stopped: {detail}. {}",
             if panes_closed {
@@ -1649,8 +1650,7 @@ fn check_confirmed_removal(request: &ConfirmedRemoval, panes_closed: bool) -> Re
         // Git leaves ignored folders out of the status above, and removing
         // the worktree deletes them, including a repository cloned into one
         // (B28): such a nested repository stops the removal.
-        let nested = ignored_repositories(target)
-            .map_err(|error| stopped(format!("could not recheck ignored folders: {error}")))?;
+        let nested = ignored_repositories(target).map_err(stopped)?;
         if !nested.is_empty() && !request.discard_changes {
             return Err(stopped(format!(
                 "ignored repositories would be deleted: {}. Review and explicitly choose Discard",
