@@ -652,6 +652,9 @@ impl LabelWorker {
             .get_mut(pane_id)
             .expect("an observed pane has a record");
         let owner = transcript.confirmed.owner.clone();
+        // Forgetting the verdicts forgets which submits they claimed too, so
+        // the messages are judged again against every submit kept.
+        let mut verdicts_forgotten = false;
         if record.owner.as_deref() != Some(owner.as_str()) {
             if record.owner.is_some() || record.goal.is_some() {
                 crate::diagnostic!(json!({
@@ -666,6 +669,7 @@ impl LabelWorker {
             record.reset_session(Some(owner));
             record.forget_position();
             self.waiting.retain(|id| id != pane_id);
+            verdicts_forgotten = true;
             changed = true;
         } else if transcript.rescanned.is_some()
             || record
@@ -682,6 +686,7 @@ impl LabelWorker {
                 "reason": transcript.rescanned,
             }));
             record.reset_analysis();
+            verdicts_forgotten = true;
         }
         if record.proven_reference.as_deref() != Some(reference) {
             record.proven_reference = Some(reference.to_owned());
@@ -695,6 +700,9 @@ impl LabelWorker {
         record.incarnation = Some(transcript.confirmed.incarnation.clone());
         self.dirty = true;
         let pane = self.panes.get_mut(pane_id).expect("checked above");
+        if verdicts_forgotten {
+            pane.claimed_submit = None;
+        }
         let submits = self.input.submits(&target, pane_id);
         changed |= record.facts.fold(
             ReadFacts {
@@ -716,7 +724,7 @@ impl LabelWorker {
             },
         );
         changed |= record.facts.judge_created(&self.pull_request_times);
-        if transcript.skipped_lines > 0 {
+        if transcript.skipped_lines > 0 || !transcript.skipped_reasons.is_empty() {
             crate::diagnostic!(json!({
                 "component": "labels",
                 "kind": "read.lines_skipped",

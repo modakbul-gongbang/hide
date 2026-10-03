@@ -17,8 +17,14 @@ const PENDING_CHECKS_REREAD: std::time::Duration = std::time::Duration::from_sec
 
 impl Runtime {
     /// Lays the block on this Mac's rows, whose pull requests come from
-    /// their checkout's branch and their session.
-    pub(super) fn lay_local_requests(&mut self, agents: &mut [SidebarAgentSnapshot]) {
+    /// their checkout's branch and their session. `live_panes` is Herdr's
+    /// pane topology when the caller has one; only then do the verb records
+    /// of panes outside it go.
+    pub(super) fn lay_local_requests(
+        &mut self,
+        agents: &mut [SidebarAgentSnapshot],
+        live_panes: Option<&HashSet<String>>,
+    ) {
         let places: HashMap<&str, (Option<&str>, &str)> = self
             .snapshot
             .navigator
@@ -51,18 +57,27 @@ impl Runtime {
             verbs,
             unix_milliseconds(),
         );
-        changed |= request_view::prune_verbs(verbs, |pane| !pane.starts_with("remote:"), agents);
+        if let Some(live) = live_panes {
+            changed |= request_view::prune_verbs(verbs, |pane| {
+                !pane.starts_with("remote:")
+                    && !live.contains(pane)
+                    && !agents.iter().any(|row| row.pane_id == pane)
+            });
+        }
         if changed {
             self.persist_ui_state();
         }
     }
 
     /// Lays the block on a device's rows; their pull requests are not read
-    /// (PRD Non-goals), so they carry none.
+    /// (PRD Non-goals), so they carry none. `fetched` says the rows are a
+    /// session the device just answered with, whose panes are the device's
+    /// whole list; only then do the others' verb records go.
     pub(super) fn lay_remote_requests(
         &mut self,
         target_id: &str,
         agents: &mut [SidebarAgentSnapshot],
+        fetched: bool,
     ) {
         let verbs = &mut self.snapshot.ui_state.request_verbs;
         let mut changed = request_view::apply(
@@ -73,7 +88,11 @@ impl Runtime {
             unix_milliseconds(),
         );
         let prefix = remote_pane_id_prefix(target_id);
-        changed |= request_view::prune_verbs(verbs, |pane| pane.starts_with(&prefix), agents);
+        if fetched {
+            changed |= request_view::prune_verbs(verbs, |pane| {
+                pane.starts_with(&prefix) && !agents.iter().any(|row| row.pane_id == pane)
+            });
+        }
         if changed {
             self.persist_ui_state();
         }
@@ -83,7 +102,7 @@ impl Runtime {
     /// row changed.
     pub(super) fn sync_request_rows(&mut self) -> bool {
         let mut agents = self.snapshot.navigator.agents.clone();
-        self.lay_local_requests(&mut agents);
+        self.lay_local_requests(&mut agents, None);
         let mut changed = agents != self.snapshot.navigator.agents;
         self.snapshot.navigator.agents = agents;
         let targets: Vec<String> = self
@@ -106,7 +125,7 @@ impl Runtime {
             else {
                 continue;
             };
-            self.lay_remote_requests(&target_id, &mut agents);
+            self.lay_remote_requests(&target_id, &mut agents, false);
             if let Some(session) = self
                 .snapshot
                 .status
@@ -180,6 +199,16 @@ impl Runtime {
     /// read, as a focus would make it, without moving the focus (D-29). A
     /// row asking a question keeps its demand.
     pub(super) fn open_result(&mut self, pane_id: &str) -> bool {
+        // A result a settled pull request gave is seen once opened; the read
+        // axis below covers an unread completion.
+        let marked = request_view::open_result(
+            &mut self.snapshot.ui_state.request_verbs,
+            pane_id,
+            unix_milliseconds(),
+        );
+        if marked {
+            self.persist_ui_state();
+        }
         let mut records = std::mem::take(&mut self.snapshot.ui_state.pane_read_records);
         let mut changes = Vec::new();
         if self
@@ -204,7 +233,7 @@ impl Runtime {
         }
         self.snapshot.ui_state.pane_read_records = records;
         if changes.is_empty() {
-            return false;
+            return marked && self.sync_request_rows();
         }
         self.record_read_record_changes(&changes);
         // The rows take the new record with the focus each server reports.

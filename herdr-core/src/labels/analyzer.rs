@@ -169,8 +169,9 @@ fn run(
         };
         let cancel = CancelToken::new();
         *lock(&running.job) = Some(cancel.clone());
-        // A shutdown between the check above and the token's install.
-        if running.stopping.is_cancelled() {
+        // A shutdown or the switch turned off between the checks above and
+        // the token's install found no token to cancel; look once more.
+        if running.stopping.is_cancelled() || !settings().agent_summary {
             cancel.cancel();
         }
         // The outcome must arrive whatever happens on this thread: a panic

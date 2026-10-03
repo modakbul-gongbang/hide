@@ -524,6 +524,7 @@ mod tests {
             crate::request_view::VerbRecord {
                 verb: crate::request_view::RequestVerb::Answer,
                 since_unix_ms: 1_790_000_000_000,
+                result_opened_unix_ms: Some(1_790_000_100_000),
             },
         );
         save(&path, &state, &PaneTerminalSizes::new()).expect("state saves");

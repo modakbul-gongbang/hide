@@ -116,6 +116,8 @@ pub struct LabelTranscript {
 
 /// How many of a Claude Code session's subagent files are read.
 pub const MAX_SUBAGENT_FILES: usize = 16;
+/// The skip reason a read reports with how many subagent files it left out.
+pub const SUBAGENT_FILES_CAPPED: &str = "subagent_files_capped";
 /// The most subagent bytes one read takes; the rest waits for the next read.
 const SUBAGENT_READ_BUDGET: u64 = 2 * 1024 * 1024;
 /// How much of the end of Codex's `session_index.jsonl` is read for a
@@ -204,8 +206,9 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     let mut pr_sightings = parsed.pr_sightings.clone();
     let mut subagents = BTreeMap::new();
     let mut subagents_pending = false;
+    let mut subagents_left_out = 0;
     if request.agent == Agent::Claude {
-        subagents_pending = read_subagents(
+        (subagents_pending, subagents_left_out) = read_subagents(
             home,
             &path,
             &request.subagents,
@@ -236,6 +239,10 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
             .skipped_reasons
             .iter()
             .map(|(reason, count)| (reason.as_str().to_owned(), *count))
+            .chain(
+                (subagents_left_out > 0)
+                    .then(|| (SUBAGENT_FILES_CAPPED.to_owned(), subagents_left_out)),
+            )
             .collect(),
         title,
         custom_title: parsed.custom_title.clone(),
@@ -247,8 +254,9 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
 /// Reads what was appended to each of a Claude Code session's subagent files
 /// (`<session>/subagents/*.jsonl`), for the pull request addresses their
 /// tools printed: a subagent's work is its session's (D-46). At most
-/// [`MAX_SUBAGENT_FILES`] files and [`SUBAGENT_READ_BUDGET`] bytes per read;
-/// says whether bytes remain. A file that cannot be read keeps its
+/// [`MAX_SUBAGENT_FILES`] files, the most recently written first, and
+/// [`SUBAGENT_READ_BUDGET`] bytes per read; says whether bytes remain and how
+/// many files the cap left out. A file that cannot be read keeps its
 /// checkpoint and is tried again on the next read.
 fn read_subagents(
     home: &Path,
@@ -256,20 +264,34 @@ fn read_subagents(
     before: &BTreeMap<String, ConversationCheckpoint>,
     after: &mut BTreeMap<String, ConversationCheckpoint>,
     sightings: &mut Vec<crate::PrSighting>,
-) -> bool {
+) -> (bool, usize) {
     let (Some(folder), Some(stem)) = (session.parent(), session.file_stem()) else {
-        return false;
+        return (false, 0);
     };
     let folder = folder.join(stem).join("subagents");
     let Ok(entries) = std::fs::read_dir(&folder) else {
-        return false;
+        return (false, 0);
     };
-    let mut names = entries
-        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-        .filter(|name| name.ends_with(".jsonl"))
+    let mut files = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().into_string().ok()?;
+            let written = entry.metadata().and_then(|meta| meta.modified()).ok();
+            name.ends_with(".jsonl").then_some((written, name))
+        })
         .collect::<Vec<_>>();
-    names.sort();
-    names.truncate(MAX_SUBAGENT_FILES);
+    // A subagent still at work is the one that can print a new address.
+    files.sort_by(|(left_at, left), (right_at, right)| {
+        right_at.cmp(left_at).then_with(|| left.cmp(right))
+    });
+    let left_out = files.split_off(files.len().min(MAX_SUBAGENT_FILES));
+    // A file the cap leaves out keeps where it was read to.
+    for (_, name) in &left_out {
+        if let Some(checkpoint) = before.get(name) {
+            after.insert(name.clone(), checkpoint.clone());
+        }
+    }
+    let names = files.into_iter().map(|(_, name)| name);
     let mut spent = 0_u64;
     let mut pending = false;
     for name in names {
@@ -302,7 +324,7 @@ fn read_subagents(
             }
         }
     }
-    pending
+    (pending, left_out.len())
 }
 
 /// Codex's name for the session, from the newest `session_index.jsonl`
@@ -435,6 +457,56 @@ mod tests {
         let resumed = read(root.path(), &request(&path, first.anchor.clone())).unwrap();
         assert_eq!(resumed.events[0].text, "first request");
         assert_eq!(resumed.events.len(), 3);
+    }
+
+    /// D-46: past the file cap the subagents still at work are read, so a
+    /// pull request a late subagent prints is found, and the cap is said.
+    #[test]
+    fn the_most_recently_written_subagents_are_read_past_the_cap() {
+        let root = tempfile::tempdir().unwrap();
+        let path = transcript_path(root.path(), "session.jsonl");
+        fs::write(
+            &path,
+            claude_line("user", "s1", "request", "2026-10-01T00:00:00Z"),
+        )
+        .unwrap();
+        let folder = path.parent().unwrap().join("session/subagents");
+        fs::create_dir_all(&folder).unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for index in 0..20 {
+            let name = folder.join(format!("agent-{index:02}.jsonl"));
+            let printed = if index == 18 {
+                serde_json::json!({"type":"user","sessionId":"s1","timestamp":"2026-10-01T00:01:00Z",
+                    "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t",
+                        "content":[{"type":"text","text":"https://github.com/acme/app/pull/18"}]}]}})
+                .to_string()
+            } else {
+                claude_line("assistant", "s1", "working", "2026-10-01T00:00:30Z")
+            };
+            fs::write(&name, format!("{}\n", printed.trim_end())).unwrap();
+            let written = if index == 18 {
+                old + std::time::Duration::from_secs(1_000)
+            } else {
+                old + std::time::Duration::from_secs(index)
+            };
+            fs::File::options()
+                .write(true)
+                .open(&name)
+                .unwrap()
+                .set_modified(written)
+                .unwrap();
+        }
+        let answer = read(root.path(), &request(&path, None)).unwrap();
+        assert_eq!(
+            answer
+                .pr_sightings
+                .iter()
+                .map(|sighting| sighting.number)
+                .collect::<Vec<_>>(),
+            [18]
+        );
+        assert_eq!(answer.skipped_reasons.get(SUBAGENT_FILES_CAPPED), Some(&4));
+        assert_eq!(answer.subagents.len(), MAX_SUBAGENT_FILES);
     }
 
     #[test]

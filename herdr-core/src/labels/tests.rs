@@ -1136,3 +1136,44 @@ fn turning_summaries_off_ends_the_request_and_on_asks_for_the_current_turn() {
     settle(&mut worker, &woken);
     assert_eq!(harness.backend.calls(), 3, "the current turn, once");
 }
+
+/// D-19: a transcript that starts over is judged again against the submits
+/// still kept, so the operator's request stays the operator's.
+#[test]
+fn a_restarted_transcript_keeps_the_operators_request_the_operators() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    let turns = [
+        ("user", "요청 보기 만들어줘"),
+        ("assistant", "만들었어요"),
+        ("assistant", "테스트도 돌렸어요"),
+    ];
+    let path = harness.session("a", "native-a", &turns);
+    harness.input.record("w1:p1", turn_at(0) - 300, false);
+    harness.backend.answer("요청 보기 화면 만들기", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    settle(&mut worker, &woken);
+    let requester = |store: &LabelStore| {
+        store.target(LOCAL_TARGET)["w1:p1"]
+            .facts
+            .operator_request
+            .as_ref()
+            .map(|request| request.requester.clone())
+    };
+    assert_eq!(requester(&store), Some(Requester::Operator));
+
+    // The same file, shorter: the reader starts it over.
+    harness.session("a", "native-a", &turns[..2]);
+    harness.backend.answer("요청 보기 화면 만들기", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 4));
+    settle_with_ticks(&mut worker, &woken);
+    assert_eq!(requester(&store), Some(Requester::Operator));
+    assert!(
+        store.target(LOCAL_TARGET)["w1:p1"]
+            .facts
+            .other_request
+            .is_none(),
+        "the request is not read as another agent's"
+    );
+}

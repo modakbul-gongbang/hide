@@ -136,6 +136,10 @@ pub struct AgentRequestSnapshot {
 pub struct VerbRecord {
     pub verb: RequestVerb,
     pub since_unix_ms: u64,
+    /// When the operator last opened the row's result (D-29): a pull
+    /// request that settled before then is a result already seen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_opened_unix_ms: Option<u64>,
 }
 
 /// Where a row lives, for its branch's pull requests.
@@ -199,7 +203,10 @@ pub(crate) fn apply<'a>(
             ),
         };
         let pull_requests = shown_pull_requests(linked, operator_at);
-        let verb = verb_of(row, &pull_requests);
+        let opened = verbs
+            .get(&row.pane_id)
+            .and_then(|record| record.result_opened_unix_ms);
+        let verb = verb_of(row, &pull_requests, opened);
         let record = verbs.get(&row.pane_id).filter(|record| record.verb == verb);
         let since = match record {
             Some(record) => record.since_unix_ms,
@@ -209,6 +216,7 @@ pub(crate) fn apply<'a>(
                     VerbRecord {
                         verb,
                         since_unix_ms: now_unix_ms,
+                        result_opened_unix_ms: opened,
                     },
                 );
                 verbs_changed = true;
@@ -239,16 +247,33 @@ pub(crate) fn apply<'a>(
     verbs_changed
 }
 
-/// Drops the verb records of panes outside `live`, among those `owned`
-/// selects. Returns whether any went.
+/// Drops the verb records of the panes `gone` names. The caller names
+/// only panes an authoritative topology no longer has, so a list that is
+/// empty for a moment (a Herdr reconnect, before the first session) never
+/// restarts every wait. Returns whether any went.
 pub(crate) fn prune_verbs(
     verbs: &mut BTreeMap<String, VerbRecord>,
-    owned: impl Fn(&str) -> bool,
-    live: &[SidebarAgentSnapshot],
+    gone: impl Fn(&str) -> bool,
 ) -> bool {
     let before = verbs.len();
-    verbs.retain(|pane, _| !owned(pane) || live.iter().any(|row| row.pane_id == *pane));
+    verbs.retain(|pane, _| !gone(pane));
     verbs.len() != before
+}
+
+/// Marks the row's result opened now, when its verb is `result`; a settled
+/// pull request it showed is then seen. Returns whether it was marked.
+pub(crate) fn open_result(
+    verbs: &mut BTreeMap<String, VerbRecord>,
+    pane_id: &str,
+    now_unix_ms: u64,
+) -> bool {
+    match verbs.get_mut(pane_id) {
+        Some(record) if record.verb == RequestVerb::Result => {
+            record.result_opened_unix_ms = Some(now_unix_ms);
+            true
+        }
+        _ => false,
+    }
 }
 
 fn sender(request: &Request, delegated: bool, parent: Option<&String>) -> RequestSender {
@@ -427,7 +452,11 @@ fn shown_pull_requests(
         .collect()
 }
 
-fn verb_of(row: &SidebarAgentSnapshot, pull_requests: &[AgentPullRequestSnapshot]) -> RequestVerb {
+fn verb_of(
+    row: &SidebarAgentSnapshot,
+    pull_requests: &[AgentPullRequestSnapshot],
+    result_opened: Option<u64>,
+) -> RequestVerb {
     if row.demand != "none" {
         return RequestVerb::Answer;
     }
@@ -463,7 +492,16 @@ fn verb_of(row: &SidebarAgentSnapshot, pull_requests: &[AgentPullRequestSnapshot
     if open(&[PullRequestChecks::Pending]) {
         return RequestVerb::Waiting;
     }
-    if (row.completed && row.unread) || duty().any(|pull_request| pull_request.badge.is_settled()) {
+    // A settled pull request is a result until the operator opens it.
+    let unseen = |pull_request: &AgentPullRequestSnapshot| match result_opened {
+        None => true,
+        Some(opened) => pull_request
+            .settled_at_unix_ms
+            .is_some_and(|settled| settled > opened),
+    };
+    if (row.completed && row.unread)
+        || duty().any(|pull_request| pull_request.badge.is_settled() && unseen(pull_request))
+    {
         return RequestVerb::Result;
     }
     if row.waiting_on_descendants || end == Some(LabelEnd::Waiting) {

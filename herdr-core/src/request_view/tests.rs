@@ -236,6 +236,75 @@ fn a_pull_request_settled_after_the_request_is_a_result_and_one_settled_before_i
     assert!(!rows[1].request.as_ref().unwrap().pull_requests[0].live);
 }
 
+/// B15, D-29: opening a result a merged pull request gave sends the row to
+/// rest, and a pull request that settles after the opening is a result again.
+#[test]
+fn an_opened_result_rests_until_another_pull_request_settles() {
+    let lay = |rows: &mut Vec<SidebarAgentSnapshot>,
+               github: &GithubSnapshot,
+               verbs: &mut BTreeMap<String, VerbRecord>,
+               now| {
+        apply(
+            rows,
+            |_| {
+                Some(RowPlace {
+                    branch: Some("after"),
+                    root_path: ROOT,
+                })
+            },
+            github,
+            verbs,
+            now,
+        );
+    };
+    let mut merged = pull_request(
+        1,
+        "after",
+        PullRequestBadge::Merged,
+        PullRequestChecks::Passing,
+    );
+    merged.merged_at_unix_ms = Some(ASKED + 1);
+    let mut verbs = BTreeMap::new();
+    let mut shown = rows(&[("p", "idle")]);
+    lay(
+        &mut shown,
+        &github(vec![merged.clone()]),
+        &mut verbs,
+        ASKED + 10,
+    );
+    assert_eq!(verb(&shown[0]), RequestVerb::Result);
+
+    assert!(open_result(&mut verbs, "p", ASKED + 20));
+    let mut shown = rows(&[("p", "idle")]);
+    lay(
+        &mut shown,
+        &github(vec![merged.clone()]),
+        &mut verbs,
+        ASKED + 30,
+    );
+    assert_eq!(verb(&shown[0]), RequestVerb::Idle);
+    assert!(
+        !open_result(&mut verbs, "p", ASKED + 40),
+        "only a result is opened"
+    );
+
+    let mut later = pull_request(
+        2,
+        "after",
+        PullRequestBadge::Closed,
+        PullRequestChecks::Passing,
+    );
+    later.closed_at_unix_ms = Some(ASKED + 50);
+    let mut shown = rows(&[("p", "idle")]);
+    lay(
+        &mut shown,
+        &github(vec![merged, later]),
+        &mut verbs,
+        ASKED + 60,
+    );
+    assert_eq!(verb(&shown[0]), RequestVerb::Result);
+}
+
 #[test]
 fn a_shared_pull_request_gives_its_duty_to_the_row_on_its_branch() {
     let mut rows = rows(&[("maker", "idle"), ("branch", "idle")]);
@@ -327,5 +396,5 @@ fn a_verbs_time_holds_while_the_verb_holds_and_starts_over_when_it_moves() {
         30
     ));
     assert_eq!(working[0].request.as_ref().unwrap().verb_since_unix_ms, 30);
-    assert!(prune_verbs(&mut verbs, |_| true, &[]));
+    assert!(prune_verbs(&mut verbs, |_| true));
 }
