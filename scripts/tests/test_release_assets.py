@@ -42,11 +42,11 @@ class ReleaseAssetsTest(unittest.TestCase):
             (self.directory / name).write_bytes(data)
             (self.directory / f"{name}.sha256").write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
 
-    def check(self, tag="v1.2.3", release=None):
+    def check(self, tag="v1.2.3", release=None, pages=None):
         args = ["node", str(CHECK), tag, str(self.directory)]
-        if release is not None:
+        if release is not None or pages is not None:
             record = Path(self.scratch.name) / "release.json"
-            record.write_text(json.dumps(release))
+            record.write_text(json.dumps([[release]] if release is not None else pages))
             args.append(str(record))
         return subprocess.run(args, capture_output=True, text=True, timeout=10)
 
@@ -105,6 +105,21 @@ class ReleaseAssetsTest(unittest.TestCase):
         self.assertNotEqual(self.check(release=draft).returncode, 0)
         draft["assets"] = [{"name": self.names[0]}, {"name": self.names[0]}]
         self.assertNotEqual(self.check(release=draft).returncode, 0)
+
+    def test_late_page_draft_and_ambiguous_tags_cannot_bypass_inventory(self):
+        old = {"tag_name": "v0.0.1", "draft": False, "prerelease": False, "assets": []}
+        stale = {"tag_name": "v1.2.3", "draft": True, "prerelease": False,
+                 "assets": [{"name": "hide-v1.2.2-windows-x64.zip"}]}
+        self.assertNotEqual(self.check(pages=[[old], [old], [stale]]).returncode, 0)
+        good = {**stale, "assets": []}
+        self.assertNotEqual(self.check(pages=[[good], [good]]).returncode, 0)
+        self.assertEqual(self.check(pages=[[old], [good]]).returncode, 0)
+        self.assertEqual(self.check(pages=[[]]).returncode, 0)
+
+    def test_malformed_inventory_fails_instead_of_establishing_absence(self):
+        for pages in [{"message": "API failure"}, [None], [[None]], [[{}]]]:
+            with self.subTest(pages=pages):
+                self.assertNotEqual(self.check(pages=pages).returncode, 0)
 
 
 if __name__ == "__main__":

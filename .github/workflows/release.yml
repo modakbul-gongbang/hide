@@ -105,22 +105,15 @@ jobs:
           pattern: hide-package-*
           path: packages
           merge-multiple: true
-      - name: Read existing release without changing it
+      - name: Read every published release and draft without changing them
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p agents/runs/release
-          status=$(curl --silent --show-error --output agents/runs/release/existing.json --write-out '%{http_code}' \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header 'Accept: application/vnd.github+json' \
-            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")
-          case "$status" in
-            200) ;;
-            404) printf 'null\n' > agents/runs/release/existing.json ;;
-            *) printf 'Release lookup failed with HTTP %s\n' "$status" >&2; exit 1 ;;
-          esac
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > agents/runs/release/pages.json
       - name: Require this version of all three targets and an unpublished draft
-        run: node scripts/check-release-assets.mjs "$GITHUB_REF_NAME" packages agents/runs/release/existing.json
+        run: node scripts/check-release-assets.mjs "$GITHUB_REF_NAME" packages agents/runs/release/pages.json
       - name: Create draft release
         uses: softprops/action-gh-release@v3
         with:

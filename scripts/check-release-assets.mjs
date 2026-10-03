@@ -5,9 +5,9 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const [tag, directory, existingReleaseFile] = process.argv.slice(2);
+const [tag, directory, releasePagesFile] = process.argv.slice(2);
 if (!tag || !directory || process.argv.length > 5) {
-  throw new Error("usage: node scripts/check-release-assets.mjs <vX.Y.Z> <directory> [existing-release.json]");
+  throw new Error("usage: node scripts/check-release-assets.mjs <vX.Y.Z> <directory> [release-pages.json]");
 }
 if (!/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag)) {
   throw new Error("a stable release requires a vX.Y.Z tag without prerelease or build suffixes");
@@ -38,10 +38,20 @@ for (const name of archives) {
   for await (const chunk of createReadStream(path.join(directory, name))) hash.update(chunk);
   if (hash.digest("hex") !== match[1]) throw new Error(`${name} does not match its SHA-256`);
 }
-if (existingReleaseFile) {
-  const release = JSON.parse(await fs.readFile(existingReleaseFile, "utf8"));
-  if (release !== null) {
-    if (release.tag_name !== tag || release.draft !== true || release.prerelease !== false) {
+if (releasePagesFile) {
+  const pages = JSON.parse(await fs.readFile(releasePagesFile, "utf8"));
+  if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page))) {
+    throw new Error("release inventory must contain every page from the authenticated release list");
+  }
+  const releases = pages.flat();
+  if (releases.some((release) => release === null || typeof release !== "object" || typeof release.tag_name !== "string")) {
+    throw new Error("release inventory contains an invalid release record");
+  }
+  const matching = releases.filter((release) => release.tag_name === tag);
+  if (matching.length > 1) throw new Error("multiple releases use this tag; review them before retrying");
+  if (matching.length === 1) {
+    const release = matching[0];
+    if (release.draft !== true || release.prerelease !== false) {
       throw new Error("only an existing stable draft for this exact tag may be updated");
     }
     if (!Array.isArray(release.assets)) throw new Error("the existing draft has no asset inventory");

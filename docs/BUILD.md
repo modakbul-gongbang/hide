@@ -90,10 +90,12 @@ The suite runs the focus tests after every other one (`desktop/playwright.config
 ## Release asset gate
 
 The release workflow accepts only a stable `vX.Y.Z` tag whose commit is already an ancestor of protected `main`.
-It serializes runs of the same tag, waits for all three packaging jobs, then runs `node scripts/check-release-assets.mjs <tag> <directory> [existing-release.json]` before touching a GitHub release.
+It serializes runs of the same tag, waits for all three packaging jobs, then runs `node scripts/check-release-assets.mjs <tag> <directory> [release-pages.json]` before touching a GitHub release.
 The directory must contain exactly that tag's macOS ARM64 ZIP, Windows x64 ZIP and Linux x64 TAR.GZ, and one SHA-256 sidecar per archive.
 The gate rejects a missing target, extra or mixed-version files, symbolic links, empty archives, an incorrectly named sidecar, and a mismatched digest; archive hashing streams bytes rather than retaining each package in memory.
 An existing release must be an unpublished, non-prerelease draft for that same tag, with only expected asset names and no duplicates.
+The authenticated release inventory is fully paginated and includes drafts; a tag lookup alone cannot establish that a draft is absent.
+Multiple releases for the same tag or an invalid inventory block the run.
 A failed upload can therefore retry the same draft, while a published release or a draft containing stale assets requires maintainer review and is left unchanged.
 An API lookup failure blocks the update instead of being treated as an absent release.
 
