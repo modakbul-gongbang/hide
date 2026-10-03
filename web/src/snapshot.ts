@@ -1189,6 +1189,8 @@ export type SnapshotRest = {
   workspace_view?: import("./workspace").WorkspaceView;
   /** All retained Browser Views, including those outside the front Workspace. */
   browser_views?: { device_id: string; path: string; view_id: string; area_id: string }[];
+  /** Positive connected Workspace area authority from the core, including empty areas; incarnation changes on revoke/regrant. */
+  browser_scopes?: { device_id: string; path: string; area_id: string; incarnation: number }[];
 };
 
 /**
