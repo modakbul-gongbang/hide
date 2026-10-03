@@ -430,7 +430,12 @@ mod tests {
         });
         let ready = match lines.recv_timeout(Duration::from_secs(10)) {
             Ok(line) => line,
-            Err(_) => panic!("the bridge never became ready: {:?}", bridge.try_recv()),
+            // The bridge drops its output before it hands back its result,
+            // so wait for the result rather than read what is there now.
+            Err(_) => panic!(
+                "the bridge never became ready: {:?}",
+                bridge.recv_timeout(Duration::from_secs(1))
+            ),
         };
         let ready: Value = serde_json::from_str(&ready).unwrap();
         assert_eq!(ready["type"], "ready");
