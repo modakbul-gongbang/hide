@@ -584,7 +584,7 @@ impl Runtime {
                 .workspaces
                 .iter()
                 .flat_map(|view| {
-                    view.layout.areas().into_iter().flat_map(|area| {
+                    view.layout.areas().into_iter().flat_map(move |area| {
                         area.displays
                             .iter()
                             .filter(|display| display.kind == DisplayKind::Browser)

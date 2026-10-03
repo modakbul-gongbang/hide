@@ -94,11 +94,12 @@ impl BrowserControl {
             ));
         }
         let started = process_start(registration.owner_pid).ok_or_else(unavailable)?;
+        let endpoint = registration.endpoint.trim_end_matches('/');
         let mut hosts = self.hosts.lock().map_err(|_| unavailable())?;
         live(&mut hosts);
         if let Some(host) = hosts.get(&registration.owner_pid) {
             if host.started == started
-                && host.endpoint == registration.endpoint
+                && host.endpoint == endpoint
                 && host.token == registration.token
             {
                 return Ok(());
@@ -119,7 +120,7 @@ impl BrowserControl {
             registration.owner_pid,
             Host {
                 started,
-                endpoint: registration.endpoint.trim_end_matches('/').to_owned(),
+                endpoint: endpoint.to_owned(),
                 token: registration.token,
                 caller_key,
             },
@@ -486,6 +487,9 @@ mod tests {
         let token = "0123456789abcdef0123456789abcdef";
         registry.register(make(token)).unwrap();
         registry.register(make(token)).unwrap();
+        let mut with_slash = make(token);
+        with_slash.endpoint.push('/');
+        registry.register(with_slash).unwrap();
         registry
             .release(&make("ffffffffffffffffffffffffffffffff"))
             .unwrap();

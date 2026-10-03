@@ -238,9 +238,7 @@ The harness resolves that directory to an absolute path before starting child pa
 The driver and the marker still go to the one measured pane, so the other panes are idle shells with mounted xterm instances, and the gate is the same as the single-pane run.
 A Chrome window opens on the desktop for the run; the loop throttles in an occluded or minimized window, so leave it visible and report the load recorded beside each trial.
 
-## Projects and Overview cost contract
-
-### Scoped browser gateway discovery
+## Scoped browser gateway discovery
 
 Browser inventory area identity is projected in the existing changed-layout generation pass, one visit per area and display, with no additional notification or timer.
 The daemon's gateway registration retains at most four app process identities; each discovery or action checks those bounded identities outside the Runtime mutex.
@@ -248,6 +246,8 @@ Discovery and browser actions share eight admission permits; exceeding the cap r
 Discovery does loopback HTTP outside the core owner thread, with no proxy or redirect, an eight-second deadline and a 16 KiB answer cap.
 Browser creation reuses Workspace prepare/read/commit and its existing retry-record cap; checkout file reads remain outside the Runtime mutex.
 Idle pages add no discovery work, and ordinary terminal input, snapshots and tab selection do not start gateway requests.
+
+## Projects and Overview cost contract
 
 The shared input surface and empty-state renderer add no timers, tasks, I/O or core state.
 Row hover/focus remains local to visible controls.
