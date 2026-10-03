@@ -15,7 +15,7 @@ import { laneCheckoutCard, shownPullRequest } from "./projects";
 import type { AgentRow, Checkout, Task, Workspace } from "./snapshot";
 import { PR_TONE, ReviewMarks, TaskGlyph } from "./TaskBoards";
 import { useUiStore, type OverviewTab } from "./ui";
-import { opensExternally } from "./host";
+import { holdsCommandKey } from "./host";
 
 // The Overview's lenses (PRD overview-lenses-tiles-agents, agents-graph-view):
 // the tiles in the tab row's place, and the chips, popover and fold line the
@@ -183,7 +183,7 @@ function TileView({ tile, selected, onSelect, onSegment }: { tile: Tile; selecte
 
 /** ⌘-click (Ctrl-click off macOS) means GitHub wherever it lands (D-09). */
 export function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: LensHandlers): boolean {
-  if (!opensExternally(event) || !url) return false;
+  if (!holdsCommandKey(event) || !url) return false;
   event.preventDefault();
   handlers.openGitHub(url, deviceId);
   return true;
@@ -240,7 +240,7 @@ export function PullRequestChip({ project, checkout, onOpen, onRow, now }: { pro
         className="pointer-events-auto relative z-10 rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
         onClick={(event) => {
           event.stopPropagation();
-          if (opensExternally(event)) onOpen(pr.url);
+          if (holdsCommandKey(event)) onOpen(pr.url);
           else onRow(pr.number);
         }}
       >

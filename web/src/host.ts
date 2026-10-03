@@ -118,21 +118,13 @@ export function keySystem(): KeySystem {
 }
 
 /**
- * Whether a press inside a text field, a palette or a board holds the
- * system's own command key, as ⌘↵ does: ⌘ on macOS, Ctrl elsewhere
- * (`fieldChord`).
+ * Whether a press or a click holds the system's own command key: ⌘ on macOS,
+ * Ctrl elsewhere (`fieldChord`), as ⌘↵ in a palette does and as a click that
+ * asks for the operating system rather than the shell does (Ctrl-click is
+ * not the context menu off macOS).
  */
 export function holdsCommandKey(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
   return holdsFieldModifier(event, keySystem());
-}
-
-/**
- * Whether a click asks for the operating system rather than the shell: ⌘ on
- * macOS, Ctrl elsewhere, where ⌘ does not exist and Ctrl-click is not the
- * context menu.
- */
-export function opensExternally(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
-  return holdsCommandKey(event);
 }
 
 /** The OS file manager item's host: its label on this OS, or null in a plain browser tab, which has none. */

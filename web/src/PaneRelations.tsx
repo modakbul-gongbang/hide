@@ -10,7 +10,7 @@ import { DeviceChip } from "./components/device-chip";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
 import type { PaneRow, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { pasteText, selectAllText, terminalSelectionText } from "./terminals";
+import { copySelection, pasteClipboard, selectAllText } from "./terminals";
 import { useUiStore } from "./ui";
 
 // The delegation tree where the operator works (PRD S6 D-07, B14-B16): a
@@ -237,7 +237,6 @@ export function terminalMenuItems(pane: PaneRow, title: string, context: Termina
 
 type MenuOpen = { x: number; y: number; items: MenuEntry<PaneMenuId>[] };
 
-const noteDiagnostic = (message: string) => useShellStore.getState().noteDiagnostic(message);
 
 export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
   const [open, setOpen] = useState<MenuOpen | null>(null);
@@ -250,21 +249,11 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
         return actions.closePane(pane.id);
       case "sleep_agent":
         return actions.sleepAgent(pane.id);
-      case "copy": {
-        const text = terminalSelectionText(pane.id);
-        if (text === null) return;
-        if (!navigator.clipboard) return noteDiagnostic("pane menu copy: no clipboard in this host");
-        void navigator.clipboard.writeText(text).catch(() => noteDiagnostic("pane menu copy: clipboard write refused"));
+      case "copy":
+        void copySelection(pane.id, "pane menu");
         return;
-      }
       case "paste":
-        if (!navigator.clipboard) return noteDiagnostic("pane menu paste: no clipboard in this host");
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) pasteText(pane.id, text);
-          })
-          .catch(() => noteDiagnostic("pane menu paste: clipboard read refused"));
+        void pasteClipboard(pane.id, "pane menu");
         return;
       case "select_all":
         return selectAllText(pane.id);

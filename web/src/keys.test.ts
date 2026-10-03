@@ -50,7 +50,8 @@ describe("terminalKey on Windows and Linux", () => {
   it("copies on Ctrl+Shift+C and pastes on Ctrl+Shift+V, by physical key on any layout", () => {
     expect(terminalKey(event({ key: "C", code: "KeyC", ctrlKey: true, shiftKey: true }), "pc", true)).toEqual({ kind: "copy" });
     expect(terminalKey(event({ key: "С", code: "KeyC", ctrlKey: true, shiftKey: true }), "pc", true)).toEqual({ kind: "copy" });
-    expect(terminalKey(event({ key: "C", code: "KeyC", ctrlKey: true, shiftKey: true }), "pc", false)).toBeNull();
+    // Nothing selected copies nothing, but the chord stays the terminal's (Chrome's element inspector never opens).
+    expect(terminalKey(event({ key: "C", code: "KeyC", ctrlKey: true, shiftKey: true }), "pc", false)).toEqual({ kind: "copy" });
     expect(terminalKey(event({ key: "V", code: "KeyV", ctrlKey: true, shiftKey: true }), "pc", false)).toEqual({ kind: "paste" });
   });
 

@@ -1206,7 +1206,7 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
             ? `The number is the order on screen: tabs left to right, Agents rows top to bottom, first to ninth. Hold ${system === "mac" ? "⌘ or ⌥" : "Ctrl+Shift or Alt"} to see it. These chords are fixed; a pane chord bound onto one is refused.`
             : system === "mac"
               ? "The desktop app's ⌘1-9 and ⌥1-9; a browser keeps its own ⌘1-9, so this host has no numbered chords."
-              : "The desktop app's Ctrl+Shift+1-9 and Alt+1-9; a browser keeps its own Ctrl+1-9, so this host has no numbered chords."
+              : "The desktop app's Ctrl+Shift+1-9 and Alt+1-9; a browser tab has no numbered chords."
         }
         data-settings-group="numbered-chords"
       >

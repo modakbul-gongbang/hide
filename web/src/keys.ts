@@ -1,26 +1,23 @@
 /** The modified-key input policy, for xterm.js attachCustomKeyEventHandler. */
 
-import { modChord, type Chord, type KeySystem } from "./shortcuts";
+import { modChord, TERMINAL_COPY, TERMINAL_PASTE, type Chord, type KeySystem } from "./shortcuts";
 
 export const SHIFT_ENTER = new Uint8Array([0x1b, 0x0d]);
 export const COMMAND_DELETE = new Uint8Array([0x15]);
 export const LINE_START = new Uint8Array([0x01]);
 export const LINE_END = new Uint8Array([0x05]);
 
-/** Copy and paste in a terminal, as macOS chords: ⌘C and ⌘V, which the rule makes Ctrl+Shift+C and Ctrl+Shift+V elsewhere. */
-export const TERMINAL_COPY: Chord = { code: "KeyC", meta: true };
-export const TERMINAL_PASTE: Chord = { code: "KeyV", meta: true };
-
 /**
  * What a modified key does in a terminal on `system`, or null when xterm
  * handles it as typed input:
  * - bytes the shell reads for a macOS text-editing key (⇧↩ on every system;
- *   ⌘⌫, ⌘← and ⌘→ on macOS, which Windows and Linux spell with
- *   Ctrl+Backspace, Home and End, keys xterm already sends);
+ *   ⌘⌫, ⌘← and ⌘→ on macOS, which Windows and Linux reach with Ctrl+U,
+ *   Home and End, keys xterm already sends);
  * - a copy of the selection: ⌘C on macOS is the menu's own; elsewhere
- *   Ctrl+Shift+C, and Ctrl+C while there is a selection, as Windows
- *   Terminal does, so Ctrl+C still interrupts when nothing is selected;
- * - a paste: Ctrl+Shift+V elsewhere, which the page's own paste carries out.
+ *   Ctrl+Shift+C, which is the terminal's even with nothing selected, and
+ *   Ctrl+C while there is a selection, as Windows Terminal does, so Ctrl+C
+ *   still interrupts when nothing is selected;
+ * - a paste: Ctrl+Shift+V elsewhere.
  */
 export type TerminalKey = { kind: "bytes"; bytes: Uint8Array } | { kind: "copy" } | { kind: "paste" };
 
@@ -43,7 +40,6 @@ export function terminalKey(event: KeyEventLike, system: KeySystem, selection: b
     return null;
   }
   if (presses(event, modChord(TERMINAL_PASTE, system))) return { kind: "paste" };
-  if (!selection) return null;
-  if (presses(event, modChord(TERMINAL_COPY, system)) || presses(event, { code: "KeyC", ctrl: true })) return { kind: "copy" };
+  if (presses(event, modChord(TERMINAL_COPY, system)) || (selection && presses(event, { code: "KeyC", ctrl: true }))) return { kind: "copy" };
   return null;
 }

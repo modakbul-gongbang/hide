@@ -64,7 +64,7 @@ import {
 import { laneCheckoutCard, relativeActivity } from "./projects";
 import type { AgentRow, IssueDetail, IssueLabel, Task, Workspace } from "./snapshot";
 import type { TasksMode } from "./ui";
-import { opensExternally } from "./host";
+import { holdsCommandKey } from "./host";
 
 // The Issues views (PRD task-agents-views, reworked issue-first on
 // 2026-09-28 and issues-only by PRD overview-lenses-issues), drawn the same
@@ -125,7 +125,7 @@ export type BoardPage = { panel: string | null; focusedPaneId: string | null };
 
 /** ⌘-click (Ctrl-click off macOS) means GitHub wherever it lands (D-09). */
 function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: BoardHandlers): boolean {
-  if (!opensExternally(event) || !url) return false;
+  if (!holdsCommandKey(event) || !url) return false;
   event.preventDefault();
   event.stopPropagation();
   handlers.openGitHub(url, deviceId);

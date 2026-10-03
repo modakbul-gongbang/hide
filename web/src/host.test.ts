@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { keySystem, opensExternally } from "./host";
+import { keySystem, holdsCommandKey } from "./host";
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("opensExternally", () => {
+describe("holdsCommandKey", () => {
   it("takes ⌘ on a Mac and Ctrl elsewhere, never the other one", () => {
     vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" });
-    expect(opensExternally({ metaKey: true, ctrlKey: false })).toBe(true);
-    expect(opensExternally({ metaKey: false, ctrlKey: true })).toBe(false);
+    expect(holdsCommandKey({ metaKey: true, ctrlKey: false })).toBe(true);
+    expect(holdsCommandKey({ metaKey: false, ctrlKey: true })).toBe(false);
     vi.stubGlobal("navigator", { platform: "Win32", userAgent: "" });
-    expect(opensExternally({ metaKey: false, ctrlKey: true })).toBe(true);
-    expect(opensExternally({ metaKey: true, ctrlKey: false })).toBe(false);
+    expect(holdsCommandKey({ metaKey: false, ctrlKey: true })).toBe(true);
+    expect(holdsCommandKey({ metaKey: true, ctrlKey: false })).toBe(false);
   });
 });
 

@@ -9,7 +9,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { countSent, registerFolder, screenshot, sendEvent } from "./wire";
-import { chord, mod } from "./chords";
+import { chord, mod, SYSTEM } from "./chords";
 
 type Daemon = { origin: string; token: string; home: string; stop: () => void };
 
@@ -391,16 +391,15 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.locator(`[data-tab="${herdr.tab}"]`).click();
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
 
-    // ⌘/ opens the sheet from the registry with the seven moved chords marked.
+    // ⌘/ opens the sheet from the registry with the moved chords marked.
     // The pane keeps keyboard focus under the sheet, and the Escape that
     // closes it is the shell's alone: no ESC byte reaches the program.
     await page.locator('[data-pane-view][data-focused="true"] .xterm-helper-textarea').focus();
     const keysBeforeSheet = sent.get("key") ?? 0;
     await page.keyboard.press(chord("shortcuts"));
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
-    // The S5 Settings row (⌥, in place of Chrome's ⌘,) is a move and Add
-    // project (desktop app only) no longer is, so seven rows are moved;
-    // Toggle Explorer (issue 170) is the 28th row, and the two numbered
+    // On macOS the S5 Settings row (⌥, in place of Chrome's ⌘,) is a move
+    // and Add project (desktop app only) no longer is; Toggle Explorer (issue 170) is the 28th row, and the two numbered
     // families (Select tab 1-9, Select agent 1-9) fold into one row each,
     // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
     // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st,
@@ -409,7 +408,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // move; the global Recent Panels pair has no default chord), and the eight
     // Agent and View area commands (no default chord either) the 35th to 42nd.
     await expect(page.locator("[data-shortcut]")).toHaveCount(42);
-    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(7);
+    // Chrome keeps seven desktop chords on macOS and four on Windows and Linux.
+    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(SYSTEM === "mac" ? 7 : 4);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-shortcut-sheet]")).toHaveCount(0);

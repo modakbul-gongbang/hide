@@ -1229,12 +1229,12 @@ Which system applies is the one the operator types on: the desktop app's, or the
 
 ### The rule
 
-On Windows and Linux every ⌘ is Ctrl+Shift, as in Windows Terminal, GNOME Terminal, WezTerm and kitty, so a plain Ctrl key always reaches the shell and the agent CLIs (Ctrl+C, Ctrl+R, Ctrl+W, Ctrl+K, Ctrl+D and the rest).
+On Windows and Linux every ⌘ is Ctrl+Shift, as in Windows Terminal, GNOME Terminal, WezTerm and kitty, so a plain Ctrl key reaches the shell and the agent CLIs (Ctrl+C, Ctrl+R, Ctrl+W, Ctrl+K, Ctrl+D and the rest); the only plain Ctrl keys the app takes are text size and, in a browser tab, the ones Chrome keeps for itself.
 A ⇧ or ⌥ that a macOS chord adds to ⌘ is Alt there, the layer kitty and WezTerm put above Ctrl+Shift, because Shift is already held: ⌘T is Ctrl+Shift+T and ⇧⌘T is Ctrl+Shift+Alt+T.
-A chord without ⌘ is the same keys on every system: ⌃Tab is Ctrl+Tab and ⌥1 is Alt+1.
+A chord without ⌘ is the same keys on every system: ⌃Tab is Ctrl+Tab and ⌥1 is Alt+1, so those Alt chords take keys a shell reads as Meta, as they do on a Mac whose terminal sends Option as Meta.
 Chords are written in words joined with `+`, in the order Ctrl, Shift, Alt, as VS Code writes them, so every app chord begins with the same `Ctrl+Shift+`.
 AltGr types a character on Windows and Linux layouts (Windows reports it as Ctrl+Alt), and a key pressed with it is never a chord.
-A stored chord set keeps macOS chords, so a set a Mac saved means the same keys through the rule on Windows and Linux; on those systems a desktop pane chord needs Ctrl+Shift, a browser chord Ctrl or Alt, and the Windows or Super key is refused because the system keeps it.
+A stored chord set keeps macOS chords, so a set a Mac saved means the same keys through the rule on Windows and Linux, except that ⇧⌘X and ⌥⌘X are both Ctrl+Shift+Alt+X there, so a set binding both is refused whole and the defaults run; on those systems a desktop pane chord needs Ctrl+Shift, a browser chord Ctrl or Alt, and the Windows or Super key is refused because the system keeps it.
 
 ### Exceptions
 
@@ -1250,14 +1250,15 @@ Each exception has a dominant convention on Windows and Linux, or a chord the sy
 
 | Action | macOS | Windows and Linux |
 | --- | --- | --- |
-| Copy the selection | `⌘C` | `Ctrl+Shift+C`, or `Ctrl+C` while text is selected |
+| Copy the selection | `⌘C` | `Ctrl+Shift+C` (the terminal's even with nothing selected, so Chrome's element inspector never opens), or `Ctrl+C` while text is selected |
 | Interrupt the program | `⌃C` | `Ctrl+C` with nothing selected |
 | Paste | `⌘V` | `Ctrl+Shift+V` |
-| Delete to the line start, go to the line start or end | `⌘⌫`, `⌘←`, `⌘→` (sent as ^U, ^A, ^E) | the system's own `Ctrl+Backspace`, `Home` and `End`, which the terminal sends as typed |
+| Delete to the line start, go to the line start or end | `⌘⌫`, `⌘←`, `⌘→` (sent as ^U, ^A, ^E) | `Ctrl+U`, `Home` and `End`, which the terminal sends as typed |
 | A newline the agent keeps in its prompt | `⇧↩` | `Shift+Enter` |
 
 Ctrl+C copies only while text is selected and clears the selection as it copies, as Windows Terminal does, so the next Ctrl+C interrupts; with nothing selected it reaches the program.
-Every other plain Ctrl key reaches the program.
+Every other plain Ctrl key reaches the program, apart from text size (Ctrl+=, Ctrl+- and Ctrl+0).
+Settings, Shortcuts refuses a binding on the terminal's copy or paste chord.
 
 ### Every command
 
@@ -1268,7 +1269,7 @@ A command marked none has no chord until the operator binds one in Settings, Sho
 | --- | --- | --- | --- | --- |
 | New tab | `⌘T` | `Ctrl+Shift+T` | `⌥T` | `Alt+T` |
 | Close focused view or pane | `⌘W` | `Ctrl+Shift+W` | `⌥W` | `Alt+W` |
-| Reopen closed tab | `⇧⌘T` | `Ctrl+Shift+Alt+T` | `⌥⇧T` | `Shift+Alt+T` |
+| Reopen closed tab | `⇧⌘T` | `Ctrl+Shift+Alt+T` | `⌥⇧T` | `Ctrl+Shift+Alt+T` |
 | Select tab 1-9 | `⌘1 … ⌘9` | `Ctrl+Shift+1 … Ctrl+Shift+9` | none | none |
 | Add project | `⇧⌘N` | `Ctrl+Shift+Alt+N` | none | none |
 | Start agent | `⌘N` | `Ctrl+Shift+N` | none | none |
@@ -1293,7 +1294,7 @@ A command marked none has no chord until the operator binds one in Settings, Sho
 | Split right | `⌘D` | `Ctrl+Shift+D` | `⌘D` | `Ctrl+Shift+D` |
 | Split down | `⇧⌘D` | `Ctrl+Shift+Alt+D` | `⇧⌘D` | `Ctrl+Shift+Alt+D` |
 | Zoom pane | `⌥⌘↩` | `Ctrl+Shift+Alt+Enter` | `⌥⌘↩` | `Ctrl+Shift+Alt+Enter` |
-| Close pane | `⇧⌘W` | `Ctrl+Shift+Alt+W` | `⌥⇧W` | `Shift+Alt+W` |
+| Close pane | `⇧⌘W` | `Ctrl+Shift+Alt+W` | `⌥⇧W` | `Ctrl+Shift+Alt+W` |
 | Larger text (exception) | `⌘=` | `Ctrl+=` | `⌘=` | `Ctrl+=` |
 | Smaller text (exception) | `⌘-` | `Ctrl+-` | `⌘-` | `Ctrl+-` |
 | Reset text size (exception) | `⌘0` | `Ctrl+0` | `⌘0` | `Ctrl+0` |
@@ -1306,7 +1307,7 @@ A command marked none has no chord until the operator binds one in Settings, Sho
 | Grow View area | none | none | none | none |
 | Shrink View area | none | none | none | none |
 | Move to Trash (exception) | `⌘⌫` | `Delete` | `⌘⌫` | `Delete` |
-| Settings | `⌘,` | `Ctrl+Shift+,` | `⌥,` | `Alt+,` |
+| Settings | `⌘,` | `Ctrl+Shift+,` | `⌥,` | `Ctrl+Shift+,` |
 | Keyboard shortcuts | `⌘/` | `Ctrl+Shift+/` | `⌘/` | `Ctrl+Shift+/` |
 
 ## Keycaps, tooltips, and icon buttons

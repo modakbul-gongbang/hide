@@ -10,16 +10,31 @@ import { defaultChord, displayChord, fieldChord, keySystemOf, modChord, type Cho
 
 export const SYSTEM = keySystemOf(process.platform);
 
+/** A chord's modifiers as Playwright names them. */
+function modifiers(chord: Chord): string[] {
+  return [chord.ctrl && "Control", chord.alt && "Alt", chord.shift && "Shift", chord.meta && "Meta"].filter((key): key is string => !!key);
+}
+
 /** A chord as Playwright presses it: its modifiers, then the physical key by its code. */
 function keys(chord: Chord): string {
-  return [chord.ctrl && "Control", chord.alt && "Alt", chord.shift && "Shift", chord.meta && "Meta", chord.code].filter(Boolean).join("+");
+  return [...modifiers(chord), chord.code].join("+");
+}
+
+function bound(id: CommandId, host: HostKind): Chord {
+  const chord = defaultChord(id, host, SYSTEM);
+  if (!chord) throw new Error(`${id} has no ${host} chord on ${SYSTEM}`);
+  return chord;
 }
 
 /** The default chord of `id` on `host` for this system; a command without one is a spec error. */
 export function chord(id: CommandId, host: HostKind = "browser"): string {
-  const bound = defaultChord(id, host, SYSTEM);
-  if (!bound) throw new Error(`${id} has no ${host} chord on ${SYSTEM}`);
-  return keys(bound);
+  return keys(bound(id, host));
+}
+
+/** `id`'s default chord split for a cycle held open: hold `modifiers`, press `key`, release. */
+export function held(id: CommandId, host: HostKind = "browser"): { modifiers: string[]; key: string } {
+  const chord = bound(id, host);
+  return { modifiers: modifiers(chord), key: chord.code };
 }
 
 /** A macOS ⌘ chord through the rule: `mod("KeyC")` is Meta+KeyC on macOS and Control+Shift+KeyC elsewhere. */
@@ -42,7 +57,5 @@ export function label(chord: Chord): string {
 
 /** How the shell writes `id`'s default chord on `host` for this system. */
 export function commandLabel(id: CommandId, host: HostKind = "browser"): string {
-  const bound = defaultChord(id, host, SYSTEM);
-  if (!bound) throw new Error(`${id} has no ${host} chord on ${SYSTEM}`);
-  return label(bound);
+  return label(bound(id, host));
 }

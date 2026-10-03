@@ -26,7 +26,7 @@ import { checkoutCard, laneCheckoutCard, pullRequestCard, pullRequestKind, relat
 import type { Workspace } from "./snapshot";
 import { CardAgentRow, ChecksMark, PR_TONE, REVIEW, TaskGlyph } from "./TaskBoards";
 import { useUiStore, type PrLens } from "./ui";
-import { holdsCommandKey, opensExternally } from "./host";
+import { holdsCommandKey } from "./host";
 
 // The PRs tab of a Project's Overview (PRD overview-lenses-prs): the project's
 // pull requests grouped by whose move it is, the operator's first. At rest a
@@ -162,7 +162,7 @@ function PullRequestRowView({ row, project, open, onToggle, onUnfold, handlers, 
           aria-label={`PR #${row.number} ${row.title}`}
           className="absolute inset-0 rounded-sm outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
           onClick={(event) => {
-            if (opensExternally(event)) github(row.url);
+            if (holdsCommandKey(event)) github(row.url);
             else onToggle();
           }}
           onKeyDown={(event) => {

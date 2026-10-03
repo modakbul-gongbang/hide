@@ -24,7 +24,6 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { branchProblem, taskFor } from "./workspaceManage";
 import { useErrorSince } from "./WorkspaceDialogs";
-import { holdsCommandKey } from "./host";
 import { fieldLabel } from "./shortcutLabels";
 
 export const DEFAULT_SETTINGS: IssueSettings = { ai_worktree_name: true, closes_instruction: true };
@@ -56,7 +55,7 @@ export function Field({ label, aside, children }: { label: string; aside?: React
 
 /** ⌘↵ (Ctrl+Enter off macOS) sends the form from any field, the way the footer's keycap says. */
 export function submitOnCommandEnter(event: React.KeyboardEvent<HTMLFormElement>) {
-  if (event.key === "Enter" && holdsCommandKey(event)) {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
     event.currentTarget.requestSubmit();
   }

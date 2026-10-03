@@ -399,7 +399,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     const chip = overview.locator('[data-overview-card][data-task-key="github:acme/repo#5"] [data-lens-pr-chip="21"]');
     await expect(chip).toBeVisible({ timeout: 30_000 });
     const github = page.waitForEvent("popup");
-    await chip.click({ modifiers: ["Meta"] });
+    await chip.click({ modifiers: ["ControlOrMeta"] });
     expect((await github).url()).toBe("https://github.com/acme/repo/pull/21");
     await (await github).close();
     await chip.click();

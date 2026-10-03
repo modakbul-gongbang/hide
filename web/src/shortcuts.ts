@@ -78,6 +78,10 @@ export function macChord(chord: Chord, system: KeySystem): Chord | null {
   return chord.alt ? { code: chord.code, meta: true, shift: true } : { code: chord.code, meta: true };
 }
 
+/** Copy and paste in a terminal, as macOS chords: ⌘C and ⌘V, which the rule makes Ctrl+Shift+C and Ctrl+Shift+V elsewhere. */
+export const TERMINAL_COPY: Chord = { code: "KeyC", meta: true };
+export const TERMINAL_PASTE: Chord = { code: "KeyV", meta: true };
+
 /**
  * A chord inside a text field, a palette, a board or a document, where no
  * terminal holds the keyboard: the system's own command key, ⌘ on macOS and
@@ -247,22 +251,26 @@ export const REGISTRY: readonly Command[] = [
   { id: "shortcuts", title: "Keyboard shortcuts", group: "Help", browser: { code: "Slash", meta: true }, electron: { code: "Slash", meta: true }, moved: false },
 ];
 
-const TEXT_SIZE_KEYS = "Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser size text with Ctrl and =, - or 0.";
-const RECENT_PROJECT_KEYS = "Alt+Tab is the system's window switcher on Windows and Linux and never reaches an app, so the cycle moves to ` under the Ctrl+Shift rule (macOS keeps ⌘` for its own window cycle, which is why it uses ⌥Tab).";
-
 /**
  * The commands whose chord on Windows and Linux is not the rule's
- * (`modChord`), each with why: a dominant convention there, or a chord the
- * system keeps. The same keys hold in both hosts; a host without the command
- * stays without it, and an operator's own binding replaces the entry.
+ * (`modChord`): a dominant convention there, or a chord the system keeps.
+ * The same keys hold in both hosts; a host without the command stays
+ * without it, and an operator's own binding replaces the entry.
  */
-export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord: Chord; why: string; passthrough?: string }>>> = {
-  recent_project: { chord: { code: "Backquote", ctrl: true, shift: true }, why: RECENT_PROJECT_KEYS },
-  previous_recent_project: { chord: { code: "Backquote", ctrl: true, shift: true, alt: true }, why: RECENT_PROJECT_KEYS },
-  text_larger: { chord: { code: "Equal", ctrl: true }, why: TEXT_SIZE_KEYS },
-  text_smaller: { chord: { code: "Minus", ctrl: true }, why: TEXT_SIZE_KEYS },
-  text_reset: { chord: { code: "Digit0", ctrl: true }, why: TEXT_SIZE_KEYS },
-  move_to_trash: { chord: { code: "Delete" }, why: "Windows Explorer and the Linux file managers move a file to the Recycle Bin or Trash with Delete.", passthrough: "Explorer only" },
+export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord: Chord; passthrough?: string }>>> = {
+  // Alt+Tab is the system's window switcher and never reaches an app, so the
+  // cycle moves to ` under the rule (macOS keeps ⌘` for its own window cycle,
+  // which is why it uses ⌥Tab).
+  recent_project: { chord: { code: "Backquote", ctrl: true, shift: true } },
+  previous_recent_project: { chord: { code: "Backquote", ctrl: true, shift: true, alt: true } },
+  // Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser size
+  // text with Ctrl and =, - or 0.
+  text_larger: { chord: { code: "Equal", ctrl: true } },
+  text_smaller: { chord: { code: "Minus", ctrl: true } },
+  text_reset: { chord: { code: "Digit0", ctrl: true } },
+  // Windows Explorer and the Linux file managers move a file to the Recycle
+  // Bin or Trash with Delete.
+  move_to_trash: { chord: { code: "Delete" }, passthrough: "Explorer only" },
 };
 
 /** Chords Chrome or the system never hands to a page, per system; a browser chord using one is a registry error. */
@@ -313,15 +321,19 @@ export function isChromeReserved(chord: Chord, system: KeySystem): boolean {
   return CHROME_RESERVED[system].some((reserved) => chordEquals(reserved, chord));
 }
 
+// A browser chord moved off the desktop one on macOS returns to the desktop
+// chord on Windows and Linux unless Chrome keeps that chord there too, so the
+// only browser chords that differ are the ones Chrome forces.
 function pcCommand(command: Command): Command {
   const deviation = PC_KEYS[command.id];
   const keys = (chord: Chord | null) => chord && (deviation?.chord ?? modChord(chord, "pc"));
   const electron = keys(command.electron);
+  const moved = command.moved && electron !== null && isChromeReserved(electron, "pc");
   return {
     ...command,
-    browser: keys(command.browser),
+    browser: command.moved && !moved ? electron : keys(command.browser),
     electron,
-    moved: command.moved && electron !== null && isChromeReserved(electron, "pc"),
+    moved,
     ...(deviation?.passthrough ? { passthrough: deviation.passthrough } : {}),
   };
 }
@@ -544,6 +556,8 @@ export function bindingProblem(id: CommandId, chord: Chord, registry: readonly C
     if (!chord.meta && !chord.ctrl && !chord.alt) return `Include ${system === "mac" ? "⌘, ⌥ or ⌃" : "Ctrl or Alt"} so typing in a terminal stays typing.`;
     if (isChromeReserved(chord, system)) return `${shown} is kept by Chrome or ${system === "mac" ? "macOS" : "the system"} and never reaches the page.`;
   }
+  if (chordEquals(chord, modChord(TERMINAL_COPY, system))) return `${shown} copies a terminal's selection.`;
+  if (chordEquals(chord, modChord(TERMINAL_PASTE, system))) return `${shown} pastes into a terminal.`;
   const taken = registry.find((command) => {
     const bound = command.id === id ? null : hostChord(command, host);
     return bound && chordEquals(bound, chord);
