@@ -391,7 +391,7 @@ Each refuses with `NotFound`, `InvalidInput` or `Unsupported` rather than guessi
 The Windows check builds the whole workspace, tests included.
 What has not moved yet: the `O_NONBLOCK` open that keeps a FIFO from stalling a reader (`hide-host` document, bytes, index and save, `hide-session`), the `readlinkat` in `hide-host/src/list.rs`, hided's root opens in `boundary.rs` (`openat` beneath the pinned root on Unix, a final-path check on Windows) and its Windows `ShellExecuteW` opener, and the stop signals in `hided/src/lib.rs` (tokio's per-system handlers).
 What stays Unix by design until a later slice: the device's workspace bridge (a Unix socket that attests the caller by its kernel peer pid) and the one-time move of a Mac's old state folder (`hided/src/state_move.rs`; no Windows build ever wrote that folder, so `Env` names none there).
-hided starts on Windows, and `hided/tests/handshake.rs` runs there except the tests that reach a checkout through a folder link, which on Windows is a junction judged by the boundary's final-path check, and the FIFO and file index tests.
+hided starts on Windows, and `hided/tests/handshake.rs` runs there except the tests that reach a checkout through a folder link, which on Windows is a junction judged by the boundary's final-path check, and the FIFO test.
 On Windows a pane bootstrap caller is bound to its pane when it descends from the pane's shell; the checkout binding needs the caller's working directory, which `cwd_of` cannot read there, so a caller outside a pane is refused `caller_unavailable`.
 
 `path` is the sixth module and decides how a path is spelled between machines: UTF-8 with `/` between names, the spelling Git's index, LSP and VS Code's remote URIs use.

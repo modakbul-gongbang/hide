@@ -48,6 +48,7 @@ impl OpenHandler {
     /// eventual application opened it. An explicit CLI helper is ended within
     /// ten seconds or on daemon stop; the OS default is handed off at spawn.
     pub fn launch(&self, path: &Path) -> Result<(), &'static str> {
+        let path = &program_spelling(path);
         let permit = self
             .slots
             .clone()
@@ -115,6 +116,17 @@ impl OpenHandler {
         });
         Ok(())
     }
+}
+
+/// The path as a program on this system is handed one: on Windows without
+/// the `\\?\` prefix a canonical path carries, which `cmd.exe` and many
+/// programs cannot read, and with `\` between names; elsewhere the path as
+/// it is. It goes through the path model's wire spelling and back, and a
+/// path the wire cannot spell (not UTF-8) is handed over unchanged.
+fn program_spelling(path: &Path) -> PathBuf {
+    hide_platform::path::to_wire(path)
+        .and_then(|wire| hide_platform::path::from_wire(&wire))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(target_os = "macos")]

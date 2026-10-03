@@ -68,6 +68,8 @@ fn fake_program() {
         |suffix| std::fs::write(sidecar(&marker, suffix), std::process::id().to_string()).unwrap();
     match std::env::var(ROLE).unwrap().as_str() {
         "opener" => {
+            // The path exactly as the helper was handed it.
+            std::fs::write(sidecar(&marker, "arg"), marker.to_string_lossy().as_bytes()).unwrap();
             write_pid("pid");
             let mut child = Command::new(std::env::current_exe().unwrap())
                 .args(["--ignored", "--exact", "fake_program", "--nocapture"])
@@ -228,6 +230,34 @@ fn acceptance_timeout_ends_cli_spawned_before_watcher() {
     assert!(owner.0.wait().unwrap().success());
     assert_gone(pid);
     assert_gone(child);
+}
+
+/// A canonical path is `\\?\C:\...` on Windows, which `cmd.exe` cannot read;
+/// the helper is handed the plain spelling of the same file.
+#[tokio::test]
+async fn a_helper_is_handed_the_plain_spelling_of_a_canonical_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = fake_opener(dir.path());
+    let handler = handler(&script, Arc::new(Notify::new()));
+    let canonical = std::fs::canonicalize(dir.path()).unwrap().join("canonical");
+    let plain = hide_platform::fs::identity::canonical(dir.path())
+        .unwrap()
+        .join("canonical");
+    assert_eq!(handler.launch(&canonical), Ok(()));
+    let handed = sidecar(&plain, "arg");
+    let until = Instant::now() + Duration::from_secs(20);
+    while std::fs::read_to_string(&handed).map_or(true, |text| text.is_empty()) {
+        assert!(
+            Instant::now() < until,
+            "fake helper never wrote its argument"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        std::fs::read_to_string(&handed).unwrap(),
+        plain.to_string_lossy()
+    );
+    // The runtime's end drops the handler's task, whose owner ends the helper.
 }
 
 #[test]
