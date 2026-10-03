@@ -635,6 +635,7 @@ mod tests {
 
     /// A device that has not moved hcoord yet keeps the Node its old shim
     /// named, so the move does not swap the operator's Node for another.
+    #[cfg(unix)]
     #[test]
     fn the_old_homes_shim_still_names_the_node() {
         let stop = AtomicBool::new(false);
