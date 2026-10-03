@@ -146,6 +146,52 @@ test('a descendant override key whose id exists in the imported library is accep
   assert.deepEqual(check(document, path.join(root, 'hide-screens.pen')), []);
 });
 
+test('nested imported override paths resolve through each component instance', t => {
+  const root = fixture(t);
+  const library = doc([
+    screen('workspace-master', 'Workspace', {reusable: true, children: [{id: 'toolbar-instance', type: 'ref', ref: 'toolbar-master'}]}),
+    screen('toolbar-master', 'Toolbar', {reusable: true, children: [{id: 'toggle-instance', type: 'ref', ref: 'toggle-master'}]}),
+    screen('toggle-master', 'Toggle', {reusable: true, children: [{id: 'glyph', type: 'icon', name: 'Toggle glyph'}]}),
+    {id: 'outside-toolbar-instance', type: 'ref', ref: 'toolbar-master'},
+    screen('unrelated', 'Unrelated'),
+  ]);
+  fs.writeFileSync(path.join(root, 'lib.pen'), JSON.stringify(library));
+  const instance = {id: 'window', type: 'ref', ref: 'hideui:workspace-master', descendants: {
+    'hideui:toolbar-instance/hideui:toggle-instance/hideui:glyph': {fill: '#000000'},
+  }};
+  const document = doc([screen('scr', 'Screen / Workspace', {children: [themed('light', 'Light', [instance]), themed('dark', 'Dark')]})], {
+    imports: {hideui: './lib.pen'},
+  });
+  const file = path.join(root, 'hide-screens.pen');
+  assert.deepEqual(check(document, file), []);
+  for (const invalid of [
+    'hideui:toolbar-instance/hideui:toggle-instance/hideui:unrelated',
+    'hideui:toolbar-instance/unknown:toggle-instance/hideui:glyph',
+    'hideui:toolbar-master/hideui:toggle-instance/hideui:glyph',
+    'hideui:toolbar-instance/hideui:missing/hideui:glyph',
+    'hideui:outside-toolbar-instance/hideui:toggle-instance/hideui:glyph',
+  ]) {
+    instance.descendants = {[invalid]: {fill: '#000000'}};
+    assert.ok(check(document, file).some(f => f.includes(invalid) && f.includes('do not resolve')), invalid);
+  }
+});
+
+test('an explicit empty paint list clears a themed color without accepting a missing override', t => {
+  const root = fixture(t);
+  const libraryPath = writeColorLibrary(root);
+  const instance = {id: 'a', type: 'ref', ref: 'hideui:btn-m', fill: [], descendants: {'hideui:btn-lb': {fill: []}}};
+  const document = doc([screen('scr', 'Screen / Main', {
+    children: [themed('light', 'Light', [instance]), themed('dark', 'Dark')],
+  })], {imports: {hideui: `./${libraryPath}`}});
+  const file = path.join(root, 'hide-screens.pen');
+  assert.deepEqual(check(document, file), []);
+  delete instance.fill;
+  assert.ok(check(document, file).some(f => f.includes('a (hideui:btn-m) does not restate its fill')));
+  instance.fill = [];
+  delete instance.descendants['hideui:btn-lb'].fill;
+  assert.ok(check(document, file).some(f => f.includes('descendant btn-lb does not restate its fill')));
+});
+
 test('freeform text content shaped like "alias:id" (a pane label such as "w2:p1") is not mistaken for an unresolved ref', t => {
   const root = fixture(t);
   const document = doc([screen('scr-1', 'Screen / Main', {

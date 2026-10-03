@@ -54,14 +54,7 @@ function readDoc(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-/** Every id in `node`'s own subtree, via `children` only. */
-function collectIds(node, into = new Set()) {
-  if (node && typeof node === 'object' && typeof node.id === 'string') into.add(node.id);
-  for (const child of node?.children ?? []) collectIds(child, into);
-  return into;
-}
-
-/** `node`'s own subtree, via `children` only (matches collectIds's reach). */
+/** `node`'s own subtree, via `children` only. */
 function findMaster(node, id) {
   if (node && typeof node === 'object') {
     if (node.id === id) return node;
@@ -71,6 +64,20 @@ function findMaster(node, id) {
     }
   }
   return null;
+}
+
+/** Pen paths cross component instances, never arbitrary adjacent nodes. */
+function resolvesImportedPath(document, alias, id, scope = document) {
+  const parts = id.split('/').map(part => part.startsWith(`${alias}:`) ? part.slice(alias.length + 1) : part);
+  if (parts.some(part => !part || part.includes(':'))) return false;
+  let node = findMaster(scope, parts[0]);
+  for (const part of parts.slice(1)) {
+    if (node?.type !== 'ref') return false;
+    const master = findMaster(document, node.ref);
+    if (!master) return false;
+    node = findMaster(master, part);
+  }
+  return node !== null;
 }
 
 /**
@@ -114,9 +121,11 @@ function collectAliasedRefs(document, into = []) {
 /**
  * True if `value` is a local (non-aliased) override: any non-empty string that
  * is not `$alias:token`, or an image paint, which replaces the master's color
- * with artwork that looks the same in either theme (a provider mark).
+ * with artwork that looks the same in either theme (a provider mark), or an
+ * explicit empty paint list that clears the color in both themes.
  */
 function isLocalOverride(value) {
+  if (Array.isArray(value) && value.length === 0) return true;
   if (value && typeof value === 'object' && value.type === 'image' && typeof value.url === 'string' && value.url.length > 0) return true;
   return typeof value === 'string' && value.length > 0 && !ALIASED.test(value);
 }
@@ -207,7 +216,7 @@ export function check(document, file) {
   }
 
   const imports = document.imports ?? {};
-  const importedIds = new Map();
+  const importedDocs = new Map();
   const unresolved = [];
   for (const reference of refs.aliased) {
     const colon = reference.indexOf(':');
@@ -216,17 +225,14 @@ export function check(document, file) {
     const importPath = imports[alias];
     if (importPath === undefined) { unresolved.push(`${reference} (no "${alias}" entry in imports)`); continue; }
     if (typeof importPath !== 'string') continue; // an import that is not a path (e.g. the transplant test's {status:'ok'} fixture) is out of scope here
-    if (!importedIds.has(alias)) {
+    if (!importedDocs.has(alias)) {
       const importedFile = path.resolve(root, importPath);
-      importedIds.set(alias, fs.existsSync(importedFile) ? collectIds(readDoc(importedFile)) : new Set());
+      importedDocs.set(alias, fs.existsSync(importedFile) ? readDoc(importedFile) : null);
     }
-    if (!importedIds.get(alias).has(id)) unresolved.push(`${reference} (no node "${id}" in ${importPath})`);
-  }
-  if (unresolved.length) {
-    failures.push(`${unresolved.length} ref(s) or descendant override(s) do not resolve against the imported library:\n` + unresolved.map(line => `    ${line}`).join('\n'));
+    const importedDocument = importedDocs.get(alias);
+    if (!importedDocument || !resolvesImportedPath(importedDocument, alias, id)) unresolved.push(`${reference} (no node "${id}" in ${importPath})`);
   }
 
-  const importedDocs = new Map();
   const unrestated = [];
   for (const {node, alias, masterId} of collectAliasedRefs(document)) {
     const importPath = imports[alias];
@@ -235,6 +241,14 @@ export function check(document, file) {
     if (!importedDocs.has(alias)) importedDocs.set(alias, fs.existsSync(importedFile) ? readDoc(importedFile) : null);
     const importedDocument = importedDocs.get(alias);
     if (!importedDocument) continue; // missing import already reported above
+    const master = findMaster(importedDocument, masterId);
+    for (const key of Object.keys(node.descendants ?? {})) {
+      if (!key.includes('/') || !master) continue;
+      const id = key.startsWith(`${alias}:`) ? key.slice(alias.length + 1) : key;
+      if (!resolvesImportedPath(importedDocument, alias, id, master)) {
+        unresolved.push(`${key} (not a component-instance path under ${node.ref})`);
+      }
+    }
     const requirements = colorRequirements(importedDocument, masterId);
     if (!requirements) continue; // unresolved master id already reported above
 
@@ -247,6 +261,9 @@ export function check(document, file) {
         if (!isLocalOverride(entry?.[prop])) unrestated.push(`${node.id} (${node.ref})'s descendant ${descendantId} does not restate its ${prop} (still ${JSON.stringify(entry?.[prop] ?? null)})`);
       }
     }
+  }
+  if (unresolved.length) {
+    failures.push(`${unresolved.length} ref(s) or descendant override(s) do not resolve against the imported library:\n` + unresolved.map(line => `    ${line}`).join('\n'));
   }
   if (unrestated.length) {
     failures.push(`${unrestated.length} cross-library color(s) left un-restated, which freezes them at the library's own Light value in every theme:\n` + unrestated.map(line => `    ${line}`).join('\n'));
