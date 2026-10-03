@@ -25,7 +25,7 @@ use crate::root::RootIdentity;
 /// the old layout's helper root and bridge folder off the device in its
 /// `kit` apply, and its report carries `legacy_retirement` (PRD
 /// hide-home-layout D-13); a helper on 12 would leave them.
-/// 14: `session_activity` answers only a proven session's modification time
+/// 15: `session_activity` answers only a proven session's modification time
 /// and size, for the parent-owned inactivity watcher.
 pub const PROTOCOL_VERSION: u32 = 15;
 
