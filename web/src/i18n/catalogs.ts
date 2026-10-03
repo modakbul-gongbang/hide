@@ -6,6 +6,7 @@ import { agentPresentationCatalogs, agentPresentationEnglish } from "./resources
 import { devicesCatalogs, devicesEnglish } from "./resources/devices";
 import { issueSettingsCatalogs, issueSettingsEnglish } from "./resources/issueSettings";
 import { historyCatalogs, historyEnglish } from "./resources/history";
+import { explorerCatalogs, explorerEnglish } from "./resources/explorer";
 import { sessionsCatalogs, sessionsEnglish } from "./resources/sessions";
 import { issuesCatalogs, issuesEnglish } from "./resources/issues";
 import { mobileCatalogs, mobileEnglish } from "./resources/mobile";
@@ -20,6 +21,7 @@ import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
 
 export const english = {
+  ...explorerEnglish,
   ...historyEnglish,
   ...sessionsEnglish,
   ...agentPresentationEnglish,
@@ -46,6 +48,7 @@ export type MessageKey = keyof typeof english;
 export const catalogs = {
   en: english,
   ko: {
+    ...explorerCatalogs.ko,
     ...historyCatalogs.ko,
     ...sessionsCatalogs.ko,
     ...agentPresentationCatalogs.ko,
@@ -67,6 +70,7 @@ export const catalogs = {
     ...overviewCatalogs.ko,
   },
   "zh-CN": {
+    ...explorerCatalogs["zh-CN"],
     ...historyCatalogs["zh-CN"],
     ...sessionsCatalogs["zh-CN"],
     ...agentPresentationCatalogs["zh-CN"],
@@ -88,6 +92,7 @@ export const catalogs = {
     ...overviewCatalogs["zh-CN"],
   },
   ja: {
+    ...explorerCatalogs.ja,
     ...historyCatalogs.ja,
     ...sessionsCatalogs.ja,
     ...agentPresentationCatalogs.ja,
