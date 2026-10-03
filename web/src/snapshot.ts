@@ -219,6 +219,8 @@ export type Task = {
   /** When the source last changed it, for the backlog's order and age. */
   updated_at_unix_ms?: number | null;
   created_at_unix_ms?: number | null;
+  /** Actual closure time; editing a closed issue does not reset it. */
+  closed_at_unix_ms?: number | null;
   /** The open tasks this one waits on, possibly of another project (`TaskRefSnapshot`). */
   blocked_by?: TaskRef[];
 };

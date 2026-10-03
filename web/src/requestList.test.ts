@@ -16,6 +16,7 @@ import {
   requestsTile,
   resultLine,
   rowIssues,
+  rowIssueChips,
   splitTail,
   verdictLine,
 } from "./requestList";
@@ -217,6 +218,30 @@ describe("the pull request and issue chips (D-46, D-47)", () => {
     const pulls = [pull(1, { closing_issues: [{ repository: "acme/project", number: 8 }] }), pull(2, { closing_issues: [{ repository: "acme/project", number: 7 }, { repository: "acme/project", number: 99 }] })];
     const [row] = requestRows([lens(agent("a", "review", { request: block("review", { pull_requests: pulls }) }), task(7))], []);
     expect(rowIssues(row!, PROJECT).map((issue) => issue.id)).toEqual(["#8", "#7"]);
+  });
+  it("keeps old closed issues in expanded history but only current closed and open issues in folded chips", () => {
+    const issues = [
+      { ...task(7), open: false, closed_at_unix_ms: NOW - 1, updated_at_unix_ms: NOW + 100 },
+      { ...task(8), open: false, closed_at_unix_ms: NOW + 1 },
+      task(9),
+      { ...task(10), open: false },
+      { ...task(11), open: false, closed_at_unix_ms: NOW },
+    ];
+    const project = { ...PROJECT, tasks: { ...PROJECT.tasks!, tasks: issues } };
+    const pulls = [
+      pull(42, { live: false, badge: "merged", settled_at_unix_ms: NOW - 1, closing_issues: [{ repository: "acme/project", number: 7 }] }),
+      pull(43, { badge: "merged", settled_at_unix_ms: NOW + 1, closing_issues: [{ repository: "acme/project", number: 8 }] }),
+      pull(44, { closing_issues: [9, 10, 11].map((number) => ({ repository: "acme/project", number })) }),
+    ];
+    const request = { text: "Next work", cut: false, images: 0, at_unix_ms: NOW, sender: { kind: "operator" as const } };
+    const [row] = requestRows([lens(agent("a", "result", { request: block("result", { request, pull_requests: pulls }) }))], []);
+    expect(rowIssueChips(row!, project).map((issue) => issue.id)).toEqual(["#8", "#9"]);
+    expect(rowIssues(row!, project).map((issue) => issue.id)).toEqual(["#8", "#7", "#9", "#10", "#11"]);
+    const checkoutOnly = { ...row!, lens: { ...row!.lens, task: issues[0]! } };
+    checkoutOnly.lens.agent = { ...checkoutOnly.lens.agent, request: block("idle", { request }) };
+    expect(rowIssueChips(checkoutOnly, project)).toEqual([]);
+    expect(rowIssues(checkoutOnly, project)).toEqual([issues[0]]);
+    expect(rowIssueChips({ ...checkoutOnly, lens: { ...checkoutOnly.lens, task: { ...issues[1]!, source: "local", id: "L-8" } } }, project).map((issue) => issue.id)).toEqual(["L-8"]);
   });
 });
 

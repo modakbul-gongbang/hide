@@ -484,6 +484,9 @@ Its third line is the label's line when there is one, else the agent's last word
 At that line's end stand up to three open chips, the addresses and existing paths of the agent's last words other than its own pull requests, opened as a terminal link opens them; a device's row offers addresses only.
 The pull request chip is the core's first live pull request in its lifecycle colour with its CI mark, `+N` for the other live ones; it opens its row on the PRs tab, ⌘-click GitHub, and while GitHub cannot be read it is dimmed with the value's age in its tooltip.
 The issue chip is the issue the chip's pull request closes, else the checkout's, with `+N`; it opens the issue's panel and never changes the row's group.
+Open issues remain eligible for that chip; a closed issue appears only when its actual closure followed the row's last operator request, as for a settled pull request.
+A later edit or comment on an older closed issue does not bring its chip back, and an unknown closure time is not treated as a new closure.
+Expanded rows keep every linked issue, including older closed issues, with the Issues board's source-neutral id and state.
 
 A click or Enter expands the row in place and again folds it: the request as written (20 lines, then `전부 보기`), the agent's last words, the label's verdict while summaries are on (`AI 판정 · 질문 · <line>`, the end read as 진행 중, 질문, 끝남, 기다림 or 덜 끝남), every open target, every pull request with its state (one settled before the request as `예전 PR #N 머지됨`), every issue, each descendant with its verb, line and 열기, and `패널 열기`.
 Expanding a row in 결과 볼 것 reads that pane without moving the focus, so it leaves the sidebar's Done and, with nothing else to do, the group; a row to answer stays until it is answered.

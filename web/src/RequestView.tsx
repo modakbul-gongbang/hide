@@ -27,6 +27,7 @@ import {
   requestLine,
   resultLine,
   rowIssues,
+  rowIssueChips,
   verdictLine,
   rowSince,
   senderWords,
@@ -186,7 +187,7 @@ function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, ac
   const children = childrenSummary(row);
   const pulls = block?.pull_requests ?? [];
   const shown = pullRequestChip(pulls);
-  const issues = rowIssues(row, project);
+  const issues = rowIssueChips(row, project);
   const targets = useOpenTargets(agent, block?.reply?.text ?? "", pulls, device === null);
   const openPane = () => handlers.openAgent(agent.pane_id);
   const place = checkout.branch ?? checkout.label;
@@ -456,6 +457,7 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
   const block = agent.request;
   const request = block?.request ? fullRequest(block.request.text, full) : null;
   const pulls = block?.pull_requests ?? [];
+  const issues = rowIssues(row, project);
   return (
     <div className="flex min-w-0 flex-col gap-sm px-sm pb-sm pl-[calc(var(--spacing-sm)+var(--size-agent-mark)*2)] text-caption" data-request-detail={agent.pane_id}>
       {request ? (
@@ -500,9 +502,9 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
           ))}
         </ul>
       ) : null}
-      {rowIssues(row, project).length > 1 ? (
+      {issues.length > 0 ? (
         <span className="flex min-w-0 flex-wrap items-center gap-sm" data-request-all-issues="true">
-          {rowIssues(row, project).map((task) => (
+          {issues.map((task) => (
             <IssueChip key={task.key} project={project} task={task} handlers={handlers} now={Date.now()} />
           ))}
         </span>

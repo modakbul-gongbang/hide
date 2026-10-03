@@ -13,6 +13,7 @@ fn issue(number: u32) -> IssueSnapshot {
         project_status: None,
         updated_at_unix_ms: Some(1),
         created_at_unix_ms: None,
+        closed_at_unix_ms: None,
         blocked_by: Vec::new(),
     }
 }

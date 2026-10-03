@@ -307,6 +307,15 @@ export function rowIssues(row: RequestRow, project: Workspace): Task[] {
   return issues;
 }
 
+/** Folded chips keep open issues and issues closed after this request (D-47, D-43).
+ * A later edit to an already closed issue does not make it current work.
+ * `rowIssues` keeps the complete history for the expanded row (B56).
+ */
+export function rowIssueChips(row: RequestRow, project: Workspace): Task[] {
+  const requested = row.lens.agent.request?.request?.at_unix_ms ?? 0;
+  return rowIssues(row, project).filter((issue) => issue.open || (issue.closed_at_unix_ms != null && issue.closed_at_unix_ms > requested));
+}
+
 // --- open targets (D-39) -----------------------------------------------------------
 
 /** How many open chips the folded row shows; the rest are in the expanded row. */
