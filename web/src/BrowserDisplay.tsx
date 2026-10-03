@@ -2,7 +2,7 @@ import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon, XIcon } from "lucide-react
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { addressShown, addressUrl, hostKey, notePageState, parseWorkspaceKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
+import { addressShown, addressUrl, clearBrowserAttachments, hostKey, noteBrowserAttachment, notePageState, parseWorkspaceKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
 import { NewTabBody } from "./components/new-tab-body";
 import { changedFiles } from "./newTab";
 import { useUiStore } from "./ui";
@@ -178,6 +178,7 @@ function AddressField({ address, onSubmit, autoFocus = false }: { address: strin
  * into another browser display, and makes a clicked page's area the active one.
  */
 export function BrowserHost({ actions }: { actions: Actions }) {
+  const connection = useShellStore((s) => s.connection);
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   const inventory = useShellStore((s) => s.rest?.browser_views);
   const front = view ? workspaceKey({ device_id: view.device_id, path: view.path }) : null;
@@ -185,20 +186,26 @@ export function BrowserHost({ actions }: { actions: Actions }) {
   useEffect(() => {
     syncBrowserFront(front ? parseWorkspaceKey(front) : null, layout, inventory ?? []);
   }, [front, layout, inventory]);
+  useEffect(() => {
+    if (connection !== "live") clearBrowserAttachments();
+  }, [connection]);
 
   const latest = useRef(actions);
   latest.current = actions;
   useEffect(() => {
     const bridge = browserBridge();
     if (!bridge) return undefined;
-    return bridge.onEvent((event) => {
+    const unsubscribe = bridge.onEvent((event) => {
       if (event.kind === "state") {
         notePageState(event);
         const workspace = parseWorkspaceKey(event.workspace);
         if (workspace) latest.current.reportBrowserState(workspace, event.id, event.state.url, event.state.title, event.load, event.state.loading, event.state.failure, true);
       } else if (event.kind === "gone") {
+        noteBrowserAttachment(event);
         const workspace = parseWorkspaceKey(event.workspace);
         if (workspace) latest.current.reportBrowserState(workspace, event.id, event.url, "", event.load, false, null, false);
+      } else if (event.kind === "attached") {
+        noteBrowserAttachment(event);
       } else if (event.kind === "open") {
         const workspace = parseWorkspaceKey(event.workspace);
         if (workspace) latest.current.openBrowser(event.url, workspace, undefined, event.id);
@@ -209,6 +216,10 @@ export function BrowserHost({ actions }: { actions: Actions }) {
         if (located && (current.layout.active_area !== located.area.id || located.area.active !== event.id)) latest.current.focusView(event.id);
       }
     });
+    return () => {
+      unsubscribe();
+      clearBrowserAttachments();
+    };
     // `record` reads everything through the stores and refs.
   }, []);
   return null;
