@@ -11,6 +11,7 @@ import { mobileEnglish } from "./resources/mobile";
 import { mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeEnglish } from "./resources/native";
 import { prWorkEnglish } from "./resources/prWork";
+import { prListEnglish } from "./resources/prList";
 import { requestsEnglish } from "./resources/requests";
 import { settingsEnglish } from "./resources/settings";
 import { workspaceEnglish } from "./resources/workspace";
@@ -37,6 +38,7 @@ describe("interface resources", () => {
       issuesEnglish,
       prWorkEnglish,
       boardEnglish,
+      prListEnglish,
     ].flatMap((schema) => Object.keys(schema));
     expect(new Set(keys).size).toBe(keys.length);
   });

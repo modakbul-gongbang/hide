@@ -9,6 +9,7 @@ import { mobileCatalogs, mobileEnglish } from "./resources/mobile";
 import { mobileSetupCatalogs, mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeCatalogs, nativeEnglish } from "./resources/native";
 import { prWorkCatalogs, prWorkEnglish } from "./resources/prWork";
+import { prListCatalogs, prListEnglish } from "./resources/prList";
 import { requestsCatalogs, requestsEnglish } from "./resources/requests";
 import { settingsCatalogs, settingsEnglish } from "./resources/settings";
 import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
@@ -29,6 +30,7 @@ export const english = {
   ...issuesEnglish,
   ...prWorkEnglish,
   ...boardEnglish,
+  ...prListEnglish,
 } as const;
 
 export type MessageKey = keyof typeof english;
@@ -50,6 +52,7 @@ export const catalogs = {
     ...issuesCatalogs.ko,
     ...prWorkCatalogs.ko,
     ...boardCatalogs.ko,
+    ...prListCatalogs.ko,
   },
   "zh-CN": {
     ...commonCatalogs["zh-CN"],
@@ -66,6 +69,7 @@ export const catalogs = {
     ...issuesCatalogs["zh-CN"],
     ...prWorkCatalogs["zh-CN"],
     ...boardCatalogs["zh-CN"],
+    ...prListCatalogs["zh-CN"],
   },
   ja: {
     ...commonCatalogs.ja,
@@ -82,5 +86,6 @@ export const catalogs = {
     ...issuesCatalogs.ja,
     ...prWorkCatalogs.ja,
     ...boardCatalogs.ja,
+    ...prListCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;
