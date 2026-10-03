@@ -196,6 +196,8 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await expect(detail).toBeVisible();
     expect(await detail.locator("[data-request-full]").innerText()).toContain("/Users/example/projects/app/docs/request-row-expanded-detail.md 를 참고하고\nhttps://github.com/acme/repo/pull/336");
     await expect(detail.locator(`[data-request-child="${childPane}"]`)).toContainText("일하는 중");
+    // The label's verdict sits with the rest while summaries are on (B6, D-28).
+    await expect(detail.locator("[data-request-verdict]")).toContainText("AI 판정 · 끝남 · ");
     await mainRow.locator(`[data-request-toggle="${mainPane}"]`).click();
     await expect(detail).toHaveCount(0);
 
