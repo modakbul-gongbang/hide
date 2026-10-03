@@ -46,6 +46,7 @@ impl From<&Observation> for Episode {
 
 pub(crate) fn eligible(observation: &Observation, now: u64) -> bool {
     observation.actor.device_id == "local"
+        && observation.actor.require_native_identity().is_ok()
         && matches!(observation.status.as_str(), "idle" | "done")
         && observation.state_change_seq.is_some()
         && now.saturating_sub(observation.last_input_at_unix_ms) >= QUIET_MS
@@ -76,7 +77,7 @@ pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<Atomi
                 .filter(|letter| {
                     letter.state == State::Pending
                         && letter.recipient.device_id == "local"
-                        && letter.bell_errors < 3
+                        && letter.attempts() < 3
                         && now().saturating_sub(letter.created_at_unix_ms)
                             < super::DELIVERY_EXPIRY_MS
                 })
@@ -105,7 +106,14 @@ pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<Atomi
                 }
                 count += 1;
                 tried.insert(letter.id.clone(), episode.clone());
-                match deliver(&owner, connector.as_ref(), &letter.id, &observed, &stop) {
+                match deliver(
+                    &owner,
+                    &client,
+                    connector.as_ref(),
+                    &letter.id,
+                    &observed,
+                    &stop,
+                ) {
                     Ok(true) => {
                         rung.insert(letter.recipient.pane_id.clone(), episode);
                         record(&client, &letter.id, &observed, true);
@@ -147,6 +155,9 @@ fn native_matches(
     connector: &dyn ApiConnector,
     observed: &Observation,
 ) -> Result<bool, &'static str> {
+    if observed.actor.require_native_identity().is_err() {
+        return Ok(false);
+    }
     let parameters =
         wire::agent_target_params(&observed.raw_pane_id).map_err(|_| "herdr_parameters")?;
     let agent = wire::delivery_agent(rpc(connector, "agent.get", parameters)?)
@@ -160,14 +171,9 @@ fn native_matches(
         && Some(agent.state_change_seq) == observed.state_change_seq)
 }
 
-/// All delivery pane writes go through this function. The last memory check
-/// cannot eliminate an external socket/TUI input race (the approved D-18 limit).
-fn deliver(
-    owner: &Mutex<Runtime>,
+fn ready_composer(
     connector: &dyn ApiConnector,
-    id: &str,
     observed: &Observation,
-    stop: &AtomicBool,
 ) -> Result<bool, &'static str> {
     if !native_matches(connector, observed)? {
         return Ok(false);
@@ -182,11 +188,45 @@ fn deliver(
     if !native_matches(connector, observed)? {
         return Ok(false);
     }
+    Ok(true)
+}
+
+/// All delivery pane writes go through this function. The last memory check
+/// cannot eliminate an external socket/TUI input race (the approved D-18 limit).
+fn deliver(
+    owner: &Mutex<Runtime>,
+    client: &Client,
+    connector: &dyn ApiConnector,
+    id: &str,
+    observed: &Observation,
+    stop: &AtomicBool,
+) -> Result<bool, &'static str> {
+    if stop.load(Ordering::Acquire) || !ready_composer(connector, observed)? {
+        return Ok(false);
+    }
+    let reservation = client
+        .submit(
+            Effect::BellAttempt {
+                id: id.to_owned(),
+                observed: Box::new(observed.clone()),
+            },
+            Duration::from_secs(5),
+        )
+        .map_err(|_| "doorbell_reservation_failed")?;
+    let attempt = reservation["attempt"]
+        .as_u64()
+        .filter(|value| (1..=3).contains(value))
+        .ok_or("doorbell_reservation_format")? as u8;
+    // The durable save may wait. Reinspect the native owner and actual composer
+    // afterwards instead of treating the pre-save screen as current evidence.
+    if stop.load(Ordering::Acquire) || !ready_composer(connector, observed)? {
+        return Ok(false);
+    }
     if stop.load(Ordering::Acquire)
         || !owner
             .lock()
             .map_err(|_| "runtime_unavailable")?
-            .delivery_bell_current(id, observed)
+            .delivery_bell_current(id, observed, Some(attempt))
     {
         return Ok(false);
     }

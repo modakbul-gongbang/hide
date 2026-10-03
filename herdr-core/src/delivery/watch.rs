@@ -510,6 +510,7 @@ mod tests {
             finished_at_unix_ms: (!open).then_some(now),
             bell_errors: 0,
             bell_sent: false,
+            bell_attempts: Some(0),
         }
     }
 

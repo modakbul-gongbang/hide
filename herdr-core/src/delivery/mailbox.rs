@@ -106,6 +106,7 @@ pub(crate) fn send(
         finished_at_unix_ms: None,
         bell_errors: 0,
         bell_sent: false,
+        bell_attempts: Some(0),
     };
     ledger.letters.push(letter.clone());
     Ok(letter)

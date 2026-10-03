@@ -269,7 +269,12 @@ impl Runtime {
     }
 
     /// The final memory guard immediately before the off-lock pane write.
-    pub(crate) fn delivery_bell_current(&self, id: &str, observed: &Observation) -> bool {
+    pub(crate) fn delivery_bell_current(
+        &self,
+        id: &str,
+        observed: &Observation,
+        reserved: Option<u8>,
+    ) -> bool {
         let Some(current) = self.delivery_observations.get(&observed.actor.pane_id) else {
             return false;
         };
@@ -283,7 +288,12 @@ impl Runtime {
                     letter.id == id
                         && letter.recipient.same_identity(&observed.actor)
                         && letter.state == crate::delivery::ledger::State::Pending
-                        && letter.bell_errors < 3
+                        && match reserved {
+                            Some(attempt) => {
+                                (1..=3).contains(&attempt) && letter.attempts() == attempt
+                            }
+                            None => letter.attempts() < 3,
+                        }
                         && unix_milliseconds().saturating_sub(letter.created_at_unix_ms)
                             < crate::delivery::DELIVERY_EXPIRY_MS
                 })

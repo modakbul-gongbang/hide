@@ -103,6 +103,10 @@ pub(crate) enum Effect {
         command: Command,
     },
     Tick(Vec<watch::Reading>),
+    BellAttempt {
+        id: String,
+        observed: Box<Observation>,
+    },
     Bell {
         id: String,
         recipient: Actor,
@@ -358,6 +362,14 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
                 tick.transitions,
             ));
         }
+        Effect::BellAttempt { id, observed } => {
+            let letter = ledger
+                .letters
+                .iter_mut()
+                .find(|letter| letter.id == *id && letter.recipient.same_identity(&observed.actor))
+                .ok_or("letter_unavailable")?;
+            return Ok((json!({"attempt":letter.reserve_bell(now)?}), false));
+        }
         Effect::Bell {
             id,
             recipient,
@@ -522,6 +534,16 @@ fn run(
                             Ok(())
                         })
                 }
+                Effect::BellAttempt { id, observed } => runtime
+                    .lock()
+                    .map_err(|_| "delivery_unavailable".to_owned())
+                    .and_then(|guard| {
+                        if guard.delivery_bell_current(id, observed, None) {
+                            Ok(())
+                        } else {
+                            Err("doorbell_observation_changed".into())
+                        }
+                    }),
                 _ => Ok(()),
             };
             let result = current.and_then(|()| apply(&mut candidate, request, now));

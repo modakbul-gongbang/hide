@@ -33,11 +33,35 @@ pub struct Letter {
     pub finished_at_unix_ms: Option<u64>,
     pub bell_errors: u8,
     pub bell_sent: bool,
+    #[serde(default)]
+    pub bell_attempts: Option<u8>,
 }
 
 impl Letter {
     pub fn open(&self) -> bool {
         self.state == State::Pending || self.waiting_answer
+    }
+
+    pub(crate) fn attempts(&self) -> u8 {
+        // Legacy successes have an unknown total. Do not infer spare attempts
+        // from the old boolean and repeat an already unbounded external effect.
+        self.bell_attempts
+            .unwrap_or(if self.bell_sent { 3 } else { self.bell_errors })
+    }
+
+    pub(crate) fn reserve_bell(&mut self, now: u64) -> Result<u8, String> {
+        self.recipient.require_native_identity()?;
+        if self.state != State::Pending
+            || now.saturating_sub(self.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
+        {
+            return Err("letter_not_pending".into());
+        }
+        if self.attempts() >= 3 {
+            return Err("doorbell_attempt_limit".into());
+        }
+        let attempt = self.attempts() + 1;
+        self.bell_attempts = Some(attempt);
+        Ok(attempt)
     }
 }
 
@@ -85,6 +109,7 @@ impl Ledger {
                 || letter.body.len() > BODY_LIMIT
                 || letter.body.trim().is_empty()
                 || letter.bell_errors > 3
+                || letter.bell_attempts.is_some_and(|attempts| attempts > 3)
                 || (!letter.open() && letter.finished_at_unix_ms.is_none())
                 || (matches!(
                     letter.state,
@@ -184,6 +209,116 @@ pub fn save(path: &Path, ledger: &Ledger) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn letter() -> Ledger {
+        let mut ledger = Ledger::default();
+        let sender = Actor {
+            pane_id: "sender".into(),
+            name: "sender".into(),
+            kind: "codex".into(),
+            device_id: "local".into(),
+            session: Some("sender-native".into()),
+        };
+        let recipient = Actor {
+            pane_id: "recipient".into(),
+            name: "recipient".into(),
+            kind: "codex".into(),
+            device_id: "local".into(),
+            session: Some("recipient-native".into()),
+        };
+        super::super::mailbox::send(
+            &mut ledger,
+            &sender,
+            &recipient,
+            "once",
+            "private",
+            "request",
+            None,
+            1,
+        )
+        .unwrap();
+        ledger
+    }
+
+    #[test]
+    fn total_doorbell_reservations_include_success_and_survive_restart_before_confirmation() {
+        for sent in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("ledger.json");
+            let mut ledger = letter();
+            for attempt in 1..=3 {
+                assert_eq!(ledger.letters[0].reserve_bell(2).unwrap(), attempt);
+                save(&path, &ledger).unwrap();
+                // A lost response or a crash here still consumes the reservation.
+                ledger = load(&path).unwrap();
+                assert_eq!(ledger.letters[0].attempts(), attempt);
+                assert_eq!(ledger.letters[0].state, State::Pending);
+                if sent {
+                    ledger.letters[0].bell_sent = true;
+                } else {
+                    ledger.letters[0].bell_errors += 1;
+                }
+                save(&path, &ledger).unwrap();
+                ledger = load(&path).unwrap();
+            }
+            let before = ledger.bytes().unwrap();
+            assert_eq!(
+                ledger.letters[0].reserve_bell(2).unwrap_err(),
+                "doorbell_attempt_limit"
+            );
+            assert_eq!(ledger.bytes().unwrap(), before);
+            let recipient = ledger.letters[0].recipient.clone();
+            let id = ledger.letters[0].id.clone();
+            super::super::mailbox::apply(
+                &mut ledger,
+                &recipient,
+                None,
+                &super::super::Command::Confirm { ids: vec![id] },
+                2,
+            )
+            .unwrap();
+            save(&path, &ledger).unwrap();
+            ledger = load(&path).unwrap();
+            assert_eq!(
+                ledger.letters[0].reserve_bell(2).unwrap_err(),
+                "letter_not_pending"
+            );
+            assert!(
+                super::super::mailbox::pull(&ledger, &recipient)
+                    .unwrap()
+                    .ids
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_success_does_not_infer_spare_attempts_and_invalid_budget_is_rejected() {
+        let ledger = letter();
+        for sent in [true, false] {
+            let mut record = serde_json::to_value(&ledger).unwrap();
+            let row = record["letters"][0].as_object_mut().unwrap();
+            row.remove("bell_attempts");
+            row.insert("bell_sent".into(), serde_json::json!(sent));
+            row.insert("bell_errors".into(), serde_json::json!(2));
+            let mut restored: Ledger = serde_json::from_value(record).unwrap();
+            if sent {
+                assert_eq!(
+                    restored.letters[0].reserve_bell(2).unwrap_err(),
+                    "doorbell_attempt_limit"
+                );
+            } else {
+                assert_eq!(restored.letters[0].reserve_bell(2).unwrap(), 3);
+                assert_eq!(
+                    restored.letters[0].reserve_bell(2).unwrap_err(),
+                    "doorbell_attempt_limit"
+                );
+            }
+        }
+        let mut invalid = ledger;
+        invalid.letters[0].bell_attempts = Some(4);
+        assert_eq!(invalid.validate().unwrap_err(), "ledger_unavailable");
+    }
 
     #[test]
     fn durable_ledger_is_private_and_corruption_is_preserved() {
