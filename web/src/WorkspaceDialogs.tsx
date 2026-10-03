@@ -445,9 +445,12 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
   const gate = row?.deletion_gate;
   const paneCount = checkout.tabs.reduce((count, tab) => count + tab.panes.length, 0);
   const [deleteBranch, setDeleteBranch] = useState(false);
-  const [discardSelection, setDiscardSelection] = useState<string | null>(null);
   const discardKey = discardConfirmationKey(checkout);
-  const discard = discardSelection === discardKey;
+  const [discardSelection, setDiscardSelection] = useState({ key: discardKey, accepted: false });
+  // Every observed facts transition retires the previous consent, including
+  // a return to the same names after a lock or unavailable scan is resolved.
+  if (discardSelection.key !== discardKey) setDiscardSelection({ key: discardKey, accepted: false });
+  const discard = discardSelection.key === discardKey && discardSelection.accepted;
   const [request, setRequest] = useState<{ afterId: number; at: number } | null>(null);
   const current = useShellStore((s) => s.rest?.worktree_removal);
   const removal = request ? removalFor(current, deviceId, checkout.path, request.afterId) : null;
@@ -531,7 +534,7 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
             ) : null}
             {gate.discard_label ? (
               <label className="flex items-start gap-xs text-body text-foreground">
-                <Checkbox checked={discard} onCheckedChange={(checked) => setDiscardSelection(checked === true ? discardKey : null)} data-delete-discard="true" className="mt-xxs" />
+                <Checkbox checked={discard} onCheckedChange={(checked) => setDiscardSelection({ key: discardKey, accepted: checked === true })} data-delete-discard="true" className="mt-xxs" />
                 <span className="min-w-0 break-words">
                   {gate.discard_label}
                   <span className="block text-caption text-muted-foreground">Required to delete: this work cannot be recovered.</span>

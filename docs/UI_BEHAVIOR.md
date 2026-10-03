@@ -792,7 +792,7 @@ A locked worktree shows its name, Git's lock reason (or that Git supplied none),
 A folder that holds uncommitted files, a worktree inside it, a status Git could not read, or ignored nested repositories shows a `Discard …` checkbox, and Delete stays disabled until it is ticked, because that loss cannot be undone.
 The checkbox names every measured ignored repository by its path relative to the checkout, including repositories with gitfiles or separate Git directories; a warning badge counts the measured list.
 An unreadable, invalid or bounded-out scan says why it could not verify the list and how to retry, and offers no Delete action.
-A changed measured list clears the prior Discard choice; the request carries the names actually shown.
+A changed measured list, lock or scan availability clears the prior Discard choice, even when the previous facts return; the request carries the names actually shown.
 Ticked, the folder is removed with one `git worktree remove --force`, which never unlocks it.
 Before either deletion action closes any checkout or outside pane, `Rechecking Git state before closing any panes…` runs an authoritative host check.
 A newly locked worktree, unavailable scan or changed repository set refuses with the reason, keeping all panes and files and requiring a fresh review.
