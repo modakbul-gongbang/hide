@@ -28,6 +28,12 @@ async function inWorkspace(label: string, body: (session: Session) => Promise<vo
     });
     const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
     await enterWorkspace(page);
+    // macOS keeps the window within the screen, which on a CI runner is
+    // about 1024 wide; zoomed out, the body still reaches the wide step, so
+    // File Views and Tools show side by side as these steps assume (PRD
+    // three-column-panel D-07).
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.6));
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-workspace-body", "wide");
     if (evidence) fs.writeFileSync(path.join(evidence, `${label}-identity.json`), JSON.stringify({ ...identity, daemonPid: run.daemonPid(), state: run.env.HIDE_STATE_DIR, socket: herdr.socket }, null, 2));
     const capture = (name: string) => {
       if (evidence && process.platform === "darwin") {
