@@ -1176,8 +1176,9 @@ async fn browser_socket_cannot_start_a_host_file_handler() {
     std::fs::create_dir_all(&checkout).unwrap();
     let file = checkout.join("notes.txt");
     std::fs::write(&file, "safe data").unwrap();
-    let marker = home.join("handler-started");
-    // A helper that leaves the marker if anything ever starts it.
+    // A helper that leaves the marker if anything ever starts it, at the
+    // temporary folder's own spelling, which `cmd` writes on Windows.
+    let marker = dir.path().join("handler-started");
     #[cfg(unix)]
     let opener = {
         use std::os::unix::fs::PermissionsExt;

@@ -142,7 +142,9 @@ fn wait_for_pid(path: &Path) -> Started {
         if let Ok(value) = std::fs::read_to_string(path)
             && let Ok(pid) = value.parse()
         {
-            let at = start_time(pid).expect("the fake helper is running");
+            // A helper that is already gone has no start; 0 is no start a
+            // live process has, so it reads as gone.
+            let at = start_time(pid).unwrap_or(0);
             return Started { pid, at };
         }
         assert!(Instant::now() < until, "fake helper never wrote its pid");

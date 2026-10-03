@@ -391,7 +391,7 @@ Each refuses with `NotFound`, `InvalidInput` or `Unsupported` rather than guessi
 The Windows check builds the whole workspace, tests included.
 What has not moved yet: the `O_NONBLOCK` open that keeps a FIFO from stalling a reader (`hide-host` document, bytes, index and save, `hide-session`), the `readlinkat` in `hide-host/src/list.rs`, hided's root opens in `boundary.rs` (`openat` beneath the pinned root on Unix, a final-path check on Windows) and its Windows `ShellExecuteW` opener, and the stop signals in `hided/src/lib.rs` (tokio's per-system handlers).
 What stays Unix by design until a later slice: the device's workspace bridge (a Unix socket that attests the caller by its kernel peer pid) and the one-time move of a Mac's old state folder (`hided/src/state_move.rs`; no Windows build ever wrote that folder, so `Env` names none there).
-hided starts on Windows, and `hided/tests/handshake.rs` runs there except the tests that reach a checkout through a folder link, which on Windows is a junction judged by the boundary's final-path check, and the FIFO and browser tests.
+hided starts on Windows, and `hided/tests/handshake.rs` runs there except the tests that reach a checkout through a folder link, which on Windows is a junction judged by the boundary's final-path check, and the FIFO and file index tests.
 On Windows a pane bootstrap caller is bound to its pane when it descends from the pane's shell; the checkout binding needs the caller's working directory, which `cwd_of` cannot read there, so a caller outside a pane is refused `caller_unavailable`.
 
 `path` is the sixth module and decides how a path is spelled between machines: UTF-8 with `/` between names, the spelling Git's index, LSP and VS Code's remote URIs use.
@@ -890,7 +890,9 @@ At most four opener requests may run at once and at most twelve launches are acc
 An explicit `HIDE_OPEN_COMMAND` CLI helper is owned with everything it starts: normal stop, the ten-second timeout, the helper's own exit, or daemon death including `SIGKILL` ends them all (`hided/src/spawn.rs`, `OwnedOpener`).
 On Windows the helper is an `OwnedChild` and nothing else: its job object ends the tree when the daemon's handle closes, however the daemon ended.
 No Unix system ends a whole process group when its owner dies, so there a private `hided` supervisor (`--open-helper`) holds the helper's process group and ends it when its owner socket reports EOF.
-The Unix override must not detach into another session or process group, which this ownership boundary cannot supervise; on Windows what the helper starts stays in its job.
+The Unix override must not detach into another session or process group, which this ownership boundary cannot supervise.
+On Windows a process the helper starts itself stays in the job and ends when the helper returns, so a helper that starts an editor and exits (`code.cmd` with no editor running) ends that editor too; what the shell or an already running application opens for it starts outside the job.
+A `.cmd` or `.bat` helper runs through `cmd.exe`, which receives the file's path quoted by the standard library's batch-file rules; such a script must quote `%1` itself.
 The normal `open` or `xdg-open` utility is started directly as an OS default-application handoff, since `xdg-open` can stay attached to the application for its lifetime; the daemon does not signal that process or its descendants after acceptance.
 Tokio's process driver attempts to reap a short-lived default utility after the handle is dropped; it does not own the registered application's lifetime.
 An opener request is accepted when its utility starts, not when the application confirms it opened the file.

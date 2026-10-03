@@ -63,9 +63,12 @@ impl OwnedOpener {
 
     /// Ends what the helper left in its job too, as the Unix supervisor ends
     /// the helper's group when the helper returns. Safe to call more than once.
+    /// A failed kill does not wait on a helper that may still run; dropping
+    /// the job's last handle still ends it.
     pub fn stop(&mut self) {
-        let _ = self.helper.kill_tree();
-        let _ = self.helper.wait();
+        if self.helper.kill_tree().is_ok() {
+            let _ = self.helper.wait();
+        }
     }
 }
 

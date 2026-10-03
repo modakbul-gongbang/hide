@@ -676,9 +676,10 @@ mod sys {
         K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
     };
     use windows_sys::Win32::System::Threading::{
-        CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED, DETACHED_PROCESS, GetExitCodeProcess,
-        GetProcessTimes, OpenProcess, OpenThread, PROCESS_QUERY_LIMITED_INFORMATION,
-        PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME, TerminateProcess,
+        CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, DETACHED_PROCESS,
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, OpenThread,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
+        TerminateProcess,
     };
 
     use super::*;
@@ -753,8 +754,10 @@ mod sys {
             return Err(io::Error::last_os_error());
         }
         // Suspended, so the child cannot start a process of its own before it
-        // is inside the job.
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED);
+        // is inside the job. A console program gets a console without a
+        // window: an owner with no console of its own (a detached daemon)
+        // would otherwise open a visible one for every child.
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_SUSPENDED);
         let mut child = command.spawn()?;
         // SAFETY: both handles are open; the child's is owned by `child`.
         let assigned = unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) };

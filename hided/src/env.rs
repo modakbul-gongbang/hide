@@ -455,6 +455,20 @@ fn valid_program_path(path: &Path) -> bool {
     if !path.is_absolute() || !path.is_file() {
         return false;
     }
+    // What Windows starts as a program: an executable, or a batch file that
+    // runs through `cmd.exe`.
+    #[cfg(windows)]
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["exe", "com", "bat", "cmd"]
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
+    {
+        return false;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -662,5 +676,16 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(env.open_command.as_deref(), Some(executable.as_path()));
+        // A file the system cannot start as a program: no execute bit on
+        // Unix, no program extension on Windows.
+        let directory = tempfile::tempdir().unwrap();
+        let text = directory.path().join("opener.txt");
+        std::fs::write(&text, "not a program").unwrap();
+        let err = from_map(&[
+            (HOME, "/Users/example"),
+            (HIDE_OPEN_COMMAND, text.to_str().unwrap()),
+        ])
+        .unwrap_err();
+        assert_eq!(err[0].key, HIDE_OPEN_COMMAND);
     }
 }
