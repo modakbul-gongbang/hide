@@ -6,13 +6,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { countSent, enterWorkspace, showExplorer } from "../../web/e2e/wire";
+import { countSent, enterWorkspace, keyboardFocus, rest, showExplorer } from "../../web/e2e/wire";
 import { isolate, launchShell, test } from "./fixture";
 
 type Probe = {
   arm: (marker: string) => void;
   waitArmed: () => Promise<{ arrival_ms: number; write_ms: number }>;
   paneText: (pane: string) => string;
+  attachedPanes: () => string[];
+  liveTerminals: () => string[];
 };
 
 async function paint(page: Page): Promise<void> {
@@ -31,7 +33,7 @@ async function nativeCapture(app: ElectronApplication, page: Page, name: string)
   });
   const geometry = await page.evaluate(() => ({
     body: document.querySelector<HTMLElement>("[data-column-row=true]")!.clientWidth,
-    columns: Array.from(document.querySelectorAll<HTMLElement>("[data-column]")).map((column) => ({ name: column.dataset.column, width: column.clientWidth, visible: column.checkVisibility() })),
+    columns: Array.from(document.querySelectorAll<HTMLElement>("[data-column]")).map((column) => ({ name: column.dataset.column, width: column.clientWidth, mounted: true, visible: column.checkVisibility({ visibilityProperty: true }) })),
   }));
   const captured = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.window.split(":")[1]!, path.join(dir, `${name}.png`)], { encoding: "utf8" });
   expect(captured.status, captured.stderr).toBe(0);
@@ -67,14 +69,19 @@ function sendText(herdr: HerdrFixture, pane: string, text: string): void {
   expect(sent.status, sent.stderr).toBe(0);
 }
 
-async function echo(page: Page, herdr: HerdrFixture, pane: string, phase: string): Promise<unknown> {
+async function echo(page: Page, herdr: HerdrFixture, pane: string, phase: string, afterSend?: (index: number) => Promise<void>) {
   const samples: { marker: string; cli_return_ms: number; arrival_ms: number; write_ms: number; latency_ms: number }[] = [];
   for (let index = 0; index < 20; index += 1) {
     const marker = `columns_${phase}_${String(index).padStart(3, "0")}`;
     await page.evaluate((marker) => (window as unknown as { __hideProbe: Probe }).__hideProbe.arm(marker), marker);
     sendText(herdr, pane, `${marker}\n`);
     const cli_return_ms = performance.timeOrigin + performance.now();
-    const sample = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.waitArmed());
+    // Keep marker observation running while the real column action lands.
+    // Both promises are owned here, including an action or echo failure.
+    const [sample] = await Promise.all([
+      page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.waitArmed()),
+      afterSend?.(index),
+    ]);
     samples.push({ marker, cli_return_ms, ...sample, latency_ms: sample.write_ms - cli_return_ms });
     await new Promise((done) => setTimeout(done, 80));
   }
@@ -94,6 +101,11 @@ test("Workspace columns preserve geometry, dock once on release and show native 
     ({ app } = await launchShell(run.env));
     const page = await app.firstWindow();
     const sent = countSent(page);
+    let newViews = 0;
+    page.on("websocket", (socket) => socket.on("framesent", (frame) => {
+      const event = JSON.parse(String(frame.payload)) as { kind?: string; payload?: { new_view?: boolean } };
+      if (event.kind === "terminal_viewport" && event.payload?.new_view === true) newViews += 1;
+    }));
     const url = new URL(page.url());
     url.searchParams.set("probe", "1");
     await page.goto(url.href);
@@ -212,9 +224,80 @@ test("Workspace columns preserve geometry, dock once on release and show native 
     await expect.poll(() => page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id), pane)).toContain("COLUMNS_DRIVEN_READY");
     const driven = await echo(page, herdr, pane, "driven");
     await nativeCapture(app, page, "columns-driven-terminal");
-    if (dir) fs.writeFileSync(path.join(dir, "columns-echo.json"), JSON.stringify({ identity, toggles, divider: { resizeDuringDrag: 0, resizeAfterRelease, panesShown, restoredViewsWidth: 596 }, load: spawnSync("uptime", { encoding: "utf8" }).stdout.trim(), workload: "two visible shell panes; idle cat and driven line every 8ms in measured pane; 20 markers per phase; no baseline or speed claim", idle, driven }, null, 2));
+    // B18: the output and input continue THROUGH toggles and a held drag,
+    // rather than only measuring echo after all geometry has settled.
+    await bodyWidth(app, page, 1600);
+    await stableCount(resizeCount);
+    const session = () => page.evaluate(() => {
+      const probe = (window as unknown as { __hideProbe: Probe }).__hideProbe;
+      return { attached: probe.attachedPanes().sort(), live: probe.liveTerminals().sort() };
+    });
+    const originalSession = await session();
+    const originalElements = await page.evaluateHandle(() => Array.from(document.querySelectorAll("[data-column=agents] .xterm")));
+    const beforeNewViews = newViews;
+    const transitionActions: { action: string; start_ms: number; end_ms: number; resizes: number }[] = [];
+    let drivenToggles;
+    let drivenDrag;
+    const retained = async () => {
+      expect(await session()).toEqual(originalSession);
+      expect(newViews).toBe(beforeNewViews);
+      expect(await page.evaluate((original) => {
+        const current = Array.from(document.querySelectorAll("[data-column=agents] .xterm"));
+        return current.length === original.length && current.every((element, index) => element === original[index]);
+      }, originalElements)).toBe(true);
+      expect(await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id), pane)).toContain("columns driven output");
+    };
+    try {
+      const calls = [["tools", "shown"], ["views", "off"], ["views", "shown"], ["tools", "off"]] as const;
+      drivenToggles = await echo(page, herdr, pane, "toggle", async (index) => {
+        if (index % 5 !== 0) return;
+        const [column, state] = calls[index / 5]!;
+        const before = await stableCount(resizeCount);
+        const start_ms = Date.now();
+        await page.locator('[data-column-toggle="' + column + '"]').click();
+        await expect(workspace).toHaveAttribute(column === "views" ? "data-file-views" : "data-tools", state);
+        await expect.poll(resizeCount).toBeGreaterThan(before);
+        const resizes = await stableCount(resizeCount) - before;
+        expect(resizes).toBe(panesShown);
+        await retained();
+        transitionActions.push({ action: column + ":" + state, start_ms, end_ms: Date.now(), resizes });
+        await nativeCapture(app!, page, "columns-driven-" + column + "-" + state);
+      });
+      const dragBox = (await page.locator('[data-column-divider="views"]').boundingBox())!;
+      const beforeDrag = await stableCount(resizeCount);
+      const start_ms = Date.now();
+      drivenDrag = await echo(page, herdr, pane, "drag", async (index) => {
+        if (index === 0) {
+          await page.mouse.move(dragBox.x + dragBox.width / 2, dragBox.y + 100);
+          await page.mouse.down();
+          await page.mouse.move(dragBox.x + dragBox.width / 2 - 32, dragBox.y + 100, { steps: 6 });
+          await expect(page.locator("[data-column-guide=true]")).toBeVisible();
+          expect(resizeCount()).toBe(beforeDrag);
+          await nativeCapture(app!, page, "columns-driven-drag-held");
+        } else if (index === 3) {
+          await page.mouse.move(dragBox.x + dragBox.width / 2 - 64, dragBox.y + 100, { steps: 6 });
+          expect(resizeCount()).toBe(beforeDrag);
+        } else if (index === 5) {
+          await page.mouse.up();
+          await expect(page.locator("[data-column-guide=true]")).toHaveCount(0);
+          await expect.poll(resizeCount).toBeGreaterThan(beforeDrag);
+          const resizes = await stableCount(resizeCount) - beforeDrag;
+          expect(resizes).toBe(panesShown);
+          transitionActions.push({ action: "drag:release", start_ms, end_ms: Date.now(), resizes });
+          await nativeCapture(app!, page, "columns-driven-drag-released");
+        }
+        await retained();
+      });
+      expect(drivenToggles.samples).toHaveLength(20);
+      expect(drivenDrag.samples).toHaveLength(20);
+    } finally {
+      await page.mouse.up();
+      await originalElements.dispose();
+    }
+    if (dir) fs.writeFileSync(path.join(dir, "columns-echo.json"), JSON.stringify({ identity, toggles, divider: { resizeDuringDrag: 0, resizeAfterRelease, panesShown, restoredViewsWidth: 596 }, transitions: { actions: transitionActions, originalSession, newViewRequests: newViews - beforeNewViews, terminalElementsRetained: true, drivenToggles, drivenDrag }, load: spawnSync("uptime", { encoding: "utf8" }).stdout.trim(), workload: "two visible shell panes; idle cat and driven line every 8ms in measured pane; 20 markers per idle, driven, driven-toggle and driven-drag phase; native captures at action states, no continuous blank-frame recording, baseline or speed claim", idle, driven }, null, 2));
     if (dir) {
       await showExplorer(page);
+      await bodyWidth(app, page, 1116);
       await page.locator(`[data-explorer-row$="/${longName}"]`).click();
       await expect(page.locator("[data-view-tab-bar]")).toContainText(longName);
       for (const theme of ["dark", "light"] as const) {
@@ -225,8 +308,39 @@ test("Workspace columns preserve geometry, dock once on release and show native 
         await page.keyboard.press("Escape");
         await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
         await nativeCapture(app, page, `columns-${theme}-long-title`);
+        await rest(page);
+        await nativeCapture(app, page, "columns-" + theme + "-divider-rest");
+        const divider = page.locator('[data-column-divider="views"]');
+        await divider.hover();
+        await expect(divider.locator("[data-column-grip]")).toHaveCSS("opacity", "1");
+        await nativeCapture(app, page, "columns-" + theme + "-divider-hover");
+        await rest(page);
+        await keyboardFocus(page, divider);
+        await expect(divider.locator("[data-column-grip]")).toHaveCSS("opacity", "1");
+        await nativeCapture(app, page, "columns-" + theme + "-divider-focus");
+        await rest(page);
+        const gripBox = (await divider.boundingBox())!;
+        await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + 100);
+        await page.mouse.down();
+        await page.mouse.move(gripBox.x + gripBox.width / 2 + 32, gripBox.y + 100);
+        await expect(page.locator("[data-column-guide=true]")).toBeVisible();
+        await nativeCapture(app, page, "columns-" + theme + "-divider-drag");
+        // Return to the starting edge before release, preserving the state
+        // used for both themes' design comparison.
+        await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + 100);
+        await page.mouse.up();
+        await expect(page.locator("[data-column-guide=true]")).toHaveCount(0);
+        for (const [column, name, shortcut] of [["views", "File Views", "⇧⌘B"], ["tools", "Tools", "⌘E"]]) {
+          await page.locator('[data-column-toggle="' + column + '"]').hover();
+          const tooltip = page.locator('[data-slot="tooltip-content"]');
+          await expect(tooltip).toContainText(name!);
+          await expect(tooltip).toContainText(shortcut!);
+          await nativeCapture(app, page, "columns-" + theme + "-" + column + "-tooltip");
+          await rest(page);
+        }
         await page.locator('[data-column-toggle="views"]').click();
         await expect(workspace).toHaveAttribute("data-file-views", "off");
+        await expect(page.locator('[data-column-toggle="views"] [data-column-badge]')).toBeVisible();
         await nativeCapture(app, page, `columns-${theme}-tools-only`);
         await page.locator('[data-column-toggle="views"]').click();
         await expect(workspace).toHaveAttribute("data-file-views", "shown");
