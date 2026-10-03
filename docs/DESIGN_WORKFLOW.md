@@ -160,9 +160,13 @@ The issue card and panel, the pull request row and its confirmation are drawn on
 Its web files are `web/src/ProjectOverview.tsx`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/GraphView.tsx`, `web/src/agentGraph.ts`, `web/src/IssuesView.tsx`, `web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx` and `web/src/projectBoard.ts`; a card's agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
-It draws the side panel (`Component / Side panel`) open at the Workspace's full height over the agent column, then the panel closed with two views still open.
-The toolbar spans only the agent column and has no tool toggles; the panel's first row holds each area's tabs and New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; its second row holds the document header and the Explorer and History tool tabs.
-A last frame draws a remote device in front: the toolbar starts with a band in `--device-remote` carrying the server glyph and the device name ahead of the path, and the agent pane is framed in the same color; This Mac in front has neither.
+It draws docked Agent Views, File Views and Tools beneath one full-width toolbar, using the Workspace columns, toolbar, toggle and divider masters in the library.
+The toolbar's right edge carries Open server, File Views and Tools, with independent pressed states, a count when open File Views are hidden, and per-control tooltip and keyboard-focus states.
+The columns start with their own tab strips; File Views carries its document header and Tools carries Explorer and History.
+The reference includes the full layout, both narrow-window fallbacks and explicit column calls, Tools without File Views, saved widths, and the divider at rest, under the pointer, focused and being dragged.
+Light and Dark frames carry Korean text and long paths, including the one-line shortened document path and its full-path tooltip.
+The server-picker comparison retains its distinct reachable endpoints, and the area-focus comparison retains two View areas with one keyboard owner and independently readable selections.
+The remote Workspace keeps the device-colored toolbar band and agent pane frame; This Mac has neither.
 Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, and `web/src/ExplorerTree.tsx`.
 
 Project Sessions is `Screen / Project Sessions`.
