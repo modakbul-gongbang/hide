@@ -122,7 +122,7 @@ Explain added work per input or tick, notification fan-out and the pending-work 
 Name missing caps explicitly rather than treating a refresh interval, timeout or one active worker as a queue or byte limit.
 Update the [state placement guide](docs/ARCHITECTURE.md#state-placement-and-publication), [process ownership table](docs/ARCHITECTURE.md#resident-process-ownership) and [resident work ledger](docs/PERFORMANCE_TESTING.md#resident-ticks-timers-and-watchers) when their contracts change.
 Read [PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md#verification-layers-and-current-ci-coverage) for the three verification layers and review policy.
-The Rust and web suites include deterministic performance-related regression tests, and the web echo and frame measurement runs against a real hided, but CI does not currently launch and drive Hide with a live Herdr server.
+The Rust and web suites include deterministic performance-related regression tests, and `pr.yml` runs web and Electron desktop end-to-end scenarios against private Herdr/hided fixtures.
 Typing, drag, wheel, focus, project Tree/List and destructive cleanup review in the packaged app, and controlled latency/RSS comparisons remain isolated local QA.
 Cleanup deletion tests must use a private fixture root; never use an operator project as a cleanup target.
 The guide's maintenance policy requires affected app scenarios for input/rendering/lifecycle changes and matched measurements for performance claims; this is review-required evidence, not a branch-protection check today.
