@@ -403,7 +403,15 @@ mod tests {
     /// about it, and the end of its exec channel ends it.
     #[test]
     fn a_remote_bridge_answers_this_device_and_ends_with_its_channel() {
-        let directory = tempfile::tempdir().unwrap();
+        // A Unix socket path is limited to about a hundred bytes, and the
+        // bridge's sits three folders below this one; a suite's own TMPDIR
+        // can be long enough to leave no room for it.
+        let directory = if cfg!(unix) {
+            tempfile::Builder::new().prefix("wb").tempdir_in("/tmp")
+        } else {
+            tempfile::Builder::new().prefix("wb").tempdir()
+        }
+        .unwrap();
         let bridges = directory.path().join("bridges");
         let (channel, mut daemon) = std::io::pipe().unwrap();
         let (sent, lines) = mpsc::channel();
@@ -420,8 +428,11 @@ mod tests {
                 Lines(Vec::new(), sent),
             ));
         });
-        let ready: Value =
-            serde_json::from_str(&lines.recv_timeout(Duration::from_secs(10)).unwrap()).unwrap();
+        let ready = match lines.recv_timeout(Duration::from_secs(10)) {
+            Ok(line) => line,
+            Err(_) => panic!("the bridge never became ready: {:?}", bridge.try_recv()),
+        };
+        let ready: Value = serde_json::from_str(&ready).unwrap();
         assert_eq!(ready["type"], "ready");
         // Both ends of the line read and write the wire spelling, which on
         // Windows is the only one `from_wire` reads.
