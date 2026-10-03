@@ -926,6 +926,14 @@ export function createActions(dispatch: DispatchFn) {
     observeAgents(observing: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { observing } });
     },
+    /** Whether this page shows the request view; while one does, the core re-reads running checks (PRD overview-request-view D-32). */
+    observeRequestView(observing: boolean) {
+      dispatch({ schema_version: 2, kind: "request_view", payload: { observing } });
+    },
+    /** A finished row opened in the request view: the pane is read, the focus stays (D-29). */
+    openResult(paneId: string) {
+      dispatch({ schema_version: 2, kind: "overview_open_result", payload: { pane_id: paneId } });
+    },
 
     /**
      * Whether the window is on screen and whether the Weekly Usage popover is

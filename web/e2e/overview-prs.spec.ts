@@ -254,14 +254,14 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await chooseTheme(page, "light");
 
-    // The project row still opens Agents › 체크아웃 (B23).
+    // The project row opens the request view (overview-request-view D-05).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const repoRow = page.locator("[data-project-row]", { hasText: /^repo/ });
     await repoRow.click();
     const overview = page.locator("[data-overview-screen]");
-    await expect(overview).toHaveAttribute("data-overview-view", "agents");
+    await expect(overview).toHaveAttribute("data-overview-view", "requests");
     const tile = (id: string) => overview.locator(`[data-lens-tile="${id}"]`);
-    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((value) => value.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
+    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((value) => value.getAttribute("data-lens-tile")))).toEqual(["requests", "agents", "issues", "prs", "sessions"]);
 
     // Until GitHub answers the tab is three skeleton rows and the tile has no number (B22).
     await tile("prs").locator("[data-lens-tile-button]").click();

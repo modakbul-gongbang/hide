@@ -100,11 +100,14 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await expect.poll(() => sent.get("focus_checkout")).toBe(focusEvents + 1);
 
     // A plain folder's sidebar row opens its checkout, so its Overview is
-    // reached from All projects (S6 B1). It opens on its agents' lanes
-    // (overview-lenses B11), and the sidebar row enters the Workspace again.
+    // reached from All projects (S6 B1). It opens on the request view
+    // (overview-request-view D-05), its Agents tile on its agents' boxes,
+    // and the sidebar row enters the Workspace again.
     await page.locator("[data-go-main]").click();
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
+    await expect(page.locator('[data-overview-screen][data-overview-view="requests"]')).toBeVisible();
+    await page.locator('[data-lens-tile-button="agents"]').click();
     await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-graph-box]')).toHaveCount(1);
     await firstRow.click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);

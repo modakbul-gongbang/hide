@@ -55,6 +55,49 @@ export type AgentRow = {
   session_id?: string | null;
   /** The agent searches its own conversation, so ⌘F asks the core where the search goes (`pane_find_open`). */
   own_find?: boolean;
+  /** The request view's block (`AgentRequestSnapshot`); absent on a row the core has not laid it on. */
+  request?: AgentRequest;
+};
+
+/** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
+export type RequestVerb = "answer" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
+
+/** Who sent the request a row shows (`RequestSender`). */
+export type RequestSender = { kind: "operator" } | { kind: "named"; name: string } | { kind: "agent" };
+
+/** The request view's part of an agent row (`AgentRequestSnapshot`, PRD overview-request-view). */
+export type AgentRequest = {
+  verb: RequestVerb;
+  /** When the row took this verb; kept across a restart (D-40). */
+  verb_since_unix_ms: number;
+  /** The agent's own name for its session (D-12). */
+  native_title?: string;
+  /** The operator's last request, else the last one another agent sent. */
+  request: { text: string; cut: boolean; images: number; at_unix_ms: number; sender: RequestSender } | null;
+  /** Who sent a request after the operator's last one (B4). */
+  later_by: RequestSender | null;
+  /** The agent's last words. */
+  reply: { text: string; cut: boolean; at_unix_ms: number } | null;
+  /** The chip first (D-46), then the other live ones, then settled ones. */
+  pull_requests: AgentPullRequest[];
+};
+
+/** One of a row's pull requests (`AgentPullRequestSnapshot`). */
+export type AgentPullRequest = {
+  number: number;
+  title: string;
+  url: string;
+  badge: PullRequest["badge"];
+  checks: NonNullable<PullRequest["checks"]>;
+  head_branch: string;
+  closing_issues: IssueReference[];
+  /** Drawn as the row's chip or counted in its `+N` (D-43). */
+  live: boolean;
+  /** This row holds the pull request's duty (D-31). */
+  duty: boolean;
+  /** The row's session made it, as opposed to its branch having it. */
+  created: boolean;
+  settled_at_unix_ms: number | null;
 };
 
 /** A sleeping agent's state (`AgentSleepSnapshot`): the row and the pane draw it. */

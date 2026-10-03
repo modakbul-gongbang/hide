@@ -154,7 +154,7 @@ export function commitCycle(cycle: Cycle, actions: Actions): boolean {
       expectSurface(chosen.key);
       // The rail and the sidebar follow the device first; the page's screen shows at once.
       actions.focusDevice(target.deviceId);
-      useUiStore.getState().setScreen(target.screen);
+      useUiStore.getState().restoreScreen(target.screen);
       return true;
     case "checkout":
       actions.openWorkspace(target.deviceId, target.workspaceId, target.checkoutId);

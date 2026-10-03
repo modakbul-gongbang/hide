@@ -438,17 +438,19 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 
 ## Project Home
 
-Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (the Overview of every project), `web/src/OverviewLenses.tsx` (the tiles, and the chips, popover and fold line the Agents graph shares), `web/src/GraphView.tsx` and `web/src/agentGraph.ts` (the Agents graph both scopes draw and its layout, routing and filter rules), `web/src/overviewLens.ts` (the buckets, the tile values and the cleanup rule), `web/src/IssuesView.tsx` (the Issues view both scopes draw, with its panel beside the board), `web/src/TaskBoards.tsx` (the Board, List and Dependencies modes and the issue card, which the Overview of every project calls Tasks), `web/src/IssuePanel.tsx` (the issue panel), `web/src/issueDetails.ts` (the issue reads the panel and the preview share), `web/src/MarkdownText.tsx` (an issue's body in Markdown), `web/src/IssueDialogs.tsx` (New issue and Start), `web/src/issueStart.ts` (the Start dialog's first name and prompt), `web/src/PullRequestsView.tsx` (the PRs view), `web/src/PrDialogs.tsx` (이슈 잇기 and 맡기기), `web/src/prDelegate.ts` (맡기기's first prompt), `web/src/projectBoard.ts` (the board rules, the PRs tab's groups included); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (the Overview of every project), `web/src/RequestView.tsx` and `web/src/requestList.ts` (the request view both scopes draw and its grouping, one-line and chip rules), `web/src/OverviewLenses.tsx` (the tiles, and the chips, popover and fold line the Agents graph shares), `web/src/GraphView.tsx` and `web/src/agentGraph.ts` (the Agents graph both scopes draw and its layout, routing and filter rules), `web/src/overviewLens.ts` (the buckets, the tile values and the cleanup rule), `web/src/IssuesView.tsx` (the Issues view both scopes draw, with its panel beside the board), `web/src/TaskBoards.tsx` (the Board, List and Dependencies modes and the issue card, which the Overview of every project calls Tasks), `web/src/IssuePanel.tsx` (the issue panel), `web/src/issueDetails.ts` (the issue reads the panel and the preview share), `web/src/MarkdownText.tsx` (an issue's body in Markdown), `web/src/IssueDialogs.tsx` (New issue and Start), `web/src/issueStart.ts` (the Start dialog's first name and prompt), `web/src/PullRequestsView.tsx` (the PRs view), `web/src/PrDialogs.tsx` (이슈 잇기 and 맡기기), `web/src/prDelegate.ts` (맡기기's first prompt), `web/src/projectBoard.ts` (the board rules, the PRs tab's groups included); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
 The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`), reworked issue-first on 2026-09-28: work starts from an issue, and a card reads issue, then agents, then pull request.
 The project's page is laid out by PRD overview-lenses-tiles-agents (`agents/prd/overview-lenses-tiles-agents/prd.md`): tiles where the tab row was, and an Agents view, one graph of checkout boxes and delegation lines (PRD agents-graph-view, `agents/prd/agents-graph-view/prd.md`), in place of the agent inbox.
 Its PRs tile and view, 이슈 잇기 and 맡기기 are PRD overview-lenses-prs's (`agents/prd/overview-lenses-prs/prd.md`).
+Its first screen, the request view and its `요청` tile and tab, is PRD overview-request-view's (`agents/prd/overview-request-view/prd.md`); the verb each row carries is the core's (`docs/status-model.md`, The request view's verb).
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
 
 ### Tiles and the first screen
 
-Under the facts line stand four tiles of one width, `Agents · Issues · PRs · Sessions`, in the place of a tab row; the chosen one is outlined and a click on a tile opens its view.
+Under the facts line stand five tiles of one width, `요청 · Agents · Issues · PRs · Sessions`, in the place of a tab row; the chosen one is outlined and a click on a tile opens its view.
 A tile holds its name, a yellow badge of how many agents it is the operator's turn with (none at zero), a large number and a small unit, and one bar; it carries no sentence.
+요청 counts the rows that are the operator's to do (답할 것, 고칠 것, 리뷰·머지, 멈춤 and 결과 볼 것), its badge the ones to answer, and its bar splits them by those five verbs.
 Agents counts the project's agents, its badge the ones asking or finished and not yet looked at, and its bar splits them into 내 차례, 일하는 중, 자식 대기 and 쉬는 중.
 Issues counts the open issues, `열림`, and its bar splits them into 백로그, 진행 중 and 리뷰.
 PRs counts the open pull requests, `열림`, its badge the ones that are the operator's turn, and its bar splits them into 내 차례, 에이전트가 고치는 중 and CI 실패; its badge's breakdown is `리뷰 · 초안 · 끝난 에이전트 확인`.
@@ -457,10 +459,36 @@ Resting on a bar shows its legend, each part's name and count, and resting on a 
 A value not yet read leaves the number and the bar out, and zero is drawn as zero; when a source read fails, a ⚠ stands by the tile's name and resting on it says what failed and how old the value is, with the reason in the diagnostic log and no banner.
 The Agents tile's agents are the device's live rows, so it has no last value to age: while the device cannot answer, its ⚠ says why and the number stays empty.
 
-Every way into a project's Overview, the project row, its Overview row, ⌘K and ⌘⇧H, opens the Agents graph with the box of the checkout in front selected (outlined and scrolled into view), or main's box when the checkout in front is elsewhere or folded away, and with no filter.
-Only Global Recent Panels (a separate command, unbound by default) brings an Overview back as it was left, its tile, mode, selected box, filter and opened folds; the view lives on the screen, not in stored settings.
+Every way into a project's Overview, the project row, its Overview row, ⌘K and ⌘⇧H, opens the request view; the Agents tile then opens the graph with the box of the checkout in front selected (outlined and scrolled into view), or main's box when the checkout in front is elsewhere or folded away, and with no filter.
+Every way into the Home Overview from another screen, the Home row and the path back included, opens its `요청` tab.
+Only Global Recent Panels (a separate command, unbound by default) brings an Overview back as it was left, its tile, mode, selected box, filter, opened folds and expanded request rows; the view lives on the screen, not in stored settings.
 The PRs view opens only from its tile, a PR chip, `이슈 없는 PR N`, the sidebar's PR card and Recent Panels.
 The facts line's right end carries the chosen view's controls: the status chips, search and device choice for Agents, the filter and `Board · List · Dependencies` for Issues, and nothing for PRs.
+
+### 요청: the request view
+
+The request view is one row per agent of the scope: what the operator asked it, what came of it, and what is the operator's to do now.
+Its groups stand in this order, each headed `name count`, a group with no row not drawn: 답할 것, 고칠 것, 리뷰·머지, 멈춤, 결과 볼 것, 일하는 중, 기다리는 중, and 쉬는 중, which is one folded line `쉬는 중 N · 펼치기` until its head opens it.
+A row's group is the verb the core gives it; the web only sorts and draws.
+A to-do group puts the row that has waited longest first and shows how long it has held that verb; the other groups put the most recent activity first and show the time since it.
+A delegated child is not a row of its own while its parent is in the scope: the parent's row carries `자식 N · 일하는 중 M`, with a warning `질문 K` when descendants ask, and a child whose parent is gone is a row.
+On the Home Overview each row carries its project's name.
+
+A row reads its status mark, the agent's kind mark and its title (the same name every surface uses), then on the right the descendants, the pull request chip, the issue chip, the checkout or branch and the time.
+Its second line is who asked, `나 ›`, an hcoord sender's name or `에이전트 ›`, and the request on one line: its lines joined by ` · `, blank lines and runs of spaces gone, each path and address by its last name (a GitHub pull request or issue as `#N`, a name over 24 characters as its first 12 and its extension), and pasted images as `이미지 N` at the end.
+A request that does not fit keeps its end, up to 40% of the width from a word boundary, and cuts its front with an ellipsis; it never takes a second line and never shows a home folder.
+A later request from another agent adds `이후 <보낸 이>`.
+Its third line is the label's line when there is one, else the agent's last words, all of them on one line while it works and their last line once it has stopped; it is the warning colour on a row to answer.
+At that line's end stand up to three open chips, the addresses and existing paths of the agent's last words other than its own pull requests, opened as a terminal link opens them; a device's row offers addresses only.
+The pull request chip is the core's first live pull request in its lifecycle colour with its CI mark, `+N` for the other live ones; it opens its row on the PRs tab, ⌘-click GitHub, and while GitHub cannot be read it is dimmed with the value's age in its tooltip.
+The issue chip is the issue the chip's pull request closes, else the checkout's, with `+N`; it opens the issue's panel and never changes the row's group.
+
+A click or Enter expands the row in place and again folds it: the request as written (20 lines, then `전부 보기`), the agent's last words, every open target, every pull request with its state (one settled before the request as `예전 PR #N 머지됨`), every issue, each descendant with its verb, line and 열기, and `패널 열기`.
+Expanding a row in 결과 볼 것 reads that pane without moving the focus, so it leaves the sidebar's Done and, with nothing else to do, the group; a row to answer stays until it is answered.
+A double click, ⌘Enter or `패널 열기` opens the agent's pane as the Agents list does.
+The arrows step through the group heads, rows and chips in the order drawn, Home and End go to the ends, and Escape leaves the Overview.
+With no agent the view is one line and New agent; when every row rests it reads `할 일 없음` above the folded 쉬는 중.
+While the view is on screen the page says so, and the core re-reads a project's pull requests once a minute while one of its rows has checks running; nothing else is read for it.
 
 ### Agents: graph
 
@@ -597,7 +625,7 @@ A closed pull request that was not merged is not shown.
 최근 머지 starts folded and its head unfolds it: every merged pull request whose worktree record is still here, and the others merged in the last 14 days, newest merge first, each row dimmed.
 The core sends the web only these pull requests, from the list `gh` already read; nothing more is read for the view.
 
-A row reads, left to right, `▸`, the state glyph in its lifecycle colour, the number, the title, the issue cell, a yellow `확인` while an agent there finished unseen, then the agents' marks (three and `+N`), the branch in mono, the CI mark, the review in one word and the time.
+A row reads, left to right, `▸`, the state glyph in its lifecycle colour, the number, the title, the issue cell, a yellow `확인` while an agent there finished unseen, then the agents' marks (three and `+N`; the branch's agents and the agent whose session made the pull request, PRD overview-request-view D-45), the branch in mono, the CI mark, the review in one word and the time.
 The issue cell is the issue's chip, from the branch's issue link or else the first issue the body closes, and a dotted circle when there is none; only `변경 요청` and `확인` are yellow.
 The row's click and Enter unfold it: the branch's agents under their ancestors, root first, the operator's turn on its yellow line, then GitHub, Workspace and, with no issue, 이슈 잇기 as icon buttons.
 → unfolds, ← folds, ↑↓ move between rows, and ⌘↵ or a ⌘-click is GitHub.
@@ -640,8 +668,8 @@ The size reads `… GB` while measurement runs and is left out, with the reason 
 Local checkout commits, branch switches, pulls, merges, fetches, rebases and staging changes refresh that repository's worktree facts after the Git directory becomes quiet; Hide does not fetch automatically, so `behind origin` follows the local remote ref.
 An edit confined to a working-tree file is reflected when the Overview opens again.
 Each issue card and List row shows its creation age in the same compact relative-time form used for activity, or no age when its source did not provide creation time; the backlog remains sorted by latest update.
-The Home Overview keeps its tab row, `Tasks · Agents · Projects`: the Tasks board mixes the device's projects' issues, Agents is the same graph over those projects with the project's name on a header line above each project's boxes, and Projects is the device's registered projects; the device's Home folder is none of them.
-Its Agents tab carries the count of agents it is the operator's turn with; there is no band under the header.
+The Home Overview keeps its tab row, `요청 · Tasks · Agents · Projects`: 요청 is the request view over the device's projects, the Tasks board mixes the device's projects' issues, Agents is the same graph over those projects with the project's name on a header line above each project's boxes, and Projects is the device's registered projects; the device's Home folder is none of them.
+Its 요청 tab carries the count of rows to answer and its Agents tab the count of agents it is the operator's turn with; there is no band under the header.
 Its title row carries Add project in the desktop app and 새 이슈 (for the project in front, else the first one with a source), and its facts line the project count, the open issues once every source has answered, and, only when every project can give its part, the open pull-request and merged totals.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
 Before the first snapshot the shell's own connecting state shows instead.

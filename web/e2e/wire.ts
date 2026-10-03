@@ -51,8 +51,9 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
 /**
  * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
  * through its Project's Overview (the one named `project`, else the first)
- * to that Project's first Workspace: the Overview opens on the Agents graph,
- * whose first box head is a checkout's Workspace (agents-graph-view B1, B15);
+ * to that Project's first Workspace: the Overview opens on the request view,
+ * whose Agents tile is the graph, whose first box head is a checkout's
+ * Workspace (overview-request-view D-05, agents-graph-view B15);
  * a project that draws no box goes
  * through the sidebar's project list, put back on the list it showed. A page
  * that already shows a Workspace is left where it is.
@@ -65,6 +66,8 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   await main.locator('[data-main-tab="projects"]').click();
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
   const overview = page.locator("[data-overview-screen]");
+  // Every way in opens the request view; the boxes are the Agents tile's (overview-request-view D-05).
+  await overview.locator('[data-lens-tile-button="agents"]').click();
   const head = overview.locator("[data-graph-box] [data-graph-head-open]").first();
   await expect(head.or(overview.locator("[data-graph-empty], [data-graph-fold]")).first()).toBeVisible();
   if ((await head.count()) > 0) {

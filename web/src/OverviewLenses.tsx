@@ -66,6 +66,10 @@ const SEGMENT_TONE: Record<string, string> = {
   codex: "bg-agent-working",
   fixing: "bg-agent-working",
   blocked: "bg-destructive",
+  answer: "bg-warning",
+  fix: "bg-destructive",
+  stopped: "bg-muted-foreground",
+  result: "bg-primary",
 };
 
 /** The Issues tile's `진행 중` is the warning tone, the Agents tile's `일하는 중` the success one. */
@@ -97,10 +101,11 @@ export function LensTiles({ tiles, selected, onSelect, onSegment }: { tiles: rea
 }
 
 function TileView({ tile, selected, onSelect, onSegment }: { tile: Tile; selected: boolean; onSelect: () => void; onSegment?: (bucket: AgentBucket) => void }) {
+  const badgeWords = tile.badge ? `${tile.badge.label ?? "내 차례"} ${tile.badge.count}` : null;
   const named = [
     tile.label,
     tile.value === null ? null : `${tile.value}${tile.unit ? ` ${tile.unit}` : ""}`,
-    tile.badge ? `내 차례 ${tile.badge.count}` : null,
+    badgeWords,
     tile.failure,
   ]
     .filter(Boolean)
@@ -128,7 +133,7 @@ function TileView({ tile, selected, onSelect, onSegment }: { tile: Tile; selecte
           ) : null}
           <span className="flex-1" />
           {tile.badge ? (
-            <Hint label={[`내 차례 ${tile.badge.count}`, tile.badge.parts.map((part) => `${part.label} ${part.count}`).join(" · ")].filter(Boolean).join("\n")}>
+            <Hint label={[badgeWords, tile.badge.parts.map((part) => `${part.label} ${part.count}`).join(" · ")].filter(Boolean).join("\n")}>
               <span className="pointer-events-auto rounded-xs px-xs font-mono text-caption text-warning" data-lens-tile-badge={tile.badge.count}>
                 {tile.badge.count}
               </span>
