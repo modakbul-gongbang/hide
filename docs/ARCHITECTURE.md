@@ -438,6 +438,7 @@ The web shell counts snapshots (`viewGeneration`) and re-requests its terminal v
 The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
 The Workspace CLI uses the same `/ws` for checkout-scoped commands and results, without giving an agent the shell's unrestricted token or snapshot stream.
 Its local bootstrap socket lives in a random private short directory under `/tmp` (the account's temporary folder on Windows, where the path names a pipe and its marker file) so a long state path cannot exceed the Unix socket limit or let another user reserve a predictable path.
+A Windows pipe name is global rather than inside that folder, so every client connect checks that the pipe it reached belongs to its own account and refuses one another account holds (`hide_platform::ipc`).
 An owner-only record in `pane-capabilities` publishes the socket path atomically; daemon shutdown removes both.
 It only attests the kernel peer PID and issues a protected file reference; the socket does not accept control commands, and nothing in the request chooses a Workspace.
 Attestation binds a local caller one of two ways, tried in this order (`hided/src/pane_auth.rs`).

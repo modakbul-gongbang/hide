@@ -26,7 +26,10 @@
 //!   Windows.
 //! - [`ListenerCloser::close`] called from another thread ends an `accept`
 //!   that is waiting, with `ConnectionAborted`, and every later one.
-//! - Only the account that bound the listener can connect to it.
+//! - Only the account that bound the listener can connect to it, and a
+//!   client reaches only its own account's listener: a Windows pipe name is
+//!   global, so a connect to a pipe another account holds at that name is
+//!   refused with `PermissionDenied`.
 //!
 //! Where the system cannot answer, the call says `ErrorKind::Unsupported`:
 //! a Windows pipe has no write timeout.
@@ -687,6 +690,17 @@ mod sys {
         })?;
         let handle = OwnedHandle::try_from(pipe)
             .map_err(|_| io::Error::other("a fresh pipe stream is not split"))?;
+        // A pipe name is not inside the folder its path names, so the folder's
+        // access list does not keep another account from creating it first.
+        if !crate::fs::private::handle_owned_by_current_user(&handle)? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "the listener at {} belongs to another account",
+                    path.display()
+                ),
+            ));
+        }
         Ok(Pipe::new(handle, false))
     }
 

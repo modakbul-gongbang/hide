@@ -25,6 +25,7 @@ const MAX_CONTROL_LINE: u64 = 4096;
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const REFERENCE_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
+const MAX_WAITING: usize = 16;
 
 struct IssuedReference {
     token: String,
@@ -333,7 +334,9 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
             }
             closing.close();
         });
-        let (accepted, arrivals) = mpsc::channel();
+        // Bounded like the pane bootstrap's queue: a flood waits in the
+        // system's backlog, not as open streams here.
+        let (accepted, arrivals) = mpsc::sync_channel(MAX_WAITING);
         scope.spawn(move || {
             loop {
                 let arrival = listener.accept();
@@ -347,6 +350,10 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
         let result = (|| {
             let mut last_sweep = Instant::now();
             loop {
+                if last_sweep.elapsed() >= SWEEP_INTERVAL {
+                    sweep_references(&issued, &output)?;
+                    last_sweep = Instant::now();
+                }
                 let wait = SWEEP_INTERVAL.saturating_sub(last_sweep.elapsed());
                 match arrivals.recv_timeout(wait) {
                     Ok(Ok(mut stream)) => {
@@ -376,13 +383,17 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
                 }
-                if last_sweep.elapsed() >= SWEEP_INTERVAL {
-                    sweep_references(&issued, &output)?;
-                    last_sweep = Instant::now();
-                }
             }
         })();
         closing.close();
+        // An accept thread blocked on a full queue sees it gone and returns.
+        drop(arrivals);
+        // The daemon reads only frames from this helper; a bridge that stopped
+        // serving on its own says so, so the daemon ends the route and its
+        // channel, which is what lets this scope's input reader return.
+        if let Err(error) = &result {
+            let _ = write_line(&output, json!({"type":"failed","reason":error.to_string()}));
+        }
         result
     })
 }

@@ -130,7 +130,7 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
         {
             continue;
         }
-        let Ok(mut stream) = hide_platform::ipc::LocalStream::connect(&socket) else {
+        let Ok(mut stream) = LocalStream::connect(&socket) else {
             continue;
         };
         seen += 1;
@@ -412,8 +412,12 @@ mod tests {
             "port": 1, "origin_port": 2,
         });
         writeln!(daemon, "{init}").unwrap();
-        let bridge = std::thread::spawn(move || {
-            hide_host::workspace_bridge::serve(BufReader::new(channel), Lines(Vec::new(), sent))
+        let (ended, bridge) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = ended.send(hide_host::workspace_bridge::serve(
+                BufReader::new(channel),
+                Lines(Vec::new(), sent),
+            ));
         });
         let ready: Value =
             serde_json::from_str(&lines.recv_timeout(Duration::from_secs(10)).unwrap()).unwrap();
@@ -434,7 +438,10 @@ mod tests {
             Err("pane_unavailable".to_owned())
         );
         drop(daemon);
-        bridge.join().unwrap().unwrap();
+        bridge
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the bridge ends with its channel")
+            .unwrap();
         assert_eq!(bootstrap_remote(&env, &request), Ok(None));
     }
 
