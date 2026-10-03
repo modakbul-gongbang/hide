@@ -1,6 +1,7 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use cap_std::fs::Dir;
+use hide_platform::path::RelPath;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
@@ -94,29 +95,21 @@ pub fn identity_of(dir: &Dir) -> std::io::Result<RootIdentity> {
     })
 }
 
-/// A path inside a root, as a caller spells it: `/`-separated components, no
-/// leading `/`, no `.` or `..`, no NUL. The empty string is the root itself.
+/// A path inside a root as the wire spells it (`hide_platform::path::RelPath`:
+/// `/`-separated names, no leading `/`, no `.` or `..`), as this machine
+/// names it below the root's handle. The empty string is the root itself.
 /// The handle is what actually confines the work; this refuses the shapes
-/// that could never name a child, before anything is opened.
+/// that could never name a child, and a name this system cannot hold as
+/// written, before anything is opened.
 pub fn relative_path(raw: &str) -> HostResult<PathBuf> {
-    let invalid = || {
-        HostError::new(
-            ErrorCode::InvalidPath,
-            "The path is not inside the checkout",
-        )
-    };
-    if raw.contains('\0') || raw.starts_with('/') {
-        return Err(invalid());
-    }
-    let path = Path::new(raw);
-    let mut clean = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(part) => clean.push(part),
-            _ => return Err(invalid()),
-        }
-    }
-    Ok(clean)
+    RelPath::parse(raw)
+        .and_then(|relative| relative.to_native())
+        .map_err(|_| {
+            HostError::new(
+                ErrorCode::InvalidPath,
+                "The path is not inside the checkout",
+            )
+        })
 }
 
 /// The parent directory handle of `relative` and the final name, opened

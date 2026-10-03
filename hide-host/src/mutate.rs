@@ -43,6 +43,14 @@ pub fn valid_name(name: &str) -> HostResult<&str> {
     if name == "." || name == ".." {
         return refuse(format!("{name} is not a valid name"));
     }
+    // A name this system would read as something else (a `\` on Windows,
+    // a device name, a trailing dot) is refused rather than created as it.
+    if let Err(error) = hide_platform::path::RelPath::root()
+        .join(name)
+        .and_then(|path| path.to_native())
+    {
+        return refuse(format!("{name} is not a valid name here: {error}"));
+    }
     Ok(name)
 }
 

@@ -45,7 +45,7 @@ fn query(scope: &str, selected: Option<&str>, committed: bool, base: Option<&str
 }
 
 fn read(root: &Root, query: &ChangesQuery) -> hide_host::HostResult<hide_host::git::Changes> {
-    changes(root, Path::new(&query.scope), query)
+    changes(root, query)
 }
 
 #[test]
