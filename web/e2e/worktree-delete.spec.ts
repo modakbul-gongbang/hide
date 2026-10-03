@@ -103,7 +103,7 @@ test("Discard names each ignored nested repository and deletes them only after e
 });
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
+  return execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
 }
 
 async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {

@@ -19,6 +19,7 @@ struct Repo {
 
 fn git(cwd: &str, arguments: &[&str]) -> String {
     let output = std::process::Command::new("git")
+        .args(["-c", "commit.gpgsign=false"])
         .arg("-C")
         .arg(cwd)
         .args(arguments)
