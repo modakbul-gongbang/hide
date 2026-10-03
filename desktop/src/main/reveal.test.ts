@@ -5,9 +5,12 @@ import { afterAll, describe, expect, it } from "vitest";
 import { revealablePath, revealTarget } from "./reveal";
 
 describe("revealablePath", () => {
-  it("takes an absolute folder as it is", () => {
-    expect(revealablePath("/Users/example/projects/hide")).toBe("/Users/example/projects/hide");
-    expect(revealablePath("/Users/example/projects/hide/../hide.worktrees/feature")).toBe("/Users/example/projects/hide.worktrees/feature");
+  it("takes an absolute folder as it is, in this system's spelling", () => {
+    const folder = path.join(path.parse(process.cwd()).root, "Users", "example", "projects", "hide");
+    expect(revealablePath(folder)).toBe(folder);
+    // The page joins names with `/` on every system.
+    const page = folder.split(path.sep).join("/");
+    expect(revealablePath(`${page}/../hide.worktrees/feature`)).toBe(path.join(path.dirname(folder), "hide.worktrees", "feature"));
   });
 
   it("refuses anything that is not an absolute path", () => {

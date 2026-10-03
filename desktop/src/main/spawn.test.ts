@@ -1,21 +1,29 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { ChildRunner, startDetached } from "./spawn";
 
+// Node itself is the test program, so each child does the same on every system.
+const node = process.execPath;
+const script = (code: string): string[] => ["-e", code];
+/** The environment a test hands a child: `extra` and, on Windows, the system folder Node needs to start. */
+const handed = (extra: Record<string, string>): Record<string, string | undefined> => ({ ...extra, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) });
+
 describe("the child runner", () => {
   it("returns a real child's output and exit code", async () => {
-    const result = await new ChildRunner().run("/bin/sh", ["-c", "echo out; echo err >&2; exit 3"], 5_000);
+    const result = await new ChildRunner().run(node, script('process.stdout.write("out\\n"); process.stderr.write("err\\n"); process.exit(3)'), 5_000);
     expect(result).toMatchObject({ code: 3, stdout: "out\n", stderr: "err\n", timedOut: false, spawnError: null });
   });
 
   it("gives a child the environment it is handed, whole", async () => {
-    const result = await new ChildRunner().run("/bin/sh", ["-c", 'printf "%s|%s" "$HERDR_BIN_PATH" "$HOME"'], 5_000, { HERDR_BIN_PATH: "/r/herdr", PATH: "/usr/bin:/bin" });
+    const result = await new ChildRunner().run(node, script('process.stdout.write(`${process.env.HERDR_BIN_PATH}|${process.env.HOME ?? ""}`)'), 5_000, handed({ HERDR_BIN_PATH: "/r/herdr" }));
     expect(result.stdout).toBe("/r/herdr|");
   });
 
   it("kills a child past its timeout", async () => {
     const started = Date.now();
-    const result = await new ChildRunner().run("/bin/sleep", ["10"], 200);
+    const result = await new ChildRunner().run(node, script("setTimeout(() => {}, 10_000)"), 200);
     expect(result.timedOut).toBe(true);
     expect(Date.now() - started).toBeLessThan(5_000);
   });
@@ -27,24 +35,39 @@ describe("the child runner", () => {
 
   it("refuses a second child while one runs", async () => {
     const runner = new ChildRunner();
-    const first = runner.run("/bin/sleep", ["10"], 5_000);
-    await expect(runner.run("/bin/echo", [], 1_000)).rejects.toThrow(/over budget/);
+    const first = runner.run(node, script("setTimeout(() => {}, 10_000)"), 5_000);
+    await expect(runner.run(node, script(""), 1_000)).rejects.toThrow(/over budget/);
     runner.stop();
     expect((await first).signal).toBe("SIGKILL");
   });
 });
 
 describe("a detached start", () => {
-  it("leaves a child that leads its own process group", async () => {
-    const started = await startDetached("/bin/sleep", ["30"], { PATH: "/usr/bin:/bin" });
-    if (!("pid" in started)) throw new Error(started.spawnError);
+  it("leaves a child that outlives the process that started it, in a group of its own", async () => {
+    // A starter process runs `startDetached` and exits, as the app does when
+    // it quits; on Windows Node ends every child it did not detach when it
+    // exits, so the server surviving the starter is the detached start.
+    const module = pathToFileURL(path.join(__dirname, "spawn.ts")).href;
+    const starter = `import(${JSON.stringify(module)}).then(async (m) => {
+      const started = await m.startDetached(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], process.env);
+      process.stdout.write(String(started.pid ?? started.spawnError));
+    })`;
+    const result = await new ChildRunner().run(node, ["--experimental-strip-types", "--no-warnings", "-e", starter], 10_000, handed({}));
+    const pid = Number(result.stdout);
+    expect(Number.isInteger(pid), result.stdout + result.stderr).toBe(true);
     try {
-      // macOS `ps` reports no session id, so the new session shows as a group the child leads.
-      const group = (pid: number) => Number(spawnSync("/bin/ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim());
-      expect(group(started.pid)).toBe(started.pid);
-      expect(group(process.pid)).not.toBe(started.pid);
+      expect(result.code).toBe(0);
+      expect(() => process.kill(pid, 0)).not.toThrow();
+      // macOS `ps` reports no session id, so the new session shows as a
+      // group the child leads. Windows starts it in a new process group too
+      // (`CREATE_NEW_PROCESS_GROUP`), but nothing there reads a group back.
+      if (process.platform !== "win32") {
+        const group = (each: number) => Number(spawnSync("/bin/ps", ["-o", "pgid=", "-p", String(each)], { encoding: "utf8" }).stdout.trim());
+        expect(group(pid)).toBe(pid);
+        expect(group(process.pid)).not.toBe(pid);
+      }
     } finally {
-      process.kill(started.pid, "SIGKILL");
+      process.kill(pid, "SIGKILL");
     }
   });
 

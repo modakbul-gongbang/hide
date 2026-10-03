@@ -13,7 +13,7 @@
 // nothing.
 
 import path from "node:path";
-import type { ChildResult } from "./spawn";
+import { executableFile, type ChildResult } from "./spawn";
 
 export type HerdrChoice = {
   /** The HERDR_BIN_PATH every `hide` child gets, or null to leave the inherited environment as it is. */
@@ -26,7 +26,7 @@ export type HerdrChoice = {
 export function chooseHerdr(input: { bundledDir: string | null; herdrBinPath: string | null; herdrPaneId: string | null }): HerdrChoice {
   const { bundledDir, herdrBinPath, herdrPaneId } = input;
   if (bundledDir === null) return { path: null, source: "inherited", replacedPaneValue: null };
-  const bundled = path.join(bundledDir, "herdr");
+  const bundled = path.join(bundledDir, executableFile("herdr"));
   if (herdrBinPath === null) return { path: bundled, source: "bundled", replacedPaneValue: null };
   if (herdrPaneId !== null) return { path: bundled, source: "bundled", replacedPaneValue: herdrBinPath === bundled ? null : herdrBinPath };
   return { path: null, source: "inherited", replacedPaneValue: null };

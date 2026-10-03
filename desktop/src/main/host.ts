@@ -17,6 +17,7 @@ import type { CommandId } from "../../../web/src/shortcuts";
 import { BINDINGS_CHANNEL, COMMAND_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import {
+  HAS_LOGIN_SHELL,
   loginPathCommand,
   parseConnect,
   parseLoginPath,
@@ -322,7 +323,7 @@ export class DesktopHost {
         searchPath: this.env.path,
         remembered: typeof stored === "string" ? stored : null,
         // A packaged app opened from Finder has launchd's PATH, not the operator's.
-        loginPath: app.isPackaged ? () => this.readLoginPath(attempt) : null,
+        loginPath: app.isPackaged && HAS_LOGIN_SHELL ? () => this.readLoginPath(attempt) : null,
         home: this.env.home,
       },
       { isExecutable, mtimeMs },
@@ -331,7 +332,7 @@ export class DesktopHost {
       attempt,
       source: resolved.found?.source,
       path: resolved.found?.path,
-      tried: resolved.tried.join(":"),
+      tried: resolved.tried.join(path.delimiter),
     });
     this.cli = resolved.found;
     return this.cli;
@@ -378,8 +379,8 @@ export class DesktopHost {
     const herdr = this.herdr().path;
     // Finder supplies only launchd's system PATH. The CLI and any daemon it
     // starts need the same standard user install dirs we search for `hide`.
-    const inheritedPath = this.env.path || "/usr/bin:/bin:/usr/sbin:/sbin";
-    const searchPath = [...new Set([...inheritedPath.split(":"), ...wellKnownDirs(this.env.home)].filter(Boolean))].join(":");
+    const inheritedPath = this.env.path || ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(path.delimiter);
+    const searchPath = [...new Set([...inheritedPath.split(path.delimiter), ...wellKnownDirs(this.env.home)].filter(Boolean))].join(path.delimiter);
     return { ...this.env.inherited, PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
   }
 

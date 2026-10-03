@@ -4,7 +4,7 @@
 // owns.
 
 import path from "node:path";
-import type { ChildResult } from "./spawn";
+import { executableFile, type ChildResult } from "./spawn";
 
 export type CliSource = "env" | "worktree" | "bundled" | "path" | "remembered" | "login" | "well-known";
 
@@ -34,6 +34,16 @@ export type CliSearch = {
   home: string;
 };
 
+/** The CLI's file name on this system. */
+export const CLI_FILE = executableFile("hide");
+
+/**
+ * Whether this system has a login shell to ask for the operator's PATH.
+ * Windows has none: an app started from the Start menu gets the account's
+ * own PATH, so there is nothing a shell would add.
+ */
+export const HAS_LOGIN_SHELL = process.platform !== "win32";
+
 /** Where the CLI is looked for last: the directories a hand-installed `hide` lands in. */
 export function wellKnownDirs(home: string): string[] {
   return [path.join(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
@@ -44,9 +54,9 @@ export const REMEMBERED_SOURCES: ReadonlySet<CliSource> = new Set(["path", "logi
 
 function inDirs(searchPath: string): string[] {
   return searchPath
-    .split(":")
+    .split(path.delimiter)
     .filter((dir) => dir && path.isAbsolute(dir))
-    .map((dir) => path.join(dir, "hide"));
+    .map((dir) => path.join(dir, CLI_FILE));
 }
 
 /**
@@ -69,7 +79,7 @@ export async function resolveCli(input: CliSearch, probe: FileProbe): Promise<Re
     return done(probe.isExecutable(input.override) ? input.override : null, "env");
   }
   if (input.worktreeRoot) {
-    const builds = ["debug", "release"].map((profile) => path.join(input.worktreeRoot as string, "target", profile, "hide"));
+    const builds = ["debug", "release"].map((profile) => path.join(input.worktreeRoot as string, "target", profile, CLI_FILE));
     tried.push(...builds);
     const newest = builds
       .filter((file) => probe.isExecutable(file))
@@ -78,7 +88,7 @@ export async function resolveCli(input: CliSearch, probe: FileProbe): Promise<Re
     if (newest) return done(newest.file, "worktree");
   }
   if (input.bundledDir) {
-    const bundled = path.join(input.bundledDir, "hide");
+    const bundled = path.join(input.bundledDir, CLI_FILE);
     tried.push(bundled);
     if (probe.isExecutable(bundled)) return done(bundled, "bundled");
   }
@@ -94,7 +104,7 @@ export async function resolveCli(input: CliSearch, probe: FileProbe): Promise<Re
     ["path", async () => inDirs(input.searchPath)],
     ["remembered", async () => (input.remembered ? [input.remembered] : [])],
     ["login", async () => (input.loginPath ? inDirs((await input.loginPath()) ?? "") : [])],
-    ["well-known", async () => wellKnownDirs(input.home).map((dir) => path.join(dir, "hide"))],
+    ["well-known", async () => wellKnownDirs(input.home).map((dir) => path.join(dir, CLI_FILE))],
   ];
   for (const [source, files] of steps) {
     const file = first(await files());
