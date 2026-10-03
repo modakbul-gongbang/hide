@@ -101,7 +101,9 @@ The directory must contain exactly that tag's macOS ARM64 ZIP, Windows x64 ZIP a
 The gate rejects a missing target, extra or mixed-version files, symbolic links, empty archives, an incorrectly named sidecar, and a mismatched digest; archive hashing streams bytes rather than retaining each package in memory.
 Before any release write, the writer requires GitHub's immutable-release policy to report both `enabled: true` and `enforced_by_owner: true`, and checks that the current tag still resolves to the event commit.
 The workflow passes its contents-write token as `GH_TOKEN` and a separate `RELEASE_POLICY_TOKEN` repository secret as `HIDE_RELEASE_POLICY_TOKEN`; that credential needs Administration read access for the [policy endpoint](https://docs.github.com/en/rest/repos/repos#check-if-immutable-releases-are-enabled-for-a-repository).
-A missing credential, disabled or unenforced policy, moved tag, or API failure blocks preparation before writes; package workflow artifacts remain available.
+A missing credential, disabled or unenforced policy, moved tag, or failed initial API read blocks preparation before writes; package workflow artifacts remain available.
+An API failure after an append may leave a partial or complete draft, including an upload whose success response was lost.
+The writer stops further preparation and preserves accepted assets; a retry validates those bytes before skipping them.
 Policy setup and credentials are operator work, and must be complete before attempting a release.
 
 The authenticated release and asset inventories are fully paginated, with a 100-page and 16 MiB limit; a tag lookup alone cannot establish that a draft is absent.
@@ -115,7 +117,8 @@ It never changes an existing release's metadata, deletes an asset, or overwrites
 Mismatched assets, incomplete `starter` uploads and duplicate-name races stop for review; a retry resumes a matching partial draft without replacing completed bytes.
 The final read must still show the complete unpublished draft and matching bytes.
 [GitHub immutability](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) supplies the server protection if publication happens between a read and upload; a GET alone is not an atomic draft-state condition.
-The operational contract excludes concurrent owner-policy disabling and manual changes to the draft during preparation.
+The operational contract excludes concurrent owner-policy disabling, manual changes to the draft, and tag moves during preparation and publication.
+Repeated tag reads do not make prepublication provenance atomic; the maintainer must confirm that the tag and draft source record still identify the tested commit before publishing.
 Each request has a 30-second bound, JSON responses are limited to 8 MiB, and the workflow job has a ten-minute bound.
 
 This gate proves the asset set and digests, not installation, terminal input/output, native first launch, signing or notarization.
