@@ -8,6 +8,7 @@ import { issueSettingsEnglish } from "./resources/issueSettings";
 import { mobileEnglish } from "./resources/mobile";
 import { mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeEnglish } from "./resources/native";
+import { requestsEnglish } from "./resources/requests";
 import { settingsEnglish } from "./resources/settings";
 import { workspaceEnglish } from "./resources/workspace";
 import { validateCatalogs } from "./schema";
@@ -29,6 +30,7 @@ describe("interface resources", () => {
       mobileSetupEnglish,
       workspaceEnglish,
       issueSettingsEnglish,
+      requestsEnglish,
     ].flatMap((schema) => Object.keys(schema));
     expect(new Set(keys).size).toBe(keys.length);
   });
