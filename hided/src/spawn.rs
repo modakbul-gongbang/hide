@@ -3,10 +3,14 @@
 use std::io;
 use std::process::{Child, Command, Stdio};
 
+use std::ffi::OsStr;
+use std::path::Path;
+
 #[cfg(unix)]
-use hide_platform::process::{self, OwnedChild};
+use hide_platform::process;
+use hide_platform::process::OwnedChild;
 #[cfg(unix)]
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 #[cfg(unix)]
 use std::io::{Read, Write};
 #[cfg(unix)]
@@ -15,8 +19,6 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(unix)]
-use std::path::Path;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
@@ -37,12 +39,37 @@ pub fn spawn_owned(command: &mut Command) -> io::Result<Child> {
         .spawn()
 }
 
-/// A short-lived CLI opener and the private owner channel to its supervisor.
-/// The channel's EOF also reaches the supervisor when hided dies without Drop.
-#[cfg(unix)]
+/// A short-lived CLI opener this daemon answers for: stopping it, dropping it
+/// and this daemon's death without Drop each end the helper and everything it
+/// started. On Windows the job object [`OwnedChild`] puts the helper in does
+/// that by itself, because the system ends the job when its last handle
+/// closes. No Unix system ends a whole process group when its owner dies, so
+/// there a private supervisor holds the helper's group and watches an owner
+/// channel whose EOF reaches it however hided died.
 pub struct OwnedOpener {
+    #[cfg(unix)]
     supervisor: OwnedChild,
+    #[cfg(unix)]
     owner: Option<UnixStream>,
+    #[cfg(windows)]
+    helper: OwnedChild,
+}
+
+#[cfg(windows)]
+impl OwnedOpener {
+    pub fn try_wait(&mut self) -> io::Result<bool> {
+        Ok(self.helper.try_wait()?.is_some())
+    }
+
+    /// Ends what the helper left in its job too, as the Unix supervisor ends
+    /// the helper's group when the helper returns. Safe to call more than once.
+    /// A failed kill does not wait on a helper that may still run; dropping
+    /// the job's last handle still ends it.
+    pub fn stop(&mut self) {
+        if self.helper.kill_tree().is_ok() {
+            let _ = self.helper.wait();
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -83,7 +110,6 @@ impl OwnedOpener {
     }
 }
 
-#[cfg(unix)]
 impl Drop for OwnedOpener {
     fn drop(&mut self) {
         self.stop();
@@ -105,8 +131,27 @@ pub fn handoff_default_opener(program: &OsStr, path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Starts the same hided binary in its internal supervisor mode for an
-/// explicit CLI override. The supervisor watches this owner's socket.
+/// Starts an explicit CLI override as an [`OwnedOpener`]. On Unix that is the
+/// same hided binary (`supervisor_exe`) in its internal supervisor mode, which
+/// watches this owner's socket; Windows starts the helper itself and never
+/// runs `supervisor_exe`.
+#[cfg(windows)]
+pub fn spawn_opener(
+    _supervisor_exe: &Path,
+    program: &OsStr,
+    path: &Path,
+) -> io::Result<OwnedOpener> {
+    let mut command = Command::new(program);
+    command
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    Ok(OwnedOpener {
+        helper: OwnedChild::spawn(&mut command)?,
+    })
+}
+
 #[cfg(unix)]
 pub fn spawn_opener(
     supervisor_exe: &Path,
