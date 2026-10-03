@@ -32,6 +32,10 @@ Record the actual head, attempt, job URLs, failures and skips; a package smoke w
 The macOS nightly package lane extracts and checks the actual archive, then runs the existing isolated install-kit and packaged-app session-search tests.
 The Windows/Linux package lanes check the real archive's headless daemon/kit behavior; their actual GUI and physical input still need device evidence.
 
+For a file-persistence claim, run the platform's public contract and OS fault regressions through `bash scripts/verify-cargo.sh test -p hide-platform` on each supported system.
+The durable writer's regressions observe returned phases and causes, installed bytes and identity, retained cleanup residue, and Windows's unsupported access modes; unit faults are scoped to the test thread at the OS boundary and exercise the public writer without replacing owned helpers.
+A readable file or legacy `sync_dir` success alone proves no durable acknowledgement, and a file-parent barrier does not prove persistence of a newly created ancestor chain or recovery of the caller's state after an uncertain replacement.
+
 A scenario someone would check by hand becomes a spec when it can.
 Playwright drives the renderer over its own connection rather than through OS input, so a spec needs no keyboard focus and cannot type into another app.
 Manual QA covers what a spec cannot reach yet, and the pull request's Evidence says the check was manual.
@@ -53,8 +57,17 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
 - A test of a one-time move (`hide connect` moving the state folder, `hcoord home adopt`, the kit's hcoord part) stops only a daemon the test started in its own private folder, and injects launchctl and the label (`plugins/hcoord/test/unit/hcoord-home.test.mjs`); launchd domains are per account, so a real `launchctl` call with the default label reaches the operator's coordinator whatever `HOME` says.
   The desktop fixture refuses a mismatched coordinator before launching a candidate.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
-- Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so it ends with the Playwright worker even when the worker dies before a test's `finally` runs.
+- Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
+  The exit callback cannot run after SIGKILL, an OOM kill or host loss; these require separate recovery and are not proven by a `process.exit()` regression.
+- `desktop/e2e/fixture.ts` owns each `isolate` home through both automatic test teardown and worker exit, with at most sixteen unclosed homes per worker.
+  Each home records at most sixteen live or pending candidate launches; a launch over that cap fails before starting another process.
+  Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided, unloading only the hashed hcoord labels for that home's legacy and adopted directories, and confirming each label absent before deleting the home.
+  An unconfirmed candidate exit, stop, launchctl query or unload failure fails teardown and retains the home for recovery; the error names the retained path and recovery action.
+  When candidate exit is unconfirmed, close only the recorded owned candidate, confirm its exit, then call that fixture's `cleanup()` again.
+  `desktop/e2e/fixture-cleanup.unit.ts` injects Electron close failures at the external boundary and checks real home retention, confirmed-exit deletion and recovery without starting native processes.
+  `desktop/e2e/lifecycle.spec.ts` checks running and manually stopped services, failed tests, Node-managed worker exit via `process.exit(23)`, and retained state after an unload failure against private homes in real launchd.
+  Standalone hcoord fixtures must use `hcoord daemon uninstall --json` with their original `HOME` and `HCOORD_HOME` before removing those paths; `daemon stop` alone keeps the job registered.
 - Herdr starts a pane's shell from the server's `SHELL`, so a fixture sets `SHELL=/bin/zsh` beside its private `HOME`.
   The CI runner's login shell is bash, where a prompt planted in the fixture's `.zshrc` never appears; reproduce that with `SHELL=/bin/bash pnpm --dir web e2e`.
 - A private `HOME` has no Claude or Codex login, because each CLI keys its credential to `HOME`.
