@@ -11,6 +11,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { labelAgent, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -92,7 +93,7 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     await expect(field).toBeFocused();
 
     // ⌘K is the same overlay; Enter opens the agent the query names.
-    await page.keyboard.press("Meta+KeyK");
+    await page.keyboard.press(chord("search"));
     await expect(input).toBeFocused();
     await page.keyboard.type("Agent two");
     await expect(headings(page).first()).toHaveText("Agents");
@@ -107,7 +108,7 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     // there is no GitHub search to offer either, and nothing is sent to GitHub.
     // Opening the agent moved the page to its Workspace, and the palette can
     // open after that screen does; typing before it holds focus loses keys.
-    await page.keyboard.press("Meta+KeyK");
+    await page.keyboard.press(chord("search"));
     await expect(input).toBeFocused();
     await page.keyboard.type("zzzz-no-such-agent");
     await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("일치하는 항목 없음");
@@ -119,7 +120,7 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
 
     // Light: the same palette on the Light tokens. Opening the agent put its
     // Workspace on screen, so an empty ⌘K lists what is connected to it.
-    await page.keyboard.press("Alt+Comma");
+    await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="appearance"]').click();
     await page.locator('[data-theme-option="light"]').click();
     await expect(page.locator("html")).toHaveClass(/(^|\s)light(\s|$)/);

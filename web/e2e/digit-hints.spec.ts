@@ -7,6 +7,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
+import { chord, MOD_KEYS } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -28,10 +29,10 @@ test("no keycap on a ⌘ or ⌥ hold, no tab on ⌘2, and the sheet says so", as
     await page.locator("[data-pane-view] .xterm-helper-textarea").first().focus();
 
     // B3: a hold reveals nothing here, on either modifier.
-    await page.keyboard.down("Meta");
+    for (const key of MOD_KEYS) await page.keyboard.down(key);
     await page.waitForTimeout(500);
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
-    await page.keyboard.up("Meta");
+    for (const key of [...MOD_KEYS].reverse()) await page.keyboard.up(key);
     await page.keyboard.down("Alt");
     await page.waitForTimeout(500);
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
@@ -40,7 +41,7 @@ test("no keycap on a ⌘ or ⌥ hold, no tab on ⌘2, and the sheet says so", as
 
     // B3: ⌘2 is not a chord of this host, so the second tab stays where it is.
     const focused = sent.get("focus_tab") ?? 0;
-    await page.keyboard.press("Meta+Digit2");
+    await page.keyboard.press(chord("select_tab_2", "electron"));
     await page.keyboard.press("Alt+Digit2");
     await page.waitForTimeout(600);
     expect(sent.get("focus_tab") ?? 0).toBe(focused);
@@ -48,7 +49,7 @@ test("no keycap on a ⌘ or ⌥ hold, no tab on ⌘2, and the sheet says so", as
     await expect(canvas).toHaveAttribute("data-canvas", herdr.tab);
 
     // B3, B4: the sheet names both families, without a chord.
-    await page.keyboard.press("Meta+Slash");
+    await page.keyboard.press(chord("shortcuts"));
     const sheet = page.locator("[data-shortcut-sheet]");
     await expect(sheet).toBeVisible();
     await expect(sheet.locator('[data-shortcut="select_tab_1"]')).toContainText("Select tab 1-9");

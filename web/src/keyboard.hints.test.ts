@@ -4,7 +4,7 @@ import { installKeyboard } from "./keyboard";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
-vi.mock("./host", () => ({ hostKind: () => "electron", hostBridge: () => null, browserBridge: () => null }));
+vi.mock("./host", () => ({ hostKind: () => "electron", keySystem: () => "mac", hostBridge: () => null, browserBridge: () => null }));
 vi.mock("./viewFocus", () => ({
   installKeyboardOwner: () => () => {}, subscribeKeyboardOwner: () => () => {},
   keyboardOwner: () => ({ kind: "none" }), keyboardCommandOwner: () => ({ kind: "none" }),

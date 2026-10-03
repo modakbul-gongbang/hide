@@ -32,7 +32,8 @@ import { drawnViews } from "./viewFocus";
 import { besideUnavailable } from "./viewLayout";
 import { expandedUnderRoot, watchedFolders } from "./watch";
 import { workspaceViewOf } from "./workspace";
-import { revealHost } from "./host";
+import { hostKind, keySystem, revealHost } from "./host";
+import { chordEquals, chordFromEvent, defaultChord } from "./shortcuts";
 
 // The Explorer tree (PRD B1, B3, B9, B10): a lazy tree over the focused
 // checkout. The core owns which folders are expanded (`ui_state.expanded_paths`)
@@ -281,9 +282,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const row = rowForPath(rows, selection);
-    // ⌘⌫ is the Explorer's trash chord; the registry leaves it to the tree,
-    // because in a terminal it is ^U (S2 passthrough).
-    if (event.key === "Backspace" && event.metaKey) {
+    // Move to Trash (⌘⌫, Delete on Windows and Linux) is the Explorer's own
+    // chord; the registry leaves it to the tree, because in a terminal ⌘⌫ is
+    // ^U (S2 passthrough).
+    const trash = defaultChord("move_to_trash", hostKind(), keySystem());
+    if (trash && chordEquals(chordFromEvent(event.nativeEvent), trash)) {
       event.preventDefault();
       if (row) requestTrash(row);
       return;

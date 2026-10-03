@@ -12,6 +12,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -85,7 +86,7 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
     for (const pane of herdr.panes) await expect.poll(() => paneText(page, pane), { timeout: 15_000 }).toMatch(DRAWN_AT_GRID);
     await page.locator(`[data-pane-view="${focused}"] [data-terminal-host]`).click();
     await expect(page.locator(`[data-pane-view="${focused}"]`)).toHaveAttribute("data-focused", "true");
-    await page.keyboard.press("Meta+f");
+    await page.keyboard.press(chord("find_in_pane"));
     const bar = page.locator("[data-find-bar]");
     await expect(bar).toBeVisible();
     await expect(bar.locator("input")).toBeFocused();
@@ -116,7 +117,7 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
 
     // B7: inside the View area Cmd+F stays the document's find.
     await page.locator("[data-editor-body] .cm-content").click();
-    await page.keyboard.press("Meta+f");
+    await page.keyboard.press(chord("find_in_pane"));
     await expect(page.locator(".cm-search")).toBeVisible();
     await expect(bar).toHaveCount(0);
     await page.keyboard.press("Escape");

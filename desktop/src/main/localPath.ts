@@ -14,11 +14,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fromPage, MAX_PATH_LENGTH, toPage, WirePathError } from "./wirePath";
 
 /** Paths one probe may name: the tokens around one hovered row, with room to spare. */
 export const MAX_PROBE_PATHS = 64;
-/** Longer than any macOS path (`PATH_MAX` is 1024); a longer value is not a path the shell sent. */
-const MAX_PATH_LENGTH = 4096;
 
 /**
  * The file types macOS is asked to open: documents whose usual applications
@@ -34,18 +33,19 @@ const DOCUMENTS = new Set([
   ...["mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "caf", "mp4", "m4v", "mov", "webm", "mkv", "avi"],
 ]);
 
-/** What a probed path is: its physical path (symlinks and `..` resolved) and whether it is a folder. */
+/** What a probed path is: its physical path (symlinks and `..` resolved) in the wire spelling, and whether it is a folder. */
 export type Probed = { real: string; kind: "file" | "directory" } | null;
 
+/** A path the page may name for a probe: this computer's own path for an absolute wire spelling, `~/` and the rest for a home path. */
 function pathValue(value: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_PATH_LENGTH || value.includes("\0")) return null;
-  if (value.startsWith("~/") || path.isAbsolute(value)) return value;
-  return null;
+  if (typeof value === "string" && value.startsWith("~/") && !value.includes("\0") && value.length <= MAX_PATH_LENGTH) return value;
+  return fromPage(value);
 }
 
 /**
  * The paths a probe names, or null when the request is not one: an array of
- * at most `MAX_PROBE_PATHS` absolute or `~/` paths. A relative path would
+ * at most `MAX_PROBE_PATHS` absolute or `~/` paths, each absolute one in the
+ * wire spelling and handed back in this system's own. A relative path would
  * resolve against this process's own folder, which the shell knows nothing of.
  */
 export function probeRequest(value: unknown): string[] | null {
@@ -58,17 +58,22 @@ function expand(value: string, home: string): string {
   return path.normalize(value.startsWith("~/") ? path.join(home, value.slice(2)) : value);
 }
 
-/** Physical spelling/kind, or null for confirmed absence or an unsupported kind; unexpected filesystem failures reject the batch. */
+/**
+ * Physical spelling, in the wire spelling, and kind, or null for confirmed
+ * absence or an unsupported kind; unexpected filesystem failures, and a
+ * physical path the wire cannot spell, reject the batch.
+ */
 export async function probe(paths: string[], home: string = os.homedir()): Promise<Probed[]> {
   return Promise.all(
     paths.map(async (each) => {
       try {
         const real = await fs.realpath(expand(each, home));
         const stat = await fs.stat(real);
-        if (stat.isDirectory()) return { real, kind: "directory" as const };
-        if (stat.isFile()) return { real, kind: "file" as const };
+        if (stat.isDirectory()) return { real: toPage(real), kind: "directory" as const };
+        if (stat.isFile()) return { real: toPage(real), kind: "file" as const };
         return null;
       } catch (error) {
+        if (error instanceof WirePathError) throw new Error(`native path probe failed: WIRE_${error.reason.toUpperCase()}`);
         const code = (error as NodeJS.ErrnoException | null)?.code;
         if (code === "ENOENT" || code === "ENOTDIR") return null;
         // Electron's rejected IPC reaches the provider's existing diagnostic.

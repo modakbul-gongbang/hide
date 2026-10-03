@@ -13,6 +13,12 @@ import {
   hostRegistry,
   isChromeReserved,
   isNumberedCommand,
+  keySystemOf,
+  macChord,
+  modChord,
+  parseStoredChord,
+  serializeStoredChord,
+  systemRegistry,
   matchHost,
   numberedCommand,
   sheetRows,
@@ -26,7 +32,7 @@ import {
 describe("shortcut registry", () => {
   it("claims no chord Chrome keeps for itself", () => {
     for (const command of REGISTRY) {
-      expect(command.browser && isChromeReserved(command.browser), command.id).toBeFalsy();
+      expect(command.browser && isChromeReserved(command.browser, "mac"), command.id).toBeFalsy();
     }
   });
 
@@ -36,13 +42,13 @@ describe("shortcut registry", () => {
   });
 
   it("offers Add project only in the desktop app, which has the folder picker", () => {
-    expect(displayCommand("new_workspace", "browser")).toBe("");
-    expect(displayCommand("new_workspace", "electron")).toBe("⇧⌘N");
+    expect(displayCommand("new_workspace", "browser", REGISTRY, "mac")).toBe("");
+    expect(displayCommand("new_workspace", "electron", REGISTRY, "mac")).toBe("⇧⌘N");
   });
 
   it("offers Start agent only in the desktop app, where ⌘N is not the browser's", () => {
-    expect(displayCommand("start_agent", "browser")).toBe("");
-    expect(displayCommand("start_agent", "electron")).toBe("⌘N");
+    expect(displayCommand("start_agent", "browser", REGISTRY, "mac")).toBe("");
+    expect(displayCommand("start_agent", "electron", REGISTRY, "mac")).toBe("⌘N");
   });
 
   it("gives the desktop app the macOS chords", () => {
@@ -89,7 +95,7 @@ describe("shortcut registry", () => {
       ...Object.fromEntries(DIGITS.map((digit) => [`select_tab_${digit}`, `⌘${digit}`])),
       ...Object.fromEntries(DIGITS.map((digit) => [`select_agent_${digit}`, `⌥${digit}`])),
     };
-    expect(Object.fromEntries(REGISTRY.map((command) => [command.id, displayCommand(command.id, "electron")]))).toEqual(macosSet);
+    expect(Object.fromEntries(REGISTRY.map((command) => [command.id, displayCommand(command.id, "electron", REGISTRY, "mac")]))).toEqual(macosSet);
   });
 
   describe("numbered commands (electron-digit-shortcuts-hints D-02, B3, B4)", () => {
@@ -120,23 +126,23 @@ describe("shortcut registry", () => {
     });
 
     it("refuses a pane chord bound onto a numbered one by that command's name", () => {
-      expect(bindingProblem("split_right", { code: "Digit3", meta: true }, REGISTRY, "electron")).toBe("⌘3 is already Select tab 3.");
-      expect(bindingProblem("split_right", { code: "Digit3", alt: true, meta: true }, REGISTRY, "electron")).toBeNull();
-      expect(effectiveRegistry({ split_right: "command+3" }, "electron").diagnostic).toContain("already Select tab 3");
+      expect(bindingProblem("split_right", { code: "Digit3", meta: true }, REGISTRY, "electron", "mac")).toBe("⌘3 is already Select tab 3.");
+      expect(bindingProblem("split_right", { code: "Digit3", alt: true, meta: true }, REGISTRY, "electron", "mac")).toBeNull();
+      expect(effectiveRegistry({ split_right: "command+3" }, "electron", "mac").diagnostic).toContain("already Select tab 3");
     });
 
     it("folds each family into one sheet row with its range, absent in a browser", () => {
-      const tabs = sheetRows("Tabs", REGISTRY, "electron");
+      const tabs = sheetRows("Tabs", REGISTRY, "electron", "mac");
       expect(tabs.map((row) => row.id)).toEqual(["new_tab", "close_tab", "reopen_closed_tab", "select_tab_1"]);
       expect(tabs.at(-1)).toMatchObject({ title: "Select tab 1-9", chord: "⌘1 … ⌘9" });
-      expect(sheetRows("Navigate", REGISTRY, "electron").find((row) => row.id === "select_agent_1")).toMatchObject({ title: "Select agent 1-9", chord: "⌥1 … ⌥9" });
-      expect(sheetRows("Tabs", REGISTRY, "browser").at(-1)).toMatchObject({ id: "select_tab_1", chord: null });
-      expect(sheetRows("Panes", REGISTRY, "browser").find((row) => row.id === "close_pane")).toMatchObject({ chord: "⌥⇧W", moved: true, movedFrom: "⌘⇧W" });
+      expect(sheetRows("Navigate", REGISTRY, "electron", "mac").find((row) => row.id === "select_agent_1")).toMatchObject({ title: "Select agent 1-9", chord: "⌥1 … ⌥9" });
+      expect(sheetRows("Tabs", REGISTRY, "browser", "mac").at(-1)).toMatchObject({ id: "select_tab_1", chord: null });
+      expect(sheetRows("Panes", REGISTRY, "browser", "mac").find((row) => row.id === "close_pane")).toMatchObject({ chord: "⌥⇧W", moved: true, movedFrom: "⇧⌘W" });
     });
   });
 
   it("binds every electron chord once", () => {
-    const shown = REGISTRY.map((command) => displayCommand(command.id, "electron")).filter(Boolean);
+    const shown = REGISTRY.map((command) => displayCommand(command.id, "electron", REGISTRY, "mac")).filter(Boolean);
     expect(new Set(shown).size).toBe(shown.length);
   });
 
@@ -161,21 +167,21 @@ describe("shortcut registry", () => {
 
   it("runs each host's own stored set and never the other's", () => {
     const uiState = { browser_shortcut_bindings: { split_right: "alt+KeyR" }, shortcut_bindings: { toggle_zoom: "command+shift+return" } };
-    const browser = hostRegistry(uiState, "browser").registry;
-    const desktop = hostRegistry(uiState, "electron").registry;
+    const browser = hostRegistry(uiState, "browser", "mac").registry;
+    const desktop = hostRegistry(uiState, "electron", "mac").registry;
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, browser, "browser")?.id).toBe("split_right");
     expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, desktop, "electron")).toBeNull();
     expect(matchHost({ code: "KeyD", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, desktop, "electron")?.id).toBe("split_right");
     expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, desktop, "electron")?.id).toBe("toggle_zoom");
     expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, browser, "browser")).toBeNull();
-    expect(hostRegistry({}, "electron").registry).toBe(REGISTRY);
+    expect(hostRegistry({}, "electron", "mac").registry).toBe(REGISTRY);
   });
 
   it("binds every browser chord once", () => {
     const seen: string[] = [];
     for (const command of REGISTRY) {
       if (!command.browser) continue;
-      const shown = displayChord(command.browser);
+      const shown = displayChord(command.browser, "mac");
       expect(seen, `${command.id} reuses ${shown}`).not.toContain(shown);
       seen.push(shown);
     }
@@ -192,10 +198,10 @@ describe("shortcut registry", () => {
   });
 
   it("renders chords in macOS modifier order", () => {
-    expect(displayChord({ code: "Enter", meta: true, alt: true })).toBe("⌥⌘↩");
-    expect(displayChord({ code: "Backquote", alt: true, shift: true })).toBe("⌥⇧`");
-    expect(displayChord({ code: "Digit0", meta: true })).toBe("⌘0");
-    expect(displayChord({ code: "Tab", ctrl: true, shift: true })).toBe("⌃⇧⇥");
+    expect(displayChord({ code: "Enter", meta: true, alt: true }, "mac")).toBe("⌥⌘↩");
+    expect(displayChord({ code: "Backquote", alt: true, shift: true }, "mac")).toBe("⌥⇧`");
+    expect(displayChord({ code: "Digit0", meta: true }, "mac")).toBe("⌘0");
+    expect(displayChord({ code: "Tab", ctrl: true, shift: true }, "mac")).toBe("⌃⇧⇥");
   });
 });
 
@@ -218,7 +224,7 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
   });
 
   it("runs and lists a stored override in place of the default", () => {
-    const { registry, diagnostic } = effectiveRegistry({ split_right: "alt+KeyR" });
+    const { registry, diagnostic } = effectiveRegistry({ split_right: "alt+KeyR" }, "browser", "mac");
     expect(diagnostic).toBeNull();
     expect(matchHost(press("KeyR", { alt: true }), registry, "browser")?.id).toBe("split_right");
     expect(matchHost(press("KeyD", { meta: true }), registry, "browser")).toBeNull();
@@ -226,22 +232,22 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
   });
 
   it("refuses a chord with no command modifier, a Chrome chord, and another command's chord", () => {
-    expect(bindingProblem("split_right", { code: "KeyR" }, REGISTRY)).toMatch(/Include/);
-    expect(bindingProblem("split_right", { code: "KeyR", shift: true }, REGISTRY)).toMatch(/Include/);
-    expect(bindingProblem("split_right", { code: "KeyW", meta: true }, REGISTRY)).toMatch(/Chrome/);
-    expect(bindingProblem("split_right", { code: "KeyT", alt: true }, REGISTRY)).toMatch(/already New tab/);
-    expect(bindingProblem("split_right", { code: "KeyD", meta: true }, REGISTRY)).toBeNull();
+    expect(bindingProblem("split_right", { code: "KeyR" }, REGISTRY, "browser", "mac")).toMatch(/Include/);
+    expect(bindingProblem("split_right", { code: "KeyR", shift: true }, REGISTRY, "browser", "mac")).toMatch(/Include/);
+    expect(bindingProblem("split_right", { code: "KeyW", meta: true }, REGISTRY, "browser", "mac")).toMatch(/Chrome/);
+    expect(bindingProblem("split_right", { code: "KeyT", alt: true }, REGISTRY, "browser", "mac")).toMatch(/already New tab/);
+    expect(bindingProblem("split_right", { code: "KeyD", meta: true }, REGISTRY, "browser", "mac")).toBeNull();
   });
 
   it("falls back to the defaults as a whole when a stored map cannot run", () => {
     const unusable: Record<string, string>[] = [{ split_right: "KeyR" }, { split_right: "meta+KeyW" }, { split_right: "alt+KeyT" }, { toggle_conversation: "alt+KeyC" }];
     for (const stored of unusable) {
-      const resolved = effectiveRegistry(stored);
+      const resolved = effectiveRegistry(stored, "browser", "mac");
       expect(resolved.registry, JSON.stringify(stored)).toBe(REGISTRY);
       expect(resolved.diagnostic).toMatch(/defaults are in use/);
     }
     // Two overrides that collide with each other are refused together.
-    expect(effectiveRegistry({ split_right: "alt+KeyR", split_down: "alt+KeyR" }).registry).toBe(REGISTRY);
+    expect(effectiveRegistry({ split_right: "alt+KeyR", split_down: "alt+KeyR" }, "browser", "mac").registry).toBe(REGISTRY);
   });
 
   it("edits the pane commands, the cycle commands, the sidebar switch, the device rail toggle and the eight area commands", () => {
@@ -258,30 +264,30 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
 
   it("leaves the area commands unbound on every host until the operator binds one (PRD cmdk-navigation B24)", () => {
     for (const id of AREA_COMMANDS) {
-      for (const host of ["browser", "electron"] as const) expect(displayCommand(id, host), `${id} ${host}`).toBe("");
+      for (const host of ["browser", "electron"] as const) expect(displayCommand(id, host, REGISTRY, "mac"), `${id} ${host}`).toBe("");
     }
-    const bound = effectiveRegistry({ grow_view_area: "meta+alt+KeyG", focus_next_agent_area: "alt+KeyJ" });
+    const bound = effectiveRegistry({ grow_view_area: "meta+alt+KeyG", focus_next_agent_area: "alt+KeyJ" }, "browser", "mac");
     expect(bound.diagnostic).toBeNull();
-    expect(displayCommand("grow_view_area", "browser", bound.registry)).toBe("⌥⌘G");
-    const desktop = effectiveRegistry({ shrink_agent_area: "command+option+h" }, "electron");
+    expect(displayCommand("grow_view_area", "browser", bound.registry, "mac")).toBe("⌥⌘G");
+    const desktop = effectiveRegistry({ shrink_agent_area: "command+option+h" }, "electron", "mac");
     expect(desktop.diagnostic).toBeNull();
-    expect(displayCommand("shrink_agent_area", "electron", desktop.registry)).toBe("⌥⌘H");
+    expect(displayCommand("shrink_agent_area", "electron", desktop.registry, "mac")).toBe("⌥⌘H");
   });
 
   it("runs the Explorer on ⌘E and leaves the sidebar switch unbound until the operator binds it (issue 170)", () => {
     const press = { code: "KeyE", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false };
     for (const host of ["browser", "electron"] as const) {
       expect(matchHost(press, REGISTRY, host)?.id).toBe("toggle_explorer");
-      expect(displayCommand("toggle_sidebar_view", host)).toBe("");
-      expect(bindingProblem("toggle_sidebar_view", { code: "KeyE", meta: true }, REGISTRY, host)).toMatch(/already Toggle tools/);
+      expect(displayCommand("toggle_sidebar_view", host, REGISTRY, "mac")).toBe("");
+      expect(bindingProblem("toggle_sidebar_view", { code: "KeyE", meta: true }, REGISTRY, host, "mac")).toMatch(/already Toggle tools/);
     }
-    const browser = effectiveRegistry({ toggle_sidebar_view: "meta+shift+KeyE" });
+    const browser = effectiveRegistry({ toggle_sidebar_view: "meta+shift+KeyE" }, "browser", "mac");
     expect(browser.diagnostic).toBeNull();
-    expect(displayCommand("toggle_sidebar_view", "browser", browser.registry)).toBe("⇧⌘E");
+    expect(displayCommand("toggle_sidebar_view", "browser", browser.registry, "mac")).toBe("⇧⌘E");
     // The desktop app keeps it in the macOS set, under its own name.
-    const desktop = effectiveRegistry({ toggle_sidebar_view: "command+shift+e", split_right: "command+option+r" }, "electron");
+    const desktop = effectiveRegistry({ toggle_sidebar_view: "command+shift+e", split_right: "command+option+r" }, "electron", "mac");
     expect(desktop.diagnostic).toBeNull();
-    expect(displayCommand("toggle_sidebar_view", "electron", desktop.registry)).toBe("⇧⌘E");
+    expect(displayCommand("toggle_sidebar_view", "electron", desktop.registry, "mac")).toBe("⇧⌘E");
   });
 });
 
@@ -304,7 +310,7 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     expect(parseMacosChord("command+command+d")).toBeNull();
     expect(parseMacosChord("d")).toBeNull();
     expect(parseMacosChord("control+tab")).toEqual({ code: "Tab", ctrl: true });
-    expect(bindingProblem("recent_area_tab", { code: "Tab", meta: true }, REGISTRY, "electron")).toContain("kept by macOS");
+    expect(bindingProblem("recent_area_tab", { code: "Tab", meta: true }, REGISTRY, "electron", "mac")).toContain("kept by macOS");
     expect(serializeMacosChord({ code: "Enter", meta: true, shift: true, alt: true, ctrl: true })).toBe("command+control+option+shift+return");
     expect(serializeMacosChord({ code: "ArrowUp", meta: true })).toBeNull();
     expect(storedKey("text_larger", "electron")).toBe("increase_text_size");
@@ -312,39 +318,196 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
   });
 
   it("runs the operator's set: ⇧⌘↩ zooms and ⌥⌘↩ no longer does", () => {
-    const { registry, diagnostic } = effectiveRegistry(operatorSet, "electron");
+    const { registry, diagnostic } = effectiveRegistry(operatorSet, "electron", "mac");
     expect(diagnostic).toBeNull();
-    expect(displayCommand("toggle_zoom", "electron", registry)).toBe("⇧⌘↩");
+    expect(displayCommand("toggle_zoom", "electron", registry, "mac")).toBe("⇧⌘↩");
     expect(matchHost(press("Enter", { meta: true, shift: true }), registry, "electron")?.id).toBe("toggle_zoom");
     expect(matchHost(press("Enter", { meta: true, alt: true }), registry, "electron")).toBeNull();
-    expect(displayCommand("text_larger", "electron", registry)).toBe("⌘=");
+    expect(displayCommand("text_larger", "electron", registry, "mac")).toBe("⌘=");
     // The browser column is untouched by the macOS set.
     expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, alt: true });
   });
 
   it("keeps the surfaceless Toggle Conversation in the set without running it", () => {
-    const { registry, diagnostic } = effectiveRegistry({ toggle_conversation: "command+option+c", split_right: "command+option+r" }, "electron");
+    const { registry, diagnostic } = effectiveRegistry({ toggle_conversation: "command+option+c", split_right: "command+option+r" }, "electron", "mac");
     expect(diagnostic).toBeNull();
     expect(matchHost(press("KeyR", { meta: true, alt: true }), registry, "electron")?.id).toBe("split_right");
   });
 
   it("lets two commands trade chords in one set", () => {
-    const { diagnostic } = effectiveRegistry({ split_right: "command+shift+d", split_down: "command+d" }, "electron");
+    const { diagnostic } = effectiveRegistry({ split_right: "command+shift+d", split_down: "command+d" }, "electron", "mac");
     expect(diagnostic).toBeNull();
   });
 
   it("refuses a chord without ⌘ or a reserved one, and falls back to the defaults as a whole", () => {
-    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, REGISTRY, "electron")).toMatch(/Include ⌘/);
-    expect(bindingProblem("split_right", { code: "KeyQ", meta: true }, REGISTRY, "electron")).toMatch(/kept by macOS/);
-    expect(bindingProblem("split_right", { code: "ArrowUp", meta: true }, REGISTRY, "electron")).toMatch(/Use one letter/);
-    expect(bindingProblem("split_right", { code: "KeyT", meta: true }, REGISTRY, "electron")).toMatch(/already New tab/);
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, REGISTRY, "electron", "mac")).toMatch(/Include ⌘/);
+    expect(bindingProblem("split_right", { code: "KeyQ", meta: true }, REGISTRY, "electron", "mac")).toMatch(/kept by macOS/);
+    expect(bindingProblem("split_right", { code: "ArrowUp", meta: true }, REGISTRY, "electron", "mac")).toMatch(/Use one letter/);
+    expect(bindingProblem("split_right", { code: "KeyT", meta: true }, REGISTRY, "electron", "mac")).toMatch(/already New tab/);
     // A chord Chrome keeps is the desktop app's to use.
-    expect(bindingProblem("close_pane", { code: "KeyW", meta: true, shift: true }, REGISTRY, "electron")).toBeNull();
+    expect(bindingProblem("close_pane", { code: "KeyW", meta: true, shift: true }, REGISTRY, "electron", "mac")).toBeNull();
     const unusable: Record<string, string>[] = [{ split_right: "command+t" }, { split_right: "option+r" }, { zoom: "command+z" }, { split_right: "command+x", split_down: "command+x" }];
     for (const stored of unusable) {
-      const resolved = effectiveRegistry(stored, "electron");
+      const resolved = effectiveRegistry(stored, "electron", "mac");
       expect(resolved.registry, JSON.stringify(stored)).toBe(REGISTRY);
       expect(resolved.diagnostic).toMatch(/defaults are in use/);
     }
   });
 });
+
+describe("Windows and Linux (operator decision 2026-10-03)", () => {
+  const pc = systemRegistry("pc");
+  const pcPress = (code: string, modifiers: { alt?: boolean; shift?: boolean; ctrl?: boolean; meta?: boolean } = {}) => press(code, modifiers);
+
+  it("tells macOS from Windows and Linux by every platform name a host reports", () => {
+    for (const name of ["darwin", "MacIntel", "macOS", "iPhone", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"]) expect(keySystemOf(name), name).toBe("mac");
+    for (const name of ["win32", "Win32", "Windows", "linux", "Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64)"]) expect(keySystemOf(name), name).toBe("pc");
+  });
+
+  it("gives the desktop app ⌘ as Ctrl+Shift, ⇧⌘ and ⌥⌘ as Alt+Shift, and the listed exceptions", () => {
+    // The table docs/UI_BEHAVIOR.md (Keyboard shortcuts per system) prints.
+    const pcSet: Record<string, string> = {
+      new_tab: "Ctrl+Shift+T",
+      close_tab: "Ctrl+Shift+W",
+      reopen_closed_tab: "Alt+Shift+T",
+      recent_area_tab: "Ctrl+Tab",
+      previous_recent_area_tab: "Ctrl+Shift+Tab",
+      recent_panel: "",
+      previous_recent_panel: "",
+      new_workspace: "Alt+Shift+N",
+      start_agent: "Ctrl+Shift+N",
+      recent_project: "Ctrl+Shift+`",
+      previous_recent_project: "Ctrl+Alt+Shift+`",
+      search: "Ctrl+Shift+K",
+      open_file: "Ctrl+Shift+P",
+      project_home: "Alt+Shift+H",
+      toggle_left_sidebar: "Ctrl+Shift+B",
+      toggle_sidebar_view: "",
+      toggle_device_rail: "",
+      toggle_explorer: "Ctrl+Shift+E",
+      toggle_right_panel: "Alt+Shift+B",
+      find_in_pane: "Ctrl+Shift+F",
+      save_file: "Ctrl+Shift+S",
+      keep_open: "Alt+Shift+K",
+      split_right: "Ctrl+Shift+D",
+      split_down: "Alt+Shift+D",
+      toggle_zoom: "Alt+Shift+Enter",
+      close_pane: "Alt+Shift+W",
+      text_larger: "Ctrl+=",
+      text_smaller: "Ctrl+-",
+      text_reset: "Ctrl+0",
+      move_to_trash: "Delete",
+      settings: "Ctrl+Shift+,",
+      shortcuts: "Ctrl+Shift+/",
+      ...Object.fromEntries(AREA_COMMANDS.map((id) => [id, ""])),
+      ...Object.fromEntries(DIGITS.map((digit) => [`select_tab_${digit}`, `Ctrl+Shift+${digit}`])),
+      ...Object.fromEntries(DIGITS.map((digit) => [`select_agent_${digit}`, `Alt+${digit}`])),
+    };
+    expect(Object.fromEntries(pc.map((command) => [command.id, displayCommand(command.id, "electron", pc, "pc")]))).toEqual(pcSet);
+  });
+
+  it("leaves every plain Ctrl key to the terminal but text size and Ctrl+Tab", () => {
+    for (const host of ["browser", "electron"] as const) {
+      const plainCtrl = pc
+        .map((command) => (host === "electron" ? command.electron : command.browser))
+        .filter((chord) => chord && chord.ctrl && !chord.shift && !chord.alt && !chord.meta)
+        .map((chord) => chord!.code);
+      expect(new Set(plainCtrl), host).toEqual(new Set(host === "electron" ? ["Equal", "Minus", "Digit0", "Tab"] : ["Equal", "Minus", "Digit0"]));
+    }
+    expect(pc.some((command) => command.electron?.meta || command.browser?.meta)).toBe(false);
+  });
+
+  it("presses no chord with more than three keys but the two that Chrome or a held cycle forces (operator decision 2026-10-03)", () => {
+    const heavy = pc.flatMap((command) =>
+      (["browser", "electron"] as const)
+        .filter((host) => { const chord = host === "electron" ? command.electron : command.browser; return chord && [chord.ctrl, chord.alt, chord.shift].filter(Boolean).length === 3; })
+        .map((host) => `${command.id} ${host}`),
+    );
+    expect(heavy.sort()).toEqual(["previous_recent_project browser", "previous_recent_project electron", "reopen_closed_tab browser"]);
+  });
+
+  it("binds every chord once on each host, and claims none that Chrome or the system keeps", () => {
+    for (const host of ["browser", "electron"] as const) {
+      const shown = pc.map((command) => displayCommand(command.id, host, pc, "pc")).filter(Boolean);
+      expect(new Set(shown).size, host).toBe(shown.length);
+    }
+    for (const command of pc) expect(command.browser && isChromeReserved(command.browser, "pc"), command.id).toBeFalsy();
+    expect(isChromeReserved({ code: "KeyT", ctrl: true, shift: true }, "pc")).toBe(true);
+    expect(isChromeReserved({ code: "Tab", alt: true }, "pc")).toBe(true);
+    expect(isChromeReserved({ code: "KeyT", alt: true, shift: true }, "pc")).toBe(true);
+  });
+
+  it("notes a browser chord as moved only where Chrome keeps the desktop chord on this system", () => {
+    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab"]);
+    expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "new_tab")).toMatchObject({ chord: "Alt+T", moved: true, movedFrom: "Ctrl+Shift+T" });
+    // Chrome keeps Alt+Shift+T for its toolbar, and the macOS ⌥⇧T is those keys.
+    expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "reopen_closed_tab")).toMatchObject({ chord: "Ctrl+Alt+Shift+T", moved: true, movedFrom: "Alt+Shift+T" });
+    // Every other browser chord is the desktop chord.
+    const differs = pc.filter((command) => command.browser && command.electron && !command.moved && displayChord(command.browser, "pc") !== displayChord(command.electron, "pc"));
+    expect(differs.map((command) => command.id)).toEqual([]);
+    expect(sheetRows("Tabs", pc, "electron", "pc").at(-1)).toMatchObject({ title: "Select tab 1-9", chord: "Ctrl+Shift+1 … Ctrl+Shift+9" });
+  });
+
+  it("answers the Ctrl+Shift chords and lets Ctrl, the Windows key and AltGr-free chords through", () => {
+    expect(matchHost(pcPress("KeyT", { ctrl: true, shift: true }), pc, "electron")?.id).toBe("new_tab");
+    expect(matchHost(pcPress("KeyT", { alt: true, shift: true }), pc, "electron")?.id).toBe("reopen_closed_tab");
+    expect(matchHost(pcPress("KeyT", { ctrl: true, shift: true, alt: true }), pc, "electron")).toBeNull();
+    expect(matchHost(pcPress("KeyT", { ctrl: true, shift: true, alt: true }), pc, "browser")?.id).toBe("reopen_closed_tab");
+    expect(matchHost(pcPress("Backquote", { ctrl: true, shift: true, alt: true }), pc, "electron")?.id).toBe("previous_recent_project");
+    expect(matchHost(pcPress("Digit3", { ctrl: true, shift: true }), pc, "electron")?.id).toBe("select_tab_3");
+    expect(matchHost(pcPress("Backquote", { ctrl: true, shift: true }), pc, "electron")?.id).toBe("recent_project");
+    expect(matchHost(pcPress("KeyK", { ctrl: true, shift: true }), pc, "browser")?.id).toBe("search");
+    for (const code of ["KeyC", "KeyR", "KeyW", "KeyK", "KeyT", "KeyD"]) expect(matchHost(pcPress(code, { ctrl: true }), pc, "electron"), code).toBeNull();
+    expect(matchHost(pcPress("KeyT", { meta: true }), pc, "electron")).toBeNull();
+    expect(matchHost(pcPress("Delete"), pc, "electron")).toBeNull();
+  });
+
+  it("stores a chord as the macOS chord it stands for, so one set reads the same on both systems", () => {
+    const pressed = { code: "KeyR", alt: true, shift: true };
+    expect(macChord(pressed, "pc")).toEqual({ code: "KeyR", meta: true, shift: true });
+    expect(serializeStoredChord(pressed, "electron", "pc")).toBe("command+shift+r");
+    expect(serializeStoredChord(pressed, "browser", "pc")).toBe("shift+meta+KeyR");
+    expect(parseStoredChord("command+shift+r", "electron", "pc")).toEqual(pressed);
+    expect(parseStoredChord("command+shift+r", "electron", "mac")).toEqual({ code: "KeyR", meta: true, shift: true });
+    expect(serializeStoredChord({ code: "Tab", ctrl: true }, "electron", "pc")).toBe("control+tab");
+    expect(serializeStoredChord({ code: "KeyR", meta: true, ctrl: true }, "electron", "pc")).toBeNull();
+    expect(modChord({ code: "Enter", meta: true, alt: true }, "pc")).toEqual({ code: "Enter", alt: true, shift: true });
+    expect(macChord({ code: "KeyR", ctrl: true, shift: true }, "pc")).toEqual({ code: "KeyR", meta: true });
+    expect(macChord({ code: "Backquote", ctrl: true, alt: true, shift: true }, "pc")).toEqual({ code: "Backquote", ctrl: true, alt: true, shift: true });
+    expect(modChord({ code: "Tab", alt: true }, "pc")).toEqual({ code: "Tab", alt: true });
+    // The operator's macOS set (2026-09-26) runs on Windows as the same keys through the rule.
+    const { registry, diagnostic } = effectiveRegistry({ toggle_zoom: "command+shift+return", split_right: "command+d" }, "electron", "pc");
+    expect(diagnostic).toBeNull();
+    expect(displayCommand("toggle_zoom", "electron", registry, "pc")).toBe("Alt+Shift+Enter");
+    expect(matchHost(pcPress("Enter", { alt: true, shift: true }), registry, "electron")?.id).toBe("toggle_zoom");
+  });
+
+  it("refuses a desktop chord without Ctrl+Shift or Alt+Shift, one the system keeps, the Windows key, and a taken one", () => {
+    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true }, pc, "electron", "pc")).toBe("Include Ctrl+Shift or Alt+Shift so typing in a terminal stays typing.");
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, pc, "electron", "pc")).toMatch(/Include/);
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true, shift: true }, pc, "electron", "pc")).toBeNull();
+    // Ctrl+Alt+Shift stands for no macOS chord, so a set holding it would be refused on a Mac.
+    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true, alt: true, shift: true }, pc, "electron", "pc")).toMatch(/Include/);
+    expect(bindingProblem("split_right", { code: "KeyD", alt: true, shift: true }, pc, "electron", "pc")).toBe("Alt+Shift+D is already Split down.");
+    expect(bindingProblem("split_right", { code: "KeyT", alt: true, shift: true }, pc, "browser", "pc")).toBe("Alt+Shift+T is kept by Chrome or the system.");
+    expect(bindingProblem("recent_area_tab", { code: "Tab", alt: true }, pc, "electron", "pc")).toBe("Alt+Tab is kept by the system.");
+    expect(bindingProblem("split_right", { code: "KeyR", meta: true }, pc, "electron", "pc")).toMatch(/Windows or Super key/);
+    expect(bindingProblem("split_right", { code: "KeyT", ctrl: true, shift: true }, pc, "electron", "pc")).toBe("Ctrl+Shift+T is already New tab.");
+    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true, shift: true }, pc, "electron", "pc")).toBeNull();
+    expect(bindingProblem("split_right", { code: "KeyC", ctrl: true, shift: true }, pc, "electron", "pc")).toBe("Ctrl+Shift+C copies a terminal's selection.");
+    expect(bindingProblem("split_right", { code: "KeyV", ctrl: true, shift: true }, pc, "browser", "pc")).toBe("Ctrl+Shift+V pastes into a terminal.");
+    expect(bindingProblem("recent_area_tab", { code: "KeyJ", ctrl: true }, pc, "electron", "pc")).toBeNull();
+    expect(bindingProblem("split_right", { code: "KeyT", ctrl: true }, pc, "browser", "pc")).toBe("Ctrl+T is kept by Chrome or the system.");
+    expect(bindingProblem("split_right", { code: "KeyR", shift: true }, pc, "browser", "pc")).toBe("Include Ctrl or Alt so typing in a terminal stays typing.");
+  });
+
+  it("writes chords in words joined with +, in Windows' order Ctrl, Alt, Shift", () => {
+    expect(displayChord({ code: "Enter", meta: true, alt: true }, "mac")).toBe("⌥⌘↩");
+    expect(displayChord({ code: "Enter", ctrl: true, shift: true, alt: true }, "pc")).toBe("Ctrl+Alt+Shift+Enter");
+    expect(displayChord({ code: "KeyD", shift: true, alt: true }, "pc")).toBe("Alt+Shift+D");
+    expect(displayChord({ code: "ArrowUp", alt: true }, "pc")).toBe("Alt+Up");
+    expect(displayChord({ code: "Slash", ctrl: true, shift: true }, "pc")).toBe("Ctrl+Shift+/");
+    expect(displayChord({ code: "Delete" }, "pc")).toBe("Delete");
+  });
+});
+

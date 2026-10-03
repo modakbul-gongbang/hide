@@ -14,6 +14,7 @@ import type { ViewDisplaySnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { locateDisplay, workspaceKey, type ViewWorkspace } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
+import { commandLabel } from "./shortcutLabels";
 
 // A browser display (issue 155): its toolbar and the place its page shows.
 // In the desktop app the page is a native view the host lays over the slot
@@ -59,7 +60,7 @@ function NewTab({ display, actions }: { display: ViewDisplaySnapshot; actions: A
         <Hint label="Reload"><Button variant="ghost" size="icon-sm" disabled><RotateCwIcon /></Button></Hint>
         <AddressField address="" autoFocus onSubmit={(url) => actions.navigateBrowser(display.id, url)} />
       </div>
-      <NewTabBody hasChanges={changedFiles(changes, root).length > 0} onFile={() => actions.openFilePalette()} onDiff={() => useUiStore.getState().openOverlay("diff_palette")} />
+      <NewTabBody hasChanges={changedFiles(changes, root).length > 0} fileChord={commandLabel("open_file")} onFile={() => actions.openFilePalette()} onDiff={() => useUiStore.getState().openOverlay("diff_palette")} />
     </div>
   );
 }

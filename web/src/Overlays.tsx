@@ -13,9 +13,8 @@ import { markTone } from "./agentRow";
 import { DeviceChip } from "./components/device-chip";
 import { StatusMark } from "./components/status-mark";
 import { Kbd } from "./components/ui/kbd";
-import { hostKind } from "./host";
 import { visibleWindow, type CycleItem } from "./recent";
-import { displayCommand, hostRegistry } from "./shortcuts";
+import { commandLabel } from "./shortcutLabels";
 import { displayMark } from "./ViewAreas";
 import { AgentMark } from "./AgentMark";
 import { closeSheet, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
@@ -31,11 +30,11 @@ import { knownProvider } from "./workspace";
  */
 export function CycleOverlay() {
   const cycle = useUiStore((s) => s.cycle);
-  const registry = useShellStore((s) => hostRegistry(s.rest?.ui_state, hostKind()).registry);
+  const uiState = useShellStore((s) => s.rest?.ui_state);
   if (!cycle) return null;
   const { start, rows } = visibleWindow(cycle.items, cycle.index);
   const title = cycle.kind === "area" ? "Recent View tabs" : cycle.kind === "agents" ? "Recent Agent panes" : cycle.kind === "panels" ? "Global Recent Panels" : "Recent Projects";
-  const chord = displayCommand(cycle.kind === "area" || cycle.kind === "agents" ? "recent_area_tab" : cycle.kind === "panels" ? "recent_panel" : "recent_project", hostKind(), registry);
+  const chord = commandLabel(cycle.kind === "area" || cycle.kind === "agents" ? "recent_area_tab" : cycle.kind === "panels" ? "recent_panel" : "recent_project", uiState);
   return createPortal(
     <div className="fixed inset-x-0 top-[var(--size-tab-strip)] z-30 flex justify-center" data-cycle={cycle.kind}>
       <div role="listbox" aria-label={title} data-slot="cycle-overlay" className="w-[var(--size-pr-popover)] rounded-md border border-border bg-popover py-xs shadow-lg">

@@ -5,6 +5,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot, showExplorer } from "./wire";
+import { chord } from "./chords";
 
 test("View new tab replaces itself with a file or changed-file diff", async ({ page }) => {
   test.setTimeout(120_000);
@@ -60,7 +61,7 @@ test("View new tab replaces itself with a file or changed-file diff", async ({ p
     await address.fill("https://example.com"); await address.press("Enter");
     await expect(page.locator('[data-browser-address]')).toHaveText("example.com");
     // Cmd+P remains a file palette outside the new-tab page.
-    await page.keyboard.press("Meta+p");
+    await page.keyboard.press(chord("open_file"));
     await expect(page.locator('[data-palette="Open file"]')).toBeVisible();
   } finally {
     daemon?.stop();
@@ -99,24 +100,24 @@ test("New tab chord opens where the keyboard is: its View area, its pane's Agent
     await editor.click();
     const viewTabs = page.locator('[data-view-tab-bar] [role="tab"]');
     await expect(viewTabs).toHaveCount(1);
-    await page.keyboard.press("Alt+KeyT");
+    await page.keyboard.press(chord("new_tab"));
     await expect(viewTabs).toHaveCount(2);
     await expect(page.getByRole("textbox", { name: "Page address" })).toBeFocused();
     await expect(page.getByRole("textbox", { name: "Page address" })).toHaveValue("");
     await expect(agentTabs).toHaveCount(2);
     await screenshot(page, "new-tab-chord-view");
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(page.locator("[data-side-panel]")).toHaveCount(0);
 
     // The keyboard in an Agent pane: a tab at the end of the area showing that
     // pane. Focusing a pane activates its area, and the core's area focus moves
     // the keyboard with it, so this is the active area too, as before.
     await right.locator("[data-terminal-host]").first().click();
-    await page.keyboard.press("Alt+KeyT");
+    await page.keyboard.press(chord("new_tab"));
     await expect(right.locator('[role="tab"]')).toHaveCount(2);
     await expect(left.locator('[role="tab"]')).toHaveCount(1);
     await left.locator("[data-terminal-host]").first().click();
-    await page.keyboard.press("Alt+KeyT");
+    await page.keyboard.press(chord("new_tab"));
     await expect(left.locator('[role="tab"]')).toHaveCount(2);
     await expect(right.locator('[role="tab"]')).toHaveCount(2);
     await screenshot(page, "new-tab-chord-pane");
@@ -125,7 +126,7 @@ test("New tab chord opens where the keyboard is: its View area, its pane's Agent
     await agentTab(secondId).click();
     await expect(right).toHaveAttribute("data-active-area", "true");
     await page.locator("[data-panel-toggle]").focus();
-    await page.keyboard.press("Alt+KeyT");
+    await page.keyboard.press(chord("new_tab"));
     await expect(right.locator('[role="tab"]')).toHaveCount(3);
     await expect(left.locator('[role="tab"]')).toHaveCount(2);
     await expect(viewTabs).toHaveCount(0);

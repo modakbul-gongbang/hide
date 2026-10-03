@@ -476,6 +476,16 @@ mod windows {
                 to_wire(r"\\?\UNC\server\share\repo").unwrap(),
                 "//server/share/repo"
             );
+            // A device name is matched with ASCII case folding and Unicode
+            // white space trimmed, so these are names, not devices.
+            assert_eq!(
+                to_wire("\\\\?\\C:\\a\\con\u{131}n$").unwrap(),
+                "C:/a/con\u{131}n$"
+            );
+            assert_eq!(
+                to_wire("\\\\?\\C:\\a\\lpt1\u{feff}").unwrap(),
+                "C:/a/lpt1\u{feff}"
+            );
             let long = format!(r"\\?\C:\{}", "a".repeat(300));
             assert_eq!(to_wire(&long).unwrap(), format!("C:/{}", "a".repeat(300)));
         }
@@ -485,6 +495,7 @@ mod windows {
             for native in [
                 r"\\?\C:\repo\name.",
                 r"\\?\C:\repo\NUL",
+                "\\\\?\\C:\\repo\\nul\u{85}",
                 r"\\?\Volume{1234}\a",
                 r"\\.\pipe\x",
                 r"repo\a",

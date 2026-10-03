@@ -12,6 +12,7 @@ import path from "node:path";
 import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { choosePanel, countSent, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -84,7 +85,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     // ⌘⇧B opens the panel on its tool with the column shown, and the icon
     // tabs swap the one tool it holds (issue 170, "Side panel hierarchy,
     // revised").
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(workspace).toHaveAttribute("data-panel", "open");
     expect(last.get("workspace_view")).toEqual({ panel: "open", tools: true });
     await panel.locator('[data-tool-tab="changes"]').click();
@@ -93,10 +94,10 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(panel.locator('[data-tool-tab="changes"]')).toHaveAttribute("aria-selected", "true");
     // Hiding the only content closes the panel. Reopening keeps History.
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
     await expect(panel).toHaveCount(0);
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(panel).toHaveAttribute("data-panel-content", "tools");
     await panel.locator('[data-tool-tab="explorer"]').click();
@@ -123,22 +124,22 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await page.mouse.move(bodyAtTools.x + 40, bodyAtTools.y + 40);
 
     // ⌘E closes tools-only and restores the same tool at its stored width.
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(panel).toHaveCount(0);
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(panel).toHaveAttribute("data-panel-content", "tools");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(500, -1);
     await panel.locator('[data-tool-tab="changes"]').click();
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(panel).toHaveCount(0);
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await panel.locator('[data-tool-tab="explorer"]').click();
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(workspace).toHaveAttribute("data-panel", "closed");
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(workspace).toHaveAttribute("data-panel", "open");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     // The sidebar switch keeps no chord of its own: the chords above left it on Projects.
@@ -235,13 +236,13 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     // opens the agent's search in that pane, never the document's; any
     // resize it causes is counted from after it.
     const heardBefore = fs.readFileSync(herdr.inputLogs[1], "latin1").length;
-    await page.keyboard.press("Meta+f");
+    await page.keyboard.press(chord("find_in_pane"));
     await expect.poll(() => JSON.stringify(fs.readFileSync(herdr.inputLogs[1], "latin1").slice(heardBefore)), { timeout: 10_000 }).toBe(JSON.stringify("\x0f/"));
     expect(last.get("pane_find_open")).toMatchObject({ pane_id: child });
     await expect(page.locator(".cm-search")).toHaveCount(0);
     await expect(page.locator("[data-find-bar]")).toHaveCount(0);
     await panel.locator("[data-editor-body] .cm-content").click();
-    await page.keyboard.press("Meta+f");
+    await page.keyboard.press(chord("find_in_pane"));
     await expect(page.locator(".cm-search")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(workspace).toHaveAttribute("data-panel", "open");

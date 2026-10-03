@@ -562,7 +562,8 @@ mod tests {
         let codex = &diagnosis.runtimes[1];
         assert_eq!(codex.status, HookStatus::RuntimeAbsent);
         assert!(!codex.offers_install() && !codex.offers_removal());
-        assert!(diagnosis.render().contains(".claude/settings.json"));
+        let settings = Path::new(".claude").join("settings.json");
+        assert!(diagnosis.render().contains(&settings.display().to_string()));
         let _ = std::fs::remove_dir_all(&home);
     }
 

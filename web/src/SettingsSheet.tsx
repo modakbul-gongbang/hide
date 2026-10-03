@@ -78,7 +78,6 @@ import {
   chordFromEvent,
   defaultChord,
   displayChord,
-  displayCommand,
   hostChord,
   resolvedRegistry,
   serializeStoredChord,
@@ -86,14 +85,16 @@ import {
   storedKey,
   type Chord,
   type CommandId,
+  type KeySystem,
   sheetRows,
 } from "./shortcuts";
+import { commandLabel } from "./shortcutLabels";
 import type { Device, IssueSettings } from "./snapshot";
 import { latestDraft } from "./editor/draft";
 import { MobileTab } from "./MobileTab";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
-import { hostKind, type HostKind } from "./host";
+import { hostKind, keySystem, type HostKind } from "./host";
 
 /** The core's newest error, if it arrived after `since` and is one of `kinds`' prefixes. */
 function useErrorSince(since: number | null, prefixes: readonly string[]): string | null {
@@ -325,8 +326,8 @@ function AppearanceTab({ actions }: { actions: Actions }) {
   const accent = useShellStore((s) => usableAccent(s.rest?.ui_state?.accent_hex));
   const theme = useShellStore((s) => readTheme(s.rest?.ui_state?.theme).choice);
   const fontSize = useShellStore((s) => usableFontSize(s.rest?.ui_state?.font_size)) ?? FONT_SIZE_BASE;
-  const host = hostKind();
-  const chords = resolvedRegistry(useShellStore((s) => storedBindings(s.rest?.ui_state, host)), host).registry;
+  const textLarger = useShellStore((s) => commandLabel("text_larger", s.rest?.ui_state));
+  const textSmaller = useShellStore((s) => commandLabel("text_smaller", s.rest?.ui_state));
   const [changedAt, setChangedAt] = useState<number | null>(null);
   const error = useErrorSince(changedAt, ["ui_state."]);
   const [draftSize, setDraftSize] = useState(fontSize);
@@ -386,7 +387,7 @@ function AppearanceTab({ actions }: { actions: Actions }) {
       </Group>
       <Group
         title="Density"
-        note={`Terminal and editor text keep their own size (${displayCommand("text_larger", host, chords)} and ${displayCommand("text_smaller", host, chords)} in a pane or document).`}
+        note={`Terminal and editor text keep their own size (${textLarger} and ${textSmaller} in a pane or document).`}
       >
         <Row label="Interface font">
           <Slider
@@ -1135,8 +1136,9 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
   // Each host edits its own set: the desktop app the macOS set, the browser
   // its own (user decision 2026-09-26).
   const host = hostKind();
+  const system = keySystem();
   const stored = useShellStore((s) => storedBindings(s.rest?.ui_state, host));
-  const { registry, diagnostic } = resolvedRegistry(stored, host);
+  const { registry, diagnostic } = resolvedRegistry(stored, host, system);
   const [sentAt, setSentAt] = useState<number | null>(null);
   const [sent, setSent] = useState<Record<string, string> | null>(null);
   const saveError = useErrorSince(sentAt, ["ui_state."]);
@@ -1153,12 +1155,13 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
         key={id}
         id={id}
         host={host}
+        system={system}
         registry={registry}
         overridden={!diagnostic && stored?.[storedKey(id, host)] !== undefined}
         onApply={(chord) => {
           const next = current();
-          const fallback = defaultChord(id, host);
-          const text = serializeStoredChord(chord, host);
+          const fallback = defaultChord(id, host, system);
+          const text = serializeStoredChord(chord, host, system);
           if ((fallback && chordEquals(fallback, chord)) || text === null) delete next[storedKey(id, host)];
           else next[storedKey(id, host)] = text;
           apply(next);
@@ -1176,8 +1179,12 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
         title="Pane and navigation chords"
         note={
           host === "electron"
-            ? "The macOS app's pane chords: this desktop app and the macOS app share them. Pane chords need ⌘; navigation can use ⌃ or ⌥ as well. A chord that macOS or the app menu keeps is refused before it is saved."
-            : "These chords are this browser host's own; the macOS and desktop apps keep their own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
+            ? system === "mac"
+              ? "The macOS app's pane chords: this desktop app and the macOS app share them. Pane chords need ⌘; navigation can use ⌃ or ⌥ as well. A chord that macOS or the app menu keeps is refused before it is saved."
+              : "This desktop app's pane chords. Pane chords need Ctrl+Shift or Alt+Shift, so a plain Ctrl key stays the terminal's; navigation can use Ctrl or Alt as well. A chord the system keeps is refused before it is saved."
+            : system === "mac"
+              ? "These chords are this browser host's own; the macOS and desktop apps keep their own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
+              : "These chords are this browser host's own; the desktop app keeps its own set. A chord needs Ctrl or Alt, and one Chrome or the system keeps is refused before it is saved."
         }
       >
         {rowsFor(EDITABLE_PANE_COMMANDS.filter((id) => !(AREA_COMMANDS as readonly CommandId[]).includes(id)))}
@@ -1196,13 +1203,15 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
         title="Numbered chords"
         note={
           host === "electron"
-            ? "The number is the order on screen: tabs left to right, Agents rows top to bottom, first to ninth. Hold ⌘ or ⌥ to see it. These chords are fixed; a pane chord bound onto one is refused."
-            : "The desktop app's ⌘1-9 and ⌥1-9; a browser keeps its own ⌘1-9, so this host has no numbered chords."
+            ? `The number is the order on screen: tabs left to right, Agents rows top to bottom, first to ninth. Hold ${system === "mac" ? "⌘ or ⌥" : "Ctrl+Shift or Alt"} to see it. These chords are fixed; a pane chord bound onto one is refused.`
+            : system === "mac"
+              ? "The desktop app's ⌘1-9 and ⌥1-9; a browser keeps its own ⌘1-9, so this host has no numbered chords."
+              : "The desktop app's Ctrl+Shift+1-9 and Alt+1-9; a browser tab has no numbered chords."
         }
         data-settings-group="numbered-chords"
       >
-        {sheetRows("Tabs", registry, host)
-          .concat(sheetRows("Navigate", registry, host))
+        {sheetRows("Tabs", registry, host, system)
+          .concat(sheetRows("Navigate", registry, host, system))
           .filter((row) => row.id.startsWith("select_"))
           .map((row) => (
             <Row key={row.id} label={row.title}>
@@ -1226,6 +1235,7 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
 function ShortcutRow({
   id,
   host,
+  system,
   registry,
   overridden,
   onApply,
@@ -1233,6 +1243,7 @@ function ShortcutRow({
 }: {
   id: CommandId;
   host: HostKind;
+  system: KeySystem;
   registry: ReturnType<typeof resolvedRegistry>["registry"];
   overridden: boolean;
   onApply: (chord: Chord) => void;
@@ -1262,7 +1273,13 @@ function ShortcutRow({
       return;
     }
     const chord = chordFromEvent(event.nativeEvent);
-    const reason = bindingProblem(id, chord, registry, host);
+    // AltGr types a character on Windows and Linux layouts (Windows reports it
+    // as Ctrl+Alt), so a key pressed with it is never a chord, as the window
+    // listener already treats it.
+    const reason =
+      system === "pc" && event.nativeEvent.getModifierState?.("AltGraph")
+        ? "AltGr types a character, so it cannot start a chord."
+        : bindingProblem(id, chord, registry, host, system);
     setRecording(false);
     setProblem(reason);
     setDraft(reason ? null : chord);
@@ -1273,17 +1290,17 @@ function ShortcutRow({
       detail={
         problem ? (
           <Note tone="error" data-shortcut-problem={id}>
-            {problem} {effective ? `${displayChord(effective)} stays.` : ""}
+            {problem} {effective ? `${displayChord(effective, system)} stays.` : ""}
           </Note>
         ) : null
       }
     >
-      <Kbd data-shortcut-effective={id}>{effective ? displayChord(effective) : "-"}</Kbd>
+      <Kbd data-shortcut-effective={id}>{effective ? displayChord(effective, system) : "-"}</Kbd>
       {draft ? (
         <>
           <span className="text-body text-subtle-foreground">→</span>
           <Kbd className="text-foreground" data-shortcut-draft={id}>
-            {displayChord(draft)}
+            {displayChord(draft, system)}
           </Kbd>
           <Button
             onClick={() => {

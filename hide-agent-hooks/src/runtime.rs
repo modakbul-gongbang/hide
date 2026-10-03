@@ -12,10 +12,15 @@ use serde::{Deserialize, Serialize};
 /// D-31, D-57). Nothing outside this crate may write it.
 pub const HOOK_SOURCE_NAME: &str = "hide-subagents";
 
-/// The hook helper's file name, as the bundle ships it. The app looks for it
-/// beside its own executable and hands the path to [`crate::install`], so the
-/// name is stated once here rather than in the app and the build script both.
-pub const HELPER_BINARY_NAME: &str = "hide-agent-hooks";
+/// The hook helper's file name on this system, as the bundle ships it
+/// (`.exe` on Windows). The kit looks for it in its kit folder and hands the
+/// path to [`crate::install`], so the name is stated once here rather than in
+/// the app and the build script both.
+pub const HELPER_BINARY_NAME: &str = if cfg!(windows) {
+    "hide-agent-hooks.exe"
+} else {
+    "hide-agent-hooks"
+};
 
 /// The version of the installed entry. Raise it when the command Hide writes
 /// changes shape, so an older entry is reported as outdated and the operator
@@ -55,6 +60,29 @@ pub fn hook_stdout_with_context(
         }),
     };
     serde_json::to_string(&output).ok()
+}
+
+/// `json` with every character outside ASCII written as a `\u` escape,
+/// which every JSON reader decodes to the same value.
+///
+/// On Windows both runtimes run the hook through PowerShell, which can read
+/// a program's output in the console code page and write it out again
+/// (`docs/agent-hooks.md`, Installing); ASCII is the one
+/// encoding that survives that unchanged, and the context carries `…` and
+/// Memory text in any language.
+pub fn ascii_json(json: &str) -> String {
+    let mut ascii = String::with_capacity(json.len());
+    for character in json.chars() {
+        if character.is_ascii() {
+            ascii.push(character);
+        } else {
+            let mut units = [0_u16; 2];
+            for unit in character.encode_utf16(&mut units) {
+                ascii.push_str(&format!("\\u{unit:04x}"));
+            }
+        }
+    }
+    ascii
 }
 
 /// Add a live pane's Workspace instructions to the existing SessionStart
@@ -273,6 +301,21 @@ mod tests {
         assert_eq!(
             AgentRuntime::Codex.config_path(home),
             Path::new("/Users/example/.codex/hooks.json")
+        );
+    }
+
+    #[test]
+    fn ascii_json_decodes_to_the_same_value_in_ascii_only() {
+        let context = format!("{PURPOSE_CONTEXT} 메모리 \u{1F600}");
+        let json = serde_json::json!({ "hookSpecificOutput": { "additionalContext": context } })
+            .to_string();
+        let ascii = ascii_json(&json);
+        assert!(ascii.is_ascii(), "{ascii}");
+        assert!(ascii.contains(r#"purpose=\"\u2026\""#));
+        assert!(ascii.contains(r"\ud83d\ude00"), "outside the BMP as a pair");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&ascii).unwrap(),
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()
         );
     }
 
