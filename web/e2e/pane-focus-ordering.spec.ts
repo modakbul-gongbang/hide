@@ -90,10 +90,10 @@ function observeDiagnostics(page: Page): () => Diagnostic[] {
   let diagnostics: Diagnostic[] = [];
   page.on("websocket", (socket) => socket.on("framereceived", ({ payload }) => {
     const frame = JSON.parse(String(payload)) as {
-      type: string; payload?: { status?: { diagnostics?: Diagnostic[] } };
+      type: string; payload?: { rest?: { status?: { diagnostics?: Diagnostic[] } } };
     };
-    if ((frame.type === "snapshot" || frame.type === "delta") && frame.payload?.status?.diagnostics) {
-      diagnostics = frame.payload.status.diagnostics;
+    if ((frame.type === "snapshot" || frame.type === "delta") && frame.payload?.rest?.status?.diagnostics) {
+      diagnostics = frame.payload.rest.status.diagnostics;
     }
   }));
   return () => diagnostics;
