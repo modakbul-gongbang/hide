@@ -374,11 +374,12 @@ The workspace inspector uses the canonical representative agent and disconnected
 
 ## Task identity
 
-The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, and the Overview agent line.
-`sidebar.rs` owns the ladder: the label's rolling `task`, then the provider's name (`Claude`, `Codex`, the kind Herdr reports, or `Agent` when it reports none).
+The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, the Overview agent line and the request view.
+`sidebar.rs` owns the ladder (PRD overview-request-view D-13): the label's rolling `task`, then the agent's own title for the session (Claude Code's `/rename` over its `ai-title`, Codex's `thread_name`, OpenCode's session title, read by the session adapter), then the provider's name (`Claude`, `Codex`, `OpenCode`, the kind Herdr reports, or `Agent` when it reports none).
+The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
-Nothing publishes a session `name`, reads Claude's `ai-title` or Codex's first human turn as a separate title, or renames an agent or tab.
+Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
 The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude or Codex pane's conversation, asks the background AI for a task title, a progress line, the reply the agent wants and whether it asked a question, and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 `LabelWorker::apply` lays that label onto an agent just before the runtime projects it, and `sidebar.rs::project_agent` reads `task`, `progress`, `expected_reply` and `question` off it.
@@ -394,6 +395,20 @@ Regression owners: in `herdr-core/src/labels/tests.rs`, `another_session_shows_n
 There is no `summary` token and no missing-summary notice: an agent without a task is titled by its provider, and the row says nothing else.
 Truncation belongs to each view and does not shorten tooltip or accessibility text.
 Projection adds bounded-by-metadata strings per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.
+
+### The request view's verb
+
+Each agent row also carries a `request` block (`herdr-core/src/request_view.rs`, PRD overview-request-view): the operator's last request with who sent it, the last reply, the row's pull requests, and one verb the request view groups by.
+The verb is computed in the core from the axes above and the row's pull requests, never by the shell, and the first rule that holds wins:
+a demand (a question or an approval) is `answer`; a running agent is `working`; then, over the open pull requests whose duty the row holds, failed checks are `fix`, passing, absent or unknown checks are `review`, and running checks are `waiting`; an unread completion, or a pull request settled since the operator's last request, is `result`; a quiet root with working descendants is `waiting`; anything else is `idle`.
+A row's pull requests are its checkout branch's and those its session made: a tool in the session printed the address within thirty seconds of GitHub's `createdAt` (D-31), judged once by the label worker and kept with the session's facts.
+An address in a reply or a request is a mention and links nothing.
+A pull request on several rows gives its duty to the row on its branch's checkout, else to the row whose session printed it first, so `fix` and `review` appear once.
+A settled pull request counts as live only when it settled after the operator's last request (D-43).
+The verb's time is kept per pane in `core-state.json` (`request_verbs`), so a restart does not restart the wait.
+Opening a finished row in the request view (`overview_open_result`) reads the pane the way a focus does and moves no focus; a demand outlives the read as everywhere else.
+Who sent a request is the label worker's verdict (ARCHITECTURE.md, Agent labels in the core); a delegated child's first request is its parent's, by the parent row's title.
+Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull request links, duty and senders, and `runtime::tests::labels` for the title ladder, the open-result read and the running-checks re-read.
 
 ### The second line
 

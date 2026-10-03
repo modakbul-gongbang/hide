@@ -975,7 +975,7 @@ impl Runtime {
         self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain, None);
         let changed = before != agents;
         self.snapshot.navigator.agents = agents;
-        changed | self.refresh_inactive_groups()
+        changed | self.refresh_inactive_groups() | self.sync_request_rows()
     }
 
     /// Applies the read axis to one remote target's agent rows.
@@ -1338,6 +1338,13 @@ impl Runtime {
     /// Whether the readers that only feed a window should run.
     pub(crate) fn ui_attached(&self) -> bool {
         self.ui_attached
+    }
+
+    /// The pull request creation times the label workers judge against.
+    pub(crate) fn pull_request_times(
+        &self,
+    ) -> std::sync::Arc<crate::labels::facts::PullRequestTimes> {
+        std::sync::Arc::clone(&self.pull_request_times)
     }
 
     /// What a starting session-sync coordinator builds its label worker on.
@@ -2080,7 +2087,10 @@ impl Runtime {
             });
         // Machine identity, remote arrival and local arrival all publish the
         // same ownership transition, including normal tab placement.
-        changed | self.sync_pane_lineage()
+        let changed = changed | self.sync_pane_lineage();
+        // The request block reads the lineage (a delegated child's first
+        // request is its parent's), so it is built after it.
+        changed | self.sync_request_rows()
     }
 
     /// Logs the descendants whose activity Herdr cannot classify, once per

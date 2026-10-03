@@ -434,6 +434,23 @@ mod tests {
         assert!(projection.agents().all(|agent| agent.device_id != "gone"));
     }
 
+    /// The request view's words (the operator's request, the agent's reply)
+    /// stay on the desktop: the phone's rows carry none of them (PRD
+    /// overview-request-view Risks).
+    #[test]
+    fn the_request_views_text_never_reaches_a_phone_row() {
+        let mut rest = rest();
+        rest["navigator"]["agents"][0]["request"] = json!({
+            "verb": "working", "verb_since_unix_ms": 1,
+            "request": {"text": "secret request words", "cut": false, "images": 0, "at_unix_ms": 1, "sender": {"kind": "operator"}},
+            "reply": {"text": "secret reply words", "cut": false, "at_unix_ms": 2},
+            "later_by": null, "pull_requests": [],
+        });
+        let projection = project(&rest);
+        let sent = serde_json::to_string(&projection.groups).unwrap();
+        assert!(!sent.contains("secret"), "{sent}");
+    }
+
     #[test]
     fn rows_carry_place_line_and_lineage_root() {
         let projection = project(&rest());

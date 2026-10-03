@@ -30,6 +30,26 @@ use super::input::Submit;
 pub(crate) const MAX_TEXT_BYTES: usize = 8 * 1024;
 /// Pull request addresses kept per session, newest (by first sighting) last.
 pub(crate) const MAX_SIGHTINGS: usize = 20;
+/// Pull requests one session is recorded as having made.
+const MAX_CREATED: usize = 20;
+/// How far from GitHub's creation time a tool's printing of the address may
+/// be and still be the creation (D-31): a little before, for clock skew, and
+/// up to thirty seconds after, for a tool that prints when it returns.
+const CREATED_BEFORE_MS: u64 = 2_000;
+const CREATED_AFTER_MS: u64 = 30_000;
+
+/// When GitHub made each pull request this daemon has read, by lowercase
+/// `owner/name` and number.
+pub(crate) type PullRequestTimes = BTreeMap<(String, u64), u64>;
+
+/// A pull request this session made.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CreatedPr {
+    pub(crate) repository: String,
+    pub(crate) number: u64,
+    pub(crate) sighted_at_unix_ms: u64,
+}
+
 /// Requesters kept, by message offset.
 const MAX_VERDICTS: usize = 32;
 /// How long after a submit its message may be written by an agent that was
@@ -109,6 +129,10 @@ pub(crate) struct SessionFacts {
     pub(crate) reply: Option<Reply>,
     #[serde(default)]
     pub(crate) sightings: Vec<PrSighting>,
+    /// The pull requests the session made, judged once against GitHub's
+    /// creation time and kept (D-31), oldest first.
+    #[serde(default)]
+    pub(crate) created_prs: Vec<CreatedPr>,
     #[serde(default)]
     first_request_offset: Option<u64>,
     #[serde(default)]
@@ -190,6 +214,37 @@ impl SessionFacts {
         }
         self.sight(read.sightings, log);
         before != self.shown()
+    }
+
+    /// Records each sighted pull request whose address a tool printed when
+    /// GitHub made it. Returns whether one was added.
+    pub(crate) fn judge_created(&mut self, times: &PullRequestTimes) -> bool {
+        let mut added = false;
+        for sighting in &self.sightings {
+            let repository = sighting.repository.to_ascii_lowercase();
+            let Some(&created) = times.get(&(repository.clone(), sighting.number)) else {
+                continue;
+            };
+            let at = sighting.at_unix_ms;
+            let made_then = at.saturating_add(CREATED_BEFORE_MS) >= created
+                && at <= created.saturating_add(CREATED_AFTER_MS);
+            let known = self
+                .created_prs
+                .iter()
+                .any(|kept| kept.number == sighting.number && kept.repository == repository);
+            if made_then && !known {
+                if self.created_prs.len() >= MAX_CREATED {
+                    self.created_prs.remove(0);
+                }
+                self.created_prs.push(CreatedPr {
+                    repository,
+                    number: sighting.number,
+                    sighted_at_unix_ms: at,
+                });
+                added = true;
+            }
+        }
+        added
     }
 
     /// A rewritten conversation: the offsets the requesters were kept by no
@@ -477,6 +532,39 @@ mod tests {
             Requester::Operator
         );
         assert!(facts.other_request.is_none());
+    }
+
+    #[test]
+    fn a_pull_request_is_the_sessions_only_when_its_tool_printed_it_as_github_made_it() {
+        let mut facts = SessionFacts::default();
+        let sighting = |number, at_unix_ms| PrSighting {
+            repository: "Acme/App".to_owned(),
+            number,
+            at_unix_ms,
+        };
+        facts.sight(
+            &[
+                sighting(1, 100_000),
+                sighting(2, 100_000),
+                sighting(3, 200_000),
+            ],
+            &LOG,
+        );
+        let times = PullRequestTimes::from([
+            (("acme/app".to_owned(), 1), 90_000), // printed 10 s after: made here
+            (("acme/app".to_owned(), 2), 40_000), // printed a minute after: looked at
+            (("acme/app".to_owned(), 3), 201_000), // printed a second before: made here
+        ]);
+        assert!(facts.judge_created(&times));
+        assert_eq!(
+            facts
+                .created_prs
+                .iter()
+                .map(|pr| pr.number)
+                .collect::<Vec<_>>(),
+            [1, 3]
+        );
+        assert!(!facts.judge_created(&times), "judged once");
     }
 
     #[test]

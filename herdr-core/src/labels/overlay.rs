@@ -13,7 +13,9 @@ use std::collections::HashMap;
 
 use hide_session::label_reference_token;
 
+use super::facts::SessionFacts;
 use super::store::{self, PaneRecord};
+use crate::request_view::RowFacts;
 use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -38,6 +40,7 @@ struct ProvenLabel {
     progress: String,
     expected_reply: String,
     question: bool,
+    facts: RowFacts,
 }
 
 impl LabelOverlay {
@@ -55,6 +58,7 @@ impl LabelOverlay {
                     progress: record.progress.clone(),
                     expected_reply: record.expected_reply.clone(),
                     question: record.question,
+                    facts: row_facts(&record.facts),
                 });
                 (
                     pane_id.clone(),
@@ -97,7 +101,23 @@ impl LabelOverlay {
                 expected_reply: non_empty(&label.expected_reply),
                 question: label.question && agent.agent_status.as_deref() != Some("working"),
             });
+            agent.facts = Some(label.facts.clone());
         }
+    }
+}
+
+/// The part of a session's facts a row is built from.
+fn row_facts(facts: &SessionFacts) -> RowFacts {
+    RowFacts {
+        native_title: facts.custom_title.clone().or_else(|| facts.title.clone()),
+        operator_request: facts.operator_request.clone(),
+        other_request: facts.other_request.clone(),
+        reply: facts.reply.clone(),
+        created_prs: facts
+            .created_prs
+            .iter()
+            .map(|pr| (pr.repository.clone(), pr.number, pr.sighted_at_unix_ms))
+            .collect(),
     }
 }
 

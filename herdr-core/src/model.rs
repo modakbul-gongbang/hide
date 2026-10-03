@@ -891,6 +891,15 @@ pub struct SidebarAgentSnapshot {
     /// the agent is awake, so an awake row keeps exactly its keys (PRD D-16).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep: Option<AgentSleepSnapshot>,
+    /// What the label worker read of this agent's session, which the request
+    /// block is built from (PRD overview-request-view D-14).
+    #[serde(skip_serializing)]
+    pub(crate) row_facts: Option<crate::request_view::RowFacts>,
+    /// The request view's part of the row: the verb and since when, the
+    /// request and reply lines, the pull requests (`request_view.rs`).
+    /// Absent until the core has built it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<crate::request_view::AgentRequestSnapshot>,
 }
 
 /// What a sleeping agent's row and pane say about it.
@@ -2294,6 +2303,11 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// Each agent pane's request-view verb and when it took it, so the time
+    /// a row has waited survives a restart (PRD overview-request-view D-40).
+    /// The store owns it; the shell reads it on the row.
+    #[serde(default, skip_serializing)]
+    pub request_verbs: BTreeMap<String, crate::request_view::VerbRecord>,
     /// How long an agent may go untouched before Hide ends its process and
     /// keeps its conversation to resume: 12, 24 or 72 hours, or `None` for
     /// never, the default (PRD D-10).
@@ -2709,6 +2723,7 @@ impl Default for UiStateSnapshot {
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
+            request_verbs: BTreeMap::new(),
             agent_sleep_after_hours: None,
             project_issue_sources: BTreeMap::new(),
             issue_settings: IssueSettingsSnapshot::default(),
@@ -3029,6 +3044,13 @@ pub struct PullRequestSnapshot {
     pub is_draft: bool,
     pub merged_at_unix_ms: Option<u64>,
     pub updated_at_unix_ms: Option<u64>,
+    /// When GitHub made the pull request, which ties it to the session whose
+    /// tool printed its address then (PRD overview-request-view D-31).
+    #[serde(skip_serializing)]
+    pub created_at_unix_ms: Option<u64>,
+    /// When it was closed or merged, for a row's chip after the request.
+    #[serde(skip_serializing)]
+    pub closed_at_unix_ms: Option<u64>,
 }
 
 /// How a repository's `gh` lookup is doing, independent of what it found.
@@ -4257,6 +4279,32 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "pull_request_checks", &checks);
         checked.insert("pull_request_checks");
+
+        use crate::request_view::RequestVerb;
+        let verbs = [
+            RequestVerb::Answer,
+            RequestVerb::Fix,
+            RequestVerb::Review,
+            RequestVerb::Stopped,
+            RequestVerb::Result,
+            RequestVerb::Working,
+            RequestVerb::Waiting,
+            RequestVerb::Idle,
+        ];
+        for variant in verbs {
+            match variant {
+                RequestVerb::Answer
+                | RequestVerb::Fix
+                | RequestVerb::Review
+                | RequestVerb::Stopped
+                | RequestVerb::Result
+                | RequestVerb::Working
+                | RequestVerb::Waiting
+                | RequestVerb::Idle => {}
+            }
+        }
+        assert_wire(&contract, "request_verb", &verbs);
+        checked.insert("request_verb");
 
         let statuses = [
             ChangedFileStatus::Modified,

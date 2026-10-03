@@ -41,6 +41,7 @@ mod project_context;
 mod reader;
 mod recent_closed;
 pub mod remote;
+mod request_view;
 mod runtime;
 pub mod schema;
 mod session_sync;

@@ -43,6 +43,8 @@ fn pull_request(
         is_draft: false,
         merged_at_unix_ms: merged_at,
         updated_at_unix_ms: Some(1),
+        created_at_unix_ms: None,
+        closed_at_unix_ms: None,
     }
 }
 

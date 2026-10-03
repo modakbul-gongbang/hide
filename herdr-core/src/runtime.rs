@@ -27,6 +27,7 @@ mod projects;
 mod pull_requests;
 mod recent_checkouts;
 mod rename;
+mod request_view;
 mod session;
 pub(crate) mod session_search;
 mod snapshot_delta;
@@ -1239,6 +1240,14 @@ pub struct Runtime {
     /// The label store and analyzer every session-sync coordinator's worker
     /// shares; `None` when the core was made without them (tests).
     label_services: Option<std::sync::Arc<crate::labels::LabelServices>>,
+    /// GitHub's creation time of every pull request read, which the label
+    /// workers judge their sessions' sightings against (PRD
+    /// overview-request-view D-31); replaced only when it changes.
+    pull_request_times: std::sync::Arc<crate::labels::facts::PullRequestTimes>,
+    /// Some window shows the request view, and when its pending checks were
+    /// last looked at (PRD overview-request-view D-32).
+    request_view_observed: bool,
+    pending_checks_read_at: Option<std::time::Instant>,
     issue_tokens: crate::wire::IssueTokens,
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
     issue_write_pending: Option<(u64, String, String)>,
@@ -1641,6 +1650,9 @@ impl Runtime {
             ui_attached: true,
             label_overlay: Default::default(),
             label_services: None,
+            pull_request_times: Default::default(),
+            request_view_observed: false,
+            pending_checks_read_at: None,
             issue_tokens: Default::default(),
             issue_candidates: Default::default(),
             issue_write_pending: None,

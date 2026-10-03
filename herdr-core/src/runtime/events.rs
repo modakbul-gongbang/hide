@@ -113,6 +113,14 @@ pub(super) struct OverviewRefreshPayload {
     pub(super) workspace_id: String,
 }
 
+/// Whether any window shows the request view; hided aggregates its
+/// connections and sends the change (PRD overview-request-view D-32).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RequestViewPayload {
+    pub(super) observing: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateWorkspacePayload {
     /// The device that holds the folder; this machine when absent. A
@@ -1272,6 +1280,8 @@ pub(super) enum Event {
     RemoveWorktree(RemoveWorktreePayload),
     GithubRequest(GithubRequestPayload),
     OverviewRefresh(OverviewRefreshPayload),
+    OverviewOpenResult(PaneTargetPayload),
+    RequestView(RequestViewPayload),
     /// The card's refresh button, opening the delete confirmation, and a
     /// completed worktree removal. All three say "read again now" about a
     /// different set of readers, and none needs a target: the card is always
@@ -1474,6 +1484,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "remove_worktree" => decode!(RemoveWorktreePayload, RemoveWorktree),
         "github_request" => decode!(GithubRequestPayload, GithubRequest),
         "overview_refresh" => decode!(OverviewRefreshPayload, OverviewRefresh),
+        "overview_open_result" => decode!(PaneTargetPayload, OverviewOpenResult),
+        "request_view" => decode!(RequestViewPayload, RequestView),
         "cleanup_review" => decode!(CleanupReviewPayload, CleanupReview),
         "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
         "cleanup_dismiss" => Ok(Event::CleanupDismiss),
@@ -3121,6 +3133,11 @@ impl Runtime {
                 }
                 first || payload.refresh
             }
+            Event::OverviewOpenResult(payload) => self.open_result(&payload.pane_id),
+            Event::RequestView(payload) => {
+                self.observe_request_view(payload.observing, std::time::Instant::now());
+                false
+            }
             Event::OverviewRefresh(payload) => {
                 let project = self
                     .snapshot
@@ -3460,6 +3477,7 @@ impl Runtime {
                     editor_text_scale: current.editor_text_scale,
                     conversation_pane_ids: current.conversation_pane_ids,
                     pane_read_records: current.pane_read_records,
+                    request_verbs: current.request_verbs,
                     // `agent_sleep_set` owns the setting and the core owns
                     // the sleep records; a shared save carries both through.
                     agent_sleep_after_hours: current.agent_sleep_after_hours,

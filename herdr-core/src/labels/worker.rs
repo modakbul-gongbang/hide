@@ -37,7 +37,7 @@ use super::analysis::{
 };
 use super::analyzer::{AnalysisJob, AnalysisResult, LabelAnalyzer};
 use super::context_label;
-use super::facts::{InputView, LogTarget, ReadFacts};
+use super::facts::{InputView, LogTarget, PullRequestTimes, ReadFacts};
 use super::generator::GeneratorLock;
 use super::input::{OperatorInput, Submit};
 use super::overlay::LabelOverlay;
@@ -169,6 +169,8 @@ pub(crate) struct LabelWorker {
     waiting: VecDeque<String>,
     next_generation: u64,
     dirty: bool,
+    /// GitHub's creation time of each pull request the core has read.
+    pull_request_times: Arc<PullRequestTimes>,
 }
 
 impl LabelWorker {
@@ -198,6 +200,7 @@ impl LabelWorker {
             waiting: VecDeque::new(),
             next_generation: 0,
             dirty: false,
+            pull_request_times: Arc::default(),
         })
     }
 
@@ -360,6 +363,25 @@ impl LabelWorker {
         }
         self.schedule(now);
         self.persist();
+        changed
+    }
+
+    /// Takes the core's latest pull request creation times and judges every
+    /// session's sightings against them (D-31). Returns whether a row's pull
+    /// requests changed.
+    pub(crate) fn set_pull_request_times(&mut self, times: Arc<PullRequestTimes>) -> bool {
+        if Arc::ptr_eq(&self.pull_request_times, &times) {
+            return false;
+        }
+        self.pull_request_times = times;
+        let mut changed = false;
+        for record in self.records.values_mut() {
+            changed |= record.facts.judge_created(&self.pull_request_times);
+        }
+        if changed {
+            self.dirty = true;
+            self.persist();
+        }
         changed
     }
 
@@ -652,6 +674,7 @@ impl LabelWorker {
                 pane_id,
             },
         );
+        changed |= record.facts.judge_created(&self.pull_request_times);
         if transcript.skipped_lines > 0 {
             crate::diagnostic!(json!({
                 "component": "labels",
