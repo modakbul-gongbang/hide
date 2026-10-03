@@ -54,8 +54,10 @@ export function systemLanguage(locale: unknown): LanguageResolution {
 }
 
 /**
- * The core's absent/null choice follows the host's OS. A stored explicit
- * choice wins, including English on a Korean OS. Unknown persisted values
+ * The core owns one explicit preference for all connected shells and
+ * phones. Until that preference exists, each client follows its own primary
+ * OS/browser language without saving a default into the core.
+ * A stored explicit choice wins, including English on a Korean OS. Unknown persisted values
  * take the required English fallback and name the invalid state for the
  * boundary's diagnostic; they never clear the preference silently.
  */
