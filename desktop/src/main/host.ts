@@ -27,6 +27,7 @@ import {
   rememberedCliPath,
   rememberedCliValue,
   resolveCli,
+  systemDirs,
   wellKnownDirs,
   type Attached,
   type CliSource,
@@ -120,6 +121,10 @@ export class DesktopHost {
   // --- lifecycle ------------------------------------------------------------
 
   start(): void {
+    // A folder whose variable is unset is left out of the search and of every
+    // child's PATH (`cli.ts`); the keys are named once here.
+    const missing = [...new Set([...wellKnownDirs(this.env).missing, ...(this.env.path ? [] : systemDirs(this.env).missing)])];
+    if (missing.length > 0) this.log.event("env.locations_missing", { keys: missing.join(",") });
     this.guardSession();
     this.browsers = new BrowserViews(
       this.log,
@@ -339,7 +344,7 @@ export class DesktopHost {
         remembered: typeof stored === "string" ? stored : null,
         // A packaged app opened from Finder has launchd's PATH, not the operator's.
         loginPath: app.isPackaged && HAS_LOGIN_SHELL ? () => this.readLoginPath(attempt) : null,
-        home: this.env.home,
+        wellKnown: wellKnownDirs(this.env).dirs,
       },
       { isExecutable, mtimeMs },
     );
@@ -355,6 +360,10 @@ export class DesktopHost {
 
   private async readLoginPath(attempt: number): Promise<string | null> {
     if (this.loginPath) return this.loginPath;
+    if (this.env.shell === null) {
+      this.log.event("cli.login_path", { attempt, ok: false, reason: "no_shell" });
+      return null;
+    }
     const started = Date.now();
     const command = loginPathCommand(this.env.shell);
     const result = await this.runCli(command.file, command.args, LOGIN_PATH_TIMEOUT_MS);
@@ -393,9 +402,9 @@ export class DesktopHost {
   private childEnvironment(): Record<string, string | undefined> {
     const herdr = this.herdr().path;
     // Finder supplies only launchd's system PATH. The CLI and any daemon it
-    // starts need the same standard user install dirs we search for `hide`.
-    const inheritedPath = this.env.path || ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(path.delimiter);
-    const searchPath = [...new Set([...inheritedPath.split(path.delimiter), ...wellKnownDirs(this.env.home)].filter(Boolean))].join(path.delimiter);
+    // starts need the same install folders we search for `hide`.
+    const inherited = this.env.path ? this.env.path.split(path.delimiter) : systemDirs(this.env).dirs;
+    const searchPath = [...new Set([...inherited, ...wellKnownDirs(this.env).dirs].filter(Boolean))].join(path.delimiter);
     return { ...this.env.inherited, PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
   }
 

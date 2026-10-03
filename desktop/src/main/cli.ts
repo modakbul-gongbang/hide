@@ -4,6 +4,7 @@
 // owns.
 
 import path from "node:path";
+import type { DesktopEnv } from "./env";
 import { executableFile, type ChildResult } from "./spawn";
 
 export type CliSource = "env" | "worktree" | "bundled" | "path" | "remembered" | "login" | "well-known";
@@ -31,7 +32,8 @@ export type CliSearch = {
   remembered: string | null;
   /** Asks the login shell for its PATH; called only when every cheaper step missed, and null when unpackaged. */
   loginPath: (() => Promise<string | null>) | null;
-  home: string;
+  /** The install folders searched last (`wellKnownDirs`). */
+  wellKnown: readonly string[];
 };
 
 /** The CLI's file name on this system. */
@@ -44,9 +46,65 @@ export const CLI_FILE = executableFile("hide");
  */
 export const HAS_LOGIN_SHELL = process.platform !== "win32";
 
-/** Where the CLI is looked for last: the directories a hand-installed `hide` lands in. */
-export function wellKnownDirs(home: string): string[] {
-  return [path.join(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+/** Folders found from the system's own variables, and the registered keys whose absence left folders out. */
+export type Folders = { dirs: string[]; missing: string[] };
+
+/** The variables the install folders are found under, as the environment registry read them (`env.ts`). */
+export type Locations = Pick<DesktopEnv, "home" | "localAppData" | "appData" | "programFiles" | "systemRoot">;
+
+/**
+ * The folders installers put the programs Hide runs in, searched last for
+ * `hide` and appended to every child's PATH, so a daemon started from Finder
+ * or the Start menu finds `git`, `gh`, the agent CLIs and Herdr. On macOS and
+ * Linux those are `~/.local/bin`, Homebrew's and `/usr/local/bin`. On Windows
+ * each comes from that program's own installer, and a folder whose variable is
+ * unset is left out and named rather than guessed:
+ *
+ * - `~\.local\bin`: Hide's kit links `hide.exe` there, and Claude Code's
+ *   installer puts `claude.exe` there.
+ * - `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin` and
+ *   `%LOCALAPPDATA%\Programs\Herdr\bin`: the Codex and Herdr installers'
+ *   default folders (`install.ps1`'s visible bin folder in each).
+ * - `%LOCALAPPDATA%\Programs\Git\cmd` and `%ProgramFiles%\Git\cmd`: Git for
+ *   Windows, installed for the account or for the machine (`{userpf}` and
+ *   `{commonpf}` in its installer), whose `cmd` folder is what it puts on PATH.
+ * - `%APPDATA%\npm`: the global folder the Node.js installer gives npm, where
+ *   `npm install -g` puts `claude` and `codex`.
+ * - `%ProgramFiles%\GitHub CLI` and `%ProgramFiles%\nodejs`: the GitHub CLI's
+ *   and Node.js's installers' folders; npm's commands and hcoord run on `node`.
+ */
+export function wellKnownDirs(at: Locations): Folders {
+  if (process.platform !== "win32") return { dirs: [path.join(at.home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"], missing: [] };
+  const missing: string[] = [];
+  const under = (key: string, root: string | null, ...folders: string[][]): string[] => {
+    if (root === null) {
+      missing.push(key);
+      return [];
+    }
+    return folders.map((names) => path.join(root, ...names));
+  };
+  const dirs = [
+    path.join(at.home, ".local", "bin"),
+    ...under("LOCALAPPDATA", at.localAppData, ["Programs", "OpenAI", "Codex", "bin"], ["Programs", "Herdr", "bin"], ["Programs", "Git", "cmd"]),
+    ...under("APPDATA", at.appData, ["npm"]),
+    ...under("ProgramFiles", at.programFiles, ["Git", "cmd"], ["GitHub CLI"], ["nodejs"]),
+  ];
+  return { dirs, missing };
+}
+
+/**
+ * The system's own folders, which a child gets when PATH is absent so setting
+ * it for user tools does not lose system commands: launchd's PATH on macOS
+ * and Linux, and on Windows the default system Path a fresh install has
+ * (`System32`, the Windows folder, `Wbem`, Windows PowerShell and OpenSSH under
+ * `%SystemRoot%`), left out and named when SystemRoot is unset.
+ */
+export function systemDirs(at: Locations): Folders {
+  if (process.platform !== "win32") return { dirs: ["/usr/bin", "/bin", "/usr/sbin", "/sbin"], missing: [] };
+  const root = at.systemRoot;
+  if (root === null) return { dirs: [], missing: ["SystemRoot"] };
+  const system32 = path.join(root, "System32");
+  return { dirs: [system32, root, path.join(system32, "Wbem"), path.join(system32, "WindowsPowerShell", "v1.0"), path.join(system32, "OpenSSH")], missing: [] };
 }
 
 /** Finds worth remembering once they attach; an override, a worktree build or the app's own bundled CLI is not the operator's installed CLI. */
@@ -55,6 +113,8 @@ export const REMEMBERED_SOURCES: ReadonlySet<CliSource> = new Set(["path", "logi
 function inDirs(searchPath: string): string[] {
   return searchPath
     .split(path.delimiter)
+    // A rooted entry without a drive (`\tools`) is kept on Windows: Windows
+    // itself reads it against the current drive when it searches PATH.
     .filter((dir) => dir && path.isAbsolute(dir))
     .map((dir) => path.join(dir, CLI_FILE));
 }
@@ -104,7 +164,7 @@ export async function resolveCli(input: CliSearch, probe: FileProbe): Promise<Re
     ["path", async () => inDirs(input.searchPath)],
     ["remembered", async () => (input.remembered ? [input.remembered] : [])],
     ["login", async () => (input.loginPath ? inDirs((await input.loginPath()) ?? "") : [])],
-    ["well-known", async () => wellKnownDirs(input.home).map((dir) => path.join(dir, CLI_FILE))],
+    ["well-known", async () => input.wellKnown.map((dir) => path.join(dir, CLI_FILE))],
   ];
   for (const [source, files] of steps) {
     const file = first(await files());

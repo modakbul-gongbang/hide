@@ -13,7 +13,10 @@ import {
   rememberedCliValue,
   REMEMBERED_SOURCES,
   resolveCli,
+  systemDirs,
+  wellKnownDirs,
   type CliSearch,
+  type Locations,
   type FileProbe,
 } from "./cli";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
@@ -51,7 +54,7 @@ const probe = (files: Record<string, number>): FileProbe => {
 };
 
 describe("resolveCli (B2)", () => {
-  const input: CliSearch = { override: null, worktreeRoot: "/w", bundledDir: null, searchPath: dirs("/usr/local/bin", "/opt/bin"), remembered: null, loginPath: null, home: "/h" };
+  const input: CliSearch = { override: null, worktreeRoot: "/w", bundledDir: null, searchPath: dirs("/usr/local/bin", "/opt/bin"), remembered: null, loginPath: null, wellKnown: ["/h/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"] };
   const packaged: CliSearch = { ...input, worktreeRoot: null, searchPath: dirs("/usr/bin", "/bin") };
   const login = (answer: string | null) => {
     const asked = { count: 0 };
@@ -119,6 +122,45 @@ describe("resolveCli (B2)", () => {
       found: null,
       tried: ["/h/.local/bin/hide", "/opt/homebrew/bin/hide", "/usr/local/bin/hide"].map(built),
     });
+  });
+});
+
+describe("the install folders", () => {
+  it.runIf(process.platform !== "win32")("are the user's, Homebrew's and the local ones on macOS and Linux, with launchd's PATH for a child without one", () => {
+    const at: Locations = { home: "/h", localAppData: null, appData: null, programFiles: null, systemRoot: null };
+    expect(wellKnownDirs(at)).toEqual({ dirs: ["/h/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"], missing: [] });
+    expect(systemDirs(at)).toEqual({ dirs: ["/usr/bin", "/bin", "/usr/sbin", "/sbin"], missing: [] });
+  });
+
+  // Each folder is the one its installer documents (`wellKnownDirs` names the source).
+  it.runIf(process.platform === "win32")("are each Windows installer's own folder, and a folder whose variable is unset is named, not guessed", () => {
+    const at: Locations = {
+      home: "C:\\Users\\example",
+      localAppData: "C:\\Users\\example\\AppData\\Local",
+      appData: "C:\\Users\\example\\AppData\\Roaming",
+      programFiles: "C:\\Program Files",
+      systemRoot: "C:\\Windows",
+    };
+    expect(wellKnownDirs(at)).toEqual({
+      dirs: [
+        "C:\\Users\\example\\.local\\bin",
+        "C:\\Users\\example\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
+        "C:\\Users\\example\\AppData\\Local\\Programs\\Herdr\\bin",
+        "C:\\Users\\example\\AppData\\Local\\Programs\\Git\\cmd",
+        "C:\\Users\\example\\AppData\\Roaming\\npm",
+        "C:\\Program Files\\Git\\cmd",
+        "C:\\Program Files\\GitHub CLI",
+        "C:\\Program Files\\nodejs",
+      ],
+      missing: [],
+    });
+    expect(systemDirs(at)).toEqual({
+      dirs: ["C:\\Windows\\System32", "C:\\Windows", "C:\\Windows\\System32\\Wbem", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0", "C:\\Windows\\System32\\OpenSSH"],
+      missing: [],
+    });
+    const bare: Locations = { home: "C:\\Users\\example", localAppData: null, appData: null, programFiles: null, systemRoot: null };
+    expect(wellKnownDirs(bare)).toEqual({ dirs: ["C:\\Users\\example\\.local\\bin"], missing: ["LOCALAPPDATA", "APPDATA", "ProgramFiles"] });
+    expect(systemDirs(bare)).toEqual({ dirs: [], missing: ["SystemRoot"] });
   });
 });
 
