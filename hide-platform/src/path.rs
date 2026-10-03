@@ -21,7 +21,6 @@
 
 use std::ffi::OsStr;
 use std::fmt;
-use std::io;
 use std::path::{Component, Path, PathBuf};
 
 /// Why a path cannot be spelled or read as asked.
@@ -64,12 +63,6 @@ impl fmt::Display for PathError {
 }
 
 impl std::error::Error for PathError {}
-
-impl From<PathError> for io::Error {
-    fn from(error: PathError) -> Self {
-        io::Error::new(io::ErrorKind::InvalidInput, error)
-    }
-}
 
 /// A path below a root, as every machine spells it. The empty path is the
 /// root itself.

@@ -423,9 +423,11 @@ fn read_committed(
 /// rename is a deletion from the scope's perspective, with unknown counts.
 fn scope_entries(entries: Vec<ChangedFile>, scope: &RelPath) -> Vec<ChangedFile> {
     // Git spells a path below the top level with `/` on every system, which
-    // is the wire's relative spelling.
+    // is the wire's relative spelling, and marks an untracked folder it does
+    // not enter (a nested repository) with a trailing `/`, which the entry
+    // does not keep.
     let within = |path: &str| {
-        RelPath::parse(path)
+        RelPath::parse(path.strip_suffix('/').unwrap_or(path))
             .ok()?
             .strip_prefix(scope)
             .map(RelPath::into_string)

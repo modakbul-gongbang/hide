@@ -1482,7 +1482,7 @@ pub(crate) fn created_worktree(value: Value) -> Result<CreatedWorktree, String> 
         } => Ok(CreatedWorktree {
             workspace_id: nonempty_id(workspace.workspace_id, missing)?,
             pane_id: nonempty_id(root_pane.pane_id, missing)?,
-            path: nonempty_id(worktree.path, missing)?,
+            path: herdr_path(nonempty_id(worktree.path, missing)?),
             branch: worktree.branch,
         }),
         _ => Err(missing.into()),
@@ -1495,7 +1495,7 @@ pub(crate) fn listed_worktree_path(value: Value, branch: &str) -> Result<Option<
         res::ResponseResult::WorktreeList { worktrees, .. } => Ok(worktrees
             .into_iter()
             .find(|row| row.branch.as_deref() == Some(branch))
-            .map(|row| row.path)),
+            .map(|row| herdr_path(row.path))),
         _ => Err(missing.into()),
     }
 }

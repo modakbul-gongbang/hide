@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use cap_std::fs::Dir;
-use hide_platform::path::RelPath;
+use hide_platform::path::{PathError, RelPath};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
@@ -101,14 +101,19 @@ pub fn identity_of(dir: &Dir) -> std::io::Result<RootIdentity> {
 /// The handle is what actually confines the work; this refuses the shapes
 /// that could never name a child, and a name this system cannot hold as
 /// written, before anything is opened.
-pub fn relative_path(raw: &str) -> HostResult<PathBuf> {
+pub(crate) fn relative_path(raw: &str) -> HostResult<PathBuf> {
     RelPath::parse(raw)
         .and_then(|relative| relative.to_native())
-        .map_err(|_| {
-            HostError::new(
+        .map_err(|error| match error {
+            // Inside the checkout, but no file here can have that name.
+            PathError::Unrepresentable(_) => HostError::new(
+                ErrorCode::InvalidPath,
+                format!("The path is invalid: {error}"),
+            ),
+            _ => HostError::new(
                 ErrorCode::InvalidPath,
                 "The path is not inside the checkout",
-            )
+            ),
         })
 }
 

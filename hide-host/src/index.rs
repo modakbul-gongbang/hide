@@ -97,10 +97,10 @@ pub fn walk(root_dir: &Dir, root: &Path) -> Walked {
                 }
                 // The wire spells it with `/` on every system; a name the
                 // wire cannot carry (not UTF-8) could not be opened from the
-                // palette, so it is left out and the walk says it is partial.
-                match hide_platform::path::RelPath::from_native(&relative) {
-                    Ok(relative) => paths.push(relative.into_string()),
-                    Err(_) => truncated = true,
+                // palette, so it is left out. It is not a truncation: the
+                // walk did not stop.
+                if let Ok(relative) = hide_platform::path::RelPath::from_native(&relative) {
+                    paths.push(relative.into_string());
                 }
             }
         }

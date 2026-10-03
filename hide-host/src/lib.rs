@@ -34,4 +34,4 @@ pub mod workspace_bridge;
 pub mod worktrees;
 
 pub use error::{ErrorCode, HostError, HostResult};
-pub use root::{Root, RootIdentity, relative_path};
+pub use root::{Root, RootIdentity};
