@@ -972,7 +972,13 @@ mod tests {
     #[tokio::test]
     async fn long_state_directory_keeps_a_short_private_bootstrap_socket() {
         let directory = tempfile::tempdir().unwrap();
-        let state_dir = directory.path().join("long-state-segment/".repeat(12));
+        // Long enough to pass a Unix socket's limit of about a hundred bytes.
+        // Windows has no such limit, and hide-platform's private files there
+        // take paths below MAX_PATH (260), so the folder stays under it.
+        let depth = if cfg!(unix) { 12 } else { 4 };
+        let state_dir = (0..depth).fold(directory.path().to_path_buf(), |path, _| {
+            path.join("long-state-segment")
+        });
         fs::create_dir_all(state_dir.join("pane-capabilities")).unwrap();
         let (listener, socket) = bind(&state_dir).unwrap();
         assert!(!socket.starts_with(&state_dir));
