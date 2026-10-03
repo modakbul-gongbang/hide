@@ -99,7 +99,7 @@ This boundary is an Observer-approved, user-vetoable implementation assumption f
 
 The Agent column has its own area tree, separate from the side panel's View tree.
 Each area has a tab bar, a New tab button and the active tab's live pane canvas; dividers separate areas.
-Only the area holding the keyboard carries the strong selected-tab accent and content boundary, across both Agent and View columns.
+Only the area holding the keyboard carries the foreground-colored selected-tab underline, across both Agent and View columns.
 Clicking a tab or pane activates its area and sends the keyboard to that pane.
 All shown tabs stay attached and awake, while only the active area's tab receives read and sleep-visit updates.
 Pane headers, child chips, relationship controls and pane splits remain inside each canvas; find belongs to the focused pane.
@@ -147,8 +147,9 @@ Retry close reuses that intent's shell, while Dismiss ends the failed intent; de
 The side panel holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
 A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
 Each layout keeps its own active area for opening and layout actions.
-The recorded keyboard owner alone gives one Agent or View area the strong tab accent and content boundary.
-Every other area's tab bar uses the card background, and its selected tab keeps a foreground title and secondary background without the strong accent.
+The recorded keyboard owner alone gives one Agent or View area the foreground-colored selected-tab underline.
+Every other area's tab bar uses the card background, and its selected tab keeps a foreground title and secondary background without the underline.
+Areas have no visible focus perimeter; their transparent content border reserves the same space as before.
 The content stays readable and unfiltered; focus adds no content blur, opacity reduction, capture loop or geometry change.
 The same rule applies to floating, pinned and expanded View panels, narrow single-area presentation and both themes.
 An area's tabs each ask for the preferred width and shrink alike down to the title minimum; a file's type mark does not tell files apart, so a View tab keeps its title and never turns to marks the way an Agent tab does.
@@ -280,7 +281,7 @@ Several View areas leave the Agent side as it was already drawn: the side panel 
 
 A pane header reads, left to right: the Return mark of a child pane, the agent's status mark and provider mark under the sidebar row's rules (a plain shell has the neutral `>_` mark and no status mark), the title, the zoom control, the status caption, then the overflow control and ×.
 While the tab is zoomed, the zoomed pane's header carries a zoom control that names how many panes it hides (`+1`) and unzooms the tab when pressed; an unzoomed header has none.
-When a tab shows more than one pane, a primary-colored outline surrounds the pane whose terminal holds the keyboard, and stays while that pane's menu is open; a lone or zoomed pane has no outline, and moving the keyboard to a View area, the sidebar, or another app removes it while the header wash stays on the focused pane.
+When a tab shows more than one pane, a thin subtle-foreground outline surrounds the pane whose terminal holds the keyboard, and stays while that pane's menu is open; a lone or zoomed pane has no outline, and moving the keyboard to a View area, the sidebar, or another app removes it while the header wash stays on the focused pane.
 The focused pane's header reads in the foreground color and every other pane's header in the muted one, so the wash is not the only difference.
 Web owner: `web/src/PaneView.tsx`, `web/src/PaneGrid.tsx`.
 
@@ -1163,7 +1164,7 @@ Ownership is drawn as emphasis, not as a new color or container: the operator's 
 A child's question or completion reaches the operator through its ancestors: the ancestor row turns unread and its descendant badge changes, and the ancestor's own group does not move.
 An uninstrumented mark (agent detected but its subagents not visible to Hide) is drawn only where an agent was detected, is a mark plus an accessible name and never a color alone, and its subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
-The header wash marks the pane Hide is showing, while the outer primary indicator marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
+The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit

@@ -198,7 +198,7 @@ export function DisplayTab({ display, interaction, actions }: { display: ViewDis
           <XIcon />
         </Button>
       </Hint>
-      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
+      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-foreground" /> : null}
     </div>
     </Hint>
   );

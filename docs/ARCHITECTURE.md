@@ -1142,7 +1142,7 @@ The Agent pane or View tab cycles use ⌃Tab in Electron and ⌥Backquote in a b
 Only an actually focused drawn Agent pane supplies the cycle origin and records a pane visit; a focused View with no other tab stays a no-op rather than falling through to Agent panes.
 Main and Overview ignore a View owner left recorded when a shortcut unmounted the Workspace, because no file holds the keyboard on those screens.
 One frozen cycle is held in `ui.ts`; membership changes prune candidates, a disappeared View scope cancels, and release dispatches one pane-focus action for an Agent or one `view_layout focus` for a View.
-`viewFocus.ts` publishes only owner changes to a bounded set of mounted area subscribers; both columns derive their strong tab accent and constant-size content border from that one owner.
+`viewFocus.ts` publishes only owner changes to a bounded set of mounted area subscribers; both columns derive their foreground-colored tab underline from that one owner.
 Native browser `before-input-event` matches the same effective registry before the page or menu consumes a cycle key and forwards input through the existing trusted browser bridge.
 The host retains at most one held page/release modifier with a cycle identifier, clears it on matching shell completion, window blur, page failure or destruction, and rejects starts from hidden or unfocused pages.
 Release from another native page keeps the initiating scope, and a late completion cannot clear a newer hold.
