@@ -43,6 +43,10 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     await page.locator("[data-checkout]").first().click();
     const pane = page.locator(`[data-pane-view="${sleeper}"]`);
     await expect(pane).toBeVisible({ timeout: 20_000 });
+    // Sleep must preserve a name the automatic label worker has produced.
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    await expect(page.locator(`[data-agent-list] [data-pane="${sleeper}"]`)).toContainText("Agent two");
+    await page.locator('[data-sidebar-mode="projects"]').click();
 
     // B15: Sleep agent from the pane menu.
     await page.locator(`[data-pane-menu="${sleeper}"]`).click();
