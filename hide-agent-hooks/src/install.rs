@@ -632,7 +632,10 @@ mod tests {
         assert!(!first_home.exists());
         assert!(second_home.is_dir());
         for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
-            assert_eq!(second.read(runtime), serde_json::json!({ "owner": "second" }));
+            assert_eq!(
+                second.read(runtime),
+                serde_json::json!({ "owner": "second" })
+            );
         }
         drop(second);
         assert!(!second_home.exists());
