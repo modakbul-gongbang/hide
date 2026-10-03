@@ -439,9 +439,9 @@ class WindowsOwned:
         finally:
             if initialized:
                 api.DeleteProcThreadAttributeList(attributes)
-            for fd in (read_fd, write_fd, stdin_fd):
-                if fd is not None:
-                    os.close(fd)
+            for descriptor in (read_fd, write_fd, stdin_fd):
+                if descriptor is not None:
+                    os.close(descriptor)
             if job:
                 api.TerminateJobObject(job, 1)
                 api.CloseHandle(job)
