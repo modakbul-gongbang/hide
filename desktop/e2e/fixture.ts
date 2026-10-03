@@ -109,11 +109,11 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
 
 export function assertIsolated(env: Record<string, string>): void {
   // The Herdr fixture keeps its socket directly under /tmp for the path length limit.
-  const roots = [fs.realpathSync(os.tmpdir()), ...(process.platform === "win32" ? [] : [fs.realpathSync("/tmp")])];
+  const roots = [fs.realpathSync.native(os.tmpdir()), ...(process.platform === "win32" ? [] : [fs.realpathSync.native("/tmp")])];
   const nativeHomeKeys = process.platform === "win32" ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA"] : [];
   for (const key of ["HOME", "HCOORD_HOME", "HIDE_STATE_DIR", "HIDE_DESKTOP_USER_DATA_DIR", "HERDR_SOCKET_PATH", ...nativeHomeKeys]) {
     const value = env[key];
-    const parent = value ? fs.realpathSync(path.dirname(value)) : null;
+    const parent = value ? fs.realpathSync.native(path.dirname(value)) : null;
     if (!parent || !roots.some((root) => {
       const relative = path.relative(root, parent);
       return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
