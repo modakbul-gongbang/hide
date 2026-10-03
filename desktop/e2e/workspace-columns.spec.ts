@@ -6,7 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { countSent, enterWorkspace, keyboardFocus, rest, showExplorer } from "../../web/e2e/wire";
+import { chord } from "../../web/e2e/chords";
+import { countSent, enterWorkspace, keyboardFocus, rest, sendEvent, showExplorer } from "../../web/e2e/wire";
+import { bootoutTestLabel, deviceHome, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL, proveDeviceHome, resetDeviceHome, stageBuild, writeSshConfig } from "./device-home";
 import { isolate, launchShell, test } from "./fixture";
 
 type Probe = {
@@ -400,6 +402,150 @@ test("Workspace columns preserve geometry, dock once on release and show native 
 
 // Changing Workspaces while the pointer is captured cancels the old guide;
 // releasing it must not land a width in the newly front Workspace.
+test("SSH Workspace columns keep chords, fallback and saved widths separate from the same local path", async () => {
+  test.skip(!process.env.HIDE_E2E_SSH_PORT, "requires the proved private SSH HOME in device-home.ts");
+  test.setTimeout(300_000);
+  const local = await startHerdr({ agents: false });
+  let remote: HerdrFixture | null = null;
+  let run: ReturnType<typeof isolate> | null = null;
+  let app: ElectronApplication | null = null;
+  let remoteHome: string | null = null;
+  let provedHcoord: string | null = null;
+  const operator = launchdPid(OPERATOR_HCOORD_LABEL);
+  try {
+    remote = await startHerdr({ agents: false });
+    run = isolate(local, "remote-columns");
+    run.env.HIDE_HOST_HELPER_ROOT = path.join(run.root, "device-helper");
+    run.env.HIDE_HOST_CLI_DIR = path.join(run.root, "device-bin");
+    writeSshConfig(run.env.HOME!, ["isolated-columns"]);
+    remoteHome = deviceHome();
+    provedHcoord = proveDeviceHome(run.env, "isolated-columns", remoteHome);
+    resetDeviceHome(remoteHome, hcoordLabel(provedHcoord));
+    // The host starts and owns the staged daemon through its existing CLI
+    // boundary; no second resident-process launcher belongs to this spec.
+    run.env.HIDE_CLI_PATH = path.join(stageBuild(run.root), "hide");
+    const shared = path.join(fs.realpathSync(local.root), "shared-columns");
+    const other = path.join(fs.realpathSync(remote.root), "remote-only");
+    for (const folder of [shared, other]) {
+      fs.mkdirSync(folder);
+      fs.writeFileSync(path.join(folder, "한글-notes.md"), "# Remote column notes\n");
+      const initialized = spawnSync("git", ["-C", folder, "init", "-q"], { env: local.env, encoding: "utf8", timeout: 10_000 });
+      expect(initialized.status, initialized.stderr).toBe(0);
+    }
+    for (const [server, folder, label] of [[local, shared, "shared-columns"], [remote, shared, "shared-columns"], [remote, other, "remote-only"]] as const) {
+      server.run(["workspace", "create", "--cwd", folder, "--label", label, "--env", `PATH=${server.fixturePath}`, "--no-focus"]);
+    }
+    ({ app } = await launchShell(run.env));
+    const page = await app.firstWindow();
+    await enterWorkspace(page, "fixture");
+    const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { token: string };
+    await sendEvent(page, { origin: new URL(page.url()).origin, token: state.token }, "register_device", {
+      id: "columns-ssh", label: "SSH columns", ssh_alias: "isolated-columns", herdr_socket_path: remote.socket, host_consent: true,
+    });
+    const rail = (device: string) => page.locator(`[data-rail-tile="${device}"]`);
+    await expect(rail("columns-ssh")).toHaveAttribute("data-rail-connected", "true", { timeout: 120_000 });
+    await rail("columns-ssh").click();
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const row = (label: string) => page.locator("[data-project]", { hasText: label }).locator("[data-checkout]").first();
+    await row("shared-columns").click();
+    await expect(row("shared-columns")).toHaveAttribute("aria-current", "true");
+    const workspace = page.locator("[data-workspace-screen]");
+    await bodyWidth(app, page, 1600);
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
+    await expect(workspace).toHaveAttribute("data-tools", "off");
+    await page.keyboard.press(chord("toggle_explorer", "electron"));
+    await expect(workspace).toHaveAttribute("data-tools", "shown");
+    await expect(page.locator('[data-explorer-row$="/한글-notes.md"]')).toBeVisible({ timeout: 60_000 });
+    await page.locator('[data-explorer-row$="/한글-notes.md"]').click();
+    await expect(page.locator("[data-editor-body] .cm-content")).toContainText("Remote column notes");
+    await page.keyboard.press(chord("toggle_right_panel", "electron"));
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
+    await page.keyboard.press(chord("toggle_right_panel", "electron"));
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    // Save a width by the real release path, then give Tools a different
+    // saved width through the separator's accessible keyboard interaction.
+    const divider = page.locator('[data-column-divider="views"]');
+    const box = (await divider.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 96, box.y + 100);
+    await expect(page.locator("[data-column-guide=true]")).toBeVisible();
+    await page.mouse.up();
+    await expect(divider).toHaveAttribute("aria-valuenow", "544");
+    await page.locator('[data-column-divider="tools"]').press("ArrowLeft");
+    await expect(page.locator('[data-column-divider="tools"]')).toHaveAttribute("aria-valuenow", "387");
+    const saved = () => JSON.parse(fs.readFileSync(path.join(run!.env.HIDE_STATE_DIR!, "workspace-views.json"), "utf8")) as {
+      workspaces: { device_id: string; path: string; views: boolean; tools: boolean; views_width?: number; tools_width?: number }[];
+    };
+    await expect.poll(() => saved().workspaces.find((entry) => entry.device_id === "columns-ssh" && entry.path === shared)).toMatchObject({ views: true, tools: true, views_width: 512, tools_width: 387 });
+    const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (dir) {
+      const candidate = await app.evaluate(({ BrowserWindow }) => ({ pid: process.pid, window: BrowserWindow.getAllWindows()[0]!.getMediaSourceId(), executable: process.execPath }));
+      fs.writeFileSync(path.join(dir, "remote-columns-identity.json"), JSON.stringify({ ...candidate, daemonPid: run.daemonPid(), localSocket: local.socket, remoteSocket: remote.socket, home: run.env.HOME, deviceHome: remoteHome, provedHcoord, state: run.env.HIDE_STATE_DIR, profile: run.env.HIDE_DESKTOP_USER_DATA_DIR, operatorHcoord: operator, transport: "real loopback SSH to a separate private Herdr server" }, null, 2));
+    }
+    await nativeCapture(app, page, "remote-columns-wide-saved");
+    await bodyWidth(app, page, 1116);
+    await expect.poll(() => Promise.all(["agents", "views", "tools"].map((column) => page.locator(`[data-column="${column}"]`).evaluate((element) => element.clientWidth)))).toEqual([480, 360, 260]);
+    await nativeCapture(app, page, "remote-columns-1116");
+    await bodyWidth(app, page, 1100);
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-tools", "hidden");
+    await page.keyboard.press(chord("toggle_explorer", "electron"));
+    await expect(workspace).toHaveAttribute("data-tools", "shown");
+    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
+    await expect.poll(() => page.locator('[data-column="tools"]').evaluate((element) => element.clientWidth)).toBe(387);
+    await nativeCapture(app, page, "remote-columns-mid-called-tools");
+    await bodyWidth(app, page, 848);
+    await expect(workspace).toHaveAttribute("data-workspace-body", "mid");
+    await expect.poll(() => page.locator('[data-column="agents"]').evaluate((element) => element.clientWidth)).toBe(480);
+    await bodyWidth(app, page, 847);
+    await expect(workspace).toHaveAttribute("data-workspace-body", "narrow");
+    await expect(page.locator('[data-column="agents"]')).toBeVisible();
+    await page.keyboard.press(chord("toggle_right_panel", "electron"));
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(page.locator('[data-column="agents"]')).not.toBeVisible();
+    await nativeCapture(app, page, "remote-columns-narrow-called-views");
+    await bodyWidth(app, page, 1600);
+    await rail("local").click();
+    await row("shared-columns").click();
+    await expect(row("shared-columns")).toHaveAttribute("aria-current", "true");
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
+    await expect(workspace).toHaveAttribute("data-tools", "off");
+    await showExplorer(page);
+    await page.locator('[data-explorer-row$="/한글-notes.md"]').click();
+    await expect(page.locator("[data-editor-body] .cm-content")).toContainText("Remote column notes");
+    await expect(page.locator('[data-column-divider="views"]')).toHaveAttribute("aria-valuenow", "640");
+    await expect(page.locator('[data-column-divider="tools"]')).toHaveAttribute("aria-valuenow", "355");
+    await nativeCapture(app, page, "remote-columns-same-local-path");
+    await rail("columns-ssh").click();
+    await row("remote-only").click();
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
+    await expect(workspace).toHaveAttribute("data-tools", "off");
+    await row("shared-columns").click();
+    await expect(page.locator('[data-column-divider="views"]')).toHaveAttribute("aria-valuenow", "512");
+    await expect(page.locator('[data-column-divider="tools"]')).toHaveAttribute("aria-valuenow", "387");
+    await page.reload();
+    await expect(page.locator('[data-column-divider="views"]')).toHaveAttribute("aria-valuenow", "512");
+    await expect(page.locator('[data-column-divider="tools"]')).toHaveAttribute("aria-valuenow", "387");
+    await nativeCapture(app, page, "remote-columns-restored");
+    if (dir) fs.writeFileSync(path.join(dir, "remote-columns-saved.json"), JSON.stringify(saved(), null, 2));
+  } finally {
+    const errors: unknown[] = [];
+    try { await app?.close(); } catch (error) { errors.push(error); }
+    for (const cleanup of [
+      () => run?.cleanup(),
+      () => { if (provedHcoord) bootoutTestLabel(hcoordLabel(provedHcoord)); },
+      () => { if (remoteHome) bootoutTestLabel(hcoordLabel(path.join(remoteHome, ".hide", "hcoord"))); },
+      () => { expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operator); },
+      () => remote?.stop(),
+      () => local.stop(),
+    ]) {
+      try { cleanup(); } catch (error) { errors.push(error); }
+    }
+    if (errors.length) throw new AggregateError(errors, "private SSH column fixture cleanup failed; preserve its declared homes");
+  }
+});
+
 test("a Workspace switch cancels its column drag without changing another Workspace", async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "column-drag-switch");
