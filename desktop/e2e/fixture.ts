@@ -9,11 +9,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
+import { bootoutTestLabel, hcoordLabel } from "./launchd";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
 export const REPO = path.resolve(DESKTOP_DIR, "..");
 export const HIDE_CLI = path.join(REPO, "target", "debug", "hide");
+const isolations = new Set<() => void>();
+const MAX_ISOLATIONS = 16;
 
 export type Isolated = {
   root: string;
@@ -31,6 +35,7 @@ export type Isolated = {
  * HOME where it is not logged in.
  */
 export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pick<HerdrFixture, "root">>, label: string): Isolated {
+  if (isolations.size >= MAX_ISOLATIONS) throw new Error(`desktop fixture has ${MAX_ISOLATIONS} unclosed homes; clean an owned fixture before creating another`);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `hide-desktop-${label}-`));
   const home = path.join(root, "home");
   fs.mkdirSync(path.join(home, "projects"), { recursive: true });
@@ -58,19 +63,42 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
     // `open_external` must not launch a GUI application during a test.
     HIDE_OPEN_COMMAND: "/usr/bin/true",
   };
+  const cleanupEnv = { ...env };
   const hide = (args: string[]) => {
     const run = spawnSync(HIDE_CLI, args, { env, encoding: "utf8", timeout: 20_000 });
-    return { status: run.status, stdout: run.stdout };
+    return { status: run.status, stdout: run.stdout, stderr: run.error?.message ?? run.stderr };
   };
   const daemonPid = () => {
     const answer = JSON.parse(hide(["status", "--json"]).stdout) as { running: boolean; pid?: number };
     return answer.running ? (answer.pid ?? null) : null;
   };
+  let cleaned = false;
   const cleanup = () => {
-    hide(["stop"]);
-    // The stopped daemon can still be removing its own files; rmSync retries ENOTEMPTY.
+    if (cleaned) return;
+    const errors: unknown[] = [];
+    for (const state of [cleanupEnv.HIDE_STATE_DIR!, path.join(home, ".hide", "state"), path.join(home, ".local", "state", "hide")]) {
+      if (!fs.existsSync(state)) continue;
+      const stopped = spawnSync(HIDE_CLI, ["stop"], { env: { ...cleanupEnv, HIDE_STATE_DIR: state }, encoding: "utf8", timeout: 20_000 });
+      if (stopped.error || stopped.status !== 0) errors.push(new Error(`private hided stop failed for ${state}: ${stopped.error?.message ?? (stopped.stderr || stopped.stdout || stopped.status)}`));
+    }
+    // The kit may adopt the legacy home into the default home. Both belong
+    // to this fixture, regardless of environment changes a spec makes later.
+    if (process.platform === "darwin") {
+      for (const data of [path.join(home, ".hcoord"), path.join(home, ".hide", "hcoord")]) {
+        try { bootoutTestLabel(hcoordLabel(data)); } catch (error) { errors.push(error); }
+      }
+    }
+    if (errors.length) throw new AggregateError(errors, `fixture cleanup incomplete; preserve ${root} and resolve the reported stop/unload failure`);
+    // No process can recreate files now; only transient filesystem removal is retried.
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    cleaned = true;
+    isolations.delete(cleanup);
+    owned.disown();
   };
+  const owned = ownUntilWorkerExit(() => {
+    try { cleanup(); } catch (error) { process.exitCode = 1; throw error; }
+  });
+  isolations.add(cleanup);
   return { root, env, hide, daemonPid, cleanup };
 }
 
@@ -120,21 +148,30 @@ export const test = base.extend<{ focusGuard: void }>({
     async ({}, use, testInfo) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-focus-"));
       focusReports = { dir, apps: [] };
+      const errors: unknown[] = [];
       try {
         await use();
-        // A test that timed out skips its own cleanup; an app it left running is closed here, so
-        // none outlives its report folder. The guard appends synchronously, so every report is on disk.
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        // Test failures and timeouts skip local finally blocks. The fixture
+        // still closes each app, then releases every home before forgetting it.
         for (const { app, child } of focusReports.apps) {
-          if (child.exitCode === null && child.signalCode === null) await app.close().catch(() => undefined);
+          if (child.exitCode === null && child.signalCode === null) {
+            try { await app.close(); } catch (error) { errors.push(error); }
+          }
+        }
+        for (const cleanup of [...isolations]) {
+          try { cleanup(); } catch (error) { errors.push(error); }
         }
         const reports = fs.readdirSync(dir).flatMap((file) => fs.readFileSync(path.join(dir, file), "utf8").split("\n").filter(Boolean));
-        if (!testInfo.tags.includes(NEEDS_FOCUS)) {
-          expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]);
-        }
-      } finally {
         focusReports = null;
         fs.rmSync(dir, { recursive: true, force: true });
+        if (!testInfo.tags.includes(NEEDS_FOCUS)) {
+          try { expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]); } catch (error) { errors.push(error); }
+        }
       }
+      if (errors.length) throw new AggregateError(errors, "desktop fixture teardown failed");
     },
     { auto: true },
   ],

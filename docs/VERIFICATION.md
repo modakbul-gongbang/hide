@@ -46,6 +46,11 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so it ends with the Playwright worker even when the worker dies before a test's `finally` runs.
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
+- `desktop/e2e/fixture.ts` owns each `isolate` home through both automatic test teardown and worker exit, with at most sixteen unclosed homes per worker.
+  Cleanup closes the candidate apps, stops the private hided, unloads only the hashed hcoord labels for that home's legacy and adopted directories, and confirms each label absent before deleting the home.
+  A stop, launchctl query or unload failure fails teardown and retains the home for recovery; it is never treated as an absent service.
+  `desktop/e2e/lifecycle.spec.ts` checks running and manually stopped services, failed tests, worker exit, and retained state after an unload failure against private homes in real launchd.
+  Standalone hcoord fixtures must use `hcoord daemon uninstall --json` with their original `HOME` and `HCOORD_HOME` before removing those paths; `daemon stop` alone keeps the job registered.
 - Herdr starts a pane's shell from the server's `SHELL`, so a fixture sets `SHELL=/bin/zsh` beside its private `HOME`.
   The CI runner's login shell is bash, where a prompt planted in the fixture's `.zshrc` never appears; reproduce that with `SHELL=/bin/bash pnpm --dir web e2e`.
 - A private `HOME` has no Claude or Codex login, because each CLI keys its credential to `HOME`.
