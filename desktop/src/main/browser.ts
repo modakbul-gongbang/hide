@@ -52,11 +52,16 @@ type Page = {
   report: NodeJS.Timeout | null;
   route: ResolvedPage | null;
   partition: string;
-  /** CDP can install future scripts. Its file ban survives disconnect until
-   * this native generation ends, including popups/resources it owns. */
+  /** Native file reads are forbidden before the first load of a web/blank
+   * generation. Only a separately created manual-file partition permits them. */
+  readonly fileRestricted: boolean;
+  /** CDP can install future scripts. Its filesystem-write/download ban
+   * survives disconnect until this native generation ends. */
   cdpRestricted: boolean;
   /** A generation that has held a native file frame never enters CDP. */
   cdpFileFrame: boolean;
+  /** One request refusal diagnostic per generation, even under script loops. */
+  cdpFileRequestRefused: boolean;
 };
 
 export type ResolvedPage = { url: string; source_url: string; load: number };
@@ -98,9 +103,9 @@ export class BrowserViews {
     for (const page of this.pages.values()) {
       const area_id = this.cdpAreas.get(page.key);
       const contents = page.view.webContents;
-      if (area_id && !contents.isDestroyed() && !isFileAddress(page.state.url)
+      if (area_id && page.fileRestricted && !contents.isDestroyed() && !isFileAddress(page.state.url)
         && !isFileAddress(page.route?.source_url ?? "") && !isFileAddress(contents.getURL())
-        && !page.partition.startsWith("persist:hide-browser-file-") && !page.cdpFileFrame) {
+        && !page.cdpFileFrame) {
         result.push({ workspace: page.workspace, area_id, id: page.id, contents });
       }
     }
@@ -359,8 +364,10 @@ export class BrowserViews {
       report: null,
       route: null,
       partition,
+      fileRestricted: !partition.startsWith("persist:hide-browser-file-"),
       cdpRestricted: false,
       cdpFileFrame: false,
+      cdpFileRequestRefused: false,
     };
     view.setVisible(false);
     window.contentView.addChildView(view);
@@ -395,8 +402,15 @@ export class BrowserViews {
     });
     pageSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
       const page = this.ownerOf(details.webContentsId);
-      const outcome = page?.cdpRestricted && isFileAddress(details.url) ? { cancel: true }
-        : !page
+      if (page?.fileRestricted && isFileAddress(details.url)) {
+        if (!page.cdpFileRequestRefused) {
+          page.cdpFileRequestRefused = true;
+          this.log.event("browser.request_refused", { reason: "cdp_file_boundary", display_id: page.id, resource_type: details.resourceType });
+        }
+        callback({ cancel: true });
+        return;
+      }
+      const outcome = !page
         ? partition === "persist:hide-browser-web" ? remoteRequest({ source_url: details.url, url: details.url }, details.url) : { cancel: true }
         : !page.route ? { cancel: true }
         : page.workspace.startsWith("local\u0000") ? {}
@@ -481,7 +495,7 @@ export class BrowserViews {
     contents.on("did-navigate", forget);
     contents.once("destroyed", forget);
     const navigation = (event: { preventDefault(): void }, url: string) => {
-      if (page.cdpRestricted && isFileAddress(url)) {
+      if (page.fileRestricted && isFileAddress(url)) {
         event.preventDefault();
         this.log.event("browser.navigation_refused", { reason: "cdp_file_boundary", display_id: page.id });
         return;
@@ -498,7 +512,7 @@ export class BrowserViews {
     };
     contents.on("will-navigate", navigation);
     contents.on("will-frame-navigate", (event) => {
-      if (page.cdpRestricted && isFileAddress(event.url)) navigation(event, event.url);
+      if (page.fileRestricted && isFileAddress(event.url)) navigation(event, event.url);
     });
     contents.on("will-redirect", navigation);
   }
@@ -511,7 +525,7 @@ export class BrowserViews {
    * features) is another browser display, which the core opens.
    */
   private openWindow(page: Page, contents: WebContents, url: string, popup: boolean, referrer: string): WindowOpenHandlerResponse {
-    if (page.cdpRestricted && isFileAddress(url)) {
+    if (page.fileRestricted && isFileAddress(url)) {
       this.log.event("browser.window_open_refused", { reason: "cdp_file_boundary", display_id: page.id });
       return { action: "deny" };
     }
