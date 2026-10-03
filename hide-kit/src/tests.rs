@@ -400,12 +400,36 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
 
     std::fs::remove_file(&link).unwrap();
+    let old_resources = fixture.home().join("Old Hide/resources");
+    std::fs::create_dir_all(&old_resources).unwrap();
+    std::fs::write(old_resources.join("app.asar"), "").unwrap();
+    std::fs::write(old_resources.parent().unwrap().join("hide"), "").unwrap();
+    std::os::unix::fs::symlink(old_resources.join("hide"), &link).unwrap();
+    let report = apply(&fixture.target, &Scope::Automatic);
+    assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        fixture.target.kit_dir.join("hide")
+    );
+
+    std::fs::remove_file(&link).unwrap();
     std::os::unix::fs::symlink("/usr/local/bin/some-other-hide", &link).unwrap();
     let report = apply(&fixture.target, &Scope::Automatic);
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Failed);
     assert_eq!(
         std::fs::read_link(&link).unwrap(),
         PathBuf::from("/usr/local/bin/some-other-hide")
+    );
+
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink("/another-program/resources/hide", &link).unwrap();
+    assert_eq!(
+        state(&apply(&fixture.target, &Scope::Automatic), ComponentId::Cli),
+        ComponentState::Failed
+    );
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        PathBuf::from("/another-program/resources/hide")
     );
 
     // A target that climbs out of a folder Hide owns is not Hide's.
@@ -1075,4 +1099,27 @@ fn the_old_helper_root_goes_only_once_nothing_names_it() {
 
     // Under any other root nothing of the old layout is touched (D-12).
     assert!(crate::legacy::device(&home, &fixture.root.join("helper-root")).is_empty());
+}
+
+#[test]
+fn a_recorded_command_is_upgraded_after_its_old_package_is_deleted() {
+    let fixture = Fixture::new();
+    let old_resources = fixture.home().join("Old Hide/resources");
+    std::fs::create_dir_all(&old_resources).unwrap();
+    executable(&old_resources.join("hide"), "#!/bin/sh\nexit 0\n");
+    let mut old = fixture.target.clone();
+    old.kit_dir = old_resources.clone();
+    assert_eq!(
+        state(&apply(&old, &Scope::Automatic), ComponentId::Cli),
+        ComponentState::Installed
+    );
+    std::fs::remove_dir_all(old_resources.parent().unwrap()).unwrap();
+    assert_eq!(
+        state(&apply(&fixture.target, &Scope::Automatic), ComponentId::Cli),
+        ComponentState::Installed
+    );
+    assert_eq!(
+        std::fs::read_link(fixture.home().join(".local/bin/hide")).unwrap(),
+        fixture.target.kit_dir.join("hide")
+    );
 }

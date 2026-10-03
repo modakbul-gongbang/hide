@@ -29,6 +29,9 @@ on:
       - scripts/verify-cargo.sh
       - scripts/toolchain-env.sh
       - hided/build.rs
+      - hided/src/cli.rs
+      - hide-kit/**
+      - hide-agent-hooks/**
       - .github/workflows/package.yml
       - .github/workflows/release.yml
 
@@ -87,7 +90,7 @@ jobs:
         # fetches the pinned Herdr and refuses when any of them cannot run.
         timeout-minutes: 50
         run: pnpm --dir desktop package
-      - name: Unpack the package and start it without a window
+      - name: Unpack, install the kit, and replace the daemon without a window
         timeout-minutes: 5
         run: node desktop/scripts/smoke-package.mjs "desktop/out/hide-v${HIDE_VERSION}-${{ matrix.system }}-x64.${{ matrix.archive }}"
       - name: Keep the package

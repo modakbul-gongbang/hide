@@ -154,6 +154,10 @@ jobs:
           cargo test --locked -p hide-host --lib workspace_bridge
           cargo test --locked -p hided --test connect_stop
           cargo test --locked -p hided --test handshake
+      - name: Install kit and its Windows command shim
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: cargo test --locked -p hide-kit
       - name: Agent hooks, their Windows entries run through PowerShell
         # The hook file writer, the entries Claude Code and Codex run on
         # Windows, and the helper's stdin deadline. It stands on its own, so
