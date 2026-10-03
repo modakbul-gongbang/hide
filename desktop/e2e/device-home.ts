@@ -18,15 +18,15 @@
 // device's own install would be.
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { herdrBinary } from "../../web/e2e/herdr-fixture";
 import { HIDE_CLI, REPO } from "./fixture";
+import { bootoutTestLabel } from "./launchd";
+export { bootoutTestLabel, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL } from "./launchd";
 
 const MARKER = ".hide-e2e-device-home";
-export const OPERATOR_HCOORD_LABEL = "com.hcoord.daemon";
 
 /** The private HOME the isolated sshd gives its sessions, refused unless it is declared a test HOME. */
 export function deviceHome(): string {
@@ -79,24 +79,6 @@ export function proveDeviceHome(localEnv: Record<string, string>, alias: string,
     throw new Error(`a session on the isolated sshd gets HCOORD_HOME=${hcoordHome}; it must sit inside ${remoteHome} so hcoord's LaunchAgent label is its own`);
   }
   return hcoordHome;
-}
-
-/** hcoord's LaunchAgent label for an HCOORD_HOME, by hcoord's own rule. */
-export function hcoordLabel(hcoordHome: string): string {
-  return `com.hcoord.daemon.${createHash("sha256").update(path.resolve(hcoordHome)).digest("hex").slice(0, 12)}`;
-}
-
-/** The pid launchd reports for a label in this account's GUI domain, `loaded` without one, null when not loaded; it only reads. */
-export function launchdPid(label: string): string | null {
-  const printed = spawnSync("launchctl", ["print", `gui/${os.userInfo().uid}/${label}`], { encoding: "utf8", timeout: 10_000 });
-  if (printed.status !== 0) return null;
-  return printed.stdout.match(/^\s*pid = (\d+)/m)?.[1] ?? "loaded";
-}
-
-/** Unloads the test's own hcoord daemon; the operator's label is never passed here. */
-export function bootoutTestLabel(label: string): void {
-  if (label === OPERATOR_HCOORD_LABEL || !label.startsWith(`${OPERATOR_HCOORD_LABEL}.`)) throw new Error(`${label} is not a test hcoord label`);
-  spawnSync("launchctl", ["bootout", `gui/${os.userInfo().uid}/${label}`], { encoding: "utf8", timeout: 15_000 });
 }
 
 export type AgentSettings = { hooks: Record<string, { hooks: { type: string; command: string; timeout?: number }[] }[]>; [key: string]: unknown };
