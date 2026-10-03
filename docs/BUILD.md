@@ -56,6 +56,7 @@ A check script calls these scripts rather than cargo or pnpm directly, so the ta
 
 The Cargo `test` mode forwards trailing test arguments, so an explicitly configured live probe can run as `verify-cargo.sh test <test-name> -- --ignored` without bypassing worktree isolation or toolchain ownership.
 The no-argument `test` mode remains the full locked workspace gate.
+Focused delivery and session-activity filters and their nonzero-test prerequisite are listed in [delivery.md: Verification](delivery.md#verification).
 Each compiler or test process's failure reaches the caller.
 
 The build regression tests in `test_verification_builds.py` use a tiny real Cargo workspace, not compiler mocks.

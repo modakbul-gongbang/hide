@@ -11,6 +11,7 @@ A claim is verified by the check that observes what a caller of the behavior obs
 | The change claims | Check | Owner |
 | --- | --- | --- |
 | Core state, a runtime event, a Herdr fixture, the hided wire | `bash scripts/verify-cargo.sh test` | [CONTRIBUTING.md: CI gates](../CONTRIBUTING.md#ci-gates) |
+| Local mailbox intake, safe doorbells, durable watches and activity privacy | Named library checks plus actual isolated runtime observations | [delivery.md: Verification](delivery.md#verification) |
 | Web or desktop logic that needs no window | `bash scripts/verify-web.sh` | [CONTRIBUTING.md: CI gates](../CONTRIBUTING.md#ci-gates) |
 | A flow a user performs in the web shell | `pnpm --dir web e2e` | [Before an e2e run](#before-an-e2e-run) |
 | A desktop app behavior: window, menu, native view, relaunch, a daemon that goes away | `pnpm --dir desktop e2e` | [BUILD.md: The desktop app](BUILD.md#the-desktop-app) |

@@ -240,6 +240,18 @@ A pane that is going away ends its attach quietly.
 Herdr closes the PTY before it reports the pane gone, so the attach child ends while the pane is still drawn; projecting that as `ended` is what flashed "terminal attach ended" over a pane the operator had just closed.
 A close Hide asked for, or a pane Herdr has already stopped listing, projects `closing` with no notice chunk and keeps the pane's last frame until it is removed. Every other reason still reports `ended` with its message.
 
+### Local agent delivery and inactivity watches
+
+The core's delivery worker owns a separate private ledger and returns mutation success only after atomic persistence outside `Mutex<Runtime>`.
+Runtime holds an immutable ledger projection; one bounded writer queue and separately owned doorbell/watch producers stop and join with Core outside the lock.
+The existing pane input path adds only a last-input timestamp assignment, and watch snapshots publish start, warning and end transitions.
+The daemon exposes typed `hide request`, `inbox` and `watch` commands through the existing caller-bound Workspace boundary without requiring a renderer.
+The bounded visible ANSI adapter writes only to a positively identified idle/done empty composer, and prompt-hook stdout flush precedes durable intake confirmation.
+Local delivery expires after 10 minutes; watch warnings use 20-minute inactivity and first-warning time plus 60 minutes, with persistent counts and activity reset.
+The helper's metadata-only session activity uses the same native ownership proof as the local reader.
+Existing hcoord retains its ledger, watches, spawning and lineage ownership; its only registration-time contact is the bounded read-only conflict probe.
+[delivery.md](delivery.md) owns the CLI, capacities, privacy, reverse-watch operating rule, manual fallback and the residual external-input race.
+
 ### Explicit terminal attachments
 
 The browser cannot name a dropped file's or a pasted image's path, so hided's own staging (`hided/src/attachments.rs`, see hided and the WebSocket boundary) is the only source of a `terminal_attachment` intent: it writes the uploaded bytes to disk and sends the event carrying the original pane ID, bracketed-paste mode, a generated request UUID and the staged paths.
