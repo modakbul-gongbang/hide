@@ -82,6 +82,8 @@ All test daemons and temporary files are cleaned up on failure as well as succes
 
 `desktop/` is a pnpm workspace member; `pnpm install` at the root installs it with the web shell.
 Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the first launch rather than at install, so a lane that only typechecks never fetches it.
+CI acquires that lock-resolved runtime once with `bash scripts/verify-web.sh desktop electron-install` before desktop or packaged-app fixtures, using the dependency's own checksum-verifying installer within a five-minute step.
+An acquisition failure blocks the suite at that prerequisite and retains the upstream error instead of retrying the download in each test.
 
 | Command | Does |
 | --- | --- |

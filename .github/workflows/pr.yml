@@ -301,6 +301,11 @@ jobs:
         run: bash scripts/verify-cargo.sh cli
       - name: Install dependencies
         run: bash scripts/verify-web.sh install
+      - name: Install the pinned Electron runtime
+        id: electron
+        timeout-minutes: 5
+        # Acquire once before the suite, preserving an upstream failure here.
+        run: bash scripts/verify-web.sh desktop electron-install
       - name: Build the web shell
         # The desktop app serves web/dist through the hided it starts.
         run: bash scripts/verify-web.sh web build
@@ -328,7 +333,7 @@ jobs:
       - name: Desktop app end-to-end
         # The desktop app against an isolated Herdr, starting its own hided
         # through the hide CLI built above. Electron downloads its runtime on
-        # first launch.
+        # first launch outside CI; this lane acquires it once before the suite.
         timeout-minutes: 20
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
@@ -349,7 +354,7 @@ jobs:
         # Into its own output directory: Playwright empties its output directory
         # when a run starts, which would delete the required step's failure
         # snapshots.
-        if: ${{ !cancelled() && steps.herdr.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' && steps.herdr.outcome == 'success' }}
         continue-on-error: true
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
