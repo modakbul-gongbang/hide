@@ -268,8 +268,8 @@ fn record_state(frame: &Value, states: &mut Vec<Value>) {
 }
 
 fn failure_snapshot(herdr: &PrivateHerdr) -> String {
-    match hide_herdr_client::request_with_timeout(
-        &herdr.socket,
+    match hide_herdr_client::request_small_response(
+        &hide_herdr_client::LocalSocketConnector::new(&herdr.socket),
         "session.snapshot",
         json!({}),
         Duration::from_secs(5),
