@@ -316,7 +316,8 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
                 &expected,
                 &retry_id,
                 Action::Close {
-                    view_id: view_id.clone()
+                    view_id: view_id.clone(),
+                    expected_browser_area: None,
                 },
                 Ok(None),
             )
@@ -334,6 +335,7 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
                 Action::Select {
                     view_id: view_id.clone(),
                     reveal: false,
+                    expected_browser_area: None,
                 },
                 Ok(None),
             )
@@ -393,6 +395,7 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
     layout.insert("a1", display, 1).unwrap();
     let action = Action::Close {
         view_id: view_id.clone(),
+        expected_browser_area: None,
     };
     assert!(
         runtime
@@ -458,6 +461,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
             Action::Select {
                 view_id: view_id.clone(),
                 reveal: false,
+                expected_browser_area: None,
             },
             Ok(None),
         )
@@ -477,6 +481,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
             Action::Select {
                 view_id,
                 reveal: true,
+                expected_browser_area: None,
             },
             Ok(None),
         )
@@ -985,6 +990,297 @@ fn browser_area_removed_during_file_read_refuses_without_mutation() {
 }
 
 #[test]
+fn scoped_browser_close_and_select_refuse_a_page_moved_after_prepare() {
+    for close in [false, true] {
+        let (mut runtime, _dir) = caller_fixture();
+        let expected = runtime
+            .workspace_control_query("local", "pane-b", Query::Info)
+            .unwrap()
+            .context;
+        let (view_id, _, other_area) = seed_browser_areas(&mut runtime, &expected);
+        let copied_view = runtime
+            .workspace_control_query("local", "pane-b", Query::ViewList)
+            .unwrap()
+            .views
+            .unwrap()
+            .into_iter()
+            .find(|view| view.view_id == view_id)
+            .unwrap();
+        assert_eq!(copied_view.kind, "browser");
+        assert_eq!(copied_view.area_id, "a1");
+        let action = if close {
+            Action::Close {
+                view_id: view_id.clone(),
+                expected_browser_area: Some(copied_view.area_id),
+            }
+        } else {
+            Action::Select {
+                view_id: view_id.clone(),
+                reveal: true,
+                expected_browser_area: Some(copied_view.area_id),
+            }
+        };
+        let id = action_id("scoped-before-move");
+        assert!(matches!(
+            runtime
+                .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+                .unwrap(),
+            ActionPreparation::Ready
+        ));
+
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &action_id("move-page-before-commit"),
+                Action::Move {
+                    view_id: view_id.clone(),
+                    area_id: other_area.clone(),
+                    index: 0,
+                },
+                Ok(None),
+            )
+            .unwrap();
+        let key = (expected.device_id.clone(), expected.checkout_path.clone());
+        assert_eq!(
+            runtime
+                .view_layout_of(&key)
+                .unwrap()
+                .area_of(&view_id)
+                .unwrap()
+                .id,
+            other_area
+        );
+        let before = browser_control_state(&runtime);
+        assert_eq!(
+            runtime
+                .workspace_control_action("local", "pane-b", &expected, &id, action, Ok(None))
+                .unwrap_err()
+                .reason,
+            "browser_scope_changed"
+        );
+        assert_eq!(browser_control_state(&runtime), before);
+    }
+}
+
+#[test]
+fn scoped_browser_close_and_select_refuse_a_document_in_the_named_area() {
+    for close in [false, true] {
+        let (mut runtime, _dir) = caller_fixture();
+        let expected = runtime
+            .workspace_control_query("local", "pane-b", Query::Info)
+            .unwrap()
+            .context;
+        let layout = &mut runtime
+            .workspace_views
+            .as_mut()
+            .unwrap()
+            .views
+            .entry(&expected.device_id, &expected.checkout_path)
+            .layout;
+        let file = layout.new_display(
+            "/checkouts/b/index.html",
+            crate::view_layout::DisplayKind::File,
+            None,
+            false,
+        );
+        let view_id = file.id.clone();
+        layout.insert("a1", file, 1).unwrap();
+        let action = if close {
+            Action::Close {
+                view_id,
+                expected_browser_area: Some("a1".into()),
+            }
+        } else {
+            Action::Select {
+                view_id,
+                reveal: true,
+                expected_browser_area: Some("a1".into()),
+            }
+        };
+        let id = action_id("scoped-document");
+        let before = browser_control_state(&runtime);
+        assert_eq!(
+            runtime
+                .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+                .err()
+                .unwrap()
+                .reason,
+            "browser_scope_changed"
+        );
+        assert_eq!(
+            runtime
+                .workspace_control_action("local", "pane-b", &expected, &id, action, Ok(None))
+                .unwrap_err()
+                .reason,
+            "browser_scope_changed"
+        );
+        assert_eq!(browser_control_state(&runtime), before);
+    }
+}
+
+#[test]
+fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt() {
+    let (mut runtime, _dir) = caller_fixture();
+    let expected = runtime
+        .workspace_control_query("local", "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let (view_id, _, other_area) = seed_browser_areas(&mut runtime, &expected);
+    let selected_action = Action::Select {
+        view_id: view_id.clone(),
+        reveal: false,
+        expected_browser_area: Some("a1".into()),
+    };
+    let select_id = action_id("scoped-select");
+    let selected = runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &select_id,
+            selected_action.clone(),
+            Ok(None),
+        )
+        .unwrap();
+    assert_eq!(selected.view_id, view_id);
+    assert_eq!(selected.area_id.as_deref(), Some("a1"));
+    let after_select = browser_control_state(&runtime);
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &select_id,
+                selected_action,
+                Ok(None)
+            )
+            .unwrap(),
+        selected
+    );
+    for expected_browser_area in [None, Some(other_area)] {
+        assert_eq!(
+            runtime
+                .workspace_control_action(
+                    "local",
+                    "pane-b",
+                    &expected,
+                    &select_id,
+                    Action::Select {
+                        view_id: view_id.clone(),
+                        reveal: false,
+                        expected_browser_area
+                    },
+                    Ok(None),
+                )
+                .unwrap_err()
+                .reason,
+            "request_id_reused"
+        );
+    }
+    assert_eq!(browser_control_state(&runtime), after_select);
+
+    let close_action = Action::Close {
+        view_id: view_id.clone(),
+        expected_browser_area: Some("a1".into()),
+    };
+    let close_id = action_id("scoped-close");
+    let closed = runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &close_id,
+            close_action.clone(),
+            Ok(None),
+        )
+        .unwrap();
+    assert!(closed.changed);
+    let key = (expected.device_id.clone(), expected.checkout_path.clone());
+    assert!(
+        runtime
+            .view_layout_of(&key)
+            .unwrap()
+            .display(&view_id)
+            .is_none()
+    );
+    let after_close = browser_control_state(&runtime);
+    let ActionPreparation::Cached(Ok(cached)) = runtime
+        .workspace_control_prepare_action("local", "pane-b", &expected, &close_id, &close_action)
+        .unwrap()
+    else {
+        panic!("a closed browser target must replay its successful receipt")
+    };
+    assert_eq!(cached, closed);
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &close_id,
+                close_action.clone(),
+                Ok(None)
+            )
+            .unwrap(),
+        closed
+    );
+    assert_eq!(browser_control_state(&runtime), after_close);
+    for expected_browser_area in [None, Some("different-area".into())] {
+        assert_eq!(
+            runtime
+                .workspace_control_action(
+                    "local",
+                    "pane-b",
+                    &expected,
+                    &close_id,
+                    Action::Close {
+                        view_id: view_id.clone(),
+                        expected_browser_area
+                    },
+                    Ok(None),
+                )
+                .unwrap_err()
+                .reason,
+            "request_id_reused"
+        );
+    }
+    assert_eq!(browser_control_state(&runtime), after_close);
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &action_id("fresh-scoped-close"),
+                close_action,
+                Ok(None),
+            )
+            .unwrap_err()
+            .reason,
+        "browser_scope_changed"
+    );
+    assert!(
+        !runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &action_id("legacy-close-missing"),
+                Action::Close {
+                    view_id,
+                    expected_browser_area: None
+                },
+                Ok(None),
+            )
+            .unwrap()
+            .changed
+    );
+}
+
+#[test]
 fn browser_file_source_is_confined_to_the_calling_checkout() {
     let (mut runtime, dir) = caller_fixture();
     let checkout = dir.path().join("checkout");
@@ -1282,6 +1578,7 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
             Action::Select {
                 view_id: opened.view_id.clone(),
                 reveal: false,
+                expected_browser_area: None,
             },
             Ok(None),
         )
@@ -1306,7 +1603,8 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
                 &expected,
                 &action_id("after-move"),
                 Action::Close {
-                    view_id: opened.view_id
+                    view_id: opened.view_id,
+                    expected_browser_area: None,
                 },
                 Ok(None),
             )

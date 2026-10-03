@@ -28,6 +28,36 @@ pub(super) struct RecordedAction {
 }
 
 impl Runtime {
+    fn check_browser_scope(&self, key: &(String, String), action: &Action) -> Result<(), Refusal> {
+        let (view_id, expected_area) = match action {
+            Action::Select {
+                view_id,
+                expected_browser_area: Some(area),
+                ..
+            }
+            | Action::Close {
+                view_id,
+                expected_browser_area: Some(area),
+            } => (view_id, area),
+            _ => return Ok(()),
+        };
+        let in_scope = self
+            .view_layout_of(key)
+            .and_then(|layout| layout.area(expected_area))
+            .is_some_and(|area| {
+                area.displays
+                    .iter()
+                    .any(|display| display.id == *view_id && display.kind == DisplayKind::Browser)
+            });
+        if !in_scope {
+            return Err(Refusal {
+                reason: "browser_scope_changed",
+                next_action: "Refresh the browser target and retry",
+            });
+        }
+        Ok(())
+    }
+
     fn check_browser_area(
         &self,
         key: &(String, String),
@@ -196,6 +226,8 @@ impl Runtime {
         if let Some(cached) = cached {
             return Ok(ActionPreparation::Cached(cached));
         }
+        let key = (context.device_id.clone(), context.checkout_path.clone());
+        self.check_browser_scope(&key, action)?;
         if let Action::OpenBrowser { url, area_id, .. } = action {
             if !crate::view_layout::browser_address(url) {
                 return Err(Refusal {
@@ -203,10 +235,7 @@ impl Runtime {
                     next_action: "Use an http, https, or checkout HTML address",
                 });
             }
-            self.check_browser_area(
-                &(context.device_id.clone(), context.checkout_path.clone()),
-                area_id.as_deref(),
-            )?;
+            self.check_browser_area(&key, area_id.as_deref())?;
             if crate::view_layout::is_file_address(url) {
                 let path = crate::workspace_control::local_file_path(url).ok_or(Refusal {
                     reason: "invalid_address",
@@ -271,21 +300,20 @@ impl Runtime {
         if let Some(cached) = cached {
             return cached;
         }
+        let key = (context.device_id.clone(), context.checkout_path.clone());
         // A file read releases the owner lock, so its named area may have
-        // gone since prepare. Refuse before reconciliation, load stamps or
-        // display ids can mutate the layout.
+        // gone since prepare. A browser capability may also name a display
+        // moved since its query. Check both under this commit's owner lock,
+        // after receipt lookup and before any state mutation.
         let material = material.and_then(|material| {
+            self.check_browser_scope(&key, &action)?;
             if let Action::OpenBrowser { area_id, .. } = &action {
-                self.check_browser_area(
-                    &(context.device_id.clone(), context.checkout_path.clone()),
-                    area_id.as_deref(),
-                )?;
+                self.check_browser_area(&key, area_id.as_deref())?;
             }
             Ok(material)
         });
         let result = match material {
             Ok(material) => {
-                let key = (context.device_id.clone(), context.checkout_path.clone());
                 self.reconcile_view_displays();
                 // A pane of a tab the operator is not looking at keeps the
                 // operator's fronts and only bookmarks its own tab (D-05).
@@ -526,7 +554,9 @@ impl Runtime {
         let (view_id, changed, area_id) = match action {
             Action::OpenFile { .. } | Action::OpenDiff { .. } => unreachable!("handled above"),
             Action::OpenBrowser { .. } => unreachable!("handled above"),
-            Action::Select { view_id, reveal } => {
+            Action::Select {
+                view_id, reveal, ..
+            } => {
                 let selected = self
                     .change_view_layout(key, |layout, stamp| {
                         layout
@@ -571,7 +601,7 @@ impl Runtime {
                     .map_err(layout_refusal)?;
                 (view_id.clone(), changed, Some(area_id.clone()))
             }
-            Action::Close { view_id } => {
+            Action::Close { view_id, .. } => {
                 let Some(display) = self
                     .view_layout_of(key)
                     .and_then(|layout| layout.display(view_id))
