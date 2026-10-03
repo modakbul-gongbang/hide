@@ -2,12 +2,13 @@
 // lanes. It reads the daemon's state file for the loopback origin and token,
 // so nothing here touches the operator's running daemon.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
 import { ownUntilWorkerExit } from "./worker-owned";
+import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv } from "./platform-fixture";
 
 /**
  * `restart` stops the daemon and starts it again on the same state directory
@@ -31,7 +32,7 @@ export type Daemon = {
 export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<Daemon> {
   // The daemon places pane-bootstrap.sock below this directory. Keep the
   // fixture root short enough for macOS's Unix socket path limit.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hde-"));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hde-")));
   const home = homeOverride ?? path.join(dir, "home");
   fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
@@ -41,16 +42,14 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
 }
 
 async function launch(herdr: HerdrFixture, label: string, dir: string, home: string, port: string, extraEnv: NodeJS.ProcessEnv): Promise<Daemon> {
-  const env = { ...process.env };
-  for (const key of ["HERDR_SOCKET_PATH", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"]) delete env[key];
+  const env = inheritedFixtureEnv();
   const statePath = path.join(dir, "hide", "hided.json");
   fs.rmSync(statePath, { force: true });
-  const binary = path.resolve("..", "target", "debug", "hided");
+  const binary = path.resolve("..", "target", "debug", fixtureExecutable("hided"));
   const child = spawn(binary, [], {
     env: {
       ...env,
-      HOME: home,
-      HCOORD_HOME: path.join(home, ".hcoord"),
+      ...fixtureHomeEnv(home),
       HIDE_STATE_DIR: path.join(dir, "hide"),
       HIDE_KEEP_ALIVE: "1",
       HIDE_PORT: port,
@@ -62,7 +61,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
       // Specs adding a shim prepend it to this path through extraEnv.
       PATH: herdr.fixturePath,
       // `open_external` must not launch a GUI application on the runner.
-      HIDE_OPEN_COMMAND: "/usr/bin/true",
+      HIDE_OPEN_COMMAND: fixtureOpenCommand(herdr.root),
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -93,7 +92,9 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
         fs.rmSync(dir, { recursive: true, force: true });
         return;
       } catch {
-        spawnSync("/bin/sleep", ["0.05"]);
+        // Synchronous worker-exit cleanup cannot await a timer. Keep the
+        // same 50 ms filesystem retry interval without a Unix child tool.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
       }
     }
     fs.rmSync(dir, { recursive: true, force: true });

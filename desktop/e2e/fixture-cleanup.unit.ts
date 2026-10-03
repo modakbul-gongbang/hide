@@ -1,7 +1,7 @@
 // Exercise the real fixture teardown and filesystem with Electron and service
 // calls replaced at their external boundaries. No native process is started.
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { ChildProcess, spawnSync } from "node:child_process";
+import { ChildProcess, execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +16,27 @@ vi.mock("@playwright/test", () => ({
 }));
 vi.mock("node:child_process", async (original) => ({
   ...await original<typeof import("node:child_process")>(),
+  execFileSync: vi.fn((command: string, args?: readonly string[], options?: { timeout?: number }) => {
+    if (process.platform !== "win32" || command !== "clang.exe" || args?.length !== 4
+      || args[0] !== "-O1" || args[1] !== "-o" || options?.timeout !== 20_000
+      || Object.keys(options).some((key) => key !== "timeout")) {
+      throw new Error(`unexpected fixture compiler: ${command}`);
+    }
+    const [, , output, source] = args;
+    const privateRoot = path.dirname(source);
+    if (!root || !path.isAbsolute(privateRoot) || path.dirname(privateRoot) !== fs.realpathSync.native(root)
+      || !path.basename(privateRoot).startsWith("hide-desktop-")
+      || source !== path.join(privateRoot, "hide-open.c")
+      || output !== path.join(privateRoot, "bin", "hide-open.exe")
+      || fs.realpathSync.native(source) !== source
+      || fs.realpathSync.native(path.dirname(output)) !== path.join(privateRoot, "bin")
+      || fs.readFileSync(source, "utf8") !== "int main(void) { return 0; }\n") {
+      throw new Error(`unexpected fixture compiler files: ${command}`);
+    }
+    // The real helper checks existence; native executable validity belongs to e2e.
+    fs.writeFileSync(output, Buffer.alloc(0), { flag: "wx" });
+    return Buffer.alloc(0);
+  }),
   spawnSync: vi.fn((command: string) => {
     if (command !== "launchctl") throw new Error(`unexpected fixture process: ${command}`);
     return { status: 113, stdout: "", stderr: "No such service" };
@@ -29,6 +50,7 @@ beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "hide-fixture-regression-"));
   vi.spyOn(os, "tmpdir").mockReturnValue(root);
   boundary.launch.mockReset();
+  vi.mocked(execFileSync).mockClear();
   vi.mocked(spawnSync).mockClear();
   runs = [];
   children = [];

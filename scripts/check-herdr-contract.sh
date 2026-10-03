@@ -41,47 +41,15 @@ fi
 
 script_dir=${0:A:h}
 project_root=${script_dir:h}
-contract_schema=$project_root/contracts/herdr-api.schema.json
-[[ -f "$contract_schema" ]] || {
-  print -u2 -- "error: bundled Herdr API contract is missing: $contract_schema"
-  exit 1
-}
-
-temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/herdr-contract-check.XXXXXX")
-cleanup() {
-  rm -rf -- "$temporary_root"
-}
-trap cleanup EXIT
-
-contract_normalized=$temporary_root/contract.json
-cli_normalized=$temporary_root/cli.json
-jq -S . "$contract_schema" > "$contract_normalized"
-"$herdr_bin" api schema --json | jq -S . > "$cli_normalized"
-
-contract_protocol=$(jq -er '.protocol' "$contract_normalized")
-cli_protocol=$(jq -er '.protocol' "$cli_normalized")
-if ! cmp -s "$contract_normalized" "$cli_normalized"; then
-  print -u2 -- "error: installed Herdr CLI schema does not match the IDE contract"
-  print -u2 -- "expected_protocol=$contract_protocol received_protocol=$cli_protocol cli=$herdr_bin"
-  exit 1
-fi
-
-cli_version=$("$herdr_bin" --version | awk '{print $2}')
-schema_sha256=$(/usr/bin/shasum -a 256 "$contract_normalized" | awk '{print $1}')
-
-# `herdr api schema --json` is answered by the binary itself, so the comparison
-# above is the whole of what a machine with no Herdr session can verify. The
-# remaining checks read live server state and are a local step, not a CI one.
+# One portable implementation owns the binary/schema comparison on all OSes.
+schema_result=$(python3 "$script_dir/check-herdr-schema.py" --herdr-bin "$herdr_bin")
 if [[ "$schema_only" == true ]]; then
-  jq -n \
-    --arg herdr_bin "$herdr_bin" \
-    --arg version "$cli_version" \
-    --arg schema_sha256 "$schema_sha256" \
-    --argjson protocol "$contract_protocol" \
-    '{status: "pass", scope: "schema-only", herdr_bin: $herdr_bin, version: $version,
-      protocol: $protocol, schema_sha256: $schema_sha256}'
+  print -r -- "$schema_result"
   exit 0
 fi
+contract_protocol=$(print -r -- "$schema_result" | jq -er '.protocol')
+cli_version=$(print -r -- "$schema_result" | jq -er '.version')
+schema_sha256=$(print -r -- "$schema_result" | jq -er '.schema_sha256')
 
 snapshot=$("$herdr_bin" api snapshot)
 server_protocol=$(print -r -- "$snapshot" | jq -er '.result.snapshot.protocol')
