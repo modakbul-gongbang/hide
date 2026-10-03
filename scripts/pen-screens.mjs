@@ -28,13 +28,9 @@
 // two import their variant tables from pen-system.mjs (`BUTTON_VARIANTS`,
 // `BADGE_VARIANTS`) rather than recomputing them from a single default state.
 //
-// This only reaches a master's own literal `children` tree; a master that itself
-// nests a same-library `ref` (the Icon Button inside Workspace row and Project row,
-// for instance) is not walked past that ref, the same way `themedOverrides` doesn't
-// walk into ITS OWN `descendants` map - matching what scripts/check-hide-screens.mjs
-// enforces, so the generator and the checker agree on what "covered" means. Those
-// nested-ref icons are undecorated by the master itself (no default icon or fill),
-// so there is nothing there for either side to miss.
+// Nested same-library refs carry their master's defaults and instance patches.
+// The generator and checker share this effective color walk, addressed by each
+// full instance path, so separate instances never share an override by accident.
 
 import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
 import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
@@ -65,6 +61,7 @@ function libraryDocument() {
 }
 
 function findMaster(node, id) {
+  if (typeof id !== 'string' || !id) return null;
   if (node && typeof node === 'object') {
     if (node.id === id) return node;
     for (const child of node.children ?? []) {
@@ -82,21 +79,51 @@ function findMaster(node, id) {
  * on the ref's `descendants` map (xref() adds the alias prefix). A literal
  * color (not a `$--token` string) is left alone - it is already theme-independent.
  */
-function themedOverrides(masterId) {
-  const master = findMaster({children: libraryDocument().children}, masterId);
+export function themedOverrides(masterId, document = libraryDocument()) {
+  const master = findMaster({children: document.children}, masterId);
   if (!master) throw new Error(`pen-screens needs master ${masterId}, which ${CANVAS} no longer carries`);
   const top = {};
-  for (const prop of THEMED_PROPS) if (LOCAL_TOKEN.test(master[prop])) top[prop] = master[prop];
   const descendants = {};
-  (function walk(node) {
-    if (!node || typeof node !== 'object') return;
-    if (node.id !== masterId) {
-      const props = {};
-      for (const prop of THEMED_PROPS) if (LOCAL_TOKEN.test(node[prop])) props[prop] = node[prop];
-      if (Object.keys(props).length) descendants[node.id] = props;
+  const colors = (node, address) => {
+    const props = {};
+    for (const prop of THEMED_PROPS) if (LOCAL_TOKEN.test(node[prop])) props[prop] = node[prop];
+    if (!address.length) Object.assign(top, props);
+    else if (Object.keys(props).length) descendants[address.join('/')] = props;
+  };
+  const patches = (address, scopes) => {
+    const props = {};
+    for (const {prefix, entries} of scopes) {
+      if (!prefix.every((part, i) => address[i] === part)) continue;
+      const key = address.slice(prefix.length).join('/');
+      if (Object.hasOwn(entries, key)) Object.assign(props, entries[key]);
     }
-    for (const child of node.children ?? []) walk(child);
-  })(master);
+    return props;
+  };
+  const walk = (node, prefix, scopes, activeMasters, isRoot = false) => {
+    const address = isRoot ? prefix : [...prefix, node.id];
+    const effective = {...node, ...patches(address, scopes)};
+    if (effective.type === 'ref') {
+      let resolved = effective;
+      let nestedScopes = scopes;
+      const active = new Set(activeMasters);
+      while (resolved.type === 'ref') {
+        const target = findMaster(document, resolved.ref);
+        if (!target) throw new Error(`Component instance ${address.join('/')} has no target ${JSON.stringify(resolved.ref)}`);
+        if (active.has(target.id)) throw new Error(`Component instance ${address.join('/')} cycles to active master ${target.id}`);
+        active.add(target.id);
+        // Inner master patches are defaults; enclosing instances apply last.
+        nestedScopes = [{prefix: address, entries: resolved.descendants ?? {}}, ...nestedScopes];
+        const {id: _id, type: _type, ref: _ref, children: _children, descendants: _descendants, ...overrides} = resolved;
+        resolved = {...target, ...overrides};
+      }
+      colors(resolved, address);
+      for (const child of resolved.children ?? []) walk(child, address, nestedScopes, active);
+    } else {
+      colors(effective, address);
+      for (const child of effective.children ?? []) walk(child, prefix, scopes, activeMasters);
+    }
+  };
+  walk(master, [], [], new Set([masterId]), true);
   return {top, descendants};
 }
 
@@ -124,7 +151,7 @@ export const LIBRARY_PATH = './hide-ui.lib.pen';
 // overrides on the ref itself (fill, stroke, width...); `descendants` is a plain
 // {rawId: props} map this function prefixes for you.
 function xref(id, masterId, name, overrides = {}, descendants) {
-  const prefixed = descendants ? Object.fromEntries(Object.entries(descendants).map(([key, value]) => [`${ALIAS}:${key}`, value])) : undefined;
+  const prefixed = descendants ? Object.fromEntries(Object.entries(descendants).map(([key, value]) => [key.split('/').map(part => `${ALIAS}:${part}`).join('/'), value])) : undefined;
   return {id, type: 'ref', ref: `${ALIAS}:${masterId}`, name, ...overrides, ...(prefixed ? {descendants: prefixed} : {})};
 }
 

@@ -192,6 +192,92 @@ test('an explicit empty paint list clears a themed color without accepting a mis
   assert.ok(check(document, file).some(f => f.includes('descendant btn-lb does not restate its fill')));
 });
 
+function nestedFixture(t) {
+  const root = fixture(t);
+  const library = doc([
+    screen('workspace-master', 'Workspace', {reusable: true, children: [{id: 'toolbar-instance', type: 'ref', ref: 'toolbar-master'}]}),
+    screen('toolbar-master', 'Toolbar', {reusable: true, children: [{id: 'toggle-instance', type: 'ref', ref: 'toggle-master'}]}),
+    screen('toggle-master', 'Toggle', {reusable: true, children: [{id: 'glyph', type: 'text'}]}),
+    {id: 'unrelated', type: 'text'},
+  ]);
+  const instance = {id: 'window', type: 'ref', ref: 'hideui:workspace-master', descendants: {
+    'hideui:toolbar-instance/hideui:toggle-instance/hideui:glyph': {content: 'x'},
+  }};
+  const document = doc([screen('scr', 'Screen / Workspace', {children: [themed('light', 'Light', [instance]), themed('dark', 'Dark')]})], {
+    imports: {hideui: './lib.pen'},
+  });
+  return {library, instance, document, run() {
+    fs.writeFileSync(path.join(root, 'lib.pen'), JSON.stringify(library));
+    return check(document, path.join(root, 'hide-screens.pen'));
+  }};
+}
+
+test('nested imported paths reject absent targets and active component cycles', t => {
+  const f = nestedFixture(t);
+  assert.deepEqual(f.run(), []);
+  for (const target of [undefined, '', 'missing-master']) {
+    f.library.children[0].children[0].ref = target;
+    f.instance.descendants = {'hideui:toolbar-instance/hideui:unrelated': {content: 'x'}};
+    assert.ok(f.run().some(failure => failure.includes('do not resolve')), String(target));
+  }
+  f.library.children[0].children[0].ref = 'toolbar-master';
+  f.library.children[1].children = [{id: 'loop-instance', type: 'ref', ref: 'workspace-master'}];
+  f.instance.descendants = {'hideui:toolbar-instance/hideui:loop-instance/hideui:toolbar-instance': {content: 'x'}};
+  assert.ok(f.run().some(failure => failure.includes('do not resolve')), 'active outer master cycle');
+});
+
+test('every segment of an imported instance path requires its owning alias', t => {
+  const f = nestedFixture(t);
+  assert.deepEqual(f.run(), []);
+  for (const key of [
+    'hideui:toolbar-instance/toggle-instance/glyph',
+    'hideui:toolbar-instance/hideui:toggle-instance/glyph',
+    'toolbar-instance/toggle-instance/glyph',
+    'glyph',
+  ]) {
+    f.instance.descendants = {[key]: {content: 'x'}};
+    assert.ok(f.run().some(failure => failure.includes('do not resolve')), key);
+  }
+});
+
+test('nested effective colors require separate local overrides through inherited instance patches', t => {
+  const f = nestedFixture(t);
+  f.library.children[2].children[0].fill = '$--primary';
+  f.library.children[1].children[0].descendants = {glyph: {stroke: '$--border'}};
+  const key = 'hideui:toolbar-instance/hideui:toggle-instance/hideui:glyph';
+  assert.ok(f.run().some(failure => failure.includes('glyph') && failure.includes('fill')), 'nested default fill');
+  f.instance.descendants[key] = {fill: []};
+  assert.ok(f.run().some(failure => failure.includes('glyph') && failure.includes('stroke')), 'inherited stroke patch');
+  f.instance.descendants[key].stroke = [];
+  assert.deepEqual(f.run(), []);
+  f.instance.descendants[key].fill = '$hideui:--primary';
+  assert.ok(f.run().some(failure => failure.includes('glyph') && failure.includes('fill')), 'aliased color');
+  f.instance.descendants[key].fill = [];
+  f.library.children[0].children.push({id: 'toolbar-twin', type: 'ref', ref: 'toolbar-master'});
+  assert.ok(f.run().some(failure => failure.includes('toolbar-twin') && failure.includes('fill')), 'independent instance colors');
+  f.instance.descendants['hideui:toolbar-twin/hideui:toggle-instance/hideui:glyph'] = {fill: [], stroke: []};
+  assert.deepEqual(f.run(), []);
+});
+
+test('ancestor instance patches and ref-valued masters preserve effective color precedence', t => {
+  const f = nestedFixture(t);
+  f.library.children[2].children[0].fill = '$--primary';
+  f.library.children[1].children[0].descendants = {glyph: {fill: '$--secondary', stroke: '$--border'}};
+  f.library.children[0].children[0].descendants = {'toggle-instance/glyph': {fill: [], stroke: '$--accent'}};
+  const key = 'hideui:toolbar-instance/hideui:toggle-instance/hideui:glyph';
+  f.instance.descendants[key] = {stroke: []};
+  assert.deepEqual(f.run(), [], 'ancestor explicitly clears inherited fill');
+  delete f.instance.descendants[key].stroke;
+  assert.ok(f.run().some(failure => failure.includes('glyph') && failure.includes('stroke')));
+  f.instance.descendants[key].stroke = [];
+  f.library.children[0].children[0].descendants['toggle-instance/glyph'].fill = '$--primary-foreground';
+  assert.ok(f.run().some(failure => failure.includes('glyph') && failure.includes('fill')));
+  f.instance.descendants[key].fill = [];
+  f.library.children[1].children[0].ref = 'toggle-variant';
+  f.library.children.push({id: 'toggle-variant', type: 'ref', ref: 'toggle-master', reusable: true, descendants: {glyph: {stroke: '$--primary'}}});
+  assert.deepEqual(f.run(), [], 'nested ref-valued master resolves its inherited colors');
+});
+
 test('freeform text content shaped like "alias:id" (a pane label such as "w2:p1") is not mistaken for an unresolved ref', t => {
   const root = fixture(t);
   const document = doc([screen('scr-1', 'Screen / Main', {
