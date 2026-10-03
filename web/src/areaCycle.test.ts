@@ -7,7 +7,8 @@ import { commitCycle, reconcileHeldCycle } from "./keyboard";
 import { expectPane, observeEntries, observePane, resetRecent, tabSurface } from "./recent";
 import type { SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
+import { entryLens, useUiStore } from "./ui";
+import type { KeyboardOwner } from "./viewFocus";
 
 // a1 exists independently in Agent and View; another Agent area and
 // checkout both contain tabs that must never leak into the cycle.
@@ -68,16 +69,13 @@ describe("focused-area recent tabs", () => {
     rest.workspace_view!.layout!.root = area(["d1", "d3"], "new-area") as never;
     expect(reconcileHeldCycle(held, rest)).toBeNull();
   });
-  it("never falls back from a tool, outside owner, Overview, hidden View or delegated canvas", () => {
+  it("keeps View scope strict for tools, another checkout, hidden Views and delegated canvases", () => {
     const rest = world(); draw(rest);
     observePane(rest, "t2-pane");
     expect(areaCycle(rest, { kind: "tool", workspace: "c" })).toBeNull();
-    expect(agentCycle(rest, { kind: "tool", workspace: "c" })).toBeNull();
     expect(areaCycle(rest, { kind: "view", workspace: "other", areaId: "a1" })).toBeNull();
-    expect(agentCycle(rest, { kind: "pane", workspace: "other", paneId: "other-tab-pane" })).toBeNull();
     useUiStore.setState({ screen: { kind: "main" } });
     expect(areaCycle(rest, owner)).toBeNull();
-    expect(agentCycle(rest, owner)).toBeNull();
     useUiStore.setState({ screen: { kind: "workspace" } });
     rest.workspace_view!.panel = "closed";
     expect(areaCycle(rest, { kind: "view", workspace: "c", areaId: "a1" })).toBeNull();
@@ -109,6 +107,50 @@ const panes = (cycle: ReturnType<typeof agentCycle>) => cycle?.items.map((row) =
 
 describe("Agent pane cycle (issue 301)", () => {
   beforeEach(() => { resetRecent(); useUiStore.setState({ screen: { kind: "workspace" }, cycle: null }); noteAreaFrame("agent", null); noteAreaFrame("view", null); });
+
+  it.each<KeyboardOwner>([{ kind: "none" }, { kind: "tool", workspace: "c" }])("opens recent agents from $kind focus without inventing a pane visit", (outside) => {
+    const rest = devices(); draw(rest);
+    for (const pane of ["remote:mini:pane:p1", "t2-pane", "other-tab-pane"]) observePane(rest, pane);
+    expect(agentOrigin(rest, outside)).toBeNull();
+    const cycle = agentCycle(rest, outside)!;
+    expect(panes(cycle)).toEqual(["other-tab-pane", "t2-pane", "remote:mini:pane:p1"]);
+    expect(cycle.index).toBe(-1);
+    expect(cycle.originKey).toBeUndefined();
+    const sent: unknown[] = [];
+    commitCycle({ ...cycle, index: 0 }, createActions((event) => { sent.push(event); }));
+    expect(sent).toEqual([expect.objectContaining({ kind: "focus_pane", payload: expect.objectContaining({ pane_id: "other-tab-pane" }) })]);
+    expect(panes(agentCycle(rest, outside))).toEqual(["other-tab-pane", "t2-pane", "remote:mini:pane:p1"]);
+  });
+
+  it("opens recent agents on Main and Overview even with no drawn Agent area", () => {
+    const rest = devices(); draw(rest);
+    observePane(rest, "other-tab-pane");
+    noteAreaFrame("agent", null);
+    for (const screen of [{ kind: "main" }, { kind: "overview", projectId: "w", lens: entryLens(null, "board") }] as const) {
+      useUiStore.setState({ screen });
+      // A shortcut can leave the last View owner recorded when its screen
+      // unmounts; that is no longer a focused file on Main or Overview.
+      for (const outside of [{ kind: "none" }, { kind: "view", workspace: "c", areaId: "a1" }] as const) {
+        expect(panes(agentCycle(rest, outside))).toEqual(["other-tab-pane"]);
+        expect(agentCycle(rest, outside)?.index).toBe(-1);
+      }
+    }
+    resetRecent();
+    expect(agentCycle(rest, { kind: "none" })).toBeNull();
+  });
+
+  it("never substitutes Agent panes for a focused View, including a single-tab or retired area", () => {
+    const rest = devices(); draw(rest);
+    observePane(rest, "other-tab-pane");
+    const viewOwner = { kind: "view", workspace: "c", areaId: "a1" } as const;
+    expect(agentCycle(rest, viewOwner)).toBeNull();
+    expect(ids(areaCycle(rest, viewOwner))).toEqual(["d1", "d2"]);
+    rest.workspace_view!.layout!.root = { area: { id: "a1", active: "d1", displays: [{ id: "d1", kind: "browser", label: "d1", url: "about:blank", state: "open", tab_id: null }] } } as never;
+    expect(areaCycle(rest, viewOwner)).toBeNull();
+    expect(agentCycle(rest, viewOwner)).toBeNull();
+    rest.workspace_view!.panel = "closed";
+    expect(agentCycle(rest, viewOwner)).toBeNull();
+  });
 
   it("walks the agent panes visited on every device, project and checkout, one row per pane, most recent first", () => {
     const rest = devices(); draw(rest);
@@ -181,7 +223,7 @@ describe("Agent pane cycle (issue 301)", () => {
     observePane(rest, "t2-pane");
     // t3 is in the fixture but a1 shows t1: a keyboard owner left on t3's pane is stale.
     expect(agentOrigin(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" })).toBeNull();
-    expect(agentCycle(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" })).toBeNull();
+    expect(panes(agentCycle(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" }))).toEqual(["t2-pane"]);
   });
 
   it("starts before the most recent agent pane when the keyboard is in no pane, and drops a closed pane or ended agent while held", () => {
