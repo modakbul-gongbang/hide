@@ -52,7 +52,7 @@ async function agentAt(herdr: HerdrFixture, cwd: string): Promise<string> {
 const LONG_REQUEST = [
   "Overview 요청 보기에서 긴 요청을 한 줄로 보여 주세요",
   "",
-  "/Users/someone/projects/app/docs/request-row-expanded-detail.md 를 참고하고",
+  "/Users/example/projects/app/docs/request-row-expanded-detail.md 를 참고하고",
   "https://github.com/acme/repo/pull/336 리뷰도   함께 [Image #1]",
   "끝쪽 단어는 남겨 둘 것",
 ].join("\n");
@@ -175,7 +175,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
       "data-request-text",
       "Overview 요청 보기에서 긴 요청을 한 줄로 보여 주세요 · request-row-….md 를 참고하고 · #336 리뷰도 함께 · 끝쪽 단어는 남겨 둘 것 · 이미지 1",
     );
-    await expect(mainRow.locator("[data-request-line]")).not.toContainText("/Users/");
+    await expect(mainRow.locator("[data-request-line]")).not.toContainText("/Users/example");
     await expect(mainRow.locator("[data-request-children]")).toHaveText("자식 1 · 일하는 중 1");
     await expect(mainRow.locator('[data-request-open="https://example.com/report"]')).toBeVisible();
     // One line at the default width and at a narrow one, and no sideways scroll (B42, B52).
@@ -194,7 +194,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await mainRow.locator(`[data-request-toggle="${mainPane}"]`).click();
     const detail = mainRow.locator(`[data-request-detail="${mainPane}"]`);
     await expect(detail).toBeVisible();
-    expect(await detail.locator("[data-request-full]").innerText()).toContain("/Users/someone/projects/app/docs/request-row-expanded-detail.md 를 참고하고\nhttps://github.com/acme/repo/pull/336");
+    expect(await detail.locator("[data-request-full]").innerText()).toContain("/Users/example/projects/app/docs/request-row-expanded-detail.md 를 참고하고\nhttps://github.com/acme/repo/pull/336");
     await expect(detail.locator(`[data-request-child="${childPane}"]`)).toContainText("일하는 중");
     await mainRow.locator(`[data-request-toggle="${mainPane}"]`).click();
     await expect(detail).toHaveCount(0);

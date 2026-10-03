@@ -77,7 +77,7 @@ describe("the request line (D-42, B52)", () => {
   });
 
   it("names paths and addresses by their last name, so a home folder never shows", () => {
-    expect(requestLine("/Users/hoyeonlee/projects/app/docs/README.md 읽고 https://github.com/acme/project/pull/336 리뷰", 0)).toBe("README.md 읽고 #336 리뷰");
+    expect(requestLine("/Users/example/projects/app/docs/README.md 읽고 https://github.com/acme/project/pull/336 리뷰", 0)).toBe("README.md 읽고 #336 리뷰");
     expect(requestLine("~/work/notes/today.txt 봐", 0)).toBe("today.txt 봐");
   });
 
