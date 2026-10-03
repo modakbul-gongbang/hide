@@ -365,7 +365,7 @@ fn plain(screen: &str) -> String {
     text
 }
 
-async fn assert_private_pane_input() {
+async fn assert_private_pane_input() -> tempfile::TempDir {
     let bin = PathBuf::from(
         std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
     );
@@ -466,15 +466,24 @@ async fn assert_private_pane_input() {
     running.stop();
     drop(running);
     herdr.stop().expect("the private Herdr server exits");
+    root
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test]
 #[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
-async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
+fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
     // Independent servers exercise startup ordering. An assertion failure
     // stops the test immediately; a later instance cannot erase its result.
     for instance in 1..=3 {
         eprintln!("private pane/input instance {instance}/3");
-        assert_private_pane_input().await;
+        let fixture_runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("the private daemon runtime starts");
+        let root = fixture_runtime.block_on(assert_private_pane_input());
+        // End resident daemon tasks and their core before removing the
+        // fixture, so none can publish into the next instance's diagnostics.
+        drop(fixture_runtime);
+        root.close().expect("the private fixture is removed");
     }
 }
