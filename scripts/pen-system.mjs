@@ -783,7 +783,7 @@ function buildAgentGraphBox(tokens) {
           {type: 'ellipse', id: `${p}-ring`, name: 'Ring', width: DOT, height: DOT, stroke: '$--muted-foreground', strokeWidth: HAIR, strokeAlignment: 'inner'},
           disabled(text(`${p}-glyph`, '?', {fill: '$--warning', mono: true, size: '$--text-caption'})),
         ]),
-        frame(`${p}-provider`, 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'fit'}}, []),
+        frame(`${p}-provider`, 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'contain'}}, []),
         text(`${p}-title`, 'agent title'),
         grow(`${p}-sp`),
         frame(`${p}-tucked`, 'Tucked badge', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: ROW_LINE, cornerRadius: '$--radius-sm', fill: '$--secondary', enabled: false}, [
@@ -812,7 +812,7 @@ function buildAgentGraphBox(tokens) {
     const p = `agb-row${n}`;
     return {
       ...mark(p, symbol, fill),
-      [`${p}-provider`]: {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}},
+      [`${p}-provider`]: {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
       [`${p}-title`]: {content: title, ...(asking ? {fontWeight: '600'} : {})},
       [`${p}-age`]: {content: age},
       [`${p}-ind`]: {enabled: depth > 0},
