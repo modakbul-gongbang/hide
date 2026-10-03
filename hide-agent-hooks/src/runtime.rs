@@ -62,6 +62,29 @@ pub fn hook_stdout_with_context(
     serde_json::to_string(&output).ok()
 }
 
+/// `json` with every character outside ASCII written as a `\u` escape,
+/// which every JSON reader decodes to the same value.
+///
+/// On Windows both runtimes run the hook through PowerShell, which reads a
+/// program's output in the console code page and writes it out again
+/// (`docs/agent-hooks.md`, What is written, and where); ASCII is the one
+/// encoding that survives that unchanged, and the context carries `…` and
+/// Memory text in any language.
+pub fn ascii_json(json: &str) -> String {
+    let mut ascii = String::with_capacity(json.len());
+    for character in json.chars() {
+        if character.is_ascii() {
+            ascii.push(character);
+        } else {
+            let mut units = [0_u16; 2];
+            for unit in character.encode_utf16(&mut units) {
+                ascii.push_str(&format!("\\u{unit:04x}"));
+            }
+        }
+    }
+    ascii
+}
+
 /// Add a live pane's Workspace instructions to the existing SessionStart
 /// envelope without changing the Memory receipt embedded in that context.
 pub fn append_session_context(output: &str, context: &str) -> Option<String> {
@@ -278,6 +301,21 @@ mod tests {
         assert_eq!(
             AgentRuntime::Codex.config_path(home),
             Path::new("/Users/example/.codex/hooks.json")
+        );
+    }
+
+    #[test]
+    fn ascii_json_decodes_to_the_same_value_in_ascii_only() {
+        let context = format!("{PURPOSE_CONTEXT} 메모리 \u{1F600}");
+        let json = serde_json::json!({ "hookSpecificOutput": { "additionalContext": context } })
+            .to_string();
+        let ascii = ascii_json(&json);
+        assert!(ascii.is_ascii(), "{ascii}");
+        assert!(ascii.contains(r#"purpose=\"\u2026\""#));
+        assert!(ascii.contains(r"\ud83d\ude00"), "outside the BMP as a pair");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&ascii).unwrap(),
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()
         );
     }
 

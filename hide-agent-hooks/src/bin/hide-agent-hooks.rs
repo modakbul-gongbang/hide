@@ -88,7 +88,12 @@ fn run_hook(arguments: &[String]) {
         });
     }
     if let Some(output) = output {
-        println!("{output}");
+        // PowerShell runs the hook on Windows and re-encodes what it prints.
+        if cfg!(windows) {
+            println!("{}", hide_agent_hooks::runtime::ascii_json(&output));
+        } else {
+            println!("{output}");
+        }
     }
     if event == HookEvent::UserPromptSubmit {
         return;
@@ -189,9 +194,20 @@ fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
     }
 }
 
+/// Windows has no nonblocking read of an anonymous pipe, so a thread reads
+/// and this waits for it until the deadline; a producer that never closes
+/// stdin leaves that thread blocked, and the process exits without it.
 #[cfg(not(unix))]
-fn read_stdin_before_deadline(_deadline: Instant) -> Option<(Vec<u8>, bool)> {
-    hide_agent_hooks::memory::read_bounded(std::io::stdin()).ok()
+fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(hide_agent_hooks::memory::read_bounded(std::io::stdin()));
+    });
+    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(Ok(read)) => Some(read),
+        Ok(Err(_)) => Some((Vec::new(), false)),
+        Err(_) => None,
+    }
 }
 
 fn run_doctor(arguments: &[String]) -> Result<String, String> {
