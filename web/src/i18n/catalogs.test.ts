@@ -5,9 +5,11 @@ import { cleanupEnglish } from "./resources/cleanup";
 import { commonEnglish } from "./resources/common";
 import { devicesEnglish } from "./resources/devices";
 import { issueSettingsEnglish } from "./resources/issueSettings";
+import { issuesEnglish } from "./resources/issues";
 import { mobileEnglish } from "./resources/mobile";
 import { mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeEnglish } from "./resources/native";
+import { prWorkEnglish } from "./resources/prWork";
 import { requestsEnglish } from "./resources/requests";
 import { settingsEnglish } from "./resources/settings";
 import { workspaceEnglish } from "./resources/workspace";
@@ -31,6 +33,8 @@ describe("interface resources", () => {
       workspaceEnglish,
       issueSettingsEnglish,
       requestsEnglish,
+      issuesEnglish,
+      prWorkEnglish,
     ].flatMap((schema) => Object.keys(schema));
     expect(new Set(keys).size).toBe(keys.length);
   });

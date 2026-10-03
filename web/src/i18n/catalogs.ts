@@ -3,9 +3,11 @@ import { cleanupCatalogs, cleanupEnglish } from "./resources/cleanup";
 import { commonCatalogs, commonEnglish } from "./resources/common";
 import { devicesCatalogs, devicesEnglish } from "./resources/devices";
 import { issueSettingsCatalogs, issueSettingsEnglish } from "./resources/issueSettings";
+import { issuesCatalogs, issuesEnglish } from "./resources/issues";
 import { mobileCatalogs, mobileEnglish } from "./resources/mobile";
 import { mobileSetupCatalogs, mobileSetupEnglish } from "./resources/mobileSetup";
 import { nativeCatalogs, nativeEnglish } from "./resources/native";
+import { prWorkCatalogs, prWorkEnglish } from "./resources/prWork";
 import { requestsCatalogs, requestsEnglish } from "./resources/requests";
 import { settingsCatalogs, settingsEnglish } from "./resources/settings";
 import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
@@ -23,6 +25,8 @@ export const english = {
   ...workspaceEnglish,
   ...issueSettingsEnglish,
   ...requestsEnglish,
+  ...issuesEnglish,
+  ...prWorkEnglish,
 } as const;
 
 export type MessageKey = keyof typeof english;
@@ -41,6 +45,8 @@ export const catalogs = {
     ...workspaceCatalogs.ko,
     ...issueSettingsCatalogs.ko,
     ...requestsCatalogs.ko,
+    ...issuesCatalogs.ko,
+    ...prWorkCatalogs.ko,
   },
   "zh-CN": {
     ...commonCatalogs["zh-CN"],
@@ -54,6 +60,8 @@ export const catalogs = {
     ...workspaceCatalogs["zh-CN"],
     ...issueSettingsCatalogs["zh-CN"],
     ...requestsCatalogs["zh-CN"],
+    ...issuesCatalogs["zh-CN"],
+    ...prWorkCatalogs["zh-CN"],
   },
   ja: {
     ...commonCatalogs.ja,
@@ -67,5 +75,7 @@ export const catalogs = {
     ...workspaceCatalogs.ja,
     ...issueSettingsCatalogs.ja,
     ...requestsCatalogs.ja,
+    ...issuesCatalogs.ja,
+    ...prWorkCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;
