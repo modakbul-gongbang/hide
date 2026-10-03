@@ -55,7 +55,9 @@ check("checksum", () => {
   if (actual !== digest) throw new Error(`the archive's SHA-256 is ${actual}, the checksum says ${digest}`);
 });
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "hide-smoke-"));
+// Windows TEMP may use an 8.3 alias. Every fixture path, including the
+// expected hook command, starts from the native canonical spelling.
+const scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-smoke-")));
 const unpacked = path.join(scratch, "unpacked");
 const home = path.join(scratch, "home");
 const state = path.join(scratch, "state");
@@ -197,7 +199,9 @@ try {
     const resolved = process.platform === "win32"
       ? output("pwsh", ["-NoProfile", "-Command", "(Get-Command hide -CommandType Application).Source"], shellEnv)
       : output("/bin/sh", ["-c", "command -v hide"], shellEnv);
-    if (path.resolve(resolved) !== path.resolve(command)) throw new Error(`new shell resolved ${resolved}, expected ${command}`);
+    const resolvedId = fs.statSync(resolved, { bigint: true });
+    const commandId = fs.statSync(command, { bigint: true });
+    if (resolvedId.dev !== commandId.dev || resolvedId.ino !== commandId.ino) throw new Error(`new shell resolved ${resolved}, expected ${command}`);
     const answer = process.platform === "win32"
       ? output("pwsh", ["-NoProfile", "-Command", "hide status --json"], shellEnv)
       : output("/bin/sh", ["-c", "hide status --json"], shellEnv);
