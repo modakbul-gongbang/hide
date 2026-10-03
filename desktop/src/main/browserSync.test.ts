@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import { appScheme, browserPartition, isPopup, loadable, popupBounds, MAX_SYNCED_DISPLAYS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
 
 const rect = { x: 0, y: 40, width: 800, height: 600 };
-const display = { id: "d1", url: "https://a.test/", load: 3, rect, visible: true };
+const display = { id: "d1", area_id: "a1", url: "https://a.test/", load: 3, rect, visible: true };
+const workspace = "local\u0000/r";
+const retained = [{ workspace, id: "d1", area_id: "a1" }];
+const sync = { workspace, displays: [display], retained };
 
 describe("what the shell may ask of the browser views (issue 155)", () => {
   it("takes a well-formed sync whole", () => {
-    const sync = { workspace: "local\u0000/r", displays: [display, { ...display, id: "d2", rect: null, visible: false }], retained: [{ workspace: "local\u0000/r", id: "d1" }, { workspace: "local\u0000/r", id: "d2" }, { workspace: "ssh\u0000/other", id: "d1" }] };
+    const sync = { workspace, displays: [display, { ...display, id: "d2", area_id: "a2", rect: null, visible: false }], retained: [...retained, { workspace, id: "d2", area_id: "a2" }, { workspace: "ssh\u0000/other", id: "d1", area_id: "a3" }] };
     expect(parseSync(sync)).toEqual(sync);
     expect(parseSync({ workspace: null, displays: [], retained: [] })).toEqual({ workspace: null, displays: [], retained: [] });
   });
@@ -14,21 +17,40 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
   it("drops a sync whole when any part of it is out of shape", () => {
     const bad: unknown[] = [
       null,
-      { workspace: "w", displays: "d1" },
-      { workspace: "w", displays: [display], retained: [] },
-      { workspace: null, displays: [display] },
-      { workspace: "", displays: [] },
-      { workspace: "w", displays: [display, display] },
-      { workspace: "w", displays: [{ ...display, load: -1 }] },
-      { workspace: "w", displays: [{ ...display, load: 1.5 }] },
-      { workspace: "w", displays: [{ ...display, url: "x".repeat(8193) }] },
-      { workspace: "w", displays: [{ ...display, rect: { ...rect, width: Number.NaN } }] },
-      { workspace: "w", displays: [{ ...display, rect: { ...rect, height: -1 } }] },
-      { workspace: "w", displays: [{ ...display, rect: { ...rect, x: 1e9 } }] },
-      { workspace: "w", displays: [{ ...display, visible: "yes" }] },
-      { workspace: "w", displays: Array.from({ length: MAX_SYNCED_DISPLAYS + 1 }, (_, i) => ({ ...display, id: `d${i}` })) },
+      { ...sync, displays: "d1" },
+      { ...sync, retained: [] },
+      { ...sync, workspace: null },
+      { ...sync, workspace: "" },
+      { ...sync, displays: [display, display] },
+      { ...sync, displays: [{ ...display, load: -1 }] },
+      { ...sync, displays: [{ ...display, load: 1.5 }] },
+      { ...sync, displays: [{ ...display, url: "x".repeat(8193) }] },
+      { ...sync, displays: [{ ...display, rect: { ...rect, width: Number.NaN } }] },
+      { ...sync, displays: [{ ...display, rect: { ...rect, height: -1 } }] },
+      { ...sync, displays: [{ ...display, rect: { ...rect, x: 1e9 } }] },
+      { ...sync, displays: [{ ...display, visible: "yes" }] },
+      { ...sync, displays: Array.from({ length: MAX_SYNCED_DISPLAYS + 1 }, (_, i) => ({ ...display, id: `d${i}` })) },
     ];
     for (const value of bad) expect(parseSync(value), JSON.stringify(value)?.slice(0, 80)).toBeNull();
+  });
+
+  it("requires a bounded area identity on placements and retained pages", () => {
+    for (const area_id of [undefined, null, "", 1, "a".repeat(8193), "a\u0000b", "a\u0001b"]) {
+      expect(parseSync({ ...sync, displays: [{ ...display, area_id }] })).toBeNull();
+      expect(parseSync({ ...sync, retained: [{ ...retained[0], area_id }] })).toBeNull();
+    }
+    const area_id = "a".repeat(8192);
+    expect(parseSync({ ...sync, displays: [{ ...display, area_id }], retained: [{ ...retained[0], area_id }] })).not.toBeNull();
+  });
+
+  it("matches ownership by the complete Workspace, display and authoritative area", () => {
+    expect(parseSync({ ...sync, retained: [{ workspace: "local\u0000/other", id: "d1", area_id: "a1" }] })).toBeNull();
+    expect(parseSync({ ...sync, retained: [{ workspace: "ssh\u0000/r", id: "d1", area_id: "a1" }] })).toBeNull();
+    expect(parseSync({ ...sync, retained: [{ workspace, id: "d1", area_id: "a2" }] })).toBeNull();
+    expect(parseSync({ ...sync, retained: [...retained, ...retained] })).toBeNull();
+    for (const owner of ["w", "\u0000/r", "local\u0000", "local\u0000/r\u0000other", "local\u0000/r\u0001d1"]) {
+      expect(parseSync({ ...sync, workspace: owner, retained: [{ workspace: owner, id: "d1", area_id: "a1" }] })).toBeNull();
+    }
   });
 
   it("names a page and a toolbar command only in shape", () => {

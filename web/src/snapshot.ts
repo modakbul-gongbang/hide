@@ -1188,7 +1188,7 @@ export type SnapshotRest = {
   /** The front Workspace's layout and tools (S6 D-10); absent when no Workspace is in front. */
   workspace_view?: import("./workspace").WorkspaceView;
   /** All retained Browser Views, including those outside the front Workspace. */
-  browser_views?: { device_id: string; path: string; view_id: string }[];
+  browser_views?: { device_id: string; path: string; view_id: string; area_id: string }[];
 };
 
 /**

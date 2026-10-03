@@ -37,6 +37,16 @@ function text(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= MAX_TEXT;
 }
 
+function identity(value: unknown): value is string {
+  return text(value) && !value.includes("\u0000") && !value.includes("\u0001");
+}
+
+function workspaceIdentity(value: unknown): value is string {
+  if (!text(value) || value.includes("\u0001")) return false;
+  const at = value.indexOf("\u0000");
+  return at > 0 && at < value.length - 1 && value.indexOf("\u0000", at + 1) === -1;
+}
+
 function rect(value: unknown): BrowserRect | null | undefined {
   if (value === null) return null;
   if (typeof value !== "object") return undefined;
@@ -51,33 +61,33 @@ function rect(value: unknown): BrowserRect | null | undefined {
 export function parseSync(value: unknown): BrowserSync | null {
   if (typeof value !== "object" || value === null) return null;
   const { workspace, displays, retained } = value as Record<string, unknown>;
-  if (workspace !== null && !text(workspace)) return null;
+  if (workspace !== null && !workspaceIdentity(workspace)) return null;
   if (!Array.isArray(displays) || displays.length > MAX_SYNCED_DISPLAYS) return null;
   if (!Array.isArray(retained) || retained.length > MAX_RETAINED_DISPLAYS) return null;
   const owned: BrowserSync["retained"] = [];
-  const ownedKeys = new Set<string>();
+  const ownedAreas = new Map<string, string>();
   for (const entry of retained as unknown[]) {
     if (typeof entry !== "object" || entry === null) return null;
-    const { workspace: owner, id } = entry as Record<string, unknown>;
-    if (!text(owner) || !text(id)) return null;
+    const { workspace: owner, id, area_id } = entry as Record<string, unknown>;
+    if (!workspaceIdentity(owner) || !identity(id) || !identity(area_id)) return null;
     const key = viewKey(owner, id);
-    if (ownedKeys.has(key)) return null;
-    ownedKeys.add(key);
-    owned.push({ workspace: owner, id });
+    if (ownedAreas.has(key)) return null;
+    ownedAreas.set(key, area_id);
+    owned.push({ workspace: owner, id, area_id });
   }
   const parsed: BrowserPlacement[] = [];
   const ids = new Set<string>();
   for (const entry of displays as unknown[]) {
     if (typeof entry !== "object" || entry === null) return null;
-    const { id, url, load, visible } = entry as Record<string, unknown>;
+    const { id, area_id, url, load, visible } = entry as Record<string, unknown>;
     const placed = rect((entry as Record<string, unknown>).rect);
-    if (!text(id) || ids.has(id) || !text(url) || typeof load !== "number" || !Number.isSafeInteger(load) || load < 0) return null;
+    if (!identity(id) || !identity(area_id) || ids.has(id) || !text(url) || typeof load !== "number" || !Number.isSafeInteger(load) || load < 0) return null;
     if (placed === undefined || typeof visible !== "boolean") return null;
     ids.add(id);
-    parsed.push({ id, url, load, rect: placed, visible });
+    parsed.push({ id, area_id, url, load, rect: placed, visible });
   }
   if (workspace === null && parsed.length > 0) return null;
-  if (workspace && parsed.some((display) => !ownedKeys.has(viewKey(workspace, display.id)))) return null;
+  if (workspace && parsed.some((display) => ownedAreas.get(viewKey(workspace, display.id)) !== display.area_id)) return null;
   return { workspace: workspace as string | null, displays: parsed, retained: owned };
 }
 
