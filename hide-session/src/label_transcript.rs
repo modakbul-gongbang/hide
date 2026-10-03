@@ -178,6 +178,7 @@ pub(crate) fn locate_confirmed(
         .locate("label", agent, Some(&identity), cwd)
         .map_err(|error| match error {
             SessionError::SessionFileMissing => "session_file_missing".to_owned(),
+            SessionError::Capacity { .. } => "session_capacity".to_owned(),
             _ => "label_session_location_unavailable".to_owned(),
         })?;
     let path = inside_agent_root(home, agent, &located)?;

@@ -51,6 +51,52 @@ use std::os::unix::fs::MetadataExt;
 pub const CODEX_FALLBACK_DAYS: usize = 7;
 /// Number of newest files considered by the usage fallback.
 pub const CODEX_CANDIDATE_LIMIT: usize = 32;
+/// Total directory visits and retained path bytes in one session lookup.
+const SESSION_LOOKUP_DIRECTORY_LIMIT: usize = 64;
+const SESSION_LOOKUP_PATH_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Default)]
+struct DiscoveryBudget {
+    entries: usize,
+    directories: usize,
+    path_bytes: usize,
+}
+
+impl DiscoveryBudget {
+    fn directory(&mut self) -> Result<()> {
+        if self.directories >= SESSION_LOOKUP_DIRECTORY_LIMIT {
+            return Err(SessionError::Capacity {
+                resource: "discovery_directories",
+                limit: SESSION_LOOKUP_DIRECTORY_LIMIT as u64,
+            });
+        }
+        self.directories += 1;
+        Ok(())
+    }
+
+    fn entry(&mut self) -> Result<()> {
+        if self.entries >= SESSION_DISCOVERY_LIMIT {
+            return Err(SessionError::Capacity {
+                resource: "discovery_entries",
+                limit: SESSION_DISCOVERY_LIMIT as u64,
+            });
+        }
+        self.entries += 1;
+        Ok(())
+    }
+
+    fn path(&mut self, path: &Path) -> Result<()> {
+        let bytes = path.as_os_str().as_encoded_bytes().len();
+        if bytes > SESSION_LOOKUP_PATH_BYTES.saturating_sub(self.path_bytes) {
+            return Err(SessionError::Capacity {
+                resource: "discovery_path_bytes",
+                limit: SESSION_LOOKUP_PATH_BYTES as u64,
+            });
+        }
+        self.path_bytes += bytes;
+        Ok(())
+    }
+}
 /// Largest complete session file parsed by archive and detail views.
 pub const SESSION_READ_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 /// Largest append chunk consumed by one incremental projection poll.
@@ -529,8 +575,9 @@ impl SessionLocator {
         // reported again by the runtime hook, so a switch reaches here as a
         // new id. The cwd search below serves only a pane with no reported
         // session at all.
+        let mut budget = DiscoveryBudget::default();
         if let Some(identity) = identity {
-            let path = self.reported_path(agent, cwd, identity)?;
+            let path = self.reported_path(agent, cwd, identity, &mut budget)?;
             self.resolved.insert(pane_id.to_owned(), path.clone());
             return Ok(path);
         }
@@ -542,7 +589,7 @@ impl SessionLocator {
         }
 
         let cwd = cwd.ok_or(SessionError::CwdUnavailable)?;
-        match self.newest_for_cwd(agent, cwd)? {
+        match self.newest_for_cwd(agent, cwd, &mut budget)? {
             Some(path) => {
                 self.resolved.insert(pane_id.to_owned(), path.clone());
                 Ok(path)
@@ -559,6 +606,7 @@ impl SessionLocator {
         agent: Agent,
         cwd: Option<&str>,
         identity: &SessionIdentity,
+        budget: &mut DiscoveryBudget,
     ) -> Result<PathBuf> {
         match identity {
             SessionIdentity::Path(path) => path
@@ -566,8 +614,8 @@ impl SessionLocator {
                 .then_some(path.clone())
                 .ok_or(SessionError::SessionFileMissing),
             SessionIdentity::Id(id) => match agent {
-                Agent::Claude => self.claude_path_for_id(cwd, id),
-                Agent::Codex => self.codex_path_for_id(id),
+                Agent::Claude => self.claude_path_for_id(cwd, id, budget),
+                Agent::Codex => self.codex_path_for_id(id, budget),
             },
         }
     }
@@ -580,7 +628,12 @@ impl SessionLocator {
         self.home.join(".codex/sessions")
     }
 
-    fn claude_path_for_id(&self, cwd: Option<&str>, id: &str) -> Result<PathBuf> {
+    fn claude_path_for_id(
+        &self,
+        cwd: Option<&str>,
+        id: &str,
+        budget: &mut DiscoveryBudget,
+    ) -> Result<PathBuf> {
         let name = format!("{id}.jsonl");
         if let Some(cwd) = cwd {
             let direct = self.claude_root().join(project_directory(cwd)).join(&name);
@@ -589,7 +642,7 @@ impl SessionLocator {
             }
         }
         let root = self.claude_root();
-        for entry in read_directory(&root)? {
+        for entry in read_directory(&root, budget)? {
             let candidate = entry.join(&name);
             if candidate.is_file() {
                 return Ok(candidate);
@@ -598,9 +651,9 @@ impl SessionLocator {
         Err(SessionError::SessionFileMissing)
     }
 
-    fn codex_path_for_id(&self, id: &str) -> Result<PathBuf> {
-        for directory in self.recent_codex_days()? {
-            for path in jsonl_files(&directory)? {
+    fn codex_path_for_id(&self, id: &str, budget: &mut DiscoveryBudget) -> Result<PathBuf> {
+        for directory in self.recent_codex_days(budget)? {
+            for path in jsonl_files(&directory, budget)? {
                 if path
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().contains(id))
@@ -612,19 +665,29 @@ impl SessionLocator {
         Err(SessionError::SessionFileMissing)
     }
 
-    fn newest_for_cwd(&self, agent: Agent, cwd: &str) -> Result<Option<PathBuf>> {
+    fn newest_for_cwd(
+        &self,
+        agent: Agent,
+        cwd: &str,
+        budget: &mut DiscoveryBudget,
+    ) -> Result<Option<PathBuf>> {
         match agent {
             Agent::Claude => Ok(newest_by_modified(jsonl_files(
                 &self.claude_root().join(project_directory(cwd)),
+                budget,
             )?)),
-            Agent::Codex => self.newest_codex_session(cwd),
+            Agent::Codex => self.newest_codex_session(cwd, budget),
         }
     }
 
-    fn newest_codex_session(&self, cwd: &str) -> Result<Option<PathBuf>> {
+    fn newest_codex_session(
+        &self,
+        cwd: &str,
+        budget: &mut DiscoveryBudget,
+    ) -> Result<Option<PathBuf>> {
         let mut candidates = Vec::new();
-        for directory in self.recent_codex_days()? {
-            for path in jsonl_files(&directory)? {
+        for directory in self.recent_codex_days(budget)? {
+            for path in jsonl_files(&directory, budget)? {
                 let Some(modified) = fs::metadata(&path).and_then(|data| data.modified()).ok()
                 else {
                     continue;
@@ -639,11 +702,11 @@ impl SessionLocator {
             .find(|path| codex_session_cwd(path).as_deref() == Some(cwd)))
     }
 
-    fn recent_codex_days(&self) -> Result<Vec<PathBuf>> {
+    fn recent_codex_days(&self, budget: &mut DiscoveryBudget) -> Result<Vec<PathBuf>> {
         let mut days = Vec::new();
-        for year in newest_directories(&self.codex_root(), 2)? {
-            for month in newest_directories(&year, 2)? {
-                days.extend(newest_directories(&month, CODEX_FALLBACK_DAYS)?);
+        for year in newest_directories(&self.codex_root(), 2, budget)? {
+            for month in newest_directories(&year, 2, budget)? {
+                days.extend(newest_directories(&month, CODEX_FALLBACK_DAYS, budget)?);
             }
         }
         days.sort();
@@ -653,26 +716,39 @@ impl SessionLocator {
     }
 }
 
-fn read_directory(path: &Path) -> Result<Vec<PathBuf>> {
+fn read_directory(path: &Path, budget: &mut DiscoveryBudget) -> Result<Vec<PathBuf>> {
+    budget.directory()?;
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(SessionError::io("read_directory", path, error)),
     };
-    Ok(entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .collect())
+    let mut paths = Vec::new();
+    for entry in entries {
+        // Count before filtering or retaining: junk extensions, unmatched
+        // names and unreadable entries cannot bypass the common total cap.
+        budget.entry()?;
+        let entry = entry.map_err(|error| SessionError::io("read_directory", path, error))?;
+        let path = entry.path();
+        budget.path(&path)?;
+        paths.push(path);
+    }
+    Ok(paths)
 }
 
-fn jsonl_files(directory: &Path) -> Result<Vec<PathBuf>> {
-    Ok(read_directory(directory)?
+fn jsonl_files(directory: &Path, budget: &mut DiscoveryBudget) -> Result<Vec<PathBuf>> {
+    Ok(read_directory(directory, budget)?
         .into_iter()
         .filter(|path| path.extension().is_some_and(|value| value == "jsonl"))
         .collect())
 }
 
-fn newest_directories(root: &Path, limit: usize) -> Result<Vec<PathBuf>> {
-    let mut directories = read_directory(root)?
+fn newest_directories(
+    root: &Path,
+    limit: usize,
+    budget: &mut DiscoveryBudget,
+) -> Result<Vec<PathBuf>> {
+    let mut directories = read_directory(root, budget)?
         .into_iter()
         .filter(|path| path.is_dir())
         .collect::<Vec<_>>();
@@ -702,9 +778,10 @@ fn project_directory(cwd: &str) -> String {
 /// This is intentionally separate from conversation parsing because Codex
 /// usage records are not conversation events.
 pub fn newest_codex_session_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut budget = DiscoveryBudget::default();
     let mut level = root.to_path_buf();
     for _ in 0..3 {
-        let children = newest_directories(&level, usize::MAX)?
+        let children = newest_directories(&level, usize::MAX, &mut budget)?
             .into_iter()
             .filter(|path| {
                 path.file_name().is_some_and(|name| {
@@ -719,7 +796,7 @@ pub fn newest_codex_session_files(root: &Path) -> Result<Vec<PathBuf>> {
         };
         level = next;
     }
-    let mut candidates = jsonl_files(&level)?
+    let mut candidates = jsonl_files(&level, &mut budget)?
         .into_iter()
         .filter_map(|path| Some((fs::metadata(&path).ok()?.modified().ok()?, path)))
         .collect::<Vec<_>>();

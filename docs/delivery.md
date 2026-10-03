@@ -86,6 +86,9 @@ First-warning time and count persist across daemon restarts; activity resets bot
 Only a local parent that explicitly starts a watch receives its warning letters.
 Activity is the later of Herdr's status-transition time and the confirmed native session file's modification time.
 A local read and the device helper's `session_activity` use the same session ownership and root-confinement checks.
+Session lookup has one total budget of 10000 directory entries, including skipped extensions and unmatched names, 64 visited directories and 8 MiB of retained path bytes.
+Crossing a limit returns the path-free `session_capacity` outcome; the watch uses its existing status fallback and records the failure.
+Below those limits, reported identity and provider ownership take precedence over cwd fallback, and each tick samples fresh metadata.
 The helper returns only modification time and file size; conversation text, paths and native IDs do not appear in the activity answer.
 A missing reference or failed helper read falls back to the current status-transition evidence, includes the reason in the digest and does not suppress warnings.
 That status must still be attributable to the watch's original native binding.
@@ -98,7 +101,8 @@ Three consecutive read failures produce a rate-limited diagnostic.
 The minute tick admits at most one read per watched target, at most four remote reads at once, each with a five-second deadline.
 Different parents watching one exact target share that tick's activity sample while keeping independent warning clocks and intent keys.
 A warning rejected by capacity leaves other targets' exits and activity resets intact.
-It compares metadata and integers outside `Mutex<Runtime>` and publishes only watch start, warning and end transitions.
+Session discovery, ownership reads and helper I/O run outside `Mutex<Runtime>`.
+A tick also performs one bounded ledger encoding and bounded per-watch admission checks; it publishes only watch start, warning and end transitions.
 A target exit or parent's explicit stop ends the watch.
 A normal reply closes the request's answer wait and leaves the watch active.
 A done target remains watched until exit or explicit stop; there is no completion-report command in this phase.
@@ -115,8 +119,8 @@ Use the worktree-owned entrypoints described in [BUILD.md](BUILD.md#two-entrypoi
 Focused library checks are:
 
 ```sh
-bash scripts/verify-cargo.sh test -p herdr-core --lib delivery:: -- --nocapture
-bash scripts/verify-cargo.sh test -p hide-session --lib session_activity -- --nocapture
+bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib delivery:: -- --nocapture
+bash scripts/verify-cargo.sh test-scoped -p hide-session --lib session_activity -- --nocapture
 ```
 
 A filtered run must execute the expected named tests; zero selected tests is a failed check.

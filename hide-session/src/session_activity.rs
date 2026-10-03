@@ -145,6 +145,60 @@ mod tests {
     }
 
     #[test]
+    fn id_lookup_counts_skipped_entries_across_directories_and_refuses_capacity() {
+        let home = tempfile::tempdir().unwrap();
+        // Neither directory exceeds the established catalog entry limit on
+        // its own. Ignored non-JSONL files must count across the whole lookup.
+        for day in ["01", "02"] {
+            let directory = home.path().join(format!(".codex/sessions/2026/01/{day}"));
+            fs::create_dir_all(&directory).unwrap();
+            for entry in 0..=crate::SESSION_DISCOVERY_LIMIT / 2 {
+                fs::write(directory.join(format!("skipped-{entry}.txt")), b"").unwrap();
+            }
+        }
+        let input = SessionActivityRequest {
+            agent: Agent::Codex,
+            reference_kind: "id".into(),
+            reference_value: "missing-native".into(),
+            cwd: None,
+        };
+        assert_eq!(read(home.path(), &input).unwrap_err(), "session_capacity");
+        assert!(
+            home.path()
+                .join(".codex/sessions/2026/01/01/skipped-0.txt")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn below_capacity_id_lookup_preserves_reported_native_owner_and_fresh_activity() {
+        for agent in [Agent::Claude, Agent::Codex] {
+            let home = tempfile::tempdir().unwrap();
+            let path = transcript(home.path(), agent);
+            fs::write(path.parent().unwrap().join("ignored.txt"), b"ignored").unwrap();
+            let input = SessionActivityRequest {
+                agent,
+                reference_kind: "id".into(),
+                reference_value: "native-a".into(),
+                cwd: None,
+            };
+            let before = read(home.path(), &input).unwrap();
+            use std::io::Write;
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap()
+                .write_all(b"new private bytes\n")
+                .unwrap();
+            let after = read(home.path(), &input).unwrap();
+            assert!(after.bytes > before.bytes);
+            assert!(after.modified_at_unix_ms >= before.modified_at_unix_ms);
+            assert_eq!(after.bytes, fs::metadata(&path).unwrap().len());
+            assert!(!serde_json::to_string(&after).unwrap().contains("private"));
+        }
+    }
+
+    #[test]
     fn a_reference_without_native_owner_is_not_activity() {
         let home = tempfile::tempdir().unwrap();
         let path = transcript(home.path(), Agent::Codex);
