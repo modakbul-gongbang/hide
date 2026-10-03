@@ -338,11 +338,10 @@ fn clear_leftover(path: &Path) -> io::Result<()> {
     }
 }
 
-/// The pid of the process at the other end of a connected Unix socket that
-/// this crate does not own (the device's workspace bridge still accepts on a
-/// std listener). `Unsupported` where the system does not report it.
+/// The pid of the process at the other end of a connected Unix socket.
+/// `Unsupported` where the system does not report it.
 #[cfg(target_os = "macos")]
-pub fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
+fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
     use std::os::fd::AsRawFd;
     let mut pid: libc::pid_t = 0;
     let mut size = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
@@ -367,7 +366,7 @@ pub fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
+fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
     use std::os::fd::AsRawFd;
     // SAFETY: an all-zero `ucred` is a valid value.
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };

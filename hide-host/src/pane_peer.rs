@@ -22,15 +22,6 @@ pub struct PaneIdentity {
     pub shell_started: u64,
 }
 
-/// The pid of the process at the other end of `stream`, when the system
-/// reports it.
-#[cfg(unix)]
-pub fn peer_pid(stream: &impl std::os::fd::AsFd) -> Option<i32> {
-    hide_platform::ipc::peer_pid_of_fd(stream)
-        .ok()
-        .and_then(|pid| i32::try_from(pid).ok())
-}
-
 /// Whether `pid` is `shell_pid` or one of its descendants.
 pub fn descends_from(pid: i32, shell_pid: i32) -> bool {
     match (u32::try_from(pid), u32::try_from(shell_pid)) {

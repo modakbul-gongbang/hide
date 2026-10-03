@@ -21,7 +21,6 @@ use crate::pane_auth::Reference;
 use crate::state_file::SCHEMA_VERSION;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
-#[cfg(unix)]
 const REMOTE_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// An auto-bootstrapped direct CLI owns its reference even if transport fails.
@@ -87,17 +86,9 @@ fn read_bootstrap_answer(stream: &mut impl Read) -> Result<PathBuf, String> {
         .ok_or_else(|| "reference_unavailable".to_owned())
 }
 
-/// A device's workspace bridge listens on a Unix socket
-/// (`hide_host::workspace_bridge`), so a Windows device has none to find.
-#[cfg(windows)]
-fn bootstrap_remote(_env: &Env, _request: &Value) -> Result<Option<PathBuf>, String> {
-    Ok(None)
-}
-
-#[cfg(unix)]
+/// Asks each workspace bridge a remote daemon runs on this device
+/// (`hide_host::workspace_bridge`) for this pane's reference.
 fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, String> {
-    use std::os::unix::fs::FileTypeExt;
-    use std::os::unix::net::UnixStream;
     let bridge_dir = env
         .workspace_bridge_dir
         .clone()
@@ -127,16 +118,19 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
         if !entry.file_name().to_string_lossy().starts_with("bridge-") {
             continue;
         }
+        // A socket on Unix, the listener's marker file on Windows; the
+        // connect tells a live listener from what a dead one left.
         let socket = entry.path().join("bootstrap.sock");
         let Ok(metadata) = fs::symlink_metadata(&socket) else {
             continue;
         };
-        if !metadata.file_type().is_socket()
+        if metadata.is_dir()
+            || metadata.file_type().is_symlink()
             || !private::owned_by_current_user(&socket).unwrap_or(false)
         {
             continue;
         }
-        let Ok(mut stream) = UnixStream::connect(&socket) else {
+        let Ok(mut stream) = hide_platform::ipc::LocalStream::connect(&socket) else {
             continue;
         };
         seen += 1;
@@ -144,6 +138,7 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
             return Err("bridge_limit".to_owned());
         }
         let _ = stream.set_read_timeout(Some(REMOTE_BOOTSTRAP_TIMEOUT));
+        // A Windows pipe has no write timeout; the request is one short line.
         let _ = stream.set_write_timeout(Some(REMOTE_BOOTSTRAP_TIMEOUT));
         if writeln!(stream, "{request}").is_err() {
             reason = Some("bridge_unavailable".to_owned());
@@ -381,6 +376,66 @@ mod tests {
         permissions.set_mode(0o644);
         fs::set_permissions(&path, permissions).unwrap();
         assert!(matches!(read_reference(&path), Err(reason) if reason == "invalid_reference"));
+    }
+
+    /// What the bridge writes to its exec channel, one line at a time.
+    struct Lines(Vec<u8>, mpsc::Sender<String>);
+
+    impl Write for Lines {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.extend_from_slice(bytes);
+            while let Some(end) = self.0.iter().position(|byte| *byte == b'\n') {
+                let line = self.0.drain(..=end).collect::<Vec<_>>();
+                let _ = self
+                    .1
+                    .send(String::from_utf8_lossy(&line).trim().to_owned());
+            }
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A device's bridge and a pane's `hide` meet over the system's local
+    /// stream: the bridge sees the caller's pid and asks the pane's Herdr
+    /// about it, and the end of its exec channel ends it.
+    #[test]
+    fn a_remote_bridge_answers_this_device_and_ends_with_its_channel() {
+        let directory = tempfile::tempdir().unwrap();
+        let bridges = directory.path().join("bridges");
+        let (channel, mut daemon) = std::io::pipe().unwrap();
+        let (sent, lines) = mpsc::channel();
+        let init = json!({
+            "bridge_dir": bridges, "herdr_socket": directory.path().join("no-herdr.sock"),
+            "port": 1, "origin_port": 2,
+        });
+        writeln!(daemon, "{init}").unwrap();
+        let bridge = std::thread::spawn(move || {
+            hide_host::workspace_bridge::serve(BufReader::new(channel), Lines(Vec::new(), sent))
+        });
+        let ready: Value =
+            serde_json::from_str(&lines.recv_timeout(Duration::from_secs(10)).unwrap()).unwrap();
+        assert_eq!(ready["type"], "ready");
+        let home = directory.path().to_str().unwrap().to_owned();
+        let bridge_dir = bridges.to_str().unwrap().to_owned();
+        let env = crate::env::load_from(|key| match key {
+            crate::env::HOME => Some(home.clone()),
+            crate::env::HIDE_WORKSPACE_BRIDGE_DIR => Some(bridge_dir.clone()),
+            _ => None,
+        })
+        .unwrap();
+        // No Herdr answers at the socket the bridge was given, so it cannot
+        // read the pane; it got that far only by seeing who called.
+        let request = json!({"pane_id": "w1:p1", "nonce": "0".repeat(32)});
+        assert_eq!(
+            bootstrap_remote(&env, &request),
+            Err("pane_unavailable".to_owned())
+        );
+        drop(daemon);
+        bridge.join().unwrap().unwrap();
+        assert_eq!(bootstrap_remote(&env, &request), Ok(None));
     }
 
     #[test]

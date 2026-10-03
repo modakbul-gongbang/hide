@@ -1,19 +1,20 @@
 //! Pane bootstrap on a consented SSH device. The helper listens only on an
-//! owner-only Unix socket and lives only while its SSH exec stdin is open.
-//! The invoking pane is attested from the socket's kernel peer PID; the local
-//! daemon owns the capability and answers over this exec channel.
+//! owner-only local stream (`hide_platform::ipc`: a Unix socket, a named pipe
+//! on Windows) and lives only while its SSH exec stdin is open. The invoking
+//! pane is attested from the pid the system reports for the stream's other
+//! end; the local daemon owns the capability and answers over this exec
+//! channel.
 
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use hide_platform::fs::private;
+use hide_platform::ipc::{ListenerCloser, LocalListener, LocalStream};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -23,6 +24,7 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_CONTROL_LINE: u64 = 4096;
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const REFERENCE_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
+const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 
 struct IssuedReference {
     token: String,
@@ -86,7 +88,7 @@ fn write_line(output: &Mutex<impl Write>, value: Value) -> io::Result<()> {
     output.flush()
 }
 
-fn answer_client(stream: &mut UnixStream, result: Result<PathBuf, String>) -> io::Result<()> {
+fn answer_client(stream: &mut LocalStream, result: Result<PathBuf, String>) -> io::Result<()> {
     let answer = match result {
         Ok(reference) => json!({"ok":true,"reference":reference}),
         Err(reason) => json!({"ok":false,"reason":reason}),
@@ -158,7 +160,7 @@ fn sweep_references(
 }
 
 fn serve_client(
-    mut stream: UnixStream,
+    mut stream: LocalStream,
     id: u64,
     init: &Init,
     dir: &Path,
@@ -170,15 +172,18 @@ fn serve_client(
     let mut token_new = false;
     let mut reference_new = false;
     let result: Result<PathBuf, String> = (|| {
-        let peer = pane_peer::peer_pid(&stream).ok_or("caller_unavailable")?;
+        let peer = stream
+            .peer_pid()
+            .ok()
+            .and_then(|pid| i32::try_from(pid).ok())
+            .ok_or("caller_unavailable")?;
         stream
             .set_read_timeout(Some(CLIENT_TIMEOUT))
             .map_err(|_| "bridge_unavailable")?;
-        stream
-            .set_write_timeout(Some(CLIENT_TIMEOUT))
-            .map_err(|_| "bridge_unavailable")?;
+        // A Windows pipe has no write timeout; the answer is one short line.
+        let _ = stream.set_write_timeout(Some(CLIENT_TIMEOUT));
         let mut line = String::new();
-        BufReader::new(&stream)
+        BufReader::new(&mut stream)
             .take(MAX_CONTROL_LINE)
             .read_line(&mut line)
             .map_err(|_| "invalid_request")?;
@@ -271,6 +276,10 @@ fn serve_client(
     }
 }
 
+/// Serves bootstrap requests until the exec channel's input closes, which is
+/// how the daemon that started this helper ends it, by stopping or by dying.
+/// The listener accepts on a thread of its own, because an accept blocks;
+/// the input's end closes it.
 pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::Result<()> {
     let mut line = String::new();
     input.by_ref().take(MAX_CONTROL_LINE).read_line(&mut line)?;
@@ -283,33 +292,30 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
     }
     let bridge_dir = match &init.bridge_dir {
         Some(path) => path.clone(),
-        None => {
-            let home =
-                std::env::var_os("HOME").ok_or_else(|| io::Error::other("HOME is unavailable"))?;
-            hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(
-                Path::new(&home),
-            ))
-        }
+        None => hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(
+            &hide_platform::host::home_dir()?,
+        )),
     };
     validate_dir(&bridge_dir)?;
     let dir = tempfile::Builder::new()
         .prefix("bridge-")
         .tempdir_in(&bridge_dir)?;
     let socket = dir.path().join("bootstrap.sock");
-    let listener = UnixListener::bind(&socket)?;
-    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
-    listener.set_nonblocking(true)?;
+    let listener = LocalListener::bind(&socket)?;
     let output = Mutex::new(output);
     write_line(&output, json!({"type":"ready","socket":socket}))?;
     let (sender, receiver) = mpsc::sync_channel::<Value>(1);
     let replies = Mutex::new(receiver);
     let issued = Mutex::new(HashMap::new());
-    let closed = AtomicBool::new(false);
     let next_id = AtomicU64::new(1);
     let busy = AtomicBool::new(false);
-    let mut last_sweep = Instant::now();
+    let closing = Closing {
+        closer: listener.closer(),
+        closed: AtomicBool::new(false),
+    };
     std::thread::scope(|scope| {
-        scope.spawn(|| {
+        let closing = &closing;
+        scope.spawn(move || {
             let mut line = String::new();
             loop {
                 line.clear();
@@ -325,39 +331,76 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
                     },
                 }
             }
-            closed.store(true, Ordering::Release);
+            closing.close();
         });
-        while !closed.load(Ordering::Acquire) {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    if busy.swap(true, Ordering::AcqRel) {
-                        let _ = answer_client(&mut stream, Err("bridge_busy".to_owned()));
-                        continue;
-                    }
-                    let id = next_id.fetch_add(1, Ordering::Relaxed);
-                    let output = &output;
-                    let replies = &replies;
-                    let issued = &issued;
-                    let busy = &busy;
-                    let init = &init;
-                    let dir_path = dir.path();
-                    scope.spawn(move || {
-                        serve_client(stream, id, init, dir_path, output, replies, issued);
-                        busy.store(false, Ordering::Release);
-                    });
+        let (accepted, arrivals) = mpsc::channel();
+        scope.spawn(move || {
+            loop {
+                let arrival = listener.accept();
+                let failed = arrival.is_err();
+                if accepted.send(arrival).is_err() || failed {
+                    return;
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    if last_sweep.elapsed() >= Duration::from_secs(5) {
-                        sweep_references(&issued, &output)?;
-                        last_sweep = Instant::now();
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(error) => return Err(error),
             }
-        }
-        Ok(())
+        });
+        // Ends the accept thread however this loop ends, an error included.
+        let result = (|| {
+            let mut last_sweep = Instant::now();
+            loop {
+                let wait = SWEEP_INTERVAL.saturating_sub(last_sweep.elapsed());
+                match arrivals.recv_timeout(wait) {
+                    Ok(Ok(mut stream)) => {
+                        if busy.swap(true, Ordering::AcqRel) {
+                            let _ = answer_client(&mut stream, Err("bridge_busy".to_owned()));
+                            continue;
+                        }
+                        let id = next_id.fetch_add(1, Ordering::Relaxed);
+                        let output = &output;
+                        let replies = &replies;
+                        let issued = &issued;
+                        let busy = &busy;
+                        let init = &init;
+                        let dir_path = dir.path();
+                        scope.spawn(move || {
+                            serve_client(stream, id, init, dir_path, output, replies, issued);
+                            busy.store(false, Ordering::Release);
+                        });
+                    }
+                    Ok(Err(error))
+                        if error.kind() == io::ErrorKind::ConnectionAborted
+                            && closing.closed.load(Ordering::Acquire) =>
+                    {
+                        return Ok(());
+                    }
+                    Ok(Err(error)) => return Err(error),
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                }
+                if last_sweep.elapsed() >= SWEEP_INTERVAL {
+                    sweep_references(&issued, &output)?;
+                    last_sweep = Instant::now();
+                }
+            }
+        })();
+        closing.close();
+        result
     })
+}
+
+/// Closes the listener, from the input reader when the channel ends or from
+/// the accept loop when it stops on its own; closing twice is harmless.
+struct Closing {
+    closer: ListenerCloser,
+    /// Set before the close, so the accept loop tells this stop from an
+    /// accept that failed.
+    closed: AtomicBool,
+}
+
+impl Closing {
+    fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.closer.close();
+    }
 }
 
 #[cfg(test)]
