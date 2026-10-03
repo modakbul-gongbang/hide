@@ -1,16 +1,18 @@
 // Runs the production host and its scoped endpoint against a private daemon
 // and Herdr server. The operator's app, browser and profile are never used.
-import { chromium, expect, type Browser, type ElectronApplication } from "@playwright/test";
+import { chromium, expect, type Browser, type ElectronApplication, type Page } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
+import type { BrowserSync } from "../../web/src/host";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { fitWindow, HIDE_CLI, isolate, launch, test, type Isolated } from "./fixture";
+import { BROWSER_SYNC_CHANNEL } from "../src/channel";
+import { fitWindow, HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 180_000 });
 let herdr: HerdrFixture;
@@ -22,22 +24,79 @@ let origin: string;
 let sequence = 0;
 let fileCanary: string;
 let fileUrl: string;
+let pendingPreload: ServerResponse | null = null;
+
+type Reply = { id?: number; result?: Record<string, unknown>; error?: { code: number; message: string } };
+type Capability = { cdp_http_url: string; browser_ws_url: string };
+type Target = { id: string; type: string; url: string; webSocketDebuggerUrl: string };
+type CoreView = { view_id: string; area_id: string; kind: string; target: string; active_area: boolean; selected: boolean };
+type AuthoritySync = BrowserSync & { authorized_scopes: { workspace: string; area_id: string; incarnation: number }[] };
+type Send = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<Reply>;
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
-async function browserCommand(url: string, method: string, params: Record<string, unknown>): Promise<{ error?: unknown }> {
+/** Each raw connection and request has a deadline and closes on every path. */
+async function withCdp<T>(url: string, use: (send: Send, socket: WebSocket) => Promise<T>): Promise<T> {
+  const socket = new WebSocket(url, { maxPayload: 4 * 1024 * 1024 });
+  let sequence = 0;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => finish(new Error("Scoped browser connection timed out")), 10_000);
+      const finish = (error?: Error) => {
+        clearTimeout(timer); socket.removeListener("open", opened); socket.removeListener("error", failed);
+        if (error) reject(error); else resolve();
+      };
+      const opened = () => finish();
+      const failed = () => finish(new Error("Scoped browser command could not connect"));
+      socket.once("open", opened); socket.once("error", failed);
+    });
+    // Errors are delivered to the active request below; no transport error
+    // may escape as an unhandled emitter error between sequential requests.
+    socket.on("error", () => {});
+    const send: Send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+      const id = ++sequence;
+      const timer = setTimeout(() => finish(undefined, new Error("Scoped browser command timed out")), 10_000);
+      const finish = (reply?: Reply, error?: Error) => {
+        clearTimeout(timer); socket.removeListener("message", received); socket.removeListener("close", closed); socket.removeListener("error", failed);
+        if (error) reject(error); else resolve(reply!);
+      };
+      const received = (data: Buffer) => {
+        try {
+          const reply = JSON.parse(data.toString()) as Reply;
+          if (reply.id === id) finish(reply);
+        } catch { finish(undefined, new Error("Invalid scoped browser reply")); }
+      };
+      const closed = () => finish(undefined, new Error("Scoped connection closed before its reply"));
+      const failed = () => finish(undefined, new Error("Scoped browser command failed"));
+      socket.on("message", received); socket.once("close", closed); socket.once("error", failed);
+      if (socket.readyState !== WebSocket.OPEN) closed();
+      else socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    });
+    return await use(send, socket);
+  } finally { socket.terminate(); }
+}
+function waitForClose(socket: WebSocket): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { socket.removeListener("close", closed); reject(new Error("Scoped socket did not close")); }, 10_000);
+    const closed = (code: number) => { clearTimeout(timer); resolve(code); };
+    socket.once("close", closed);
+  });
+}
+async function refusedWebSocket(url: string): Promise<number> {
   const socket = new WebSocket(url);
   let timer: NodeJS.Timeout | undefined;
   try {
     return await new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error("Scoped browser command timed out")), 10_000);
-      socket.once("error", () => reject(new Error("Scoped browser command could not connect")));
-      socket.once("open", () => socket.send(JSON.stringify({ id: 1, method, params })));
-      socket.on("message", (data) => {
-        const reply = JSON.parse(data.toString()) as { id?: number; error?: unknown };
-        if (reply.id === 1) resolve(reply);
+      timer = setTimeout(() => reject(new Error("Stale capability refusal timed out")), 10_000);
+      socket.on("error", () => reject(new Error("Expected an HTTP capability refusal")));
+      socket.once("open", () => reject(new Error("A stale capability accepted a connection")));
+      socket.once("unexpected-response", (_request, response) => {
+        response.resume(); resolve(response.statusCode ?? 0);
       });
     });
   } finally { clearTimeout(timer); socket.terminate(); }
+}
+async function browserCommand(url: string, method: string, params: Record<string, unknown>): Promise<Reply> {
+  return withCdp(url, (send) => send(method, params));
 }
 async function fromPane(args: string[], succeeds = true): Promise<Record<string, unknown>> {
   const stem = path.join(herdr.root, `cdp-command-${++sequence}`);
@@ -49,6 +108,45 @@ async function fromPane(args: string[], succeeds = true): Promise<Record<string,
   expect(Number(fs.readFileSync(status, "utf8")) === 0, "isolated Workspace command result").toBe(succeeds);
   return JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) ?? "null") as Record<string, unknown>;
 }
+async function coreViews(): Promise<CoreView[]> {
+  return ((await fromPane(["view", "list"])).result as { views: CoreView[] }).views;
+}
+async function targets(capability: Capability): Promise<Target[]> {
+  const response = await fetch(`${capability.cdp_http_url}/json/list`, { signal: AbortSignal.timeout(10_000) });
+  expect(response.status).toBe(200);
+  return await response.json() as Target[];
+}
+async function expandViews(shell: Page): Promise<void> {
+  await fitWindow(app!, { width: 1024, height: 640 });
+  await shell.locator("[data-workspace-location]").click({ button: "right" });
+  await shell.locator('[data-menu-item="panel:expanded"]').click();
+  await expect(shell.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
+  const tools = shell.locator('[data-tools-toggle="on"]');
+  if (await tools.count()) await tools.click();
+  await expect(shell.locator("[data-workspace-tools]")).toHaveCount(0);
+}
+/** Attest the real Chromium IDs through each candidate WebContents itself. */
+async function excludedRendererIds(foreignUrl: string): Promise<string[]> {
+  return app!.evaluate(async ({ BrowserWindow }, url) => {
+    const window = BrowserWindow.getAllWindows().find((window) => window.getParentWindow() === null)!;
+    const foreign = window.contentView.children.flatMap((view) => {
+      const contents = (view as { webContents?: Electron.WebContents }).webContents;
+      return contents?.getURL() === url ? [contents] : [];
+    });
+    if (foreign.length !== 1) throw new Error("Expected one foreign candidate display");
+    const ids: string[] = [];
+    for (const contents of [window.webContents, foreign[0]!]) {
+      if (contents.debugger.isAttached()) throw new Error("Excluded renderer already has a debugger owner");
+      contents.debugger.attach("1.3");
+      try {
+        const result = await contents.debugger.sendCommand("Target.getTargetInfo") as { targetInfo: { targetId: string } };
+        if (typeof result.targetInfo.targetId !== "string") throw new Error("Native target attestation failed");
+        ids.push(result.targetInfo.targetId, `page-${contents.id}`);
+      } finally { contents.debugger.detach(); }
+    }
+    return ids;
+  }, foreignUrl);
+}
 
 test.beforeAll(async () => {
   herdr = await startHerdr({ agents: false });
@@ -57,6 +155,14 @@ test.beforeAll(async () => {
   fileUrl = pathToFileURL(fileCanary).href;
   server = createServer((request, response) => {
     if (request.url === "/file-redirect") { response.writeHead(302, { location: fileUrl }); response.end(); return; }
+    if (request.url === "/pending-preload") {
+      if (pendingPreload) { response.writeHead(503); response.end(); return; }
+      pendingPreload = response;
+      response.once("close", () => { if (pendingPreload === response) pendingPreload = null; });
+      // One fixture-owned pending first response. The test deliberately
+      // attempts a file load before this native generation commits HTTP.
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end('<!doctype html><meta charset="utf-8"><title>Scoped browser fixture</title><h1>Scoped browser fixture</h1><input aria-label="Name"><button onclick="document.querySelector(\'output\').textContent=document.querySelector(\'input\').value">Apply</button><output aria-label="Result"></output>');
   });
@@ -69,6 +175,8 @@ test.afterAll(async () => {
 });
 test.beforeEach(() => { run = isolate(herdr, "browser-cdp"); });
 test.afterEach(async () => {
+  pendingPreload?.end();
+  pendingPreload = null;
   await browser?.close().catch(() => undefined);
   browser = null;
   await app?.close().catch(() => undefined);
@@ -137,23 +245,209 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
   expect((await browserCommand(result.browser_ws_url, "Browser.getVersion", {})).error).toBeUndefined();
 });
 
-test("browser CDP: same-context creation becomes a core browser display in the originating area", async () => {
+test("browser CDP: creation stays in its originating area while another area is active and foreign renderer IDs are refused", async () => {
   const launched = await launch(run.env);
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
-  await fromPane(["browser", "open", `${origin}/first`, "--reveal", "--wait"]);
+  await expandViews(launched.page);
+  const first = await fromPane(["browser", "open", `${origin}/first`, "--reveal", "--wait"]);
+  const firstId = (first.result as { view_id: string }).view_id;
+  const originalArea = (await coreViews()).find((view) => view.view_id === firstId)!.area_id;
   const connected = await fromPane(["browser", "connect"]);
-  const result = connected.result as { browser_ws_url: string };
+  const result = connected.result as Capability;
+  const foreign = await fromPane(["browser", "open", `${origin}/foreign`, "--reveal", "--wait"]);
+  const foreignId = (foreign.result as { view_id: string }).view_id;
+  const split = await fromPane(["view", "split", foreignId, "--area", originalArea, "--edge", "right"]);
+  const foreignArea = (split.result as { area_id: string }).area_id;
+  expect(foreignArea).not.toBe(originalArea);
+  await fromPane(["view", "select", foreignId]);
+  await expect.poll(() => coreViews().then((views) => views.find((view) => view.view_id === foreignId)?.active_area)).toBe(true);
+  const excludedIds = await excludedRendererIds(`${origin}/foreign`);
+  expect(excludedIds).toHaveLength(4);
+  const inventory = await targets(result);
+  expect(inventory).toHaveLength(1);
+  expect(inventory[0]!.url).toBe(`${origin}/first`);
+  await withCdp(result.browser_ws_url, async (send) => {
+    for (const targetId of excludedIds) {
+      expect((await send("Target.getTargetInfo", { targetId })).error).toBeDefined();
+      expect((await send("Target.attachToTarget", { targetId, flatten: true })).error).toBeDefined();
+    }
+  });
   try { browser = await chromium.connectOverCDP(result.browser_ws_url, { noDefaults: true, timeout: 20_000 }); }
   catch { throw new Error("The scoped Playwright connection could not initialize"); }
   const context = browser.contexts()[0]!;
+  await expect.poll(() => coreViews().then((views) => views.find((view) => view.view_id === foreignId)?.active_area)).toBe(true);
   const page = await context.newPage();
   await page.goto(`${origin}/created`);
   await expect(page.getByRole("heading")).toHaveText("Scoped browser fixture");
-  const views = await fromPane(["view", "list"]);
-  expect((views.result as { views: { kind: string }[] }).views.filter((view) => view.kind === "browser").length).toBe(2);
+  const views = await coreViews();
+  const created = views.filter((view) => view.kind === "browser" && view.view_id !== firstId && view.view_id !== foreignId);
+  expect(created).toHaveLength(1);
+  expect(created[0]!.area_id).toBe(originalArea);
+  expect(views.find((view) => view.view_id === foreignId)!.area_id).toBe(foreignArea);
+  expect(context.pages()).toHaveLength(2);
   await page.close();
-  await expect.poll(() => fromPane(["view", "list"]).then((answer) => (answer.result as { views: { kind: string }[] }).views.filter((view) => view.kind === "browser").length)).toBe(1);
+  await expect.poll(() => coreViews().then((rows) => rows.some((view) => view.view_id === created[0]!.view_id))).toBe(false);
+  expect((await coreViews()).filter((view) => view.kind === "browser")).toHaveLength(2);
+});
+
+test("browser CDP: selected-display and direct-page close replies arrive before capability shutdown", async () => {
+  const launched = await launch(run.env);
+  app = launched.app;
+  await enterWorkspace(launched.page, "fixture");
+  for (const mode of ["browser", "page"] as const) {
+    const opened = await fromPane(["browser", "open", `${origin}/close-${mode}`, "--reveal", "--wait"]);
+    const displayId = (opened.result as { view_id: string }).view_id;
+    const capability = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
+    const inventory = await targets(capability);
+    expect(inventory).toHaveLength(1);
+    await withCdp(mode === "browser" ? capability.browser_ws_url : inventory[0]!.webSocketDebuggerUrl, async (send, socket) => {
+      if (mode === "browser") expect((await send("Target.attachToTarget", { targetId: inventory[0]!.id, flatten: true })).error).toBeUndefined();
+      const closed = waitForClose(socket);
+      const [reply, code] = await Promise.all([
+        mode === "browser" ? send("Target.closeTarget", { targetId: inventory[0]!.id }) : send("Page.close"), closed,
+      ]);
+      expect(reply.error).toBeUndefined();
+      expect(reply.result).toEqual(mode === "browser" ? { success: true } : {});
+      expect(code).toBe(1000);
+    });
+    expect((await fetch(`${capability.cdp_http_url}/json/version`)).status).toBe(404);
+    expect(await refusedWebSocket(capability.browser_ws_url)).toBe(403);
+    await expect.poll(() => coreViews().then((rows) => rows.some((view) => view.view_id === displayId))).toBe(false);
+  }
+});
+
+test("browser CDP: injected incarnation-only sync revokes old URLs without replacing the native page", async () => {
+  const launched = await launch(run.env);
+  app = launched.app;
+  await enterWorkspace(launched.page, "fixture");
+  const url = `${origin}/incarnation`;
+  const opened = await fromPane(["browser", "open", url, "--reveal", "--wait"]);
+  const displayId = (opened.result as { view_id: string }).view_id;
+  const areaId = (await coreViews()).find((view) => view.view_id === displayId)!.area_id;
+  const capability = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
+  const identity = () => app!.evaluate(({ BrowserWindow }, address) => {
+    const contents = BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
+      const page = (view as { webContents?: Electron.WebContents }).webContents;
+      return page?.getURL() === address ? [page.id] : [];
+    });
+    if (contents.length !== 1) throw new Error("Expected one retained native generation");
+    return contents[0]!;
+  }, url);
+  const contentsId = await identity();
+  // Observe a real shell->native sync, then change only its incarnation at
+  // the trusted IPC boundary. This proves native consumption/revocation;
+  // it does not prove the core generates a new incarnation on unregister.
+  await app.evaluate(({ ipcMain, BrowserWindow }, channel) => {
+    const sender = BrowserWindow.getAllWindows()[0]!.webContents.id;
+    const probe: { value?: unknown; listener: (event: Electron.IpcMainEvent, value: unknown) => void } = {
+      listener: (event, value) => { if (event.sender.id === sender) probe.value = value; },
+    };
+    (globalThis as { cdpSyncProbe?: typeof probe }).cdpSyncProbe = probe;
+    ipcMain.on(channel, probe.listener);
+  }, BROWSER_SYNC_CHANNEL);
+  try {
+    await fitWindow(app, { width: 1024, height: 630 });
+    const observed = () => app!.evaluate(() => (globalThis as { cdpSyncProbe?: { value?: unknown } }).cdpSyncProbe?.value);
+    await expect.poll(async () => (await observed() as AuthoritySync | undefined)?.authorized_scopes?.some((scope) => scope.area_id === areaId)).toBe(true);
+    const sync = await observed() as AuthoritySync;
+    const scope = sync.authorized_scopes.find((scope) => scope.workspace === sync.workspace && scope.area_id === areaId)!;
+    expect(Number.isSafeInteger(scope.incarnation)).toBe(true);
+    expect(scope.incarnation).toBeLessThan(Number.MAX_SAFE_INTEGER);
+    const changed: AuthoritySync = { ...sync, authorized_scopes: sync.authorized_scopes.map((row) => row === scope ? { ...row, incarnation: row.incarnation + 1 } : row) };
+    expect(changed.displays).toEqual(sync.displays);
+    expect(changed.retained).toEqual(sync.retained);
+    await withCdp(capability.browser_ws_url, async (send, socket) => {
+      const inventory = await targets(capability);
+      expect((await send("Target.attachToTarget", { targetId: inventory[0]!.id, flatten: true })).error).toBeUndefined();
+      const closed = waitForClose(socket);
+      await launched.page.evaluate((state) => {
+        if (!window.hideHost) throw new Error("Expected the trusted native bridge");
+        window.hideHost.browser.sync(state);
+      }, changed);
+      await closed;
+    });
+    expect(await identity()).toBe(contentsId);
+    expect((await fetch(`${capability.cdp_http_url}/json/version`)).status).toBe(404);
+    expect(await refusedWebSocket(capability.browser_ws_url)).toBe(403);
+    const fresh = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
+    expect(fresh.browser_ws_url === capability.browser_ws_url).toBe(false);
+    await withCdp(fresh.browser_ws_url, async (send) => {
+      const inventory = await targets(fresh);
+      const attached = await send("Target.attachToTarget", { targetId: inventory[0]!.id, flatten: true });
+      expect(attached.error).toBeUndefined();
+      const reply = await send("Runtime.evaluate", { expression: "document.querySelector('h1').textContent", returnByValue: true }, attached.result!.sessionId as string);
+      expect(reply.result).toMatchObject({ result: { value: "Scoped browser fixture" } });
+    });
+    expect(await identity()).toBe(contentsId);
+  } finally {
+    await app.evaluate(({ ipcMain }, channel) => {
+      const root = globalThis as { cdpSyncProbe?: { listener: (event: Electron.IpcMainEvent, value: unknown) => void } };
+      if (root.cdpSyncProbe) ipcMain.removeListener(channel, root.cdpSyncProbe.listener);
+      delete root.cdpSyncProbe;
+    }, BROWSER_SYNC_CHANNEL);
+  }
+});
+
+test("browser CDP: the native guard cancels a pending preattach file load and remains restricted after disconnect", async () => {
+  const launched = await launch(run.env);
+  app = launched.app;
+  await enterWorkspace(launched.page, "fixture");
+  const opened = await fromPane(["browser", "open", `${origin}/pending-preload`, "--reveal"]);
+  const displayId = (opened.result as { view_id: string }).view_id;
+  const refusals = (id: string) => hostLog(run.env).filter((line) => line.event === "browser.request_refused" && line.reason === "cdp_file_boundary" && line.display_id === id);
+  await expect.poll(() => pendingPreload !== null).toBe(true);
+  const contentsId = await app.evaluate(({ BrowserWindow }) => {
+    const pages = BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
+      const contents = (view as { webContents?: Electron.WebContents }).webContents;
+      return contents ? [contents] : [];
+    });
+    if (pages.length !== 1) throw new Error("Expected one pending candidate page");
+    if (pages[0]!.debugger.isAttached()) throw new Error("Preload proof must precede debugger attachment");
+    if (!pages[0]!.isLoadingMainFrame()) throw new Error("The first HTTP load must still be pending");
+    return pages[0]!.id;
+  });
+  expect(refusals(displayId)).toHaveLength(0);
+  // App-owned loadURL normally admits a file. Before any debugger lease,
+  // then after a lease has ended, the candidate's structured request refusal
+  // attributes cancellation to its native guard rather than HTTP->file CORS.
+  const refusedLoads = async (contentsId: number, displayId: string) => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await app!.evaluate(async ({ webContents }, { contentsId, canary }) => {
+        const contents = webContents.fromId(contentsId);
+        if (!contents || contents.isDestroyed()) throw new Error("The owned native generation ended");
+        let loaded = true;
+        try { await contents.loadURL(canary); } catch { loaded = false; }
+        const body = await contents.executeJavaScript("document.body?.innerText ?? ''") as string;
+        return { loaded, body };
+      }, { contentsId, canary: fileUrl });
+      expect(result.loaded).toBe(false);
+      expect(result.body).not.toContain("FORBIDDEN_CDP_FILE_CONTENT");
+      await expect.poll(() => refusals(displayId).length).toBe(1);
+    }
+    expect(refusals(displayId)[0]).toMatchObject({ display_id: displayId, resource_type: "mainFrame", reason: "cdp_file_boundary" });
+    for (const key of ["url", "source_url", "token", "contents"]) expect(refusals(displayId)[0]).not.toHaveProperty(key);
+  };
+  await refusedLoads(contentsId, displayId);
+  // A blocked error-page commit may conservatively quarantine the attacked
+  // generation. Test normal HTTP and post-lease behavior on a fresh page.
+  await fromPane(["view", "close", displayId]);
+  const later = await fromPane(["browser", "open", `${origin}/post-lease-guard`, "--reveal", "--wait"]);
+  const laterId = (later.result as { view_id: string }).view_id;
+  const capability = (await fromPane(["browser", "connect", "--display", laterId])).result as Capability;
+  const inventory = await targets(capability);
+  expect(inventory).toHaveLength(1);
+  expect(inventory[0]!.id).toMatch(/^page-\d+$/);
+  const laterContents = Number(inventory[0]!.id.slice("page-".length));
+  expect(laterContents).not.toBe(contentsId);
+  await withCdp(capability.browser_ws_url, async (send) => {
+    const attached = await send("Target.attachToTarget", { targetId: inventory[0]!.id, flatten: true });
+    expect(attached.error).toBeUndefined();
+    expect((await send("Runtime.evaluate", { expression: "document.querySelector('h1').textContent", returnByValue: true }, attached.result!.sessionId as string)).result).toMatchObject({ result: { value: "Scoped browser fixture" } });
+  });
+  await expect.poll(() => app!.evaluate(({ webContents }, id) => webContents.fromId(id)?.debugger.isAttached(), laterContents)).toBe(false);
+  expect(refusals(laterId)).toHaveLength(0);
+  await refusedLoads(laterContents, laterId);
 });
 
 test("browser CDP: native files cannot be read through runtime, frames, redirects or creation", async () => {
@@ -175,7 +469,10 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   // The address is assembled at runtime. The native policy receives the
   // resolved request/navigation; the gateway never parses JavaScript.
   const encoded = [...fileUrl].map((letter) => letter.charCodeAt(0));
+  const navigationRefusals = () => hostLog(run.env).filter((line) => line.event === "browser.navigation_refused" && line.reason === "cdp_file_boundary" && line.display_id === displayId);
+  const beforeNavigation = navigationRefusals().length;
   await cdp.send("Runtime.evaluate", { expression: `location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
+  await expect.poll(() => navigationRefusals().length).toBeGreaterThan(beforeNavigation);
   await expect(page.getByRole("heading")).toHaveText("Scoped browser fixture");
   const resource = await cdp.send("Runtime.evaluate", { expression: `fetch(String.fromCharCode(...${JSON.stringify(encoded)})).then(r => r.text()).then(() => 'read', () => 'blocked')`, awaitPromise: true, returnByValue: true });
   expect(resource.result.value).toBe("blocked");
