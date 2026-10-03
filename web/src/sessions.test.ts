@@ -78,7 +78,8 @@ describe("where a session ran", () => {
       };
     };
     // Eight fixed samples, one numeric record; the calls and 5s budget stay intact.
-    const stages = [sample("callback.entry")];
+    const entry = sample("callback.entry");
+    const stages = [entry];
     try {
       stages.push(sample("zero.before"));
       expect(sessionTime(0)).toBeNull();
@@ -91,7 +92,6 @@ describe("where a session ran", () => {
       stages.push(sample("year.after"));
     } finally {
       stages.push(sample("callback.exit"));
-      const entry = stages[0];
       console.info(JSON.stringify({
         event: "test.session_time.stage_timing",
         correlation_id: "session-time-369-v1",
