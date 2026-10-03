@@ -8,23 +8,20 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Notify, Semaphore};
 
 #[cfg(unix)]
-use crate::spawn::{handoff_default_opener, spawn_opener};
+use crate::spawn::handoff_default_opener;
+use crate::spawn::spawn_opener;
 
 const MAX_IN_FLIGHT_OPENERS: usize = 4;
 const MAX_OPENS_PER_MINUTE: usize = 12;
-#[cfg(unix)]
 const OPENER_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct OpenHandler {
     configured: Option<PathBuf>,
-    // Only the Unix supervisor of an explicit helper uses these two; Windows
-    // refuses an explicit helper at boot (`HIDE_OPEN_COMMAND`).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    /// The binary the Unix supervisor of an explicit helper runs as.
     supervisor_exe: PathBuf,
     slots: Arc<Semaphore>,
     recent: Arc<Mutex<VecDeque<Instant>>>,
-    #[cfg_attr(not(unix), allow(dead_code))]
     shutdown: Arc<Notify>,
 }
 
@@ -91,38 +88,32 @@ impl OpenHandler {
             return result;
         }
 
-        #[cfg(unix)]
         let mut child = {
             let program = self.configured.as_deref().expect("configured opener");
             spawn_opener(&self.supervisor_exe, program.as_os_str(), path)
                 .map_err(|_| "spawn_failed")?
         };
-        #[cfg(windows)]
-        return Err("spawn_failed");
-        #[cfg(unix)]
-        {
-            let shutdown = Arc::clone(&self.shutdown);
-            tokio::spawn(async move {
-                let deadline = tokio::time::sleep(OPENER_TIMEOUT);
-                tokio::pin!(deadline);
-                loop {
-                    tokio::select! {
-                        _ = &mut deadline => break,
-                        _ = shutdown.notified() => break,
-                        _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                            match child.try_wait() {
-                                Ok(true) => break,
-                                Ok(false) => {},
-                                Err(_) => break,
-                            }
-                        },
-                    }
+        let shutdown = Arc::clone(&self.shutdown);
+        tokio::spawn(async move {
+            let deadline = tokio::time::sleep(OPENER_TIMEOUT);
+            tokio::pin!(deadline);
+            loop {
+                tokio::select! {
+                    _ = &mut deadline => break,
+                    _ = shutdown.notified() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                        match child.try_wait() {
+                            Ok(true) => break,
+                            Ok(false) => {},
+                            Err(_) => break,
+                        }
+                    },
                 }
-                child.stop();
-                drop(permit);
-            });
-            Ok(())
-        }
+            }
+            child.stop();
+            drop(permit);
+        });
+        Ok(())
     }
 }
 

@@ -1168,11 +1168,8 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     running.stop();
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn browser_socket_cannot_start_a_host_file_handler() {
-    use std::os::unix::fs::PermissionsExt;
-
     let (dir, mut env) = test_env(true);
     let home = hide_platform::fs::identity::canonical(dir.path()).unwrap();
     let checkout = home.join("projects/alpha");
@@ -1180,13 +1177,25 @@ async fn browser_socket_cannot_start_a_host_file_handler() {
     let file = checkout.join("notes.txt");
     std::fs::write(&file, "safe data").unwrap();
     let marker = home.join("handler-started");
-    let opener = home.join("fake-opener");
-    std::fs::write(
-        &opener,
-        format!("#!/bin/sh\nprintf x > '{}'\n", marker.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // A helper that leaves the marker if anything ever starts it.
+    #[cfg(unix)]
+    let opener = {
+        use std::os::unix::fs::PermissionsExt;
+        let opener = home.join("fake-opener");
+        std::fs::write(
+            &opener,
+            format!("#!/bin/sh\nprintf x > '{}'\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+        opener
+    };
+    #[cfg(windows)]
+    let opener = {
+        let opener = home.join("fake-opener.cmd");
+        std::fs::write(&opener, format!("@echo x> \"{}\"\r\n", marker.display())).unwrap();
+        opener
+    };
     env.open_command = Some(opener);
     seed_registration(&env.state_dir, "w-alpha", &checkout);
     let running = hided::start_daemon(env).await.expect("start daemon");

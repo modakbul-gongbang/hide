@@ -143,10 +143,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Compile the workspace for Windows
         run: cargo check --locked --workspace --all-targets --keep-going --message-format short
-      - name: hided's pane bootstrap and end-to-end tests
+      - name: hided's pane bootstrap, file opener and end-to-end tests
         timeout-minutes: 25
         run: |
-          cargo test --locked -p hided --lib pane_auth
+          cargo test --locked -p hided --lib -- pane_auth opener open_command
+          cargo test --locked -p hided --test opener_lifecycle
           cargo test --locked -p hided --test handshake
       - name: Fetch the pinned Herdr runtime
         id: herdr
