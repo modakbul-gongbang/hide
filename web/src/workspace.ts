@@ -67,6 +67,14 @@ export const DEFAULT_SLOTS: ColumnSlots = { side: "views", single: "agents" };
 export type BodyStep = "wide" | "mid" | "narrow";
 
 /**
+ * Calls only override the measured width step where they were made (B25-B27).
+ * The first measurement preserves a call that brought this Workspace forward.
+ */
+export function slotsForStep(slots: ColumnSlots, previous: BodyStep | null, step: BodyStep): ColumnSlots {
+  return previous !== null && previous !== step ? DEFAULT_SLOTS : slots;
+}
+
+/**
  * The body as it is drawn: each shown column's width, Agent Views taking
  * what the others leave. A column that is off, or on but hidden by the
  * body's width, has no width here.

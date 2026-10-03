@@ -18,7 +18,7 @@ import { RunningServers } from "./RunningServers";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { workspaceKey } from "./viewLayout";
-import { columnFrame, dividerLanding, workspaceViewOf, type ColumnFrame, type ColumnSizes, type SideColumn, type WorkspaceView } from "./workspace";
+import { bodyStep, columnFrame, dividerLanding, slotsForStep, workspaceViewOf, type BodyStep, type ColumnFrame, type ColumnSizes, type SideColumn, type WorkspaceView } from "./workspace";
 import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
 import { commandLabel } from "./shortcutLabels";
 import "./columnCalls";
@@ -60,6 +60,16 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
     }),
     [],
   );
+  const step = bodyStep(width, sizes);
+  const previousStep = useRef<BodyStep | null>(null);
+  // Draw the new step's default in its first frame, before retiring the old
+  // call. This avoids fitting terminals to an intermediate wrong column.
+  const stepSlots = slotsForStep(slots, previousStep.current, step);
+  useLayoutEffect(() => {
+    if (width <= 0) return;
+    if (previousStep.current !== null && previousStep.current !== step) useUiStore.getState().resetColumnSlots();
+    previousStep.current = step;
+  }, [width, step]);
   const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout?.id));
   const hasViews = (view?.layout?.display_count ?? 0) > 0 || opening;
   const frame = columnFrame({
@@ -69,18 +79,9 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
     toolsWidth: view?.tools_width ?? null,
     body: width,
     sizes,
-    slots,
+    slots: stepSlots,
   });
   const checkoutId = checkout?.id ?? null;
-  // A narrow body starts on Agent Views in each Workspace it draws
-  // (`columnCalls.ts`), and whenever the body narrows into one column: only a
-  // call made there gives the one column to another (D-07).
-  const step = frame.step;
-  const previousStep = useRef(step);
-  useEffect(() => {
-    if (step === "narrow" && previousStep.current !== "narrow") useUiStore.getState().callColumn("agents");
-    previousStep.current = step;
-  }, [step]);
   const viewsShown = frame.views !== null;
   const toolsShown = frame.tools !== null;
   const agentsCovered = frame.agents === null;
@@ -155,7 +156,7 @@ function ColumnRow({ view, frame, body, setBody, sizes, actions, checkout }: { v
   const [guide, setGuide] = useState<number | null>(null);
   const narrow = frame.step === "narrow";
   const covered = frame.agents === null;
-  const divider = (column: SideColumn) => <ColumnDivider column={column} frame={frame} body={body} sizes={sizes} setGuide={setGuide} actions={actions} />;
+  const divider = (column: SideColumn) => <ColumnDivider workspace={workspaceKey(view)} column={column} frame={frame} body={body} sizes={sizes} setGuide={setGuide} actions={actions} />;
   return (
     <div ref={setBody} className="relative flex min-h-0 min-w-0 flex-1" data-column-row="true">
       {/* Its own stacking context, so nothing the agents raise (a pane
@@ -212,7 +213,11 @@ function ColumnRow({ view, frame, body, setBody, sizes, actions, checkout }: { v
  * release, so no terminal or page resizes during it and every page shows its
  * still; a focused divider moves one step per arrow key, one event per press.
  */
-function ColumnDivider({ column, frame, body, sizes, setGuide, actions }: { column: SideColumn; frame: ColumnFrame; body: HTMLElement | null; sizes: ColumnSizes; setGuide: (x: number | null) => void; actions: Actions }) {
+function ColumnDivider({ workspace, column, frame, body, sizes, setGuide, actions }: { workspace: string; column: SideColumn; frame: ColumnFrame; body: HTMLElement | null; sizes: ColumnSizes; setGuide: (x: number | null) => void; actions: Actions }) {
+  const cancelDrag = useRef<(() => void) | null>(null);
+  // A captured pointer belongs to the Workspace and geometry it started on.
+  // Switching either, or unmounting, retires the guide and its page still.
+  useLayoutEffect(() => () => cancelDrag.current?.(), [workspace, body, frame.agents, frame.views, frame.tools]);
   const width = (column === "views" ? frame.views : frame.tools) ?? 0;
   const name = column === "views" ? "File Views" : "Tools";
   const land = (x: number) => {
@@ -231,6 +236,7 @@ function ColumnDivider({ column, frame, body, sizes, setGuide, actions }: { colu
   const drag = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !body) return;
     event.preventDefault();
+    cancelDrag.current?.();
     const left = body.getBoundingClientRect().left;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
@@ -245,17 +251,22 @@ function ColumnDivider({ column, frame, body, sizes, setGuide, actions }: { colu
     // The drag marks the root, so a page the guide crosses gives way to its still.
     const release = holdShellDrag("col-resize");
     const end = () => {
+      if (cancelDrag.current !== end) return;
+      cancelDrag.current = null;
       release();
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
       target.removeEventListener("pointercancel", end);
       target.removeEventListener("lostpointercapture", end);
+      if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
       setGuide(null);
     };
     const up = (next: PointerEvent) => {
+      if (cancelDrag.current !== end) return;
       end();
       land(at(next));
     };
+    cancelDrag.current = end;
     // A drag the system cancels lands nothing and leaves no guide behind.
     target.addEventListener("pointermove", move);
     target.addEventListener("pointerup", up);

@@ -111,6 +111,21 @@ test("Workspace columns preserve geometry, dock once on release and show native 
     await showExplorer(page);
     await page.locator('[data-explorer-row$="/notes.md"]').click();
     await expect(page.locator("[data-editor-body] .cm-content")).toBeVisible();
+    // A Tools call in a wide body must not override File Views-first
+    // fallback later. Only a call made in the two-column body replaces it.
+    await bodyWidth(app, page, 1600);
+    await page.locator('[data-tool-tab="explorer"]').click();
+    await bodyWidth(app, page, 1100);
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-tools", "hidden");
+    await nativeCapture(app, page, "columns-wide-tools-call-to-mid");
+    await page.locator('[data-column-toggle="tools"]').click();
+    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
+    await expect(workspace).toHaveAttribute("data-tools", "shown");
+    await bodyWidth(app, page, 1600);
+    await bodyWidth(app, page, 1100);
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-tools", "hidden");
     await bodyWidth(app, page, 1116);
     await expect(workspace).toHaveAttribute("data-workspace-body", "wide");
     const widths = async () => Promise.all(["agents", "views", "tools"].map((column) => page.locator(`[data-column=${column}]`).evaluate((element) => element.getBoundingClientRect().width)));
@@ -205,6 +220,66 @@ test("Workspace columns preserve geometry, dock once on release and show native 
         await expect(workspace).toHaveAttribute("data-file-views", "shown");
       }
     }
+  } finally {
+    await app?.close().catch(() => undefined);
+    run.cleanup();
+    herdr.stop();
+  }
+});
+
+// Changing Workspaces while the pointer is captured cancels the old guide;
+// releasing it must not land a width in the newly front Workspace.
+test("a Workspace switch cancels its column drag without changing another Workspace", async () => {
+  const herdr = await startHerdr({ agents: false });
+  const run = isolate(herdr, "column-drag-switch");
+  let app: ElectronApplication | null = null;
+  try {
+    const first = path.join(herdr.root, "fixture");
+    const beta = path.join(herdr.root, "beta");
+    fs.mkdirSync(beta);
+    for (const folder of [first, beta]) {
+      fs.writeFileSync(path.join(folder, "notes.md"), "# Workspace notes\n");
+      const init = spawnSync("git", ["-C", folder, "init", "-q"], { encoding: "utf8" });
+      expect(init.status, init.stderr).toBe(0);
+    }
+    herdr.run(["workspace", "create", "--cwd", beta, "--label", "beta", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
+    ({ app } = await launchShell(run.env));
+    const page = await app.firstWindow();
+    const sent = countSent(page);
+    await page.reload();
+    await enterWorkspace(page, "fixture");
+    await bodyWidth(app, page, 1600);
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const row = (label: string) => page.locator("[data-project]", { hasText: label }).locator("[data-checkout]").first();
+    const openNotes = async () => {
+      await showExplorer(page);
+      await page.locator('[data-explorer-row$="/notes.md"]').click();
+      await expect(page.locator("[data-editor-body] .cm-content")).toBeVisible();
+    };
+    await row("beta").click();
+    await expect(row("beta")).toHaveAttribute("aria-current", "true");
+    await openNotes();
+    await row("fixture").click();
+    await expect(row("fixture")).toHaveAttribute("aria-current", "true");
+    await openNotes();
+    const divider = page.locator('[data-column-divider="views"]');
+    const box = (await divider.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 64, box.y + 100);
+    await expect(page.locator("[data-column-guide=true]")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-view-drag", "col-resize");
+    const before = sent.get("workspace_view") ?? 0;
+    // Invoke the candidate's Workspace control while capture is held, as a
+    // keyboard Workspace switch can do without releasing the divider.
+    await row("beta").evaluate((element: HTMLElement) => element.click());
+    await expect(row("beta")).toHaveAttribute("aria-current", "true");
+    await expect(page.locator("[data-column-guide=true]")).toHaveCount(0);
+    await expect(page.locator("html")).not.toHaveAttribute("data-view-drag");
+    await page.mouse.up();
+    await paint(page);
+    expect(sent.get("workspace_view") ?? 0).toBe(before);
+    await nativeCapture(app, page, "columns-drag-switch-cancelled");
   } finally {
     await app?.close().catch(() => undefined);
     run.cleanup();

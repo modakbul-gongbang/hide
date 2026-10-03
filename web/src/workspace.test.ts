@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, StripTab } from "./snapshot";
-import { agentEntries, bodyStep, columnFrame, dividerLanding, DEFAULT_SLOTS, NO_CALLS_SEEN, readCalls, type ColumnSizes, type ColumnSlots } from "./workspace";
+import { agentEntries, bodyStep, columnFrame, dividerLanding, DEFAULT_SLOTS, NO_CALLS_SEEN, readCalls, slotsForStep, type ColumnSizes, type ColumnSlots } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -58,6 +58,26 @@ describe("the Workspace columns (PRD three-column-panel)", () => {
     expect(frame({ views: true, tools: true, body: 1000, slots: { side: "tools", single: "tools" } })).toMatchObject({ views: null, tools: 355 });
     // With only one of them on, that one shows.
     expect(frame({ tools: true, body: 1000 })).toMatchObject({ views: null, tools: 355 });
+  });
+
+  it("forgets a wide Tools call when entering mid, retaining only calls made there (B25, B26)", () => {
+    const called: ColumnSlots = { side: "tools", single: "tools" };
+    expect(frame({ views: true, tools: true, body: 1600, slots: called }).tools).toBe(355);
+    const entered = slotsForStep(called, "wide", "mid");
+    for (const body of [1100, 1115]) {
+      expect(frame({ views: true, tools: true, body, slots: entered })).toMatchObject({ views: body - 8 - 480, tools: null });
+    }
+    const midCall = slotsForStep(called, "mid", "mid");
+    expect(frame({ views: true, tools: true, body: 1100, slots: midCall })).toMatchObject({ views: null, tools: 355 });
+    const widened = slotsForStep(midCall, "mid", "wide");
+    expect(frame({ views: true, tools: true, body: 1100, slots: slotsForStep(widened, "wide", "mid") }).tools).toBeNull();
+  });
+
+  it("starts a newly narrow body on Agent Views, while a first-measurement reveal still shows its called column (B27)", () => {
+    const called: ColumnSlots = { side: "views", single: "views" };
+    expect(frame({ views: true, body: 847, slots: slotsForStep(called, "mid", "narrow") }).agents).toBe(847);
+    expect(frame({ views: true, body: 847, slots: slotsForStep(called, null, "narrow") }).views).toBe(847);
+    expect(frame({ views: true, body: 846, slots: slotsForStep(called, "narrow", "narrow") }).views).toBe(846);
   });
 
   it("below the narrow step shows one column, Agent Views unless another that is on was called (B25, B27)", () => {
