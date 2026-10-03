@@ -117,6 +117,10 @@ A script that stops earning its place here is deleted rather than left unreferen
 
 ## Performance-sensitive changes
 
+Changes that add resident work or touch a high-frequency path must include a cost review in the PR's Review section, following [Resident work cost review](docs/PERFORMANCE_TESTING.md#resident-work-cost-review).
+Explain added work per input or tick, notification fan-out and the pending-work bound, with the code owner and cleanup on every exit path.
+Name missing caps explicitly rather than treating a refresh interval, timeout or one active worker as a queue or byte limit.
+Update the [state placement guide](docs/ARCHITECTURE.md#state-placement-and-publication), [process ownership table](docs/ARCHITECTURE.md#resident-process-ownership) and [resident work ledger](docs/PERFORMANCE_TESTING.md#resident-ticks-timers-and-watchers) when their contracts change.
 Read [PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md#verification-layers-and-current-ci-coverage) for the three verification layers and review policy.
 The Rust and web suites include deterministic performance-related regression tests, and the web echo and frame measurement runs against a real hided, but CI does not currently launch and drive Hide with a live Herdr server.
 Typing, drag, wheel, focus, project Tree/List and destructive cleanup review in the packaged app, and controlled latency/RSS comparisons remain isolated local QA.
