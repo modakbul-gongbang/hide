@@ -945,6 +945,11 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "kit_reinstall", payload: components ? { device_id: deviceId, components } : { device_id: deviceId } });
     },
 
+    /** A switchable kit part's switch on its machine's row (PRD overview-request-view D-24). */
+    setKitComponent(deviceId: string, component: KitComponentId, enabled: boolean) {
+      dispatch({ schema_version: 2, kind: "kit_component_set", payload: { device_id: deviceId, component, enabled } });
+    },
+
     /** A tab showing the kit opened: this Mac's parts are read once. */
     checkKit() {
       dispatch({ schema_version: 2, kind: "kit_check", payload: {} });

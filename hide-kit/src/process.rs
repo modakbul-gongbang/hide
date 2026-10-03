@@ -5,45 +5,17 @@
 //! Every child the kit starts (`herdr plugin uninstall`, `node --version`,
 //! `hcoord daemon ensure`) is short-lived, so none outlives the call that
 //! started it, and a raised stop flag ends it at once, so the daemon that owns
-//! the kit can quit without waiting out a deadline. Output is capped, because a child that writes forever must not
-//! grow the daemon (rule 15).
+//! the kit can quit without waiting out a deadline. The waiting, the output cap
+//! and the tree's end are `hide_platform::process::run_to_end`'s; this module
+//! adds the environment the kit's children get and the kit's reasons.
 
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
-use hide_platform::process::OwnedChild;
-
-/// The most output kept from one stream; the rest is read and dropped.
-const OUTPUT_CAP: usize = 64 * 1024;
-
-#[derive(Debug)]
-pub struct Finished {
-    /// `None` when a signal ended it.
-    pub code: Option<i32>,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-impl Finished {
-    pub fn succeeded(&self) -> bool {
-        self.code == Some(0)
-    }
-
-    /// The last non-empty line of standard error, for a one-sentence reason.
-    pub fn last_error_line(&self) -> String {
-        self.stderr
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or("")
-            .trim()
-            .to_owned()
-    }
-}
+pub use hide_platform::process::Finished;
+use hide_platform::process::{RunFailure, run_to_end};
 
 /// Runs `program` with `args` and `env` added to an empty-ish environment
 /// that keeps only `PATH` and `HOME`, and waits at most `deadline`, or
@@ -61,88 +33,30 @@ pub fn run(
     stop: &AtomicBool,
 ) -> Result<Finished, String> {
     let mut command = Command::new(program);
-    command
-        .args(args)
-        .env_clear()
-        .env("HOME", home)
-        .env(
-            "PATH",
-            std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into()),
-        )
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.args(args).env_clear().env("HOME", home).env(
+        "PATH",
+        std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into()),
+    );
     for (key, value) in env {
         command.env(key, value);
     }
     let name = program.display().to_string();
-    let mut child = OwnedChild::spawn(&mut command)
-        .map_err(|error| format!("{name} could not start: {error}"))?;
-    let stdout = child.take_stdout().map(drain);
-    let stderr = child.take_stderr().map(drain);
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) if stop.load(Ordering::Relaxed) => {
-                let _ = child.kill_tree();
-                let _ = child.wait();
-                break Err(format!("{name} was stopped because Hide is quitting"));
-            }
-            Ok(None) if started.elapsed() >= deadline => {
-                let _ = child.kill_tree();
-                let _ = child.wait();
-                break Err(format!(
-                    "{name} did not finish within {} seconds and was stopped",
-                    deadline.as_secs()
-                ));
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(20)),
-            Err(error) => {
-                let _ = child.kill_tree();
-                let _ = child.wait();
-                break Err(format!("{name} could not be waited on: {error}"));
-            }
-        }
-    };
-    // The group is gone either way, so the pipes close and the readers end.
-    let stdout = stdout
-        .map(|reader| reader.join().unwrap_or_default())
-        .unwrap_or_default();
-    let stderr = stderr
-        .map(|reader| reader.join().unwrap_or_default())
-        .unwrap_or_default();
-    let status = status?;
-    // A grandchild left in the group after a normal exit is ended too; the
-    // kit's children never mean to leave anything behind.
-    let _ = child.kill_tree();
-    Ok(Finished {
-        code: status.code(),
-        stdout,
-        stderr,
-    })
-}
-
-fn drain(mut stream: impl Read + Send + 'static) -> thread::JoinHandle<String> {
-    thread::spawn(move || {
-        let mut kept = Vec::new();
-        let mut buffer = [0u8; 8192];
-        loop {
-            match stream.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(read) => {
-                    let room = OUTPUT_CAP.saturating_sub(kept.len());
-                    kept.extend_from_slice(&buffer[..read.min(room)]);
-                }
-            }
-        }
-        String::from_utf8_lossy(&kept).into_owned()
+    run_to_end(&mut command, deadline, stop).map_err(|failure| match failure {
+        RunFailure::Start(error) => format!("{name} could not start: {error}"),
+        RunFailure::Wait(error) => format!("{name} could not be waited on: {error}"),
+        RunFailure::TimedOut => format!(
+            "{name} did not finish within {} seconds and was stopped",
+            deadline.as_secs()
+        ),
+        RunFailure::Stopped => format!("{name} was stopped because Hide is quitting"),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
+    use std::time::Instant;
 
     #[test]
     fn a_child_past_its_deadline_is_stopped_with_its_group() {
@@ -162,31 +76,6 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
         thread::sleep(Duration::from_millis(2500));
         assert!(!marker.exists(), "the grandchild outlived the deadline");
-    }
-
-    #[test]
-    fn a_raised_stop_ends_the_child_before_its_deadline() {
-        let home = tempfile::tempdir().unwrap();
-        let stop = std::sync::Arc::new(AtomicBool::new(false));
-        let raiser = {
-            let stop = stop.clone();
-            thread::spawn(move || {
-                thread::sleep(Duration::from_millis(200));
-                stop.store(true, Ordering::Relaxed);
-            })
-        };
-        let started = Instant::now();
-        let result = run(
-            Path::new("/bin/sh"),
-            &["-c", "sleep 30"],
-            &[],
-            home.path(),
-            Duration::from_secs(60),
-            &stop,
-        );
-        raiser.join().unwrap();
-        assert!(result.unwrap_err().contains("quitting"));
-        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

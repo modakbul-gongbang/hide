@@ -3554,6 +3554,12 @@ impl Runtime {
             kind: operation.agent_kind.clone()?,
             prompt: launch.and_then(|launch| launch.prompt.clone()),
             args: launch.map(|launch| launch.args.clone()).unwrap_or_default(),
+            codex_daemon: self.codex_daemon(
+                operation
+                    .device_id
+                    .as_deref()
+                    .unwrap_or(crate::workspace::LOCAL_DEVICE_ID),
+            ),
         })
     }
 

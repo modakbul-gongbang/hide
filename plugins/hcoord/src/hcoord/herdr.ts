@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { CODEX_INITIALIZATION_PROMPT, getAgent, herdrErrorCode, initializedCodex, prepareCodexFirstTurn, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
 import { codexArgs, HcoordError, sameExecution, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent, type Watch } from "./model";
@@ -210,6 +211,25 @@ function codexLaunchArgs(nativeArgs: string[]): { startArgs: string[]; prompt: s
   return { startArgs, prompt: task ?? CODEX_INITIALIZATION_PROMPT };
 }
 
+/**
+ * A Codex attached to its shared app-server daemon runs its hooks in the
+ * daemon's environment, so Herdr never learns that pane's session (openai/codex#48500).
+ * A Codex hcoord starts on this machine therefore runs without the daemon when
+ * this machine's Codex has one (hide PRD overview-request-view D-20); an older
+ * Codex refuses the flag and has no daemon to leave. Another machine's Codex
+ * is not asked, so its spawn starts as before. Goes away with #48500 (D-26).
+ */
+function withoutCodexDaemon(record: SpawnIntent, startArgs: string[]): string[] {
+  if (!isLocalMachine(record.machine) || startArgs.includes("--no-daemon") || !localCodexHasDaemon()) return startArgs;
+  return ["--no-daemon", ...startArgs];
+}
+
+/** `codex features list` names `daemon_auto_start` exactly when this Codex has the shared daemon. */
+function localCodexHasDaemon(): boolean {
+  const listed = spawnSync("codex", ["features", "list"], { encoding: "utf8", shell: false, timeout: 5000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
+  return listed.error === undefined && listed.status === 0 && /^daemon_auto_start\s/m.test(listed.stdout ?? "");
+}
+
 const remotePrefix = (record: SpawnIntent): string => isLocalMachine(record.machine) ? "" : `--machine ${record.machine} `;
 
 /**
@@ -224,7 +244,7 @@ export function blockedSpawnError(record: SpawnIntent): HcoordError {
 export function startSpawnedAgent(record: SpawnIntent): void {
   if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
   validateSpawnSpec(record.name, record.kind, record.nativeArgs);
-  const nativeArgs = record.kind === "codex" ? codexLaunchArgs(record.nativeArgs).startArgs : record.nativeArgs;
+  const nativeArgs = record.kind === "codex" ? withoutCodexDaemon(record, codexLaunchArgs(record.nativeArgs).startArgs) : record.nativeArgs;
   const { result } = startAgentWhenPaneReady(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, ...(nativeArgs.length ? ["--", ...nativeArgs] : [])], at(record));
   if (result.status !== 0) throw new HcoordError("spawn_uncertain", `Herdr did not confirm agent start (${(result.stderr || result.stdout).trim().slice(0, 200) || "no diagnostic"}); inspect the saved pane before retry`, { intent: record.key, pane: record.pane, unfinishedStep: "agent_start", herdrCode: herdrErrorCode(result.stderr) ?? herdrErrorCode(result.stdout) });
 }

@@ -107,9 +107,11 @@ pub fn device_hook_status(
         },
         ComponentState::Outdated => HookStatus::Outdated { version: 0 },
         ComponentState::Absent => HookStatus::RuntimeAbsent,
-        ComponentState::NotInstalled | ComponentState::Removed | ComponentState::Failed => {
-            HookStatus::NotInstalled
-        }
+        // A hook part has no switch, so `Off` never names one.
+        ComponentState::NotInstalled
+        | ComponentState::Removed
+        | ComponentState::Failed
+        | ComponentState::Off => HookStatus::NotInstalled,
     })
 }
 

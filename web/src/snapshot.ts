@@ -863,10 +863,10 @@ export type Device = {
 };
 
 /** One part of the install kit (`contracts/snapshot-wire-enums.json`: `kit_component_id`). */
-export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "hcoord";
+export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "hcoord" | "codex_per_pane";
 
 /** What a part is on its machine (`contracts/snapshot-wire-enums.json`: `kit_component_state`). */
-export type KitComponentState = "installed" | "outdated" | "not_installed" | "removed" | "failed" | "absent";
+export type KitComponentState = "installed" | "outdated" | "not_installed" | "removed" | "failed" | "absent" | "off";
 
 export type KitComponent = {
   id: KitComponentId;

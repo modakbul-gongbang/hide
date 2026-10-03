@@ -1004,6 +1004,16 @@ pub(super) struct KitReinstallPayload {
     pub(super) components: Option<Vec<hide_kit::ComponentId>>,
 }
 
+/// The operator switched a kit part on or off from its row (PRD
+/// overview-request-view D-24); only a part
+/// [`hide_kit::ComponentId::can_turn_off`] names has a switch.
+#[derive(Debug, Deserialize)]
+pub(super) struct KitComponentSetPayload {
+    pub(super) device_id: String,
+    pub(super) component: hide_kit::ComponentId,
+    pub(super) enabled: bool,
+}
+
 /// A Settings tab that shows the kit opened: this Mac's parts are read again
 /// once, so a part removed by hand shows as removed.
 #[derive(Debug, Deserialize)]
@@ -1225,6 +1235,7 @@ pub(super) enum Event {
     CloneRepository(CloneRepositoryPayload),
     CancelRepositoryClone(CancelRepositoryClonePayload),
     KitReinstall(KitReinstallPayload),
+    KitComponentSet(KitComponentSetPayload),
     KitCheck(KitCheckPayload),
     UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
@@ -1425,6 +1436,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
+        "kit_component_set" => decode!(KitComponentSetPayload, KitComponentSet),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
@@ -1663,6 +1675,11 @@ impl Runtime {
                 self.request_terminal_control(&pane_id);
                 true
             }
+            Event::KitComponentSet(payload) => self.request_kit_component_set(
+                &payload.device_id,
+                payload.component,
+                payload.enabled,
+            ),
             Event::KitReinstall(payload) => {
                 self.request_kit_reinstall(&payload.device_id, payload.components.as_deref())
             }
@@ -2556,6 +2573,7 @@ impl Runtime {
                     session_id,
                     cwd,
                     name,
+                    codex_daemon: self.codex_daemon_for_pane(&pane_id),
                 };
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
                 if let Err(message) = live::spawn_agent_fork(context, request) {

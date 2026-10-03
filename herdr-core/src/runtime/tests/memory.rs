@@ -459,9 +459,9 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
     assert!(runtime.memory_enable_after_hook_update);
     assert_eq!(
         runtime.take_local_kit_job(std::time::Instant::now()),
-        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::Reinstall(
-            vec![hide_kit::ComponentId::CodexHook]
-        )))
+        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::reinstall([
+            hide_kit::ComponentId::CodexHook
+        ])))
     );
 
     runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {

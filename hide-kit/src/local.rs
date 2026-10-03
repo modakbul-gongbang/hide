@@ -61,6 +61,7 @@ pub fn local_target(
             .chain(crate::hcoord::relocation_env(relocated.as_deref()))
             .collect(),
         }),
+        codex: hide_agent_hooks::codex_daemon::find_codex(home),
         hcoord_home: relocated,
         legacy: crate::legacy::local(home),
         stop,

@@ -4366,7 +4366,8 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::Hcoord => {}
+                | hide_kit::ComponentId::Hcoord
+                | hide_kit::ComponentId::CodexPerPane => {}
             }
         }
         assert_wire(&contract, "kit_component_id", &kit_parts);
@@ -4379,6 +4380,7 @@ mod wire_enum_tests {
             hide_kit::ComponentState::Removed,
             hide_kit::ComponentState::Failed,
             hide_kit::ComponentState::Absent,
+            hide_kit::ComponentState::Off,
         ];
         for variant in kit_states {
             match variant {
@@ -4387,7 +4389,8 @@ mod wire_enum_tests {
                 | hide_kit::ComponentState::NotInstalled
                 | hide_kit::ComponentState::Removed
                 | hide_kit::ComponentState::Failed
-                | hide_kit::ComponentState::Absent => {}
+                | hide_kit::ComponentState::Absent
+                | hide_kit::ComponentState::Off => {}
             }
         }
         assert_wire(&contract, "kit_component_state", &kit_states);

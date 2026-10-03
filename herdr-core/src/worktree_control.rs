@@ -859,6 +859,7 @@ pub struct PendingAgentStart {
     pub kind: String,
     pub prompt: Option<String>,
     pub args: Vec<String>,
+    pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
 /// How starting the chosen agent in a task's created pane ended.
@@ -892,16 +893,10 @@ fn start_task_agent(
         Ok(guard) => guard.pending_task_agent_start(id),
         Err(_) => return,
     };
-    let Some(PendingAgentStart {
-        pane_id,
-        kind,
-        prompt,
-        args,
-    }) = pending
-    else {
+    let Some(start) = pending else {
         return;
     };
-    let outcome = launch_with_prompt(connector, local, id, &pane_id, &kind, args, prompt);
+    let outcome = launch_with_prompt(connector, local, id, start);
     if let Ok(mut guard) = runtime.lock() {
         guard.ingest_task_agent_result(id, outcome);
     } else {
@@ -923,18 +918,22 @@ fn launch_with_prompt(
     connector: &dyn ApiConnector,
     local: bool,
     id: u64,
-    pane_id: &str,
-    kind: &str,
-    mut args: Vec<String>,
-    prompt: Option<String>,
+    start: PendingAgentStart,
 ) -> TaskAgentOutcome {
+    let PendingAgentStart {
+        pane_id,
+        kind,
+        prompt,
+        mut args,
+        codex_daemon,
+    } = start;
     if let Some(prompt) = prompt {
         match prompt_argument(&prompt) {
             Ok(argument) => args.extend(["--".to_owned(), argument]),
             Err(message) => return TaskAgentOutcome::Failed(message),
         }
     }
-    launch_agent(connector, local, id, pane_id, kind, args).into()
+    launch_agent(connector, local, id, &pane_id, &kind, args, codex_daemon).into()
 }
 
 /// The longest first prompt, in bytes once encoded, that a start carries.
@@ -1025,6 +1024,7 @@ fn launch_agent(
     pane_id: &str,
     kind: &str,
     args: Vec<String>,
+    codex_daemon: crate::codex_launch::CodexDaemon,
 ) -> Launch {
     // Herdr would type the command into the pane's shell and wait for an
     // agent that can never appear; say so before asking it. A device's PATH
@@ -1035,7 +1035,7 @@ fn launch_agent(
         ));
     }
     let name = crate::fork::task_agent_name(kind, pane_id);
-    let params = match wire::agent_start_params(pane_id, &name, kind, args) {
+    let params = match wire::agent_start_params(pane_id, &name, kind, args, codex_daemon) {
         Ok(params) => params,
         Err(message) => return Launch::Failed(message),
     };
@@ -2852,10 +2852,13 @@ mod tests {
             &server,
             false,
             7,
-            "w1:p1",
-            "claude",
-            args,
-            Some("fix the tests".into()),
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "claude".into(),
+                prompt: Some("fix the tests".into()),
+                args,
+                codex_daemon: Default::default(),
+            },
         );
         assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
         let requests = requests_of(&server);
@@ -2873,6 +2876,34 @@ mod tests {
         );
     }
 
+    /// PRD overview-request-view D-20: a Codex that has the shared daemon is
+    /// started without it, ahead of its first prompt.
+    #[test]
+    fn a_codex_with_the_shared_daemon_starts_without_it() {
+        let server = server(vec![
+            shell_ready(),
+            json!({"result":{"type":"agent_started","argv":[],"agent":agent("working")}}),
+        ]);
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "codex".into(),
+                prompt: Some("fix the tests".into()),
+                args: Vec::new(),
+                codex_daemon: crate::codex_launch::CodexDaemon::Present,
+            },
+        );
+        assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
+        let requests = requests_of(&server);
+        assert_eq!(
+            requests[1]["params"]["args"],
+            json!(["--no-daemon", "--", "fix the tests"])
+        );
+    }
+
     /// D-26, B31: a multi-line prompt still travels as the CLI's own
     /// argument, its line breaks as U+2028 and its tabs as spaces; nothing is
     /// typed into the pane, where a startup question would take it.
@@ -2886,10 +2917,13 @@ mod tests {
             &server,
             false,
             7,
-            "w1:p1",
-            "claude",
-            vec!["--model".into(), "opus".into()],
-            Some("1\nfix the tests\r\n\tthen push".into()),
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "claude".into(),
+                prompt: Some("1\nfix the tests\r\n\tthen push".into()),
+                args: vec!["--model".into(), "opus".into()],
+                codex_daemon: Default::default(),
+            },
         );
         assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
         let requests = requests_of(&server);
@@ -2914,10 +2948,13 @@ mod tests {
             &server,
             false,
             7,
-            "w1:p1",
-            "claude",
-            Vec::new(),
-            Some("fix\u{7}the bell".into()),
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "claude".into(),
+                prompt: Some("fix\u{7}the bell".into()),
+                args: Vec::new(),
+                codex_daemon: Default::default(),
+            },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {
             panic!("expected a failed start, got {outcome:?}");
@@ -2937,10 +2974,13 @@ mod tests {
             &server,
             false,
             7,
-            "w1:p1",
-            "claude",
-            Vec::new(),
-            Some(format!("{at_cap}a\n")),
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "claude".into(),
+                prompt: Some(format!("{at_cap}a\n")),
+                args: Vec::new(),
+                codex_daemon: Default::default(),
+            },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {
             panic!("expected a failed start, got {outcome:?}");
@@ -2961,10 +3001,13 @@ mod tests {
             &server,
             false,
             7,
-            "w1:p1",
-            "claude",
-            Vec::new(),
-            Some("fix the tests".into()),
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "claude".into(),
+                prompt: Some("fix the tests".into()),
+                args: Vec::new(),
+                codex_daemon: Default::default(),
+            },
         );
         let TaskAgentOutcome::Failed(message) = outcome else {
             panic!("expected a failed start, got {outcome:?}");

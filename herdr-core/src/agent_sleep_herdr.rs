@@ -125,6 +125,7 @@ pub(crate) struct WakeRequest {
     pub(crate) mode: WakeMode,
     pub(crate) args: Vec<String>,
     pub(crate) cwd: Option<String>,
+    pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
 /// How a wake ended. `reason` is what the pane says (B14); `detail` is what
@@ -152,6 +153,7 @@ pub(crate) fn start_agent(connector: &dyn ApiConnector, request: &WakeRequest) -
         &request.name,
         &request.kind,
         request.args.clone(),
+        request.codex_daemon,
     ) {
         Ok(params) => params,
         Err(detail) => {
@@ -342,6 +344,7 @@ mod tests {
         let outcome = start_agent(
             &herdr.connector(),
             &WakeRequest {
+                codex_daemon: Default::default(),
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
                 name: "one".into(),
@@ -365,6 +368,7 @@ mod tests {
         let outcome = start_agent(
             &herdr.connector(),
             &WakeRequest {
+                codex_daemon: Default::default(),
                 pane_id: "w1:p1".into(),
                 kind: "codex".into(),
                 name: "wake-w1-p1".into(),

@@ -116,7 +116,8 @@ Every launch of the installed app installs Hide's kit on this Mac without asking
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex that is set up on this Mac, next to whatever other tools put there;
-- hcoord, copied to `~/.hide/kit/hcoord/`, with its command at `~/.hide/hcoord/bin/hcoord`, a link to it at `~/.local/bin/hcoord` unless an `hcoord` that is not Hide's is already there, and its daemon.
+- hcoord, copied to `~/.hide/kit/hcoord/`, with its command at `~/.hide/hcoord/bin/hcoord`, a link to it at `~/.local/bin/hcoord` unless an `hcoord` that is not Hide's is already there, and its daemon;
+- `Codex를 pane마다 실행`: when this Mac's Codex has the shared app-server daemon turned on, `codex features disable daemon_auto_start`, so each Codex runs in its own pane and Hide can read it. A daemon already running keeps running, and the setting reaches each Codex started after it. Settings > Devices turns it back on (`codex features enable daemon_auto_start`), and Hide then leaves it on.
 
 ### Where Hide keeps its files
 

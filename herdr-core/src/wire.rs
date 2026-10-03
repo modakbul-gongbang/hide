@@ -1101,14 +1101,18 @@ pub(crate) fn layout_apply_params(
     })
 }
 
+/// Every agent start Hide makes; a Codex with the shared daemon gets
+/// `--no-daemon` here, so no start path can leave it out (PRD
+/// overview-request-view D-20).
 pub(crate) fn agent_start_params(
     pane_id: &str,
     name: &str,
     kind: &str,
     args: Vec<String>,
+    codex_daemon: crate::codex_launch::CodexDaemon,
 ) -> Result<Value, String> {
     params(req::AgentStartParams {
-        args,
+        args: crate::codex_launch::start_arguments(kind, codex_daemon, args),
         kind: kind.into(),
         name: name.into(),
         pane_id: pane_id.into(),
