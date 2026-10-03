@@ -19,6 +19,7 @@ The core's Browser View inventory is sent as an empty array when the last page c
 A display's `load` stamp is how the core asks for a load: the host loads the display's address again whenever the stamp is newer than the one it last applied, so opening an address the Workspace already shows focuses that display and loads it again rather than adding a second one.
 The stamp is not saved; a relaunched page loads its address once when it is first shown.
 The retained inventory also carries the authoritative `area_id`, so native control never guesses a page's area from the front Workspace.
+Only checkouts in the current connected catalog contribute to that inventory; a removed or disconnected checkout's saved layout grants no native page authority.
 
 ## Opening a page
 
@@ -66,8 +67,12 @@ The CLI receives only the public capability URLs; it never receives the desktop 
 
 CDP target creation uses authenticated `/browser-control/action` and the existing Workspace prepare/read/commit contract.
 The core inserts a distinct browser display into the capability's named area even when another area is active or the same address is already open.
-An unknown area refuses before placement, and checkout HTML still passes the existing off-lock file read boundary.
-Close and select resolve a current browser display in that area; shell renderers and terminal displays cannot be selected or closed by this route.
+An unknown area refuses before placement.
+CDP exposes only HTTP(S) and blank pages; native `file:` displays, filesystem paths and other schemes return `browser_address_unsupported` for attachment or creation.
+The native host also prevents a controlled HTTP(S) page from loading file resources or navigating to a native file before content can be read, and revokes the capability when its native page generation leaves scope.
+Manual local-file displays retain the file policy below and are never CDP targets.
+Close and select bind the authenticated area into the core action and recheck the display's area and browser kind under the commit lock after retry lookup.
+A page moved after the query is refused without changing its selection or closing it; shell renderers and terminal displays cannot be selected or closed by this route.
 The app has one retry identity per launch registration, so retransmitting a completed close returns its receipt after the page is gone.
 
 ## The file boundary

@@ -148,6 +148,7 @@ impl CloseReason {
 }
 
 pub fn router(state: AppState) -> Router {
+    let browser_control_limit = axum::extract::DefaultBodyLimit::max(16 * 1024);
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
@@ -157,10 +158,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/browser-control",
-            post(register_browser_control).delete(release_browser_control),
+            post(register_browser_control)
+                .delete(release_browser_control)
+                .layer(browser_control_limit),
         )
-        .route("/browser-control/action", post(browser_control_action))
-        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
+        .route(
+            "/browser-control/action",
+            post(browser_control_action).layer(browser_control_limit),
+        )
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
         .route("/m", get(mobile_asset))

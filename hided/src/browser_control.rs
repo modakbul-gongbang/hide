@@ -56,6 +56,20 @@ fn unavailable() -> Failure {
     )
 }
 
+fn supported_address(address: &str) -> Result<(), Failure> {
+    if address == "about:blank"
+        || address.parse::<Uri>().is_ok_and(|uri| {
+            matches!(uri.scheme_str(), Some("http" | "https")) && uri.host().is_some()
+        })
+    {
+        return Ok(());
+    }
+    Err((
+        "browser_address_unsupported",
+        "Use an http or https browser display; native file pages do not support CDP",
+    ))
+}
+
 fn live(hosts: &mut HashMap<i32, Host>) {
     hosts.retain(|pid, host| process_start(*pid) == Some(host.started));
 }
@@ -255,6 +269,7 @@ fn connection_scope(
                 "browser_display_missing",
                 "Run hide view list and choose a browser display",
             ))?;
+        supported_address(&view.target)?;
         return Ok((view.area_id.clone(), Some(view.view_id.clone())));
     }
     let view = views.iter().find(|view| view.active_area).ok_or((
@@ -303,15 +318,20 @@ impl BrowserAction {
             ));
         }
         match self.action.as_str() {
-            "open" if self.display_id.is_none() => Ok(Action::OpenBrowser {
-                url: self.url.clone().filter(|url| !url.is_empty()).ok_or((
-                    "invalid_address",
-                    "Use an http, https, or checkout HTML address",
-                ))?,
-                reveal: false,
-                area_id: Some(self.area_id.clone()),
-                new_target: true,
-            }),
+            "open" if self.display_id.is_none() => {
+                let url = self
+                    .url
+                    .clone()
+                    .filter(|url| !url.is_empty())
+                    .ok_or(("invalid_address", "Use an http or https address"))?;
+                supported_address(&url)?;
+                Ok(Action::OpenBrowser {
+                    url,
+                    reveal: false,
+                    area_id: Some(self.area_id.clone()),
+                    new_target: true,
+                })
+            }
             "close" | "select" if self.url.is_none() => {
                 let id = self.display_id.as_deref().ok_or((
                     "browser_display_missing",
@@ -320,11 +340,13 @@ impl BrowserAction {
                 Ok(if self.action == "close" {
                     Action::Close {
                         view_id: id.to_owned(),
+                        expected_browser_area: Some(self.area_id.clone()),
                     }
                 } else {
                     Action::Select {
                         view_id: id.to_owned(),
                         reveal: false,
+                        expected_browser_area: Some(self.area_id.clone()),
                     }
                 })
             }
@@ -351,6 +373,11 @@ impl BrowserAction {
                 "browser_display_missing",
                 "Reconnect the browser capability and retry",
             ));
+        }
+        if let Some(id) = self.display_id.as_deref()
+            && let Some(view) = views.iter().find(|view| view.view_id == id)
+        {
+            supported_address(&view.target)?;
         }
         Ok(())
     }
@@ -411,6 +438,9 @@ mod tests {
             request_id: "100-close".into(),
         };
         assert!(action.command(&source).is_ok());
+        assert!(
+            matches!(action.command(&source).unwrap(), herdr_core::workspace_control::Action::Close { expected_browser_area: Some(area), .. } if area == "area-a")
+        );
         assert!(action.validate_scope(&source).is_ok());
         action.checkout_path = "/foreign".into();
         assert_eq!(action.command(&source).unwrap_err().0, "workspace_changed");
@@ -437,6 +467,36 @@ mod tests {
         assert_eq!(registry.acquire().unwrap_err().0, "browser_control_busy");
         drop(slots);
         assert!(registry.acquire().is_ok());
+    }
+
+    #[test]
+    fn native_file_pages_are_explicitly_unsupported_for_cdp() {
+        let mut source = source();
+        source.views.as_mut().unwrap()[0].target = "file:///checkout/index.html".into();
+        assert_eq!(
+            connection_scope(&source, Some("browser-a")).unwrap_err().0,
+            "browser_address_unsupported"
+        );
+        // The area capability is still useful for opening HTTP pages beside it.
+        assert!(connection_scope(&source, None).is_ok());
+        for address in [
+            "file:///checkout/index.html",
+            "/checkout/index.html",
+            "data:text/html,private",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(
+                supported_address(address).unwrap_err().0,
+                "browser_address_unsupported"
+            );
+        }
+        for address in [
+            "http://127.0.0.1:3000/",
+            "https://example.test/page",
+            "about:blank",
+        ] {
+            assert!(supported_address(address).is_ok(), "{address}");
+        }
     }
 
     #[test]

@@ -183,11 +183,16 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
         }
     }
     let action = match verb {
-        "select" if area_id.is_none() && edge.is_none() && index.is_none() => {
-            Action::Select { view_id, reveal }
-        }
+        "select" if area_id.is_none() && edge.is_none() && index.is_none() => Action::Select {
+            view_id,
+            reveal,
+            expected_browser_area: None,
+        },
         "close" if area_id.is_none() && edge.is_none() && index.is_none() && !reveal => {
-            Action::Close { view_id }
+            Action::Close {
+                view_id,
+                expected_browser_area: None,
+            }
         }
         "split" if index.is_none() && !reveal => Action::Split {
             view_id,
