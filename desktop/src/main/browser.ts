@@ -38,6 +38,9 @@ const PAGE_ZOOM_COMMANDS: Readonly<Partial<Record<CommandId, PageZoom>>> = { tex
 const ZOOM_IN_ALIAS = accelerator({ code: "Equal", meta: true, shift: true });
 /** Pinch zoom on a page, as visual zoom levels; Electron turns it off by default. */
 const PINCH_ZOOM_LIMITS = [1, 3] as const;
+/** One first-refusal witness per native generation and guard category. */
+const FILE_REFUSAL_EVENTS = { request: "browser.request_refused", navigation: "browser.navigation_refused", popup: "browser.window_open_refused" } as const;
+type FileRefusal = keyof typeof FILE_REFUSAL_EVENTS;
 
 type Page = {
   key: string;
@@ -60,8 +63,9 @@ type Page = {
   cdpRestricted: boolean;
   /** A generation that has held a native file frame never enters CDP. */
   cdpFileFrame: boolean;
-  /** One request refusal diagnostic per generation, even under script loops. */
-  cdpFileRequestRefused: boolean;
+  /** Three finite guard categories bound diagnostic state and output even
+   * when a renderer repeatedly attempts file requests or opens windows. */
+  readonly fileRefusals: Set<FileRefusal>;
 };
 
 export type ResolvedPage = { url: string; source_url: string; load: number };
@@ -367,7 +371,7 @@ export class BrowserViews {
       fileRestricted: !partition.startsWith("persist:hide-browser-file-"),
       cdpRestricted: false,
       cdpFileFrame: false,
-      cdpFileRequestRefused: false,
+      fileRefusals: new Set(),
     };
     view.setVisible(false);
     window.contentView.addChildView(view);
@@ -403,10 +407,7 @@ export class BrowserViews {
     pageSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
       const page = this.ownerOf(details.webContentsId);
       if (page?.fileRestricted && isFileAddress(details.url)) {
-        if (!page.cdpFileRequestRefused) {
-          page.cdpFileRequestRefused = true;
-          this.log.event("browser.request_refused", { reason: "cdp_file_boundary", display_id: page.id, resource_type: details.resourceType });
-        }
+        this.fileRefused(page, "request", details.resourceType);
         callback({ cancel: true });
         return;
       }
@@ -418,6 +419,15 @@ export class BrowserViews {
       callback(outcome);
     });
     return pageSession;
+  }
+
+  private fileRefused(page: Page, category: FileRefusal, resourceType?: Electron.OnBeforeRequestListenerDetails["resourceType"]): void {
+    if (page.fileRefusals.has(category)) return;
+    page.fileRefusals.add(category);
+    this.log.event(FILE_REFUSAL_EVENTS[category], {
+      reason: "cdp_file_boundary", display_id: page.id,
+      ...(resourceType ? { resource_type: resourceType } : {}),
+    });
   }
 
   private load(page: Page, url: string): void {
@@ -497,7 +507,7 @@ export class BrowserViews {
     const navigation = (event: { preventDefault(): void }, url: string) => {
       if (page.fileRestricted && isFileAddress(url)) {
         event.preventDefault();
-        this.log.event("browser.navigation_refused", { reason: "cdp_file_boundary", display_id: page.id });
+        this.fileRefused(page, "navigation");
         return;
       }
       if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
@@ -526,7 +536,7 @@ export class BrowserViews {
    */
   private openWindow(page: Page, contents: WebContents, url: string, popup: boolean, referrer: string): WindowOpenHandlerResponse {
     if (page.fileRestricted && isFileAddress(url)) {
-      this.log.event("browser.window_open_refused", { reason: "cdp_file_boundary", display_id: page.id });
+      this.fileRefused(page, "popup");
       return { action: "deny" };
     }
     if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
