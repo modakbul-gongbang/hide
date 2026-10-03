@@ -197,13 +197,82 @@ pub fn load(path: &Path) -> Result<Ledger, String> {
     Ok(ledger)
 }
 
-pub fn save(path: &Path, ledger: &Ledger) -> Result<(), String> {
-    let bytes = ledger.bytes()?;
-    let parent = path.parent().ok_or("ledger_unavailable")?;
-    hide_platform::fs::private::create_dir_all(parent).map_err(|_| "ledger_unavailable")?;
-    hide_platform::fs::atomic::write_file(path, &bytes, hide_platform::fs::Access::Private)
-        .map_err(|_| "ledger_unavailable")?;
+/// Keep the persistence phase intact until the store has applied its
+/// admission policy. An uncertain replacement can never mean old bytes won.
+#[derive(Debug)]
+pub enum SaveError {
+    Validation(String),
+    Persistence(hide_platform::fs::atomic::DurableWriteError),
+}
+
+impl SaveError {
+    pub fn code(&self) -> &str {
+        match self {
+            Self::Validation(code) => code,
+            Self::Persistence(_) => "ledger_unavailable",
+        }
+    }
+
+    pub fn uncertain(&self) -> bool {
+        matches!(
+            self,
+            Self::Persistence(
+                hide_platform::fs::atomic::DurableWriteError::ReplacementUncertain { .. }
+                    | hide_platform::fs::atomic::DurableWriteError::ReplacedNotDurable { .. }
+            )
+        )
+    }
+
+    pub fn diagnostic(&self) -> serde_json::Value {
+        use hide_platform::fs::atomic::DurableWriteError;
+        let (phase, source, cleanup) = match self {
+            Self::Validation(code) => return serde_json::json!({"phase":"validation","code":code}),
+            Self::Persistence(DurableWriteError::BeforeReplace { source, cleanup }) => {
+                ("before_replace", source, cleanup.is_some())
+            }
+            Self::Persistence(DurableWriteError::ReplacementUncertain { source, cleanup }) => {
+                ("replacement_uncertain", source, cleanup.is_some())
+            }
+            Self::Persistence(DurableWriteError::ReplacedNotDurable { source, .. }) => {
+                ("replaced_not_durable", source, false)
+            }
+        };
+        // IO text and temporary paths can contain private directory names.
+        serde_json::json!({"phase":phase,"io_kind":format!("{:?}",source.kind()),"cleanup_failed":cleanup})
+    }
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.code())
+    }
+}
+
+impl std::error::Error for SaveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Validation(_) => None,
+            Self::Persistence(source) => Some(source),
+        }
+    }
+}
+
+pub fn save(path: &Path, ledger: &Ledger) -> Result<(), SaveError> {
+    let bytes = ledger.bytes().map_err(SaveError::Validation)?;
+    // The parent and its durable ancestry are established by initialization,
+    // never opportunistically created by a transaction after admission.
+    hide_platform::fs::atomic::write_file_durable(path, &bytes, hide_platform::fs::Access::Private)
+        .map_err(SaveError::Persistence)?;
     Ok(())
+}
+
+/// Startup runs before Runtime is placed behind its mutex. Re-read the
+/// actual installed version and establish a new barrier before any effect.
+/// Corrupt or inaccessible bytes are preserved and never repaired by guess.
+pub fn recover(path: &Path) -> Result<Ledger, String> {
+    let ledger = load(path)?;
+    save(path, &ledger).map_err(|error| error.code().to_owned())?;
+    Ok(ledger)
 }
 
 #[cfg(test)]
@@ -318,6 +387,30 @@ mod tests {
         let mut invalid = ledger;
         invalid.letters[0].bell_attempts = Some(4);
         assert_eq!(invalid.validate().unwrap_err(), "ledger_unavailable");
+    }
+
+    #[test]
+    fn validated_startup_reestablishes_the_installed_version_without_repairing_corruption() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("ledger.json");
+        let ledger = letter();
+        save(&path, &ledger).unwrap();
+        assert_eq!(recover(&path).unwrap(), ledger);
+        std::fs::write(&path, b"private damaged bytes").unwrap();
+        assert_eq!(recover(&path).unwrap_err(), "ledger_unavailable");
+        assert_eq!(std::fs::read(&path).unwrap(), b"private damaged bytes");
+        // A missing parent is not implicitly bootstrapped by a transaction.
+        let missing = root.path().join("absent/ledger.json");
+        let error = save(&missing, &Ledger::default()).unwrap_err();
+        assert!(!error.uncertain());
+        assert!(!missing.parent().unwrap().exists());
+        assert_eq!(error.diagnostic()["phase"], "before_replace");
+        assert!(
+            !error
+                .diagnostic()
+                .to_string()
+                .contains(&root.path().display().to_string())
+        );
     }
 
     #[test]

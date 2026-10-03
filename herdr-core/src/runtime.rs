@@ -1411,7 +1411,7 @@ impl Runtime {
         let state_path = PathBuf::from(&options.app_state_path);
         let delivery_path =
             hide_kit::layout::delivery_ledger(state_path.parent().unwrap_or(Path::new(".")));
-        let delivery_ledger = crate::delivery::ledger::load(&delivery_path).map(Arc::new);
+        let delivery_ledger = crate::delivery::ledger::recover(&delivery_path).map(Arc::new);
         if let Err(code) = &delivery_ledger {
             crate::diagnostic!(
                 serde_json::json!({"component":"delivery","kind":"ledger.load_failed","code":code})

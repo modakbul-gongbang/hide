@@ -615,10 +615,15 @@ fn run(
         } else {
             Ok(())
         };
-        if let Err(code) = &saved {
-            crate::diagnostic!(
-                json!({"component":"delivery","kind":"ledger.save_failed","code":code})
-            );
+        if let Err(error) = &saved {
+            if error.uncertain() {
+                match runtime.lock() {
+                    Ok(mut guard) => guard.invalidate_delivery(),
+                    Err(_) => stop.store(true, Ordering::Release),
+                }
+            }
+            crate::diagnostic!(json!({"component":"delivery","kind":"ledger.save_failed",
+                    "code":error.code(),"persistence":error.diagnostic()}));
         }
         if saved.is_ok() && changed {
             match runtime.lock() {
@@ -630,7 +635,7 @@ fn run(
                     }
                 }
                 Err(_) => {
-                    saved = Err("delivery_unavailable".into());
+                    saved = Err(ledger::SaveError::Validation("delivery_unavailable".into()));
                     crate::diagnostic!(
                         json!({"component":"delivery","kind":"ledger.publish_failed"})
                     );
@@ -638,7 +643,10 @@ fn run(
             }
         }
         for (request, result) in batch.into_iter().zip(results) {
-            let result = saved.as_ref().map_err(Clone::clone).and(result);
+            let result = saved
+                .as_ref()
+                .map_err(|error| error.code().to_owned())
+                .and(result);
             let _ = request.reply.send(result);
         }
     }
@@ -989,6 +997,7 @@ mod tests {
 
     fn fixture(root: &std::path::Path) -> (Arc<Mutex<Runtime>>, Actor, Observation, PathBuf) {
         let state = root.join("state");
+        hide_platform::fs::private::create_dir_all(&state).unwrap();
         let options: CoreOptions = serde_json::from_value(json!({
             "schema_version":SCHEMA_VERSION,"home":root,"herdr_socket_path":null,
             "app_state_path":state.join("app.json"),
@@ -1029,6 +1038,78 @@ mod tests {
             target,
             hide_kit::layout::delivery_ledger(&state),
         )
+    }
+
+    #[test]
+    fn unavailable_store_refuses_all_intake_and_effects_until_validated_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, actor, target, path) = fixture(root.path());
+        let mut installed = Ledger::default();
+        let letter = mailbox::send(
+            &mut installed,
+            &actor,
+            &target.actor,
+            "pending",
+            "private",
+            "request",
+            None,
+            now(),
+        )
+        .unwrap();
+        ledger::save(&path, &installed).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        {
+            let mut guard = runtime.lock().unwrap();
+            guard.publish_delivery(Arc::new(installed), false);
+            guard.invalidate_delivery();
+            assert!(guard.delivery_bell_context().is_none());
+            assert!(guard.delivery_watch_work().is_empty());
+            assert!(!guard.delivery_bell_current(&letter.id, &target, None));
+        }
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        for command in [
+            Command::Pull,
+            Command::Confirm {
+                ids: vec![letter.id.clone()],
+            },
+            Command::Send {
+                target: "recipient".into(),
+                intent: "new".into(),
+                body: "private".into(),
+            },
+        ] {
+            assert_eq!(
+                client
+                    .submit(
+                        Effect::Command {
+                            actor: target.actor.clone(),
+                            target: Some(Box::new(target.clone())),
+                            command
+                        },
+                        Duration::from_secs(5)
+                    )
+                    .unwrap_err(),
+                "ledger_unavailable"
+            );
+        }
+        assert_eq!(
+            client
+                .submit(Effect::Tick(Vec::new()), Duration::from_secs(5))
+                .unwrap_err(),
+            "ledger_unavailable"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        drop(worker);
+        let (recovered, _, _, _) = fixture(root.path());
+        assert_eq!(
+            recovered.lock().unwrap().delivery_state().unwrap().letters[0].id,
+            letter.id
+        );
     }
 
     #[test]
@@ -1126,6 +1207,8 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let (runtime, actor, target, path) = fixture(root.path());
             if !writable {
+                std::fs::remove_file(&path).unwrap();
+                std::fs::remove_dir(path.parent().unwrap()).unwrap();
                 std::fs::write(path.parent().unwrap(), b"blocked parent").unwrap();
             }
             let (worker, client) = Worker::spawn(

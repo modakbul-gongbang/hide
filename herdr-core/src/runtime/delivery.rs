@@ -225,6 +225,12 @@ impl Runtime {
         self.delivery_ledger.clone()
     }
 
+    pub(crate) fn invalidate_delivery(&mut self) {
+        // Preserve installed bytes for startup recovery. In particular no
+        // subsequent pull, tick or bell may acknowledge our old memory image.
+        self.delivery_ledger = Err("ledger_unavailable".into());
+    }
+
     pub(crate) fn publish_delivery(&mut self, ledger: Arc<Ledger>, transitions: bool) -> bool {
         let before = self.delivery_ledger.as_ref().ok().map(|ledger| {
             ledger
