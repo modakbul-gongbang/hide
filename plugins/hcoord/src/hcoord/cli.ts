@@ -6,7 +6,7 @@ import { DEFAULT_SPAWN_KIND, HcoordError, LETTER_OPERATIONS, LETTER_SCHEMA, MAX_
 import { outboxCount, readOutboxRaw, removeLetters, writeLetter } from "./outbox";
 import { readHq, writeHq } from "./remote";
 import { openWork } from "./service";
-import { platformSupport, REMOTE_SETUP, startDaemon } from "./platform";
+import { platformSupport, REMOTE_SETUP, startDaemon, uninstallDaemon } from "./platform";
 import { callDaemon, lastDaemonContact, runDaemon, staleRead, type WireResult } from "./transport";
 import { readAlert, reconcileAlert, warningLine } from "./health";
 import { notifyText } from "./platform";
@@ -39,7 +39,7 @@ const duration = (value: string): number => {
   if (!match) throw new HcoordError("invalid_argument", "duration must use s, m, h, or d, for example 5m");
   return Number(match[1]) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 } as Record<string, number>)[match[2]!]!;
 };
-const USAGE = "usage: hcoord status | agent register [--check]/spawn/link/list/show/end | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status | home adopt; hcoord agent spawn --help describes a spawn";
+const USAGE = "usage: hcoord status | agent register [--check]/spawn/link/list/show/end | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/uninstall/status | home adopt; hcoord agent spawn --help describes a spawn";
 const SPAWN_USAGE = `usage: hcoord agent spawn --parent <participant|here> --name <name> --intent <key> [--kind <kind>] [--session <id>] [--machine <name>] [--repo <path> --branch <branch> [--path <path>]] [--no-watch] [--reconcile-pane <pane>] [--resume-start] [--json] [-- <native args>]
 
 Starts a Herdr agent as a child of --parent and records its lineage.
@@ -309,6 +309,8 @@ export async function main(argv: string[]): Promise<number> {
     }
     if (args.words[0] === "remote") { const result = await remoteSide(args); process.stdout.write(`${JSON.stringify(result)}\n`); return 0; }
     if (args.words[0] === "config" && args.words[1] === "set" && args.words[2] === "hq") { const result = await setHq(args.words[3]); print(result, json); return 0; }
+    // Uninstall is local service ownership, even when this home reports to a remote HQ.
+    if (args.words[0] === "daemon" && args.words[1] === "uninstall") { print(ok(uninstallDaemon()), json); return 0; }
     const hq = readHq();
     if (hq !== "local") {
       const { operation, data } = args.words[0] === "daemon" ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
@@ -365,7 +367,7 @@ export async function main(argv: string[]): Promise<number> {
         print(result, json);
         return 0;
       }
-      throw new HcoordError("invalid_argument", "use daemon run, start, ensure, stop, or status");
+      throw new HcoordError("invalid_argument", "use daemon run, start, ensure, stop, uninstall, or status");
     }
     if (args.words[0] === "agent" && args.words[1] === "link") {
       const result = await linkFork(args);

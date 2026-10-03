@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { HcoordError } from "./model";
 import { runHerdrCommand } from "../implement/herdr";
-import { convergeLaunchAgent, kickstartLabel, type LaunchdEnvironment } from "../support/launchd";
+import { convergeLaunchAgent, kickstartLabel, removeLaunchAgent, type LaunchdEnvironment } from "../support/launchd";
 import { accountHome, dataDir, defaultDataDir, stopMarkerPath } from "./store";
 
 export const DEFAULT_LABEL = "com.hcoord.daemon";
@@ -86,4 +86,17 @@ export function startDaemon(home = os.homedir(), environment: LaunchdEnvironment
   const kick = kickstartLabel(label, environment);
   if (!kick.ok) throw new HcoordError("start_failed", `launchd could not start the coordinator: ${kick.detail}; inspect its stderr log`);
   return { label, path: file, launchctl: [...converged.launchctl, `kickstart ${label}`] };
+}
+
+/** Explicit removal belongs to the home that installed the service, not to an app window. */
+export function uninstallDaemon(home = os.homedir(), environment: LaunchdEnvironment = {}) {
+  if (process.platform !== "darwin") throw new HcoordError("unsupported_platform", "daemon uninstall removes a macOS LaunchAgent; stop a foreground daemon with daemon stop");
+  const label = daemonLabel(home);
+  const file = plistPath(home, label);
+  // Keep a later kit ensure from undoing the explicit removal. Conversation
+  // data is retained; an already absent home is not recreated just to remove it.
+  if (fs.existsSync(dataDir(home))) fs.writeFileSync(stopMarkerPath(home), `${new Date().toISOString()}\n`, { mode: 0o600 });
+  const removed = removeLaunchAgent({ label, plistPath: file }, environment);
+  if (removed.problem !== null) throw new HcoordError("uninstall_failed", `coordinator removal is incomplete: ${removed.problem}; keep this HOME and retry daemon uninstall after resolving the launchctl or filesystem failure`, { label, path: file });
+  return { label, path: file, plist: removed.plist, launchctl: removed.launchctl };
 }

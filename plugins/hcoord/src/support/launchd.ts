@@ -56,8 +56,9 @@ export function labelStatus(agent: LaunchAgentTarget, environment: LaunchdEnviro
   const launchctl = environment.launchctl ?? defaultLaunchctl;
   const printed = launchctl(["print", `${domain(environment)}/${agent.label}`]);
   if (printed.status === 0) return { plistPath, installed: fs.existsSync(plistPath), loaded: true, detail: null };
-  if (printed.status === null) return { plistPath, installed: fs.existsSync(plistPath), loaded: null, detail: `launchctl unavailable: ${printed.stderr.trim()}` };
-  return { plistPath, installed: fs.existsSync(plistPath), loaded: false, detail: (printed.stderr || printed.stdout).trim() || `launchctl print exited ${printed.status}` };
+  // launchctl print returns 113 for a missing service. Any other
+  // failure leaves ownership unknown; it is not permission to delete files.
+  return { plistPath, installed: fs.existsSync(plistPath), loaded: printed.status === 113 ? false : null, detail: (printed.stderr || printed.stdout).trim() || `launchctl print exited ${printed.status ?? "without status"}` };
 }
 
 /** Runs launchctl and records the argv, so a result can say what launchd was asked. */
@@ -167,7 +168,7 @@ export function convergeLaunchAgent(agent: LaunchAgentTarget, rendered: string, 
 
 export interface UninstallResult {
   plistPath: string;
-  plist: "removed" | "absent";
+  plist: "removed" | "absent" | "kept";
   launchctl: string[];
   problem: string | null;
 }
@@ -178,14 +179,17 @@ export function removeLaunchAgent(agent: LaunchAgentTarget, environment: Launchd
   const asked: string[] = [];
   const call = recordingCall(environment, asked);
   const before = labelStatus(agent, environment);
-  let problem: string | null = null;
+  let problem: string | null = before.loaded === null ? `could not read the label's loaded state: ${before.detail}` : null;
   if (before.loaded === true) {
     const out = bootoutSettled(agent, environment, call);
     if (!out.ok) problem = `bootout failed: ${out.detail}`;
   }
   const existed = fs.existsSync(plistPath);
-  if (existed && problem === null) fs.rmSync(plistPath);
-  return { plistPath, plist: existed && problem === null ? "removed" : "absent", launchctl: asked, problem };
+  if (existed && problem === null) {
+    try { fs.rmSync(plistPath); }
+    catch (error) { problem = `label unloaded but its plist could not be removed: ${error instanceof Error ? error.message : String(error)}`; }
+  }
+  return { plistPath, plist: existed ? problem === null ? "removed" : "kept" : "absent", launchctl: asked, problem };
 }
 
 /** Ask launchd to start a loaded label now; a missing label is reported, never bootstrapped here. */
