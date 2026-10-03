@@ -17,6 +17,7 @@ import {
   resultLine,
   rowIssues,
   splitTail,
+  verdictLine,
 } from "./requestList";
 import type { AgentPullRequest, AgentRequest, AgentRow, Checkout, RequestVerb, Task, Workspace } from "./snapshot";
 
@@ -83,6 +84,11 @@ describe("the request line (D-42, B52)", () => {
 
   it("keeps a long name's first twelve characters and its extension", () => {
     expect(requestLine("src/components/request-row-expanded-detail.tsx", 0)).toBe("request-row-….tsx");
+  });
+
+  it("names an address whose last part is not valid percent-encoding as written", () => {
+    expect(requestLine("세일 https://example.com/files/sale-50% 확인", 0)).toBe("세일 sale-50% 확인");
+    expect(openCandidates("보고서 https://example.com/x/%zz 를 보세요", [], false).map((target) => target.label)).toEqual(["%zz"]);
   });
 
   it("keeps a slash between two words of a sentence", () => {
@@ -186,6 +192,13 @@ describe("the result line (D-12, B5, B10)", () => {
     const [working, done] = requestRows([lens(agent("w", "working", { request: block("working", { reply }) })), lens(agent("d", "result", { request: block("result", { reply }) }))], []);
     expect(resultLine(working!)).toBe("테스트를 돌렸습니다. 모두 통과했어요.");
     expect(resultLine(done!)).toBe("모두 통과했어요.");
+  });
+
+  it("reads the label's verdict in the expanded row, and nothing without a label (B6)", () => {
+    expect(verdictLine(block("answer", { end: "question", line: "어느 쪽으로 할까요?" }))).toBe("AI 판정 · 질문 · 어느 쪽으로 할까요?");
+    expect(verdictLine(block("stopped", { end: "unfinished" }))).toBe("AI 판정 · 덜 끝남");
+    expect(verdictLine(block("result", { reply }))).toBeNull();
+    expect(verdictLine(undefined)).toBeNull();
   });
 });
 

@@ -60,6 +60,8 @@ export type AgentRow = {
 };
 
 /** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
+export type LabelEnd = "working" | "question" | "done" | "waiting" | "unfinished";
+
 export type RequestVerb = "answer" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
 
 /** Who sent the request a row shows (`RequestSender`). */
@@ -74,6 +76,8 @@ export type AgentRequest = {
   native_title?: string;
   /** The label's line for the turn (B18, B47); absent with summaries off or no analysis, when the reply stands in (D-12). */
   line?: string;
+  /** How the label read the turn's end (`contracts/snapshot-wire-enums.json`: `label_end`). */
+  end?: LabelEnd;
   /** The operator's last request, else the last one another agent sent. */
   request: { text: string; cut: boolean; images: number; at_unix_ms: number; sender: RequestSender } | null;
   /** Who sent a request after the operator's last one (B4). */

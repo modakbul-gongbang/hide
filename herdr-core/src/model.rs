@@ -4309,6 +4309,26 @@ mod wire_enum_tests {
         assert_wire(&contract, "request_verb", &verbs);
         checked.insert("request_verb");
 
+        use crate::labels::analysis::LabelEnd;
+        let ends = [
+            LabelEnd::Working,
+            LabelEnd::Question,
+            LabelEnd::Done,
+            LabelEnd::Waiting,
+            LabelEnd::Unfinished,
+        ];
+        for variant in ends {
+            match variant {
+                LabelEnd::Working
+                | LabelEnd::Question
+                | LabelEnd::Done
+                | LabelEnd::Waiting
+                | LabelEnd::Unfinished => {}
+            }
+        }
+        assert_wire(&contract, "label_end", &ends);
+        checked.insert("label_end");
+
         let statuses = [
             ChangedFileStatus::Modified,
             ChangedFileStatus::Added,

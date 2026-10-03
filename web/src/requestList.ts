@@ -5,7 +5,7 @@
 
 import type { DeviceAvailability } from "./navigation";
 import type { LensAgent, Tile } from "./overviewLens";
-import type { AgentPullRequest, AgentRow, RequestSender, RequestVerb, Task, Workspace } from "./snapshot";
+import type { AgentPullRequest, AgentRequest, AgentRow, LabelEnd, RequestSender, RequestVerb, Task, Workspace } from "./snapshot";
 import { parseToken, type LinkTarget } from "./terminalLinks";
 
 // --- groups ------------------------------------------------------------------
@@ -127,14 +127,28 @@ function shortened(name: string): string {
   return `${chars.slice(0, NAME_HEAD).join("")}…${extension}`;
 }
 
+/** A percent-encoded name as written when it is not valid encoding (`50%`): text an agent wrote never throws. */
+function decoded(name: string): string {
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
 /** A URL or a path by its last name: `#N` for a GitHub pull request or issue, else the last part of its path. */
 function shortTarget(target: LinkTarget): string {
   if (target.kind === "url") {
-    const url = new URL(target.url);
+    let url: URL;
+    try {
+      url = new URL(target.url);
+    } catch {
+      return shortened(target.url);
+    }
     const github = /^\/[^/]+\/[^/]+\/(?:pull|issues)\/(\d+)/u.exec(url.pathname);
     if (url.hostname === "github.com" && github) return `#${github[1]}`;
     const parts = url.pathname.split("/").filter(Boolean);
-    return shortened(decodeURIComponent(parts.at(-1) ?? url.hostname));
+    return shortened(decoded(parts.at(-1) ?? url.hostname));
   }
   const parts = target.path.split("/").filter(Boolean);
   return shortened(parts.at(-1) ?? target.path);
@@ -216,6 +230,25 @@ export function resultLine(row: RequestRow): string {
   const reply = agent.request?.reply?.text ?? "";
   if (row.verb === "working") return reply.split(/\s+/u).filter(Boolean).join(" ");
   return lastLine(reply);
+}
+
+const END_LABEL: Record<LabelEnd, string> = {
+  working: "진행 중",
+  question: "질문",
+  done: "끝남",
+  waiting: "기다림",
+  unfinished: "덜 끝남",
+};
+
+/**
+ * The label's reading of the turn, shown in the expanded row (B6, D-28):
+ * how the turn ended and the line it wrote. Null without a label, which is
+ * also every row while summaries are off.
+ */
+export function verdictLine(block: AgentRequest | undefined): string | null {
+  if (!block?.end) return null;
+  const line = block.line?.trim();
+  return line ? `AI 판정 · ${END_LABEL[block.end]} · ${line}` : `AI 판정 · ${END_LABEL[block.end]}`;
 }
 
 /** The row's name for assistive technology (B8): title, agent kind, verb, result line. */

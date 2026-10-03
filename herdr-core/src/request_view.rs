@@ -123,6 +123,10 @@ pub struct AgentRequestSnapshot {
     /// the row shows its reply instead (D-12).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<String>,
+    /// How the label read the turn's end, shown with the line when the row
+    /// is expanded (D-28); absent without a label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<LabelEnd>,
     pub request: Option<RequestLineSnapshot>,
     /// Who sent a request after the operator's last one (B4).
     pub later_by: Option<RequestSender>,
@@ -228,6 +232,7 @@ pub(crate) fn apply<'a>(
             verb_since_unix_ms: since,
             native_title: facts.native_title.clone(),
             line: facts.line.clone(),
+            end: facts.end,
             request: shown.map(|(request, sender)| RequestLineSnapshot {
                 text: request.text.clone(),
                 cut: request.cut,

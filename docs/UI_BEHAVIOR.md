@@ -484,7 +484,7 @@ At that line's end stand up to three open chips, the addresses and existing path
 The pull request chip is the core's first live pull request in its lifecycle colour with its CI mark, `+N` for the other live ones; it opens its row on the PRs tab, ⌘-click GitHub, and while GitHub cannot be read it is dimmed with the value's age in its tooltip.
 The issue chip is the issue the chip's pull request closes, else the checkout's, with `+N`; it opens the issue's panel and never changes the row's group.
 
-A click or Enter expands the row in place and again folds it: the request as written (20 lines, then `전부 보기`), the agent's last words, every open target, every pull request with its state (one settled before the request as `예전 PR #N 머지됨`), every issue, each descendant with its verb, line and 열기, and `패널 열기`.
+A click or Enter expands the row in place and again folds it: the request as written (20 lines, then `전부 보기`), the agent's last words, the label's verdict while summaries are on (`AI 판정 · 질문 · <line>`, the end read as 진행 중, 질문, 끝남, 기다림 or 덜 끝남), every open target, every pull request with its state (one settled before the request as `예전 PR #N 머지됨`), every issue, each descendant with its verb, line and 열기, and `패널 열기`.
 Expanding a row in 결과 볼 것 reads that pane without moving the focus, so it leaves the sidebar's Done and, with nothing else to do, the group; a row to answer stays until it is answered.
 A double click, ⌘Enter or `패널 열기` opens the agent's pane as the Agents list does.
 The arrows step through the group heads, rows and chips in the order drawn, Home and End go to the ends, and Escape leaves the Overview.

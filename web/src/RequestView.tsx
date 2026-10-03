@@ -26,6 +26,7 @@ import {
   requestLine,
   resultLine,
   rowIssues,
+  verdictLine,
   rowSince,
   senderWords,
   splitTail,
@@ -59,10 +60,20 @@ export type RequestViewProps = {
 export function RequestView({ rows, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
   const groups = useMemo(() => requestGroups(rows), [rows]);
   // While a window shows the view, the core re-reads running checks (D-32).
+  // A hidden page is not showing it, and a reconnect is a new connection
+  // whose demand starts empty, so the demand is declared each time the page
+  // is live, as the Settings agents tab does.
+  const live = useShellStore((s) => s.connection === "live");
   useEffect(() => {
-    actions.observeRequestView(true);
-    return () => actions.observeRequestView(false);
-  }, [actions]);
+    if (!live) return;
+    const report = () => actions.observeRequestView(document.visibilityState === "visible");
+    report();
+    document.addEventListener("visibilitychange", report);
+    return () => {
+      document.removeEventListener("visibilitychange", report);
+      actions.observeRequestView(false);
+    };
+  }, [actions, live]);
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-requests-empty="true">
@@ -464,6 +475,11 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
         <p className="whitespace-pre-wrap break-words text-muted-foreground" data-request-reply={agent.pane_id}>
           {block.reply.text}
         </p>
+      ) : null}
+      {verdictLine(block) ? (
+        <span className="min-w-0 break-words text-subtle-foreground" data-request-verdict={block!.end}>
+          {verdictLine(block)}
+        </span>
       ) : null}
       {targets.length > 0 ? (
         <span className="flex min-w-0 flex-wrap items-center gap-xs" data-request-targets={targets.length}>
