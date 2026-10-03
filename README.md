@@ -65,7 +65,7 @@ The web shell renders that state and sends typed user events back, so the UI doe
 
 The packaging targets are Apple Silicon Macs running macOS 14 or later, Windows x64 and Linux x64 ([Windows and Linux](docs/INSTALL.md#windows-and-linux)).
 Published builds are listed on [GitHub Releases](https://github.com/modakbul-gongbang/hide/releases); a draft or a successful package build is not a public download.
-To build locally, install a Rust toolchain with Rust 2024 support, Node.js 22 and pnpm 10, then:
+To build locally, install a Rust toolchain with Rust 2024 support, Node.js 22.12.0 or later and pnpm 10, then:
 
 ```sh
 git clone https://github.com/modakbul-gongbang/hide.git
@@ -104,17 +104,17 @@ The weekly `herdr-update.yml` workflow proposes upstream stable releases with `-
 
 Contributions go through pull requests gated by the `verify` workflow; `CONTRIBUTING.md` lists the gates and how to run them locally, and `SECURITY.md` says how to report a vulnerability privately.
 
-Prerequisites are a Rust toolchain with Rust 2024 edition support, Node.js 22, and pnpm 10.
+Prerequisites are a Rust toolchain with Rust 2024 edition support, Node.js 22.12.0 or later, and pnpm 10.
 
 ```sh
 bash scripts/verify-cargo.sh test
 bash scripts/verify-web.sh
 pnpm --dir desktop dev
-pnpm --dir desktop package
+HIDE_VERSION=0.0.0-local pnpm --dir desktop package
 ```
 
 `pnpm --dir desktop dev` runs the desktop app unpackaged against this worktree's own `hide` build.
-`pnpm --dir desktop package` produces the release bundle and archive under `desktop/out/`.
+`HIDE_VERSION=0.0.0-local pnpm --dir desktop package` produces a local-version bundle and archive under `desktop/out/`.
 
 Repository map:
 
