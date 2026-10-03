@@ -9,6 +9,7 @@ import fs from "node:fs";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 test.use({ actionTimeout: 15_000 });
@@ -41,7 +42,7 @@ test("Cmd+F scrolls the focused pane to a match above the screen", { tag: "@plat
     await expect(view).toHaveAttribute("data-focused", "true");
     expect(scrollOffset(herdr, focused)).toBe(0);
 
-    await page.keyboard.press("Meta+f");
+    await page.keyboard.press(chord("find_in_pane"));
     const bar = page.locator("[data-find-bar]");
     await bar.locator("input").fill("row-005");
     await page.keyboard.press("Enter");
@@ -75,7 +76,7 @@ test("Cmd+F on a full-screen agent opens the agent's own search instead of the f
     expect(scrollOffset(herdr, agent)).toBe(0);
     const before = fs.readFileSync(herdr.inputLogs[0], "latin1").length;
 
-    await page.keyboard.press("Meta+f");
+    await page.keyboard.press(chord("find_in_pane"));
     // The agent hears Claude Code's transcript key and its search key, and
     // nothing else; Hide's own bar stays closed and the keyboard stays on the pane.
     // JSON keeps the control byte readable in a failure.

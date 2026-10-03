@@ -10,6 +10,7 @@ import path from "node:path";
 import { claudeProjects, setFixtureSession, startHerdr, writeFixtureTranscript } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 150_000 });
 
@@ -68,7 +69,7 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     await screenshot(page, "agent-sleep-sleeping");
 
     // B2, B3: Settings > Performance counts it and keeps the choice.
-    await page.keyboard.press("Alt+Comma");
+    await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="performance"]').click();
     await expect(page.locator('[data-settings-group="idle-agents"]')).toContainText("1 sleeping");
     const choice = page.locator("[data-agent-sleep-after]");

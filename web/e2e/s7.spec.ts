@@ -16,6 +16,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, choosePanel, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
+import { chord } from "./chords";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
 const RAIL = 48;
@@ -837,7 +838,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
     // Closing the last view with no tool shown closes the panel (issue 170).
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
     await tabTo(page, tab(page, "c.txt"), "Shift+Tab");
@@ -851,7 +852,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     // Core normalizes the panel as part of closing the view, without another dispatch.
     expect(stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length).toBe(panelsBefore);
     await screenshot(page, "s7-keys-closed");
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
@@ -1159,7 +1160,7 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     const herdrBefore = herdrIds(stack.herdr);
     const closes = () => viewEvents(stack).filter((event) => event.payload.action === "close").length;
     const closesBefore = closes();
-    await page.keyboard.press("Alt+KeyW");
+    await page.keyboard.press(chord("close_tab"));
     await expect.poll(closes).toBe(closesBefore + 1);
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     expect(stack.events.filter((event) => event.kind === "close_tab" || event.kind === "close_pane")).toHaveLength(0);
@@ -1178,7 +1179,7 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
     // ⌘⇧B restores the panel with its narrow tool overlay still hidden.
     // Asking for Explorer explicitly opens the overlay (issue 170).
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator("[data-tools-overlay]")).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -1559,7 +1560,7 @@ test("the side panel's toggle, Expand, tools, kind marks and an open from a clos
     await expect(page.locator("[data-view-area-id]")).toHaveCount(0);
     await expect(page.locator('[data-panel-badge]')).toHaveText("3");
     const panelsBefore = panels();
-    await page.keyboard.press("Meta+KeyP");
+    await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
     await input.fill("c.txt");
