@@ -31,7 +31,7 @@ pub const MAX_DAEMON_CHILDREN: usize = 1;
 /// terminal job or host that ran the CLI (`pnpm dev`, a desktop app killing
 /// a timed-out `hide connect`) never reaches it: its lifetime is its own.
 pub fn spawn_owned(command: &mut Command) -> io::Result<Child> {
-    hide_platform::process::detach(command);
+    hide_platform::process::detach(command)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())

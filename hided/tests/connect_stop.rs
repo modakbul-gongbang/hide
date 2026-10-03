@@ -6,8 +6,10 @@
 //! state folder with no Herdr or Hide variables, so nothing reaches a live
 //! Herdr or daemon.
 
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -15,10 +17,7 @@ use serde_json::Value;
 /// `hide` with the account's places moved under `home`; on Windows the home
 /// and the folders Herdr's default pipe and the folder locks resolve from.
 fn isolated(home: &Path, state: &Path) -> Command {
-    let mut command = Command::new(
-        Path::new(env!("CARGO_BIN_EXE_hided"))
-            .with_file_name(format!("hide{}", std::env::consts::EXE_SUFFIX)),
-    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hide"));
     for (key, _) in std::env::vars_os() {
         let upper = key.to_string_lossy().to_uppercase();
         if upper.starts_with("HERDR_") || upper.starts_with("HIDE_") {
@@ -39,15 +38,33 @@ fn isolated(home: &Path, state: &Path) -> Command {
     command
 }
 
+/// Runs `hide` and reads its output to the end, bounded: on Windows a
+/// daemon that inherited the CLI's output pipe would keep it open for its
+/// whole life, which a caller sees as a `hide` that never answers.
+fn run(command: &mut Command) -> (bool, Vec<u8>) {
+    let mut child = command.stdout(Stdio::piped()).spawn().expect("hide starts");
+    let mut stdout = child.stdout.take().unwrap();
+    let (done, heard) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        let _ = done.send(bytes);
+    });
+    let bytes = heard
+        .recv_timeout(Duration::from_secs(30))
+        .expect("hide's output did not end within 30 s: a process it started holds it open");
+    (child.wait().expect("hide ends").success(), bytes)
+}
+
 fn json(command: &mut Command) -> (bool, Value) {
-    let output = command.output().expect("hide runs");
-    let line = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+    let (ok, stdout) = run(command);
+    let line = serde_json::from_slice(&stdout).unwrap_or_else(|error| {
         panic!(
             "hide printed no JSON line ({error}): {}",
-            String::from_utf8_lossy(&output.stdout)
+            String::from_utf8_lossy(&stdout)
         )
     });
-    (output.status.success(), line)
+    (ok, line)
 }
 
 /// Stops whatever daemon the test started, however it ends.
@@ -92,11 +109,8 @@ fn connect_starts_the_daemon_beside_the_cli_and_stop_ends_it() {
         "status names the daemon connect started"
     );
 
-    let stopped = isolated(&home, &state)
-        .arg("stop")
-        .status()
-        .expect("hide stop runs");
-    assert!(stopped.success(), "hide stop failed");
+    let (stopped, _) = run(isolated(&home, &state).arg("stop"));
+    assert!(stopped, "hide stop failed");
     let until = Instant::now() + Duration::from_secs(10);
     while hide_platform::process::is_alive(pid) && Instant::now() < until {
         std::thread::sleep(Duration::from_millis(50));
