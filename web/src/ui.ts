@@ -228,6 +228,8 @@ type UiStore = {
    * what the core stores.
    */
   columnSlots: ColumnSlots;
+  /** The core's File Views call count this page last read, or null before the first. */
+  viewsCallsSeen: number | null;
   /** The columns the Workspace screen draws now, which the toolbar and the column chords read. */
   shownColumns: ShownColumns;
   /** The Explorer's inline name field, or null. */
@@ -294,6 +296,12 @@ type UiStore = {
   callColumn: (column: Column) => void;
   /** Another Workspace is drawn: a narrow body starts on Agent Views again. */
   resetColumnSlots: () => void;
+  /**
+   * The core's count of File Views calls, read from the snapshot: a rise is a
+   * call, made by this page or not (a CLI `--reveal` among them), so a narrow
+   * body shows File Views. The first count read is only noted.
+   */
+  noteViewsCalls: (count: number) => void;
   setShownColumns: (shown: ShownColumns) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
@@ -331,6 +339,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   agentFindRequest: null,
   viewFocusRequest: null,
   columnSlots: DEFAULT_SLOTS,
+  viewsCallsSeen: null,
   shownColumns: { views: false, tools: false, step: "wide" },
   explorerDraft: null,
   pendingTrash: null,
@@ -379,6 +388,12 @@ export const useUiStore = create<UiStore>((set, get) => ({
   },
   resetColumnSlots: () => {
     if (get().columnSlots !== DEFAULT_SLOTS) set({ columnSlots: DEFAULT_SLOTS });
+  },
+  noteViewsCalls: (count) => {
+    const seen = get().viewsCallsSeen;
+    if (seen === count) return;
+    set({ viewsCallsSeen: count });
+    if (seen !== null && count > seen) get().callColumn("views");
   },
   setShownColumns: (shown) => {
     const current = get().shownColumns;

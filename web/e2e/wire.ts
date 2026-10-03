@@ -92,30 +92,25 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
 }
 
 /**
- * Shows one tool in the side panel's column: a Workspace starts with its
- * panel closed, the panel toggle opens it, the column's toggle shows the
- * column, and its icon tabs choose the tool (issue 170).
+ * Shows one tool in the Tools column: a Workspace starts with Tools off, the
+ * toolbar's Tools icon turns it on, and its icon tabs choose the tool (PRD
+ * three-column-panel D-04).
  */
 export async function showTool(page: Page, tool: "explorer" | "changes"): Promise<void> {
   const shown = page.locator(`[data-tool="${tool}"]`);
   if (await shown.isVisible()) return;
-  const panel = page.locator("[data-side-panel]");
-  if ((await panel.count()) === 0) await page.locator('[data-panel-toggle="off"]').click();
-  await expect(panel).toBeVisible();
+  const column = page.locator('[data-column="tools"]');
+  if ((await column.count()) === 0) await page.locator('[data-column-toggle="tools"]').click();
+  await expect(column).toBeVisible();
   const tab = page.locator(`[data-tool-tab="${tool}"]`);
-  await expect(tab.or(page.locator('[data-tools-toggle="off"]')).first()).toBeVisible();
-  if (!(await tab.isVisible())) await page.locator('[data-tools-toggle="off"]').click();
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
   await expect(shown).toBeVisible();
 }
 
-/**
- * Chooses the side panel's state from the Workspace toolbar's menu, the one
- * place that names all three states (the palette no longer does).
- */
-export async function choosePanel(page: Page, state: "closed" | "open" | "expanded"): Promise<void> {
+/** Shows or hides a column from the Workspace toolbar's menu (B15). */
+export async function chooseColumn(page: Page, column: "views" | "tools"): Promise<void> {
   await page.locator("[data-workspace-location]").click({ button: "right" });
-  await page.locator(`[data-menu-item="panel:${state}"]`).click();
+  await page.locator(`[data-menu-item="${column}"]`).click();
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
 }
 

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -142,8 +142,8 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
       });
       await expect(areas(page)).toHaveCount(1);
     }
-    await page.locator('[data-panel-toggle="off"]').click();
-    const panel = page.locator("[data-side-panel]");
+    await showTool(page, "explorer");
+    const panel = page.locator('[data-column="tools"]');
     await expect(panel).toBeVisible();
     const floating = await box(panel);
     const beforePanelDrop = await shape(page);

@@ -60,6 +60,13 @@ pub(super) struct WorkspaceViewStore {
     /// The last load stamp a browser display was given (`next_browser_load`).
     /// Runtime only.
     pub(super) browser_load: u64,
+    /// Counts the area intents that called File Views, whichever page, CLI
+    /// `--reveal` or event asked. The shell draws a called column in a body
+    /// too narrow for all of them (PRD three-column-panel D-07, B26, B27),
+    /// and a call that did not start in that page reaches it only as this
+    /// count rising. Runtime only: which column a narrow body shows is never
+    /// stored (B28).
+    pub(super) views_called: u64,
     /// The Workspace the operator last chose, in this process or before it
     /// started: the one the app opens on (D-11); none on a first run.
     resumable: Option<WorkspaceKey>,
@@ -224,6 +231,7 @@ impl WorkspaceViewStore {
                 derived_active: None,
                 split_requests: HashMap::new(),
                 browser_load: 0,
+                views_called: 0,
                 unshown: HashSet::new(),
                 resumable,
                 pending_choice: None,
@@ -331,6 +339,7 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };
+        store.views_called += 1;
         let entry = store.views.entry(&key.0, &key.1);
         let before = (entry.views, entry.tool, entry.tools);
         entry.views = true;
@@ -601,6 +610,7 @@ impl Runtime {
             tool: view.tool,
             views_width: view.views_width,
             tools_width: view.tools_width,
+            views_called: store.views_called,
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
             agent_layout: self.agent_layout_snapshot(&view.agent_layout),

@@ -74,9 +74,9 @@ test("Command T and Command W from a native page act on its View area, and after
     const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
-    // At a CI runner's 1024-point width the side panel covers the agents
-    // while the sidebar shows, so the sidebar goes and the panel floats over
-    // the agents' right part, leaving each terminal's left edge to click.
+    // At a CI runner's 1024-point width the sidebar goes, so the Workspace
+    // body holds Agent Views beside File Views and each terminal stays in
+    // reach (PRD three-column-panel D-07).
     await fitWindow(app, { width: 1024, height: 700 });
     await enterWorkspace(page);
     await menuClick(app, "toggle_left_sidebar");

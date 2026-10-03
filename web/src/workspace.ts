@@ -25,6 +25,8 @@ export type WorkspaceView = {
   views_width: number | null;
   /** The Tools column's width, the same way. */
   tools_width: number | null;
+  /** How many times File Views has been called since the core started; a rise shows it in a narrow body (D-07). */
+  views_called: number;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */

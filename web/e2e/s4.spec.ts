@@ -41,8 +41,8 @@ test("History opens a scoped patch, then updates after editing the original file
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first().click();
-    // The side panel's column holds one tool; History's tab swaps the
-    // Explorer out (S6 B10, issue 170).
+    // The Tools column holds one tool; History's tab swaps the Explorer out
+    // (S6 B10).
     await showExplorer(page);
     await showTool(page, "changes");
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
@@ -63,11 +63,11 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-diff-group="committed"] [data-patch-view] .cm-content')).toContainText("+branch");
     await row.click();
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
-    // ⌘⇧B closes the side panel with its tool, and brings it back on the
-    // same tool (issue 170).
-    await page.keyboard.press("Meta+Shift+KeyB");
+    // ⌘E turns the Tools column off and brings it back on the same tool
+    // (PRD three-column-panel B4).
+    await page.keyboard.press("Meta+KeyE");
     await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press("Meta+KeyE");
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await showExplorer(page);
 

@@ -405,6 +405,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap()
         .context;
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
+    let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().views_called;
     runtime
         .workspace_control_action(
             "local",
@@ -423,6 +424,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         !views_of(&runtime, key),
         "a background select leaves File Views off"
     );
+    assert_eq!(called(&runtime), 0, "a background select calls no column");
     runtime
         .workspace_control_action(
             "local",
@@ -441,6 +443,9 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         Some("workspace-b")
     );
     assert!(views_of(&runtime, key), "a reveal turns File Views on");
+    // The shell shows a called File Views in a narrow body; a call from the
+    // CLI reaches it only as this count rising (PRD three-column-panel D-07).
+    assert_eq!(called(&runtime), 1, "a reveal calls File Views");
 }
 
 fn views_of(runtime: &Runtime, key: (&str, &str)) -> bool {

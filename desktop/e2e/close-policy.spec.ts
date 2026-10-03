@@ -54,13 +54,15 @@ test("Command W closes the keyboard's display or pane, never its tab", async () 
     await page.keyboard.press("Meta+KeyW");
     await expect(editor).toHaveCount(0);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
-    await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "tools");
+    // The last view closed turns File Views off and leaves Tools showing.
+    await expect(page.locator('[data-column="views"]')).toHaveCount(0);
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     capture("native-close-view-tools");
     await page.locator('[data-tool-tab="explorer"]').focus();
     await page.keyboard.press("Meta+KeyW");
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
     await page.keyboard.press("Meta+KeyE");
-    await expect(page.locator("[data-side-panel]")).toHaveCount(0);
+    await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
     await page.locator(`[data-terminal-host="${herdr.panes[1]}"]`).click();
     await page.keyboard.press("Meta+KeyW");
     await expect(page.locator(`[data-pane-view="${herdr.panes[1]}"]`)).toHaveCount(0, { timeout: 15_000 });
@@ -108,7 +110,7 @@ test("Command W on an agent that spawned others asks once and closes the subtree
     const child = await spawnAgent(herdr, "child", target);
     const grandchild = await spawnAgent(herdr, "grandchild", child);
     await page.keyboard.press("Meta+KeyE");
-    await expect(page.locator("[data-side-panel]")).toHaveCount(0);
+    await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
     await page.locator('[data-sidebar-mode="agents"]').click();
     await page.locator(`[data-agent-tree-toggle="${target}"]`).click({ timeout: 30_000 });
     await expect(page.locator(`[data-agent-tree-toggle="${child}"]`)).toBeVisible({ timeout: 30_000 });

@@ -402,7 +402,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
     // The S5 Settings row (⌥, in place of Chrome's ⌘,) is a move and Add
     // project (desktop app only) no longer is, so seven rows are moved;
-    // Toggle Explorer (issue 170) is the 28th row, and the two numbered
+    // Toggle Tools is the 28th row, and the two numbered
     // families (Select tab 1-9, Select agent 1-9) fold into one row each,
     // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
     // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st,

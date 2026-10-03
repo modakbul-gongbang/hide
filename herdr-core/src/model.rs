@@ -218,6 +218,9 @@ pub struct WorkspaceViewSnapshot {
     pub views_width: Option<u32>,
     /// The Tools column's width, the same way.
     pub tools_width: Option<u32>,
+    /// How many times File Views has been called since the core started; the
+    /// shell shows File Views in a narrow body when it rises (D-07).
+    pub views_called: u64,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).

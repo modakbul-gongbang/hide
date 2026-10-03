@@ -72,8 +72,22 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
     slots,
   });
   const checkoutId = checkout?.id ?? null;
-  // A narrow body starts on Agent Views in each Workspace it draws.
+  // A narrow body starts on Agent Views in each Workspace it draws, and
+  // whenever the body narrows into one column: only a call made there
+  // gives the one column to another (D-07).
   useEffect(() => useUiStore.getState().resetColumnSlots(), [checkoutId]);
+  const step = frame.step;
+  const previousStep = useRef(step);
+  useEffect(() => {
+    if (step === "narrow" && previousStep.current !== "narrow") useUiStore.getState().callColumn("agents");
+    previousStep.current = step;
+  }, [step]);
+  // After the Workspace's own reset, so a reveal that brought this Workspace
+  // in front still shows File Views.
+  const viewsCalls = view?.views_called;
+  useEffect(() => {
+    if (viewsCalls !== undefined) useUiStore.getState().noteViewsCalls(viewsCalls);
+  }, [viewsCalls]);
   const viewsShown = frame.views !== null;
   const toolsShown = frame.tools !== null;
   const agentsCovered = frame.agents === null;

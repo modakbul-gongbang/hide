@@ -106,7 +106,7 @@ test("New tab chord opens where the keyboard is: its View area, its pane's Agent
     await expect(agentTabs).toHaveCount(2);
     await screenshot(page, "new-tab-chord-view");
     await page.keyboard.press("Meta+Shift+KeyB");
-    await expect(page.locator("[data-side-panel]")).toHaveCount(0);
+    await expect(page.locator('[data-column="views"]')).toHaveCount(0);
 
     // The keyboard in an Agent pane: a tab at the end of the area showing that
     // pane. Focusing a pane activates its area, and the core's area focus moves
@@ -124,7 +124,7 @@ test("New tab chord opens where the keyboard is: its View area, its pane's Agent
     // Nowhere in particular: the Agent column's active area, as before.
     await agentTab(secondId).click();
     await expect(right).toHaveAttribute("data-active-area", "true");
-    await page.locator("[data-panel-toggle]").focus();
+    await page.locator('[data-column-toggle="views"]').focus();
     await page.keyboard.press("Alt+KeyT");
     await expect(right.locator('[role="tab"]')).toHaveCount(3);
     await expect(left.locator('[role="tab"]')).toHaveCount(2);

@@ -117,18 +117,16 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
     }
     const firstRow = page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first();
     await firstRow.click();
-    // Opens without --reveal leave the Workspace's side panel as it was: closed.
+    // Opens without --reveal leave the Workspace's File Views as it was: off.
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-panel", "closed");
-    await page.locator('[data-panel-toggle="off"]').click();
-    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
+    await page.locator('[data-column-toggle="views"]').click();
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(page.locator('[data-view-tab-bar] [role="tab"][aria-label*="/보고서.md"]')).toHaveCount(1);
     await expect(page.locator('[data-view-tab-bar] [role="tab"][aria-label*="/changed.txt"]')).toHaveCount(1);
     await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
     const diffArea = page.locator("[data-view-area-id]").filter({ has: page.locator('[data-tab-kind="diff"]') });
     await expect(diffArea).toContainText("modified", { timeout: 10_000 });
-    await page.locator('[data-panel-expand="off"]').click();
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) {
       await page.screenshot({ path: path.join(process.env.HIDE_E2E_SCREENSHOT_DIR, "workspace-cli-views.png") });
     }

@@ -102,9 +102,8 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
     await beforeLoad?.(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
-    // Focus the repository checkout and show the Explorer, whose toggle opens
-    // the side panel with it: that is where the tree lives (S6 D-05, B10;
-    // issue 170).
+    // Focus the repository checkout and show the Explorer in the Tools
+    // column: that is where the tree lives (S6 D-05, B10).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
     await row.click();
@@ -928,11 +927,11 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     await page.locator(`[data-explorer-row="${repo}/src"]`).click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
     await page.keyboard.press("Meta+Shift+KeyB");
-    await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
+    await expect(page.locator('[data-column="views"]')).toHaveCount(0);
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
-    // preview tab (B12). The open brings the side panel back with the
-    // Explorer the Workspace keeps, its row revealed (S6 B10, issue 170).
+    // preview tab (B12). The open turns File Views back on and reveals its
+    // row in the Explorer (S6 B10; PRD three-column-panel B2).
     await page.keyboard.press("Meta+KeyP");
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
