@@ -43,7 +43,7 @@ The sidebar's Projects | Agents switch has no default chord and can be bound in 
 File Views is never empty: closing its last view turns it off in the same transition, Agent Views takes its width, and Tools stays as it was.
 With no view open, ⌘⇧B or the File Views icon turns File Views on holding one New tab page (Open with File ⌘P, and Diff when the checkout has changes); closing that untouched tab turns File Views off again.
 Tools alone is an ordinary state.
-Opening a file, a diff or a page from the Explorer, History, ⌘P, a terminal link, Open in Browser or Open server turns File Views on with the opened tab in its active View area; revealing a file turns Tools on with the Explorer and leaves File Views as it was.
+Opening a file, a diff or a page from the Explorer, History, ⌘P, a terminal link, Open in Browser or Open server turns File Views on with the opened tab in its active View area and leaves Tools as it was; revealing a file turns Tools on with the Explorer and leaves File Views as it was, and a terminal link that names a folder shows it in the Explorer the same way.
 Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and changes no column in a window wide enough for them all.
 
 The column edges are dividers: Agent Views | File Views, and the edge left of Tools.

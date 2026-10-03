@@ -291,8 +291,10 @@ fn file_views_turned_on_with_no_view_opens_a_new_tab_page() {
 
 /// Issue 170, revised, and PRD three-column-panel B5, B12: Tools holds one
 /// tool; choosing one turns Tools on with it, a reveal turns Tools on with
-/// the Explorer and leaves File Views as it was, and `reveal_path`, which
-/// opens the file, turns both on.
+/// the Explorer and leaves File Views as it was, and `reveal_path` (a
+/// terminal link) turns File Views on with the file it opens and
+/// leaves Tools as it was (B4), unless it names a folder, which only the
+/// Explorer shows.
 #[test]
 fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
     let (runtime, _checkout_id, directory) = strip_checkout("tool-opens");
@@ -343,8 +345,27 @@ fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
         }),
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
-    assert!(columns(&runtime).1);
-    assert_eq!(tools(&runtime), (Tool::Explorer, true));
+    assert_eq!(
+        columns(&runtime),
+        (true, false),
+        "a linked file leaves Tools off"
+    );
+    assert_eq!(tools(&runtime), (Tool::Explorer, false));
+    assert!(!runtime.snapshot.ui_state.right_panel_visible);
+
+    runtime.dispatch_json(&explorer_event(
+        "reveal_path",
+        serde_json::json!({
+            "path": directory, "workspace_id": runtime.snapshot.navigator.focused_workspace_id,
+            "checkout_id": checkout_id, "is_directory": true,
+        }),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        tools(&runtime),
+        (Tool::Explorer, true),
+        "a linked folder shows in the Explorer"
+    );
 }
 
 /// D-05, A5: the tool is the Workspace's, and the one global panel every

@@ -90,16 +90,18 @@ pub(super) struct WorkspaceViewStore {
 
 /// What an event asks of a Workspace's columns once it has moved the screen
 /// (D-03, D-08): a document, diff or page opened or focused turns the front
-/// Workspace's File Views on, and a reveal of a path, applied to its own
-/// checkout's Workspace when it settles (`settle_reveal_path`), also turns
-/// Tools on with the Explorer.
+/// Workspace's File Views on, and so does a path a link names, applied to its
+/// own checkout's Workspace when it settles (`settle_reveal_path`): a file it
+/// opens leaves Tools as it was (B4), and only a folder, which no tab can
+/// show, turns Tools on with the Explorer. The Explorer's own reveal (B5) is
+/// a `workspace_view` `reveal`, not an intent.
 /// Choosing an agent or a tab changes no column (D-17); nothing else moves
 /// a column on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AreaIntent {
     Views,
-    /// A reveal also turns the Tools column on, on the Explorer.
-    RevealInViews,
+    /// A folder a link names also turns the Tools column on, on the Explorer.
+    RevealFolder,
 }
 
 impl AreaIntent {
@@ -349,7 +351,7 @@ impl Runtime {
         let entry = store.views.entry(&key.0, &key.1);
         let before = (entry.views, entry.tool, entry.tools);
         entry.views = true;
-        if intent == AreaIntent::RevealInViews {
+        if intent == AreaIntent::RevealFolder {
             entry.tool = Tool::Explorer;
             entry.tools = true;
         }

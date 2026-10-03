@@ -2531,8 +2531,8 @@ fn a_reveal_calls_the_file_views_of_its_own_checkout() {
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(view.path, other.to_string_lossy());
     assert!(
-        view.views && view.tools,
-        "the reveal turns both columns on there"
+        view.views && !view.tools,
+        "the reveal turns File Views on there and leaves Tools off (B4)"
     );
     assert_eq!(
         view.views_called,

@@ -4261,12 +4261,19 @@ impl Runtime {
         }
         // The reveal calls the columns of its own checkout's Workspace, once
         // it has settled there, not of whichever was in front when it was
-        // asked, and not when its file was refused as it landed (D-08).
+        // asked, and not when its file was refused as it landed (D-08). A
+        // file opens in File Views and leaves Tools as it was (B4); a folder
+        // shows only in the Explorer, so it turns Tools on.
         if self.separate_view_areas()
             && self.snapshot.status.last_error == error_before
             && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
         {
-            self.apply_area_intent_to(&key, super::workspace_view::AreaIntent::RevealInViews);
+            let intent = if payload.is_directory {
+                super::workspace_view::AreaIntent::RevealFolder
+            } else {
+                super::workspace_view::AreaIntent::Views
+            };
+            self.apply_area_intent_to(&key, intent);
         }
         self.push_diagnostic(
             "path.revealed",
