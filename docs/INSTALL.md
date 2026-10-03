@@ -103,11 +103,23 @@ sudo chmod 4755 hide-linux-x64/chrome-sandbox
 - Closing the last window quits the app on Windows and Linux, as other apps there do; on macOS the app keeps running with no window until you quit it.
   Either way `hided` keeps running after the app is gone, as [First launch](#first-launch) describes.
 - The app's profile is `%APPDATA%\hide-desktop` on Windows and `~/.config/hide-desktop` on Linux, instead of `~/Library/Application Support/hide-desktop`.
-- Nothing is installed at first launch: the kit (the `hide` link, the agent hook entries and hcoord) is installed only by a daemon running from inside `hide.app` today, and This machine's row in Settings > Devices says so.
-- The app does not replace a `hided` that a previous version left running: a `hide` outside `hide.app` refuses a daemon of another build and the window shows the failure.
-  Before replacing the folder with a newer version, stop the old daemon with the old folder's CLI: `hide-win32-x64\resources\hide.exe stop` on Windows, `hide-linux-x64/resources/hide stop` on Linux.
+- First launch installs the `hide` command and the Claude Code and Codex hooks for runtimes configured on this machine.
+  Settings > Devices shows their installation results under This machine; hcoord remains Absent with its reason because its daemon supports macOS only.
+- Linux installs `~/.local/bin/hide` as a link to the package's `resources/hide`.
+  Windows installs `%USERPROFILE%\.local\bin\hide.cmd`, which runs `resources\hide.exe` through a `.hide-kit` directory junction beside the command; neither Administrator access nor Developer Mode is needed.
+  Keep the unpacked package folder in place while using it.
+- Opening a newer package replaces a running daemon of another build and refreshes the command and hook paths, as on macOS.
+  A development or standalone `hide` still refuses to replace a packaged daemon.
 - A package carries the device helper for its own system only, as the macOS app does: a Linux package installs it on a Linux x64 device, while no device runs the Windows one yet (Windows devices are not supported), so from Windows a device's files and Git stay unavailable.
 - Nothing updates itself, and uninstalling is deleting the folder; `~/.hide` (`%USERPROFILE%\.hide` on Windows) and the profile stay until you delete them.
+
+### Make the command available in a new shell
+
+Hide never changes PATH or the Windows registry.
+On Linux, if your shell does not already include `~/.local/bin`, add `export PATH="$HOME/.local/bin:$PATH"` to your shell's startup file and open a new shell.
+On Windows, add `%USERPROFILE%\.local\bin` to your user Path using **Edit environment variables for your account**, then open a new terminal.
+Run `hide status --json` to check that the installed command resolves.
+You can also call the command by its full path without changing PATH.
 
 ## Build and install from source
 
@@ -230,11 +242,11 @@ Each device row in Settings shows whether the remote session is connected and, w
 
 ## Update
 
-Quit hide, replace `/Applications/hide.app` with the new release or rebuild, and reopen it.
+Quit hide, replace `/Applications/hide.app` on macOS or unpack the new Windows/Linux package into its permanent folder, and reopen it.
 Opening the updated app replaces a `hided` still running from the previous build with one of its own build, and leaves the Herdr server, its panes and the agents running; a `hided` that will not stop makes the app show its start failure instead of attaching to the old one.
 State under `~/.hide/state` and the desktop profile at `~/Library/Application Support/hide-desktop` both persist across an update.
 Files the previous Swift app left under `~/Library/Application Support/hide/` are not read by the current app, apart from `state.json`'s shortcut bindings, which are imported once, and can be deleted by hand.
-Each launch replaces an outdated part of the kit on this Mac, and each device connection does the same there, hook entries included; a part you removed stays removed.
+Each packaged launch replaces an outdated part of the kit on this machine, and each device connection does the same there, hook entries included; a part you removed stays removed.
 
 ## Uninstall
 
@@ -243,6 +255,9 @@ This removes the application but keeps `~/.hide` and `~/Library/Application Supp
 Delete both directories only when you deliberately want to reset hide's saved state.
 Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out.
 `~/.local/bin/hide`, `~/.local/bin/hcoord` and hcoord's LaunchAgent stay as well until you remove them.
+On Windows or Linux, delete the unpacked package folder after quitting and running its `resources/hide[.exe] stop`.
+The hook entries and home state likewise remain; remove `~/.local/bin/hide` on Linux, or `%USERPROFILE%\.local\bin\hide.cmd` and the `.hide-kit` junction beside it on Windows.
+Remove the junction itself, not the directory it leads to.
 
 ### Going back to a build from before `~/.hide`
 

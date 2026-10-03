@@ -694,15 +694,15 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
             return Ok(state);
         }
         // Judged by the file this `hide` is, not the link it was invoked
-        // through: the kit's `~/.local/bin/hide` link into the app is the
-        // app's, and a link that only looks like a bundle path is not.
-        let from_app = std::env::current_exe()
+        // through: the kit's command resolves into its package, and a
+        // link that only looks like a package path has no authority.
+        let from_package = std::env::current_exe()
             .and_then(|path| path.canonicalize())
             .ok()
             .as_deref()
             .and_then(hide_kit::bundled_kit_dir)
             .is_some();
-        if !from_app {
+        if !from_package {
             eprintln!(
                 "{}",
                 serde_json::json!({
@@ -711,7 +711,7 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
                 })
             );
             return Err(ConnectError::OtherBuild(format!(
-                "a hided of another build is running (pid {}, build {}); this hide is not the app's (build {build}) and neither replaces nor attaches to it",
+                "a hided of another build is running (pid {}, build {}); this hide is not from a desktop package (build {build}) and neither replaces nor attaches to it",
                 state.pid,
                 running.unwrap_or("unknown"),
             )));

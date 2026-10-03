@@ -17,6 +17,10 @@ const FORMAT: u32 = 1;
 pub(crate) struct Record {
     format: u32,
     installed: BTreeSet<String>,
+    /// The last command destination this kit actually observed installed.
+    /// This proves ownership even after an old package has been deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cli_destination: Option<PathBuf>,
     /// One-time retirements of older layouts this machine has finished, so a
     /// later pass does not ask again (PRD hide-home-layout D-14). A build
     /// that does not know the field ignores it.
@@ -31,6 +35,27 @@ impl Record {
 
     pub(crate) fn insert(&mut self, id: ComponentId) {
         self.installed.insert(id.code().to_owned());
+    }
+
+    pub(crate) fn owns_cli(&self, destination: &Path) -> bool {
+        self.cli_destination.as_deref().is_some_and(|known| {
+            known == destination
+                || match (
+                    hide_platform::path::to_wire(known),
+                    hide_platform::path::to_wire(destination),
+                ) {
+                    (Ok(known), Ok(destination)) => known == destination,
+                    _ => false,
+                }
+        })
+    }
+
+    pub(crate) fn remember_cli(&mut self, destination: PathBuf) -> bool {
+        if self.cli_destination.as_ref() == Some(&destination) {
+            return false;
+        }
+        self.cli_destination = Some(destination);
+        true
     }
 
     pub(crate) fn has_retired(&self, what: &str) -> bool {
@@ -91,6 +116,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
     let record = Record {
         format: FORMAT,
         installed: record.installed.clone(),
+        cli_destination: record.cli_destination.clone(),
         retired: record.retired.clone(),
     };
     let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
