@@ -1574,7 +1574,7 @@ function buildProjectOverview(tokens) {
       ]),
       preview(`ov-preview-${suffix}`, {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage'}, {
         body: ['Workspace 화면에도 Pen 기준 화면과 리뷰 규칙을 둔다.', 'design-review baseline을 Workspace에 만든다.', 'Light와 Dark 모두 캡처한다.'],
-        byline: 'hoyeon · 9월 26일 · 댓글 2',
+        byline: 'ana · 9월 26일 · 댓글 2',
       }),
     ]);
     // The issue panel beside the board, which keeps the width left to it
@@ -2462,7 +2462,7 @@ function buildMenus(tokens) {
     menuRow(`${p}-mt1`, {lead: lead(`${p}-mt1g`, 'folder-git-2'), label: 'herdr-ide · main', checked: true, highlighted: true, width: ROW_W}),
     menuRow(`${p}-mt2`, {lead: lead(`${p}-mt2g`, 'folder-git-2'), label: 'oh-my-principle · main', width: ROW_W}),
     menuRow(`${p}-mt3`, {lead: lead(`${p}-mt3g`, 'folder-git-2'), label: 'sasu · main', width: ROW_W}),
-    menuRow(`${p}-mt4`, {lead: lead(`${p}-mt4g`, 'folder-git-2'), label: 'hoyeon · main', width: ROW_W}),
+    menuRow(`${p}-mt4`, {lead: lead(`${p}-mt4g`, 'folder-git-2'), label: 'demo · main', width: ROW_W}),
     menuSep(`${p}-mts`, ROW_W),
     menuRow(`${p}-mt5`, {lead: lead(`${p}-mt5g`, 'server'), label: 'mini · Home', width: ROW_W}),
     menuRow(`${p}-mt6`, {lead: lead(`${p}-mt6g`, 'server'), label: 'build-box · Home', detail: '연결 안 됨', width: ROW_W}),

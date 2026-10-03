@@ -22900,8 +22900,8 @@
                         {
                           "type": "text",
                           "id": "ov-preview-l-by",
-                          "name": "hoyeon · 9월 26일 · 댓글 2",
-                          "content": "hoyeon · 9월 26일 · 댓글 2",
+                          "name": "ana · 9월 26일 · 댓글 2",
+                          "content": "ana · 9월 26일 · 댓글 2",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
@@ -45113,8 +45113,8 @@
                         {
                           "type": "text",
                           "id": "ov-preview-d-by",
-                          "name": "hoyeon · 9월 26일 · 댓글 2",
-                          "content": "hoyeon · 9월 26일 · 댓글 2",
+                          "name": "ana · 9월 26일 · 댓글 2",
+                          "content": "ana · 9월 26일 · 댓글 2",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
@@ -84448,7 +84448,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mn-ask-tc-l-mt4",
-                                      "name": "hoyeon · main",
+                                      "name": "demo · main",
                                       "children": [
                                         {
                                           "type": "frame",
@@ -84476,8 +84476,8 @@
                                         {
                                           "type": "text",
                                           "id": "mn-ask-tc-l-mt4-t",
-                                          "name": "hoyeon · main",
-                                          "content": "hoyeon · main",
+                                          "name": "demo · main",
+                                          "content": "demo · main",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -87631,7 +87631,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mn-ask-tc-d-mt4",
-                                      "name": "hoyeon · main",
+                                      "name": "demo · main",
                                       "children": [
                                         {
                                           "type": "frame",
@@ -87659,8 +87659,8 @@
                                         {
                                           "type": "text",
                                           "id": "mn-ask-tc-d-mt4-t",
-                                          "name": "hoyeon · main",
-                                          "content": "hoyeon · main",
+                                          "name": "demo · main",
+                                          "content": "demo · main",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
