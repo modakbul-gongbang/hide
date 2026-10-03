@@ -8,6 +8,8 @@
 //!   reports replacement and truncation explicitly.
 //! - The conversation parsers turn provider-specific records into a small,
 //!   common event stream.
+//! - [`session_activity`] reuses native ownership proof and returns only
+//!   modification time and size for inactivity watches.
 //!
 //! No provider response or session body is logged by this crate. Callers can
 //! use the public raw-line helpers for records outside the conversation event
@@ -26,6 +28,7 @@ mod catalog;
 mod conversation_cursor;
 mod label_owner;
 pub mod label_transcript;
+pub mod session_activity;
 pub mod search;
 
 pub use label_owner::{ConfirmedLabelSession, confirm_label_session, label_reference_token};

@@ -184,6 +184,22 @@ pub fn label_transcript(
     to_value(transcript)
 }
 
+/// Local and remote activity share this path-free, metadata-only answer.
+pub fn session_activity(
+    home: &Path,
+    request: &hide_session::session_activity::SessionActivityRequest,
+) -> HostResult<Value> {
+    let activity = hide_session::session_activity::read(home, request).map_err(|reason| {
+        let code = match reason.as_str() {
+            "session_file_missing" => ErrorCode::NotFound,
+            "session_kind_unsupported" => ErrorCode::Unsupported,
+            _ => ErrorCode::Io,
+        };
+        HostError::new(code, reason)
+    })?;
+    to_value(activity)
+}
+
 /// Answers one request. Public so the core's tests can drive the exact
 /// dispatch the helper runs without a process.
 pub fn handle(call: Call) -> HostResult<Value> {
@@ -296,6 +312,12 @@ pub fn handle(call: Call) -> HostResult<Value> {
             })?;
             label_transcript(Path::new(&home), &request)
         }
+        Call::SessionActivity { request } => {
+            let home = std::env::var_os("HOME").ok_or_else(|| {
+                HostError::new(ErrorCode::Unsupported, "session_activity_home_unavailable")
+            })?;
+            session_activity(Path::new(&home), &request)
+        }
         Call::WorktreeRemove { removal } => {
             absolute(&removal.repository_root)?;
             absolute(&removal.checkout_path)?;
@@ -378,6 +400,42 @@ pub fn handle(call: Call) -> HostResult<Value> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn activity_helper_answers_metadata_only_and_refuses_unsupported_references() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join(".codex/sessions/2026/01/01");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("activity.jsonl");
+        let contents =
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"native-a\"}}\nsecret conversation\n";
+        std::fs::write(&path, contents).unwrap();
+        let mut request = hide_session::session_activity::SessionActivityRequest {
+            agent: hide_session::Agent::Codex,
+            reference_kind: "path".to_owned(),
+            reference_value: path.to_string_lossy().into_owned(),
+            cwd: None,
+        };
+        let answer = session_activity(home.path(), &request).unwrap();
+        assert_eq!(answer.as_object().unwrap().len(), 2);
+        assert_eq!(answer["bytes"], contents.len() as u64);
+        assert!(answer["modified_at_unix_ms"].as_u64().unwrap() > 0);
+        let serialized = answer.to_string();
+        assert!(!serialized.contains("native-a"));
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains(&request.reference_value));
+        let call = Call::SessionActivity {
+            request: request.clone(),
+        };
+        assert_eq!(
+            serde_json::from_value::<Call>(serde_json::to_value(&call).unwrap()).unwrap(),
+            call
+        );
+        request.reference_kind = "opaque".to_owned();
+        let error = session_activity(home.path(), &request).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unsupported);
+        assert_eq!(error.message, "session_kind_unsupported");
+    }
 
     /// The SSH channel is gone: nothing written reaches anyone.
     struct Closed;

@@ -25,7 +25,9 @@ use crate::root::RootIdentity;
 /// the old layout's helper root and bridge folder off the device in its
 /// `kit` apply, and its report carries `legacy_retirement` (PRD
 /// hide-home-layout D-13); a helper on 12 would leave them.
-pub const PROTOCOL_VERSION: u32 = 13;
+/// 14: `session_activity` answers only a proven session's modification time
+/// and size, for the parent-owned inactivity watcher.
+pub const PROTOCOL_VERSION: u32 = 14;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -184,6 +186,10 @@ pub enum Call {
     /// next checkpoint, never a path.
     LabelTranscript {
         request: hide_session::label_transcript::LabelTranscriptRequest,
+    },
+    /// Metadata-only activity using the same native ownership proof as labels.
+    SessionActivity {
+        request: hide_session::session_activity::SessionActivityRequest,
     },
 }
 
