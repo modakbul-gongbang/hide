@@ -5,9 +5,10 @@
 // was opened, under the Home row and inside the start panel.
 
 import { expect, test, type Page } from "@playwright/test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
+import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 
@@ -24,6 +25,57 @@ async function pinFixture(page: Page) {
 async function openHomeTab(page: Page) {
   await page.locator("[data-home-destination]").hover();
   await page.locator("[data-home-new-tab]").click();
+}
+
+type SnapshotPane = { pane_id: string; workspace_id: string; tab_id: string; cwd?: string | null; foreground_cwd?: string | null };
+type HerdrSnapshot = { result: { snapshot: { workspaces: { workspace_id: string; label?: string }[]; panes: SnapshotPane[] } } };
+type PaneProcess = { result: { process_info: { shell_pid: number; foreground_process_group_id: number } } };
+
+/**
+ * Written only when the test fails, so the next failure says where each pane's
+ * cwd came from. Herdr's `cwd` is a pane's OSC 7 report when it made one and
+ * the shell's /proc cwd otherwise, and `foreground_cwd` is always /proc; the
+ * shell's /proc cwd read here (Linux) and the per-process cwds Herdr lists in
+ * `process-info` tell which of the two was wrong. Hide's side is where the
+ * path back landed. Each read stands alone, so one that
+ * fails is recorded instead of hiding the rest.
+ */
+async function recordFailure(page: Page, herdr: HerdrFixture, daemon: Daemon | null) {
+  const read = <T,>(what: () => T): T | { error: string } => {
+    try {
+      return what();
+    } catch (error) {
+      return { error: String(error) };
+    }
+  };
+  const snapshot = read(() => herdr.run(["api", "snapshot"]) as HerdrSnapshot);
+  const panes = "error" in snapshot ? [] : snapshot.result.snapshot.panes;
+  const diagnostics = {
+    daemonHome: daemon?.home ?? null,
+    hide: {
+      location: await page.locator('nav[aria-label="Location"]').textContent({ timeout: 1_000 }).catch((error: unknown) => `unreadable: ${String(error)}`),
+      project: await page.locator("[data-go-overview]").getAttribute("data-go-overview", { timeout: 1_000 }).catch(() => null),
+      kind: await page.locator("[data-workspace-location]").getAttribute("data-workspace-location", { timeout: 1_000 }).catch(() => null),
+    },
+    workspaces: "error" in snapshot ? snapshot : snapshot.result.snapshot.workspaces,
+    panes: panes.map((pane) => {
+      const info = read(() => (herdr.run(["pane", "process-info", "--pane", pane.pane_id]) as PaneProcess).result.process_info);
+      const procCwd = (pid: number) => (process.platform === "linux" ? read(() => fs.readlinkSync(`/proc/${pid}/cwd`)) : "no /proc on this system");
+      return {
+        ...pane,
+        process: info,
+        shellProcCwd: "error" in info ? null : procCwd(info.shell_pid),
+        foregroundProcCwd: "error" in info ? null : procCwd(info.foreground_process_group_id),
+        visibleText: read(() => {
+          const result = spawnSync(herdr.bin, ["pane", "read", pane.pane_id, "--source", "visible", "--format", "text"], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+          return result.status === 0 ? result.stdout : `pane read exited ${result.status}: ${result.stderr.trim()}`;
+        }),
+      };
+    }),
+  };
+  const file = test.info().outputPath("home-diagnostics.json");
+  fs.writeFileSync(file, JSON.stringify(diagnostics, null, 2));
+  await test.info().attach("home-diagnostics", { path: file, contentType: "application/json" });
 }
 
 test("Home's + makes ~/hide with a link per project and opens a tab there", async ({ page }) => {
@@ -57,6 +109,9 @@ test("Home's + makes ~/hide with a link per project and opens a tab there", asyn
     // The path back names Home and its folder, never Home as a project.
     await expect(page.locator('nav[aria-label="Location"]')).toHaveText("Home/~/hide");
     await screenshot(page, "home-tab-opened");
+  } catch (error) {
+    await recordFailure(page, herdr, daemon);
+    throw error;
   } finally {
     daemon?.stop();
     herdr.stop();
