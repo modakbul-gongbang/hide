@@ -636,11 +636,22 @@ function buildTooltip(tokens) {
   // since a hint is the smallest form of a state (design principle 9).
   function balloon(id, withShortcut) {
     return frame(id, withShortcut ? 'With Shortcut' : 'Open', {
-      cornerRadius: '$--radius-sm', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline',
+      reusable: true, cornerRadius: '$--radius-sm', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline',
       strokeAlignment: 'inner', layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', padding: ['$--spacing-xs', '$--spacing-md'],
     }, [text(`${id}-t`, 'Split terminal', {fill: '$--foreground', size: '$--text-caption', weight: '500'}), ...(withShortcut ? [text(`${id}-k`, '⌘D', {fill: '$--muted-foreground', size: '$--text-caption', mono: true})] : [])]);
   }
-  function states(suffix) { return [cell('Open', balloon(`tip-open-${suffix}`, false)), cell('With Shortcut', balloon(`tip-shortcut-${suffix}`, true))]; }
+  function states(suffix) {
+    if (suffix === 'l') return [cell('Open', balloon('tip-open-l', false)), cell('With Shortcut', balloon('tip-shortcut-l', true))];
+    const darkCell = (id, state, instance) => frame(`${id}-cell`, state,
+      {layout: 'vertical', gap: '$--spacing-xs', alignItems: 'start', width: 'fit_content'},
+      [text(`${id}-cap`, state, {size: '$--text-micro', fill: '$--muted-foreground', weight: '600'}), instance]);
+    return [darkCell('tip-open-d', 'Open', ref('Sotn7', 'tip-open-l', 'Open',
+      {fill: '$--popover', stroke: '$--border'}, {'tip-open-l-t': {fill: '$--foreground'}})),
+      darkCell('tip-shortcut-d', 'With Shortcut', ref('haCFg', 'tip-shortcut-l', 'With Shortcut',
+        {fill: '$--popover', stroke: '$--border'}, {
+          'tip-shortcut-l-t': {fill: '$--foreground'}, 'tip-shortcut-l-k': {fill: '$--muted-foreground'},
+        }))];
+  }
   return buildSheet('sys-tooltip', 'System / Tooltip', 'Shaped from shadcn’s Tooltip (lxrnE): rounded-sm, --popover fill, hairline --border, --spacing-md horizontal padding. Its label is the trigger’s accessible name.', [], states('l'), states('d'));
 }
 

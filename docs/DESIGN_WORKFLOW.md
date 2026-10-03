@@ -39,6 +39,8 @@ Every name, path and count in a scene is invented example data, so a capture of 
    The command prints the scratch path (`agents/runs/<task-slug>/design/scratch.pen`) and the exact edit command.
 2. **Edit.** Use an independent Pen CLI headless session per file: `pen interactive --in <scratch-path> --out <scratch-path>`.
    Never use the shared desktop MCP or `--app desktop` for agent editing; an explicit MCP `filePath` did not reliably isolate the active desktop document in verification.
+   `scripts/pen-cli.mjs` pins Pen CLI 0.3.10 to support SDK-authored library documents and `contain` image fitting.
+   Changing that pin requires actual import, rendering, and reopen proof with the new version.
    Inside the CLI, read `read_skill()` and its schema/execute guides, then confirm `get_app_state()` and `list_libraries()` before editing.
    `list_libraries()` returns each imported library's ID; reference a component as `<id>:<component-id>` and a variable as `$<id>:--token-name`, discovering the ID fresh in each scratch rather than reusing another task's alias.
    Only one writer edits a shared library document at a time.

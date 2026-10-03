@@ -1688,257 +1688,1499 @@ function buildProjectOverview(tokens) {
 
 // -- Screen / Workspace ---------------------------------------------------------
 
-// A leading-icon tab for the agent/terminal column's own tab strip
-// (TabBar.tsx) - distinct from screenViewTab, which is the editor column's
-// tab and carries no icon. No library master matches this exact shape
-// (icon + label + its own underline), so it is hand-composed, the same way
-// screenDialogSurface is where no Dialog master fits either.
-function screenPanelTab(id, glyph, title, active, provider = null) {
-  return frame(id, title, {
-    layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs', '$--spacing-xxs', '$--spacing-xs'],
-    ...(active ? {stroke: '$--foreground', strokeWidth: {bottom: 2}, strokeAlignment: 'inner'} : {}),
-  }, [
-    ...(provider ? [text(`${id}-status`, '●', {fill: '$--agent-working', size: '$--text-caption'}), frame(`${id}-provider`, 'Provider logo', {width: 12, height: 12, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}}, [])] : [icon(`${id}-i`, glyph, {size: 12, fill: active ? '$--foreground' : '$--subtle-foreground'})]),
-    text(`${id}-t`, title, {size: '$--text-subhead', weight: active ? '600' : '400', fill: active ? '$--foreground' : '$--subtle-foreground'}),
-  ]);
-}
-
-// The pane header bar above a terminal (Pane header and focus's own toolbar
-// is the native shell's much larger agent-identity chrome; the web's own bar
-// for a plain, session-less pane is this flat one: a pane id, its status,
-// and the same overflow/close icon pair every pane header carries).
-function screenPaneHeader(id, {label, status, width}) {
-  return frame(id, 'Pane header', {width, height: 28, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], fill: '$--secondary'}, [
-    text(`${id}-label`, label, {mono: true, size: '$--text-caption', fill: '$--subtle-foreground'}),
-    frame(`${id}-trail`, 'Trailing', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-      text(`${id}-status`, status, {size: '$--text-caption', fill: '$--muted-foreground'}),
-      screenIconButton(`${id}-more`, 'ellipsis', {size: 20}),
-      screenIconButton(`${id}-close`, 'x', {size: 20}),
-    ]),
-  ]);
-}
-
-// The side panel's own icon button: a pressed one sits on --secondary with a
-// --foreground glyph, the rest stay --subtle-foreground (WorkspaceScreen.tsx).
-function sidePanelButton(id, glyph, {pressed = false, size} = {}) {
-  return themedXref(id, 'Nyvom', glyph, {...(pressed ? {fill: '$--secondary'} : {}), ...(size ? {width: size, height: size} : {})}, {ZIZFR: {icon: glyph, fill: pressed ? '$--foreground' : '$--subtle-foreground'}});
-}
-
-// The panel toggle as the toolbar carries it while the panel is closed: the
-// open-view count rides on it as a --primary badge (Component / Side panel toggle).
-function sidePanelToggle(id, count) {
-  return frame(id, 'Side panel toggle', {layout: 'none', width: 24, height: 24}, [
-    {...sidePanelButton(`${id}-button`, 'panel-right'), x: 0, y: 0},
-    frame(`${id}-badge`, 'Open views badge', {x: 12, y: -2, width: 14, height: 14, fill: '$--primary', cornerRadius: '$--radius-lg', layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
-      text(`${id}-count`, String(count), {size: '$--text-micro', weight: '600', fill: '$--primary-foreground'}),
-    ]),
-  ]);
-}
-
+// The shared window template and explicit state differences are decoded from the
+// reviewed Pen proposal. Every window keeps its real exported node ID. Master refs
+// and local token overrides stay linked to the project library; no raster assets.
+// Changes to this design should update this scoped factory and its Pen sheet together.
 function buildWorkspace(tokens) {
-  const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), MAIN_W = 1440 - SIDEBAR_W - num(tokens, '--spacing-md'), MAIN_H = 928;
-  const ROW = num(tokens, '--size-tab-strip'), GAP = num(tokens, '--spacing-sm'), TOOLS_W = num(tokens, '--size-panel-ideal');
-  const HAIR = '$--size-hairline', PANEL_W = GAP + 300 + TOOLS_W;
-  const rule = {stroke: '$--border', strokeWidth: {bottom: HAIR}, strokeAlignment: 'inner'};
-  const TERMINAL = [
-    ['fixture % echo capture-demo 한글 확인', '$--foreground'],
-    ['capture-demo 한글 확인', '$--subtle-foreground'],
-    ['fixture % git status --short', '$--foreground'],
-    [' M docs/한글 노트.md', '$--warning'],
-    ['?? scripts/pen-screens.mjs', '$--subtle-foreground'],
-    ['fixture % ', '$--foreground'],
+  const windowTemplate = {
+    "type": "frame",
+    "id": "TUoDW",
+    "name": "Workspace / Light / full1116",
+    "clip": true,
+    "width": 1456,
+    "height": 900,
+    "fill": "$--background",
+    "layout": "none",
+    "children": [
+      {
+        "type": "frame",
+        "id": "vT0el",
+        "x": 0,
+        "y": 0,
+        "name": "Native window chrome - comparison context",
+        "width": 1456,
+        "height": 28,
+        "fill": "$--secondary",
+        "stroke": "$--border",
+        "strokeWidth": {
+          "bottom": "$--size-hairline"
+        },
+        "strokeAlignment": "inner",
+        "layout": "none",
+        "children": [
+          {
+            "type": "ellipse",
+            "id": "mDiyL",
+            "x": 8,
+            "y": 8,
+            "name": "Inactive window control 1",
+            "opacity": 0.5,
+            "fill": "$--muted-foreground",
+            "width": 12,
+            "height": 12
+          },
+          {
+            "type": "ellipse",
+            "id": "sQ9MO",
+            "x": 28,
+            "y": 8,
+            "name": "Inactive window control 2",
+            "opacity": 0.5,
+            "fill": "$--muted-foreground",
+            "width": 12,
+            "height": 12
+          },
+          {
+            "type": "ellipse",
+            "id": "rxHFj",
+            "x": 48,
+            "y": 8,
+            "name": "Inactive window control 3",
+            "opacity": 0.5,
+            "fill": "$--muted-foreground",
+            "width": 12,
+            "height": 12
+          },
+          {
+            "type": "text",
+            "id": "JNfcl",
+            "x": 714,
+            "y": 5,
+            "name": "Window title",
+            "fill": "$--muted-foreground",
+            "content": "hide",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-body",
+            "fontWeight": "600"
+          }
+        ]
+      },
+      {
+        "type": "frame",
+        "id": "j82QG",
+        "x": 0,
+        "y": 28,
+        "name": "Device rail",
+        "width": 48,
+        "height": 872,
+        "fill": "$--sidebar",
+        "stroke": "$--border",
+        "strokeWidth": {
+          "right": 1
+        },
+        "strokeAlignment": "inner",
+        "layout": "vertical",
+        "gap": 12,
+        "padding": [
+          8,
+          4
+        ],
+        "children": [
+          {
+            "id": "NFivf",
+            "type": "ref",
+            "ref": "hideui:Nyvom",
+            "name": "This Mac",
+            "width": 40,
+            "height": 40,
+            "stroke": "$--foreground",
+            "strokeWidth": 2,
+            "cornerRadius": "$--radius-lg",
+            "descendants": {
+              "hideui:ZIZFR": {
+                "fill": "$--subtle-foreground",
+                "icon": "laptop"
+              }
+            }
+          },
+          {
+            "id": "XHA5O",
+            "type": "ref",
+            "ref": "hideui:Nyvom",
+            "name": "Add device",
+            "width": 40,
+            "height": 32,
+            "stroke": "$--border",
+            "strokeWidth": 1,
+            "cornerRadius": "$--radius-lg",
+            "descendants": {
+              "hideui:ZIZFR": {
+                "fill": "$--subtle-foreground",
+                "icon": "plus"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "frame",
+        "id": "E6s0TD",
+        "x": 48,
+        "y": 28,
+        "name": "Projects sidebar",
+        "width": 292,
+        "height": 872,
+        "fill": "$--sidebar",
+        "stroke": "$--border",
+        "strokeWidth": {
+          "right": 1
+        },
+        "strokeAlignment": "inner",
+        "layout": "none",
+        "children": [
+          {
+            "type": "frame",
+            "id": "mFUBL",
+            "x": 0,
+            "y": 0,
+            "name": "This Mac header",
+            "width": 292,
+            "height": 32,
+            "stroke": "$--border",
+            "strokeWidth": {
+              "bottom": "$--size-hairline"
+            },
+            "strokeAlignment": "inner",
+            "gap": 8,
+            "padding": [
+              0,
+              12
+            ],
+            "alignItems": "center",
+            "children": [
+              {
+                "type": "text",
+                "id": "di8S5",
+                "name": "Device title",
+                "fill": "$--foreground",
+                "textGrowth": "fixed-width",
+                "width": "fill_container",
+                "content": "This Mac",
+                "fontFamily": "$--font-ui",
+                "fontSize": "$--text-title",
+                "fontWeight": "600"
+              },
+              {
+                "id": "Rfg8S",
+                "type": "ref",
+                "ref": "hideui:Nyvom",
+                "name": "Add project",
+                "descendants": {
+                  "hideui:ZIZFR": {
+                    "fill": "$--subtle-foreground",
+                    "icon": "plus"
+                  }
+                }
+              },
+              {
+                "id": "Y02KdW",
+                "type": "ref",
+                "ref": "hideui:Nyvom",
+                "name": "Search",
+                "descendants": {
+                  "hideui:ZIZFR": {
+                    "fill": "$--subtle-foreground",
+                    "icon": "search"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "frame",
+            "id": "jAdn6",
+            "x": 0,
+            "y": 32,
+            "name": "Sidebar tab strip",
+            "width": 292,
+            "height": 32,
+            "stroke": "$--border",
+            "strokeWidth": {
+              "bottom": "$--size-hairline"
+            },
+            "strokeAlignment": "inner",
+            "gap": 8,
+            "padding": [
+              0,
+              12
+            ],
+            "alignItems": "center",
+            "children": [
+              {
+                "type": "text",
+                "id": "OYRm7",
+                "name": "Selected tab",
+                "fill": "$--foreground",
+                "content": "Projects",
+                "fontFamily": "$--font-ui",
+                "fontSize": "$--text-body",
+                "fontWeight": "normal"
+              },
+              {
+                "type": "text",
+                "id": "KGCa7",
+                "name": "Other tab",
+                "fill": "$--muted-foreground",
+                "content": "Agents",
+                "fontFamily": "$--font-ui",
+                "fontSize": "$--text-body",
+                "fontWeight": "normal"
+              }
+            ]
+          },
+          {
+            "type": "frame",
+            "id": "sv6IB",
+            "x": 4,
+            "y": 68,
+            "name": "Home",
+            "width": 284,
+            "height": 36,
+            "gap": 8,
+            "padding": [
+              0,
+              8
+            ],
+            "alignItems": "center",
+            "children": [
+              {
+                "type": "icon",
+                "id": "h2d0u",
+                "name": "Home icon",
+                "width": 14,
+                "height": 14,
+                "icon": "house",
+                "library": "lucide",
+                "fill": "$--subtle-foreground"
+              },
+              {
+                "type": "text",
+                "id": "pv35D",
+                "name": "Home title",
+                "fill": "$--foreground",
+                "textGrowth": "fixed-width",
+                "width": "fill_container",
+                "content": "Home",
+                "fontFamily": "$--font-ui",
+                "fontSize": "$--text-title",
+                "fontWeight": "600"
+              },
+              {
+                "type": "text",
+                "id": "NDnyJ",
+                "name": "Project count",
+                "fill": "$--muted-foreground",
+                "content": "0 projects",
+                "fontFamily": "$--font-ui",
+                "fontSize": "$--text-body",
+                "fontWeight": "normal"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "id": "c4b0sQ",
+            "x": 12,
+            "y": 110,
+            "name": "Recent activity",
+            "fill": "$--muted-foreground",
+            "content": "Projects · Recent activity · 1",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-micro",
+            "fontWeight": "600"
+          },
+          {
+            "type": "frame",
+            "id": "HObxT",
+            "x": 4,
+            "y": 124,
+            "name": "Selected checkout",
+            "width": 284,
+            "height": 36,
+            "fill": "$--secondary",
+            "cornerRadius": "$--radius-sm",
+            "gap": 8,
+            "padding": [
+              0,
+              8
+            ],
+            "alignItems": "center",
+            "children": [
+              {
+                "type": "icon",
+                "id": "qQH68",
+                "name": "Checkout folder",
+                "width": 14,
+                "height": 14,
+                "icon": "folder",
+                "library": "lucide",
+                "fill": "$--subtle-foreground"
+              },
+              {
+                "type": "text",
+                "id": "swzTQ",
+                "name": "Checkout label",
+                "fill": "$--foreground",
+                "content": "fixture",
+                "fontFamily": "$--font-ui",
+                "fontSize": "$--text-body",
+                "fontWeight": "600"
+              }
+            ]
+          },
+          {
+            "type": "frame",
+            "id": "F0TmV",
+            "x": 0,
+            "y": 840,
+            "name": "Sidebar footer",
+            "width": 292,
+            "height": 32,
+            "stroke": "$--border",
+            "strokeWidth": {
+              "top": 1
+            },
+            "strokeAlignment": "inner",
+            "gap": 8,
+            "padding": [
+              0,
+              12
+            ],
+            "justifyContent": "end",
+            "alignItems": "center",
+            "children": [
+              {
+                "id": "VnRz8",
+                "type": "ref",
+                "ref": "hideui:Nyvom",
+                "name": "Background usage",
+                "descendants": {
+                  "hideui:ZIZFR": {
+                    "fill": "$--subtle-foreground",
+                    "icon": "activity"
+                  }
+                }
+              },
+              {
+                "id": "ydsLS",
+                "type": "ref",
+                "ref": "hideui:Nyvom",
+                "name": "Settings",
+                "descendants": {
+                  "hideui:ZIZFR": {
+                    "fill": "$--subtle-foreground",
+                    "icon": "settings"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "W2zeQP",
+        "type": "ref",
+        "ref": "hideui:VMZTz",
+        "name": "Shared Workspace toolbar",
+        "fill": "$--sidebar",
+        "stroke": "$--border",
+        "x": 340,
+        "y": 28,
+        "width": 1116,
+        "height": 32,
+        "descendants": {
+          "hideui:bkh81": {
+            "fill": "$--subtle-foreground",
+            "content": "Home  /  fixture  /  main"
+          },
+          "hideui:Kjfje/hideui:side-panel-tools-toggle/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button": {
+            "fill": "$--secondary"
+          },
+          "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge": {
+            "fill": "$--primary",
+            "enabled": false
+          },
+          "hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count": {
+            "content": "1"
+          },
+          "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM": {
+            "fill": "$--secondary"
+          },
+          "hideui:Kjfje/hideui:XHe9v/hideui:OaJhM/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          }
+        }
+      },
+      {
+        "id": "DtqSr",
+        "type": "ref",
+        "ref": "hideui:side-panel",
+        "name": "Docked columns",
+        "fill": "$--background",
+        "x": 340,
+        "y": 60,
+        "width": 1116,
+        "height": 840,
+        "descendants": {
+          "hideui:YpxMC": {
+            "fill": "$--background",
+            "enabled": true,
+            "x": 0,
+            "y": 0,
+            "width": 480,
+            "height": 840
+          },
+          "hideui:YpxMC/hideui:m3nqv": {
+            "fill": "$--card",
+            "stroke": "$--border"
+          },
+          "hideui:YpxMC/hideui:Yf5g6": {
+            "fill": "$--secondary"
+          },
+          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-mark": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-title": {
+            "fill": "$--foreground"
+          },
+          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-strike": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-dirty": {
+            "fill": "$--warning"
+          },
+          "hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-close/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:ujfpg/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:GYdsi/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:jEy0G": {
+            "fill": "$--background"
+          },
+          "hideui:YpxMC/hideui:blLvs": {
+            "fill": "$--secondary",
+            "stroke": "$--border"
+          },
+          "hideui:YpxMC/hideui:W2jHfs": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:v57l6H": {
+            "fill": "$--foreground"
+          },
+          "hideui:YpxMC/hideui:CG4wC": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:YpxMC/hideui:K8ikC/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:a63n6t/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:jPwvc": {
+            "fill": "$--background"
+          },
+          "hideui:YpxMC/hideui:PNaQy": {
+            "fill": "$--foreground"
+          },
+          "hideui:YpxMC/hideui:aTsYy": {
+            "fill": "$--background",
+            "stroke": "$--border"
+          },
+          "hideui:YpxMC/hideui:lFQa0": {
+            "fill": "$--card",
+            "stroke": "$--border"
+          },
+          "hideui:YpxMC/hideui:ljIwg": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:e7uYn": {
+            "fill": "$--foreground"
+          },
+          "hideui:YpxMC/hideui:uJYZa": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:YpxMC/hideui:x9QjtJ/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:E0Mk6/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:YpxMC/hideui:M6Mnyn": {
+            "fill": "$--background"
+          },
+          "hideui:YpxMC/hideui:QSc1K": {
+            "fill": "$--foreground"
+          },
+          "hideui:gPjhF": {
+            "enabled": true,
+            "x": 480,
+            "y": 0,
+            "width": 8,
+            "height": 840
+          },
+          "hideui:gPjhF/hideui:side-panel-grip-line-top": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:gPjhF/hideui:side-panel-grip-pill": {
+            "fill": "$--card",
+            "stroke": "$--border"
+          },
+          "hideui:gPjhF/hideui:side-panel-grip-glyph": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:giyPa": {
+            "fill": "$--card",
+            "enabled": true,
+            "x": 488,
+            "y": 0,
+            "width": 360,
+            "height": 840
+          },
+          "hideui:giyPa/hideui:tPjjv": {
+            "fill": "$--card",
+            "stroke": "$--border"
+          },
+          "hideui:giyPa/hideui:b7bsc7": {
+            "fill": "$--card",
+            "width": 304
+          },
+          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-mark": {
+            "fill": "$--file-blue"
+          },
+          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-title": {
+            "fill": "$--foreground"
+          },
+          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-strike": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-dirty": {
+            "fill": "$--warning"
+          },
+          "hideui:giyPa/hideui:b7bsc7/hideui:view-tab-close/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:giyPa/hideui:N6jVdg/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:giyPa/hideui:eeRGB/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:giyPa/hideui:fenJg": {
+            "fill": "$--card",
+            "stroke": "$--border"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:BUboy": {
+            "fill": "$--subtle-foreground",
+            "content": "… 제목과 경로 확인.md"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-ic": {
+            "fill": "$--primary-foreground"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-lb": {
+            "fill": "$--foreground"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-ic": {
+            "fill": "$--primary-foreground"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-lb": {
+            "fill": "$--foreground"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-ic": {
+            "fill": "$--primary-foreground"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-lb": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-ic": {
+            "fill": "$--primary-foreground"
+          },
+          "hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-lb": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:giyPa/hideui:nFrdf": {
+            "fill": "$--card"
+          },
+          "hideui:giyPa/hideui:aX9gF": {
+            "fill": "$--secondary"
+          },
+          "hideui:giyPa/hideui:jOt0p": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:giyPa/hideui:iExJ4": {
+            "fill": "$--file-blue"
+          },
+          "hideui:giyPa/hideui:T1KFmN": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:giyPa/hideui:sfXAM": {
+            "fill": "$--foreground"
+          },
+          "hideui:giyPa/hideui:h10qC": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:giyPa/hideui:fzHJn": {
+            "fill": "$--foreground",
+            "content": "한글과 English가 함께 있는 파일을 읽습니다."
+          },
+          "hideui:giyPa/hideui:GQ6yZ": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:giyPa/hideui:oVfkk": {
+            "fill": "$--foreground"
+          },
+          "hideui:w7GZ7c": {
+            "enabled": true,
+            "x": 848,
+            "y": 0,
+            "width": 8,
+            "height": 840
+          },
+          "hideui:w7GZ7c/hideui:side-panel-grip-line-top": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:w7GZ7c/hideui:side-panel-grip-pill": {
+            "fill": "$--card",
+            "stroke": "$--border"
+          },
+          "hideui:w7GZ7c/hideui:side-panel-grip-glyph": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:eNvgI": {
+            "fill": "$--card",
+            "enabled": true,
+            "x": 856,
+            "y": 0,
+            "width": 260,
+            "height": 840
+          },
+          "hideui:eNvgI/hideui:H2M1v0": {
+            "stroke": "$--border"
+          },
+          "hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer": {
+            "stroke": "$--primary"
+          },
+          "hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer-glyph": {
+            "fill": "$--foreground"
+          },
+          "hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-history-glyph": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:eNvgI/hideui:b22eS": {
+            "stroke": "$--border"
+          },
+          "hideui:eNvgI/hideui:d927zh": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:eNvgI/hideui:DVJS6/hideui:ZIZFR": {
+            "fill": "$--subtle-foreground"
+          },
+          "hideui:eNvgI/hideui:NZoEx": {
+            "stroke": "$--border",
+            "enabled": false,
+            "height": 0,
+            "width": 0
+          },
+          "hideui:eNvgI/hideui:iDnaZ": {
+            "fill": "$--muted-foreground"
+          },
+          "hideui:eNvgI/hideui:MmldP": {
+            "stroke": "$--border"
+          },
+          "hideui:eNvgI/hideui:Cwgap": {
+            "fill": "$--file-blue"
+          },
+          "hideui:eNvgI/hideui:x1im3": {
+            "fill": "$--foreground",
+            "fontSize": "$--text-caption"
+          },
+          "hideui:eNvgI/hideui:fZi7M": {
+            "stroke": "$--border"
+          },
+          "hideui:eNvgI/hideui:t0QOE": {
+            "fill": "$--file-blue"
+          },
+          "hideui:eNvgI/hideui:aHlvp": {
+            "fill": "$--foreground",
+            "fontSize": "$--text-caption",
+            "content": "한글과 English 작업 기록 - 긴 파일 제…"
+          }
+        }
+      }
+    ]
+  };
+  const states = [
+    {"id":"TUoDW","mode":"Light","key":"full1116","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["TUoDW","vT0el","mDiyL","sQ9MO","rxHFj","JNfcl","j82QG","NFivf","XHA5O","E6s0TD","mFUBL","di8S5","Rfg8S","Y02KdW","jAdn6","OYRm7","KGCa7","sv6IB","h2d0u","pv35D","NDnyJ","c4b0sQ","HObxT","qQH68","swzTQ","F0TmV","VnRz8","ydsLS","W2zeQP","DtqSr"],"changes":[]},
+    {"id":"PUDa5","mode":"Light","key":"mid1100","window":[1440,900],"body":1100,"visibleWidths":{"agents":480,"views":612,"tools":0},"openFileCount":1,"ids":["PUDa5","do6Xq","A0zOxv","ATZUh","WzX2i","i20ww","keYir","pMIs8","Wusym","XlqMm","OhD8s","R4J80","PXhqH","BTjWb","A2xtWy","f5eq5W","BVAgn","BPRAZ","hM2NT","PQu9f","C7H6gy","SkaIK","hrP2Y","z85Ehu","gnUYi","piBwT","d9xAM","UJsFv","r4zjY5","fjTt5"],"changes":[{"path":["children",0,"children",3,"x"],"value":706},{"path":["children",0,"width"],"value":1440},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":1100},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1108},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":612},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1100},{"path":["children",4,"width"],"value":1100},{"path":["name"],"value":"Workspace / Light / mid1100"},{"path":["width"],"value":1440}]},
+    {"id":"e7GLci","mode":"Light","key":"mid848","window":[1188,900],"body":848,"visibleWidths":{"agents":480,"views":360,"tools":0},"openFileCount":1,"ids":["e7GLci","vz6lz","zVQGC","kahQR","LOm0g","K01Xq","F7TgXs","iLgOv","mLgAQ","FjPNn","p01YEE","ESnQC","rH7HS","fH7lb","XkxSU","Mm0p0","PIfKg","ON8hj","JQhkG","i1hVs4","FgxJy","QX59A","jIiPK","v4eXnS","M8Q2A","SjVw4","q31JuN","HZ2HD","u6Y1IX","HcIQ7"],"changes":[{"path":["children",0,"children",3,"x"],"value":580},{"path":["children",0,"width"],"value":1188},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":848},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"width"],"value":848},{"path":["name"],"value":"Workspace / Light / mid848"},{"path":["width"],"value":1188}]},
+    {"id":"wU6O3","mode":"Light","key":"narrow847agents","window":[1187,900],"body":847,"visibleWidths":{"agents":847,"views":0,"tools":0},"openFileCount":1,"ids":["wU6O3","O9JUq","XEKGT","PfYYC","AnWkc","U84r63","rgA0s","x3bCyj","Gdc8u","tARwm","F6Di99","cPxQV","EXdY1","IgOFJ","rQhwq","KT7b3","B0tNd","MeJlh","clMvA","SbbbC","dPBC5","Pt9Ah","XxJ0E","MMCLY","DdFbY","J1ISi7","j76tDF","sWiJq","X1RUk","MZ4ZX"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":855},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":847},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":847},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":847},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Light / narrow847agents"},{"path":["width"],"value":1187}]},
+    {"id":"l6fpKj","mode":"Light","key":"narrow847views","window":[1187,900],"body":847,"visibleWidths":{"agents":0,"views":847,"tools":0},"openFileCount":1,"ids":["l6fpKj","HQ6SS","K3L13b","xmFd1","mPgRM","BXZpN","ioMIf","HpLPw","yc8X0","XzcpN","d6jROt","avk0e","AvcQN","LFvl8","S4hQO","hynVp","TroX8","rp8qE","D3yQeZ","osWqi","UZDzv","DkdUU","sRY6j","K5TuJo","E6TYSv","BrkeT","LNf9A","Jsx1c","e6Ozqa","sahiH"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":855},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":847},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":0},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":847},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Light / narrow847views"},{"path":["width"],"value":1187}]},
+    {"id":"aoV0a","mode":"Light","key":"mid1100tools","window":[1440,900],"body":1100,"visibleWidths":{"agents":737,"views":0,"tools":355},"openFileCount":1,"ids":["aoV0a","zDLCi","ztEhg","Hjkup","F61zLZ","mw2X4","A4Cp3","l2WaGq","uQFGt","YlulQ","h7aSBI","ybhx9","MDGQY","r6B7Lt","j3M7MQ","w7QHo2","ELGF1","M9h2p","W41Xr","sH43B","ucQ37","auZaQ","I6zeHR","jekQ3","s2ho7","z2TKo4","VJofE","V136Si","nQqVo","KCq7h"],"changes":[{"path":["children",0,"children",3,"x"],"value":706},{"path":["children",0,"width"],"value":1440},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":1100},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":737},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":745},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":737},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":488},{"path":["children",4,"width"],"value":1100},{"path":["name"],"value":"Workspace / Light / mid1100tools"},{"path":["width"],"value":1440}]},
+    {"id":"QJQsr","mode":"Light","key":"mid848tools","window":[1188,900],"body":848,"visibleWidths":{"agents":485,"views":0,"tools":355},"openFileCount":1,"ids":["QJQsr","fS5am","Gsg2l","Enf1X","x1Ko4c","n8cdF","eVee5","eN8MU","I9AAcW","Yf0Il","c6BbC","agrS2","QrHVK","T212xl","sraVI","m6c21Y","UmonT","ILiZy","tWmvY","DwHaH","g8YfS","oNL8A","G2J0Oz","nEW0f","R2ixny","X8nJT","DD39j","JUbCY","hguxV","xqsrN"],"changes":[{"path":["children",0,"children",3,"x"],"value":580},{"path":["children",0,"width"],"value":1188},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":848},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":485},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":493},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":485},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":488},{"path":["children",4,"width"],"value":848},{"path":["name"],"value":"Workspace / Light / mid848tools"},{"path":["width"],"value":1188}]},
+    {"id":"OdCvV","mode":"Light","key":"narrow847tools","window":[1187,900],"body":847,"visibleWidths":{"agents":0,"views":0,"tools":847},"openFileCount":1,"ids":["OdCvV","y3IyH0","dAGe7","ktzql","ZdikY","r1iT7Y","x3p6Kk","wKi8I","ek5dK","iBhjp","DEgE1","ZwBpe","VxtaJ","kCFm1","HC9ww","MUe8s","rKvDw","PeEHM","I2NY5U","JZZgH","XtayH","SL2xL","pqohb","DvEAp","AlGIU","xyYRX","w4OGU","Y3LDHn","xa0Cy","AL6Wa"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":0},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":0},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Light / narrow847tools"},{"path":["width"],"value":1187}]},
+    {"id":"PmKT5","mode":"Light","key":"toolszero","window":[1456,900],"body":1116,"visibleWidths":{"agents":753,"views":0,"tools":355},"openFileCount":0,"ids":["PmKT5","FuHUy","MBro6","zBlnI","cCflh","wzmiI","fCwVW","g86tY","YsPwb","bZFJP","NcoAY","UNT0u","P6f46","EywVA","F1z8N","qMDKg","ICvwN","JuJrg","bhrtH","QvgD1","BRuHK","T93o69","wO5wW","BD3O5","MQEGk","PPGRI","v0fzbi","ItbQR","XyPFU","XEdY8"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count","content"],"value":"0"},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":753},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":761},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":753},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":761},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":761},{"path":["name"],"value":"Workspace / Light / toolszero"}]},
+    {"id":"jEUuK","mode":"Light","key":"toolshiddenfile","window":[1456,900],"body":1116,"visibleWidths":{"agents":753,"views":0,"tools":355},"openFileCount":1,"ids":["jEUuK","NRbxh","Up8D1","WYjPW","O9IdOq","tcmXN","ejvfd","RwSJG","Re1gc","NxjdC","j92NQS","cLOxu","hlR0t","m2TQUy","t2JEa","Uuwy2","DgOev","rML9g","tSeEd","o3OZQ","wUCzi","lJ3a3","sCBVw","DGGgW","YRt8i","z3Ma7","zDgGn","dGUCQ","r5KQox","HVkDE"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":753},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":761},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":753},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":761},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":761},{"path":["name"],"value":"Workspace / Light / toolshiddenfile"}]},
+    {"id":"DRb4n","mode":"Light","key":"dividerhover","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["DRb4n","aaTJ1","B8KRC","dEWrC","mSYXw","XyNRb","UZTqB","XsOz8","grCCD","x3VLW","HBzHV","v4WkhA","uEkie","d4erS","Koq7O","s8wznc","Qs4bQ","xlzXW","Po0Yy","VeG1E","Pi4GX","qpTnV","XbhFO","VwRXI","S0E5Qf","ZyOpL","lQKP1","q2pn0T","bV4cT","YDwUf"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["name"],"value":"Workspace / Light / dividerhover"}]},
+    {"id":"sPxvx","mode":"Light","key":"dividerfocus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["sPxvx","QQVEE","Ph5vx","Go93y","SENyY","nkm0C","c1OJBF","pNuxp","qvqrN","O6aOiC","a8NRA","l7NfT","oIOAb","cAuBY","TNPBu","OJGB8","e5vK3W","FioQ2","B9x6o","tffiV","OqoNP","HAtvW","N87rh","ATA8H","Qk1AU","Z5azt","BptWt","ZWGxq","CcKmE","Mnq1V"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","stroke"],"value":"$--border"},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["name"],"value":"Workspace / Light / dividerfocus"}]},
+    {"id":"D3d5BU","mode":"Light","key":"dividerguide","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["D3d5BU","xlhgo","mj1iF","CPMwk","RXft7","KeWuF","REeGf","h9XzAW","FMfLu","N8Pw9","D4tzk","r0L6eA","mIhdS","xm1pt","a5nq2","i2FEP6","A09LQ","iBArK","hFjYu","UV6EW","i3hCtG","ZEa4C","zJRxJ","RkHyN","qVJCM","b6OlZD","ocTkR","x9IuOt","s3ksu","OlvXJ"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["children",5],"value":{"id":"HzVMM","type":"ref","ref":"hideui:side-panel-grip","name":"Temporary divider guide","x":852,"y":60,"width":8,"height":840,"descendants":{"hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground","enabled":true,"height":840},"hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border","enabled":true,"y":408},"hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"}}}},{"path":["name"],"value":"Workspace / Light / dividerguide"}]},
+    {"id":"d6YJdY","mode":"Light","key":"dividerrelease","window":[1456,900],"body":1116,"visibleWidths":{"agents":512,"views":596,"tools":0},"openFileCount":1,"ids":["d6YJdY","bsNeH","x4qidL","X8loM","NGctU","U4GvJ8","EQBgn","t2v4A","b2VsX","NwNBc","Lw339","f9Z5Wt","bQ3wt","llMUa","g882uE","m12WwT","ZZaL5","Ktlv3","ZnPWA","H7QlVN","C5PDs","E9mrC","QocHU","Ke1LQ","Evqfu","qtabo","TafRU","iVyiH","Ne2iu","ekAYc"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":512},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1124},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":512},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":596},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":520},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1116},{"path":["name"],"value":"Workspace / Light / dividerrelease"}]},
+    {"id":"ec1uu","mode":"Light","key":"dividercancel","window":[1940,900],"body":1600,"visibleWidths":{"agents":589,"views":640,"tools":355},"openFileCount":1,"ids":["ec1uu","eEMUc","e2TeTa","PzxQi","nYVOd","sqoI1","M8oSel","UyGio","biVeo","EHJyG","bi49h","l0y9Jm","s73UZ3","bnFuB","IE7lW","PiUC5","x59Vm","gjjwC","dP3sW","rVJft","FwBBm","wo0BA","J4Ak8","DV39t","W2UAfG","M6XZm","L4BiVy","TeO74","Ruf45","KrKXg"],"changes":[{"path":["children",0,"children",3,"x"],"value":956},{"path":["children",0,"width"],"value":1940},{"path":["children",2,"children",3,"content"],"value":"Projects · Recent activity · 2"},{"path":["children",2,"children",4,"children",1,"content"],"value":"beta"},{"path":["children",3,"descendants","hideui:bkh81","content"],"value":"Home  /  beta  /  main"},{"path":["children",3,"width"],"value":1600},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":589},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","height"],"value":780},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","width"],"value":0},{"path":["children",4,"descendants","hideui:YpxMC/hideui:v57l6H","content"],"value":"w2:p1"},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1245},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":589},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":640},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":597},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1237},{"path":["children",4,"width"],"value":1600},{"path":["name"],"value":"Workspace / Light / dividercancel"},{"path":["width"],"value":1940}]},
+    {"id":"OkoMU","mode":"Light","key":"longpathhover","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["OkoMU","x5tRd","PacrB","ts4FW","S2Fg3","uM71H","HeS3x","FVE1R","bNtOg","JM6Ki","P0NW8T","ja2cH","cDUiX","hZNaf","h3dhZ","ORUbg","CUJPq","xCUps","lk5F7","IBgU5","gdqIG","m8emt","arGs3","DZ4yX","j9vxae","EBDfy","n8DsA","b1RYB","L2sgn","s638L"],"changes":[{"path":["children",5],"value":{"id":"w6Ykvp","type":"ref","ref":"hideui:tip-open-l","name":"Full file identity tooltip","fill":"$--popover","stroke":"$--border","x":739,"y":96,"width":360,"height":"fit_content","descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"File: /workspace/fixture/한국어와 English 작업 기록/한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md · Preview","name":"Actual native file identity","width":"fill_container","textGrowth":"fixed-width","fontWeight":"normal"}}}},{"path":["name"],"value":"Workspace / Light / longpathhover"}]},
+    {"id":"V6UYh","mode":"Light","key":"views-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["V6UYh","YblEd","h5Vazd","PcjCJ","FbRBI","t3GRBQ","bFDCw","M25NO","XAa87","rZs7d","MwKlA","VMusL","P0OvX","Wv6cF","uM74R","e0ZMHw","JHhu7","loQTy","UrJCT","nzM1F","ODcup","B17CM","T6LdxI","Y0Vees","sWzTz","XXxt8","y6GPr","JOOFN","nQbN6","raWzV"],"changes":[{"path":["children",5],"value":{"id":"Y81nx","type":"ref","ref":"hideui:tip-shortcut-l","name":"File Views tooltip","fill":"$--popover","stroke":"$--border","x":1332,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"File Views","name":"File Views"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⇧⌘B","name":"⇧⌘B"}}}},{"path":["name"],"value":"Workspace / Light / toolbarhints"}]},
+    {"id":"X7Fcc","mode":"Dark","key":"full1116","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["X7Fcc","xSWYt","EWggy","iludN","oF7H1","Vt3Nu","YuyMn","JIRsZ","ETRdh","x3KXtp","bvCMq","hUI2z","T5HGp","L1X8Tr","ilbS0","MT33P","i1onXy","j9UIfy","yGxcG","XHUlP","quni8","wokvt","Mqmgr","R9g0lT","k519J","iEz6j","ztrwz","l79l0Q","Aj3R1","hae0G"],"changes":[{"path":["name"],"value":"Workspace / Dark / full1116"}]},
+    {"id":"J3ckk6","mode":"Dark","key":"mid1100","window":[1440,900],"body":1100,"visibleWidths":{"agents":480,"views":612,"tools":0},"openFileCount":1,"ids":["J3ckk6","qIhMH","jXEVs","yj3AX","EGZNL","c64W1","wvz0E","KutwH","x9zTLj","H8ys6O","lV5VT","jcBGi","QSKEr","NTqgJ","K5QiC0","uW0PU","KfIgO","bkhkB","cMSOu","x8cftG","OOgfV","czRJl","c4PAeR","X0pQL","Wca3B","JnhcW","bQK7q","s3O4V","DneBV","AviT1"],"changes":[{"path":["children",0,"children",3,"x"],"value":706},{"path":["children",0,"width"],"value":1440},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":1100},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1108},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":612},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1100},{"path":["children",4,"width"],"value":1100},{"path":["name"],"value":"Workspace / Dark / mid1100"},{"path":["width"],"value":1440}]},
+    {"id":"fbxi3","mode":"Dark","key":"mid848","window":[1188,900],"body":848,"visibleWidths":{"agents":480,"views":360,"tools":0},"openFileCount":1,"ids":["fbxi3","ijx5y","SiDhH","E1HIQ","sFXCu","Hw9ox","AxK1U","g1pyK","smCyt","Hz0uy","NAnCd","DpTz8","OmEtx","ODKyO","mmmwG","EPcRq","BH3qw","HfJpv","y5yau","Hok4y","z2QRE","biLw2","p7ssr","t8rpDR","iQfNQ","jXbgZ","UwYaw","xcVLf","vRFQe","kpB8k"],"changes":[{"path":["children",0,"children",3,"x"],"value":580},{"path":["children",0,"width"],"value":1188},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":848},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"width"],"value":848},{"path":["name"],"value":"Workspace / Dark / mid848"},{"path":["width"],"value":1188}]},
+    {"id":"Z6s9U8","mode":"Dark","key":"narrow847agents","window":[1187,900],"body":847,"visibleWidths":{"agents":847,"views":0,"tools":0},"openFileCount":1,"ids":["Z6s9U8","AcpxQ","naLSB","cEkes","mwUjJ","T431E","PPQnp","cz9u1","u7VVm1","J0sOlw","d1ubx","vuj7X","dPh0I","kZ3yA","pRPLM","eQmJQ","cmQ9R","oFmAY","HHXMg","KHFNb","d3fkrn","D6ICMs","BBcMF","zXkDs","qsGTb","sdA3w","W6ueJ1","PersO","LiSYT","jSY3P"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":855},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":847},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":847},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":847},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Dark / narrow847agents"},{"path":["width"],"value":1187}]},
+    {"id":"Ql0b5","mode":"Dark","key":"narrow847views","window":[1187,900],"body":847,"visibleWidths":{"agents":0,"views":847,"tools":0},"openFileCount":1,"ids":["Ql0b5","ajcGp","Mv0Ph","PgkXh","SvO2F","hsWNW","q6h7k","pNFj8","elzvI","Ioc2s","UeEud","fLT07","oo3bP","rJU03","y6EQtY","y4mki8","s35w1","wylU7","MrBQb","l9STyt","w0e3t","NzG8f","MeaGe","NGz63","oN0Eh","DYJbA","t2wv28","f8LVqh","Q9VJH","xYHKW"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":855},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":847},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":0},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":847},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Dark / narrow847views"},{"path":["width"],"value":1187}]},
+    {"id":"nBxva","mode":"Dark","key":"mid1100tools","window":[1440,900],"body":1100,"visibleWidths":{"agents":737,"views":0,"tools":355},"openFileCount":1,"ids":["nBxva","KkXP8","g7gnF","J1DwH","cpSAL","ggJGk","m82sA","Io5Ii","uv9m2","FyQlO","kYstM","N9hLo","TLkSm","uwhgP","M2XMV","f6Y5vY","MMkTu","Wh3OM","xrJbM","kIeLi","fDWkS","bJez6","h2GYVn","aGpXe","WaArP","zkQNe","MgIvy","xlEiO","XnKR2","MnlxC"],"changes":[{"path":["children",0,"children",3,"x"],"value":706},{"path":["children",0,"width"],"value":1440},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":1100},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":737},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":745},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":737},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":488},{"path":["children",4,"width"],"value":1100},{"path":["name"],"value":"Workspace / Dark / mid1100tools"},{"path":["width"],"value":1440}]},
+    {"id":"V4UiI","mode":"Dark","key":"mid848tools","window":[1188,900],"body":848,"visibleWidths":{"agents":485,"views":0,"tools":355},"openFileCount":1,"ids":["V4UiI","SWFW9","HIIqu","s8Hn5","mKESL","YX6Q1","pZVGl","FFm0y","B6Ubsg","fMrF1","wBqrE","OSkgp","dJ3VU","e9Pt8p","Ypy1G","AqfPY","j4jPUv","x5XicG","UoG9A","Egjym","zUquX","buC3A","z3Edxd","LhC9h","Esw0M","s2wgzN","BBAao","So12G","lpszu","Z9IPYk"],"changes":[{"path":["children",0,"children",3,"x"],"value":580},{"path":["children",0,"width"],"value":1188},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":848},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":485},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":493},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":485},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":488},{"path":["children",4,"width"],"value":848},{"path":["name"],"value":"Workspace / Dark / mid848tools"},{"path":["width"],"value":1188}]},
+    {"id":"Dz9IR","mode":"Dark","key":"narrow847tools","window":[1187,900],"body":847,"visibleWidths":{"agents":0,"views":0,"tools":847},"openFileCount":1,"ids":["Dz9IR","Wr9OS","G6Nfm","Rn7nw","vpCrE","PoPOH","cULY3","lVGGz","vXN7r","bEzhB","nKncM","U47yf","Ft1Zn","U00f1Q","XDHns","M9e9M","gUdfo","nZwFL","HzGgk","Rmhs0","VeNMx","XpcDx","J3mrcU","USX6Y","lZ1OA","vDkyN","IEJyA","L7P7jP","jExGZ","o2Oc5"],"changes":[{"path":["children",0,"children",3,"x"],"value":579.5},{"path":["children",0,"width"],"value":1187},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"width"],"value":847},{"path":["children",4,"descendants","hideui:YpxMC","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":847},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":0},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","enabled"],"value":false},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":0},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":0},{"path":["children",4,"width"],"value":847},{"path":["name"],"value":"Workspace / Dark / narrow847tools"},{"path":["width"],"value":1187}]},
+    {"id":"a8qXDY","mode":"Dark","key":"toolszero","window":[1456,900],"body":1116,"visibleWidths":{"agents":753,"views":0,"tools":355},"openFileCount":0,"ids":["a8qXDY","YE9Qq","JbRLu","jzMVJ","Y4Svf","hySbN","H8tE9g","HVJe3","Fcvxo","y4y9c","XeZUW","GfHL1","l7bNIU","Wei01","k4TgO","fZi0H","H1l5m","CJxKQ","GTxNO","rSHUO","IB2md","QvQ6s","E9vq1G","j20Doj","q9B4L","H56hdj","AxFRY","xqle6","OcMTT","DAMag"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count","content"],"value":"0"},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":753},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":761},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":753},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":761},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":761},{"path":["name"],"value":"Workspace / Dark / toolszero"}]},
+    {"id":"Kk60A","mode":"Dark","key":"toolshiddenfile","window":[1456,900],"body":1116,"visibleWidths":{"agents":753,"views":0,"tools":355},"openFileCount":1,"ids":["Kk60A","S4peZ","EOo5W","KSVZq","WXATa","deT2R","Vxngs","w2DGuU","NqcSV","uOJ3P","yMBtz","MYU7v","OaU1d","GxP7h","nIW10","L29bhV","asj4x","NfCgC","B51rqs","w0LKDp","V9uM1J","c7KciP","rHona","O61bS","GtYyK","j3zopa","kpIcn","xADYu","w5rNR1","dOyvA"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge","enabled"],"value":true},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","fill"],"value":[]},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":753},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":761},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":753},{"path":["children",4,"descendants","hideui:giyPa","enabled"],"value":false},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":761},{"path":["children",4,"descendants","hideui:giyPa/hideui:b7bsc7","width"],"delete":true},{"path":["children",4,"descendants","hideui:giyPa/hideui:fenJg/hideui:BUboy","content"],"delete":true},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":761},{"path":["name"],"value":"Workspace / Dark / toolshiddenfile"}]},
+    {"id":"uhq8e","mode":"Dark","key":"dividerhover","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["uhq8e","T3qDd","cUsH6","tvvSG","s6rYIa","k4JXVp","F22Q2","HMQJz","WSeq2","PLfTC","YhDgv","YtfoO","Wdmna","oiKqp","nx61m","VaR1J","g6gq6","cEfyc","PK3Iy","G24v5c","Cniay","ps7OC","ssMkC","ueols","favAG","C0B47C","FKTNu","BnlnV","S9YkR","Re1tY"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["name"],"value":"Workspace / Dark / dividerhover"}]},
+    {"id":"eI9Uf","mode":"Dark","key":"dividerfocus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["eI9Uf","B6tvm","WO7Sz","NwKXS","b0JjLN","vqjZn","L7pzP","CsSRF","W5UnK","etnxJ","hXqH3","DF8cd","g6kF0v","flNDz","qcsGY","a28xP","dSNlf","UrpK2","zo28A","bQiCk","BBBA6","q7s9F","f7qDt","LAoiB","x2zgyW","qCiMG","c0G5w5","gPqqa","XG5hI","pGIVX"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","stroke"],"value":"$--border"},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["name"],"value":"Workspace / Dark / dividerfocus"}]},
+    {"id":"DPFSq","mode":"Dark","key":"dividerguide","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["DPFSq","w9gY4G","Sgjwb","pMOih","tXmni","sb6fW","HiTAX","jQY3r","SKV2s","eeiLZ","O9cEr","VkPK0","akwsS","u2Dksi","OytVS","wz8d5","r43GE","Vm57g","z99vD","A84cc","aLBvB","GkzOh","c6ESwj","vvxi9","jw2h8","QoxlP","SNIjU","BJOO8","a9WT2k","STctY"],"changes":[{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-line-top","height"],"value":840},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","enabled"],"value":true},{"path":["children",4,"descendants","hideui:gPjhF/hideui:side-panel-grip-pill","y"],"value":408},{"path":["children",5],"value":{"id":"dhyqM","type":"ref","ref":"hideui:side-panel-grip","name":"Temporary divider guide","x":852,"y":60,"width":8,"height":840,"descendants":{"hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground","enabled":true,"height":840},"hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border","enabled":true,"y":408},"hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"}}}},{"path":["name"],"value":"Workspace / Dark / dividerguide"}]},
+    {"id":"N8yit","mode":"Dark","key":"dividerrelease","window":[1456,900],"body":1116,"visibleWidths":{"agents":512,"views":596,"tools":0},"openFileCount":1,"ids":["N8yit","pIBZg","e9RBr","RjxAo","FdI2i","kgcsL","yWfSc","XqLLE","iiSei","svoic","DT0n5","PfuLO","N7GoP","noQDW","DVCMf","uyd6N","x10ras","frre7","ejwBU","UCrSF","lJalK","YBc8y","HGBfD","qfg7H","C6KkS","h0ADX","l6cFsx","i7phN","p8hdt","hmu6a"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","fill"],"value":[]},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":512},{"path":["children",4,"descendants","hideui:eNvgI","enabled"],"value":false},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1124},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":512},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":596},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":520},{"path":["children",4,"descendants","hideui:w7GZ7c","enabled"],"value":false},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1116},{"path":["name"],"value":"Workspace / Dark / dividerrelease"}]},
+    {"id":"YIxRN","mode":"Dark","key":"dividercancel","window":[1940,900],"body":1600,"visibleWidths":{"agents":589,"views":640,"tools":355},"openFileCount":1,"ids":["YIxRN","B2RbFU","NlEKy","CafJB","Wb8SU","Gb7bd","r9d0YB","zAzRe","M1V3je","U8dRPI","bIXIO","sgA9Q","YsBar","P6aMF","x0z8A","EtjPI","RxzPj","KW5JV","EsDzq","ypymv","F18tb","q1Rmif","H56Q5","RVFHf","MUsv4","Y820X","Qvuxu","Rj1e9","gaf4J","C687Ki"],"changes":[{"path":["children",0,"children",3,"x"],"value":956},{"path":["children",0,"width"],"value":1940},{"path":["children",2,"children",3,"content"],"value":"Projects · Recent activity · 2"},{"path":["children",2,"children",4,"children",1,"content"],"value":"beta"},{"path":["children",3,"descendants","hideui:bkh81","content"],"value":"Home  /  beta  /  main"},{"path":["children",3,"width"],"value":1600},{"path":["children",4,"descendants","hideui:YpxMC","width"],"value":589},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","enabled"],"value":false},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","height"],"value":780},{"path":["children",4,"descendants","hideui:YpxMC/hideui:aTsYy","width"],"value":0},{"path":["children",4,"descendants","hideui:YpxMC/hideui:v57l6H","content"],"value":"w2:p1"},{"path":["children",4,"descendants","hideui:eNvgI","width"],"value":355},{"path":["children",4,"descendants","hideui:eNvgI","x"],"value":1245},{"path":["children",4,"descendants","hideui:eNvgI/hideui:aHlvp","content"],"value":"한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md"},{"path":["children",4,"descendants","hideui:gPjhF","x"],"value":589},{"path":["children",4,"descendants","hideui:giyPa","width"],"value":640},{"path":["children",4,"descendants","hideui:giyPa","x"],"value":597},{"path":["children",4,"descendants","hideui:w7GZ7c","x"],"value":1237},{"path":["children",4,"width"],"value":1600},{"path":["name"],"value":"Workspace / Dark / dividercancel"},{"path":["width"],"value":1940}]},
+    {"id":"fDgAU","mode":"Dark","key":"longpathhover","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["fDgAU","I6Fz0o","dJCwv","SEHfI","kIkme","gMxUN","ClZOI","kmjxb","F53lX","J4pFFA","rCoRu","Z6UEK3","WUPLJ","BRMdP","L4gdg3","fzdJu","IIpHb","TPaUb","hU3mm","GOtqS","QxUL7","j0Ux6","ahsaV","NmTzo","iZKD9","M4Ycl","D4XHA","VamER","ZGeLc","xfNIx"],"changes":[{"path":["children",5],"value":{"id":"cQEw5","type":"ref","ref":"hideui:tip-open-l","name":"Full file identity tooltip","fill":"$--popover","stroke":"$--border","x":739,"y":96,"width":360,"height":"fit_content","descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"File: /workspace/fixture/한국어와 English 작업 기록/한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md · Preview","name":"Actual native file identity","width":"fill_container","textGrowth":"fixed-width","fontWeight":"normal"}}}},{"path":["name"],"value":"Workspace / Dark / longpathhover"}]},
+    {"id":"u7vlOH","mode":"Dark","key":"views-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["u7vlOH","hx9OA","Grlmv","kReFs","miTEo","l6ZmGe","pBzIy","r2B6Y","lbEQq","zaCuj","nwOVx","d8cFy","t8rDk","mHqtL","dIIaJ","aJgF6","wA0sN","JJMaJ","Hsar2","kmPKQ","j69Sx","W35ji","j4FGQD","WenQA","AuuB8","c7zAa","S8Onh","m9TMO","Iw2wz","gvQSX"],"changes":[{"path":["children",5],"value":{"id":"brw2Q","type":"ref","ref":"hideui:tip-shortcut-l","name":"File Views tooltip","fill":"$--popover","stroke":"$--border","x":1332,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"File Views","name":"File Views"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⇧⌘B","name":"⇧⌘B"}}}},{"path":["name"],"value":"Workspace / Dark / toolbarhints"}]},
+    {"id":"Z6h2wQ","mode":"Light","key":"views-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["Z6h2wQ","l4vs7","X2j4mm","s7XPrR","v1BYS","C29wUo","i6IS8","CM5Ye","ttmT4","UMbHJ","vYik3","uQMtF","oWSHR","NoNa4","p4lcP","ZgkOx","WZqV2","FyLg0","d1xaPV","dakYa","iqFiZ","M4xK2i","RiuxC","PpQgx","CZzD6","ceCJS","MnMYs","rKYpX","btUG7","l9WfA"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","stroke"],"value":"$--ring"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","strokeAlignment"],"value":"outer"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","strokeWidth"],"value":1},{"path":["children",5],"value":{"id":"UFK98","type":"ref","ref":"hideui:tip-shortcut-l","name":"File Views tooltip","fill":"$--popover","stroke":"$--border","x":1332,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"File Views","name":"File Views"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⇧⌘B","name":"⇧⌘B"}}}},{"path":["name"],"value":"Workspace / Light / views-focus"}]},
+    {"id":"KLhGG","mode":"Light","key":"tools-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["KLhGG","QanvV","GvEwy","d5pksU","k6ZfY","s8JXo","OdKXW","Z28FrA","CloNd","a43cA","EY99d","yplre","IccJd","nnZWD","Jaozv","fwlX0","dETup","l7Y1j6","v843V3","OPvNY","CcIpF","r8eX3","S2Nbp","x1YXTm","ODi4T","ZKi5g","g0vE5","L3EyO","a59fDV","JNF6r"],"changes":[{"path":["children",5],"value":{"id":"LgfQY","type":"ref","ref":"hideui:tip-shortcut-l","name":"Tools tooltip","fill":"$--popover","stroke":"$--border","x":1368,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"Tools","name":"Tools"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⌘E","name":"⌘E"}}}},{"path":["name"],"value":"Workspace / Light / tools-tooltip"}]},
+    {"id":"obv9L","mode":"Light","key":"tools-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["obv9L","HM2wg","tevZB","lpEQi","QKR6a","GtYXV","P7kRRJ","tIzgN","agWco","SEiHP","Jx5D2","sgmUg","ZhoLC","y692qZ","dOxN6","m9gd0t","Huhtg","NyAJh","XaIEw","uUJ5J","OwIgy","oaptw","BlDwy","QFHU0","zSx41","tFqIS","cIf3a","aR3eZ","mGTQl","M2FmQ"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","stroke"],"value":"$--ring"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","strokeAlignment"],"value":"outer"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","strokeWidth"],"value":1},{"path":["children",5],"value":{"id":"x42r4n","type":"ref","ref":"hideui:tip-shortcut-l","name":"Tools tooltip","fill":"$--popover","stroke":"$--border","x":1368,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"Tools","name":"Tools"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⌘E","name":"⌘E"}}}},{"path":["name"],"value":"Workspace / Light / tools-focus"}]},
+    {"id":"EctRK","mode":"Light","key":"server-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["EctRK","pQehc","r5whC","iMxTY","iQbIX","A8Eund","CW7tM","bxKGb","PsvFR","zTQ6Z","qFnyz","y1q0u","Yvd3r","xuNm0","sdU4E","b9Mvfy","bgn8s","MpU0X","QjuC8","bbHlJ","Zi2SL","iHL3C","BlDel","eXDmn","qHamE","KrHmj","o4bNy1","ukiuy","B7lGHA","jfa7g"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:side-panel-tools-toggle"],"value":{"fill":"$--secondary"}},{"path":["children",5],"value":{"id":"UrmEF","type":"ref","ref":"hideui:tip-open-l","name":"Open server tooltip","fill":"$--popover","stroke":"$--border","x":1320,"y":60,"descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"Open server","name":"Open server"}}}},{"path":["name"],"value":"Workspace / Light / server-tooltip"}]},
+    {"id":"tOJtb","mode":"Light","key":"server-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["tOJtb","lDuuv","ENukt","KNGuB","ZbCXk","c5DXY4","VqIj2","IhG74","f2AsAj","qjq2s","sBo7V","rzHCi","sCaum","QUZ0G","RJKvi","G9Arxl","rV0fy","L60SgX","Uw3pS","UAeki","b6e86","S15pg6","E9UZEF","vPxeK","V1IaG","dziAs","XnSVC","EKvzN","J9e9F","T4QAvn"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:side-panel-tools-toggle"],"value":{"stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","fill":"$--secondary"}},{"path":["children",5],"value":{"id":"OBLQQ","type":"ref","ref":"hideui:tip-open-l","name":"Open server tooltip","fill":"$--popover","stroke":"$--border","x":1320,"y":60,"descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"Open server","name":"Open server"}}}},{"path":["name"],"value":"Workspace / Light / server-focus"}]},
+    {"id":"I5MCOS","mode":"Dark","key":"views-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["I5MCOS","ubM5F","GZyBz","qQtDv","OuYc6","hhWFP","E2fl25","BxSaD","WIQjb","x6QurC","pwA4Y","fabik","wv54a","fyimM","JwxaA","nGhco","OyAJU","XlQJu","l0OC16","kBQVJ","hTz67","m8MAgM","RF6kA","WvdND","uTcG8","Ct6D2","BE5Go","bMgDP","I1D9V","F06qKC"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","stroke"],"value":"$--ring"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","strokeAlignment"],"value":"outer"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button","strokeWidth"],"value":1},{"path":["children",5],"value":{"id":"C1UNFi","type":"ref","ref":"hideui:tip-shortcut-l","name":"File Views tooltip","fill":"$--popover","stroke":"$--border","x":1332,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"File Views","name":"File Views"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⇧⌘B","name":"⇧⌘B"}}}},{"path":["name"],"value":"Workspace / Dark / views-focus"}]},
+    {"id":"m3oMSt","mode":"Dark","key":"tools-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["m3oMSt","brCGR","mBl8y","W15AR","S6TpF","SFLca","n2f9Kh","u4hEd","CnJeJ","AxY5q","s4vrix","u5jXC","Mlctg","ptqY1","Z8QK6r","pXT2b","qYMKy","u9lo8","WeZH5","uwD5D","Vw5SS","rJEI6","Xj8ol","R6YT5","WoQVx","b2KE5Y","m1ywqD","y6dQc0","vF17I","MOyZC"],"changes":[{"path":["children",5],"value":{"id":"Q3xTU","type":"ref","ref":"hideui:tip-shortcut-l","name":"Tools tooltip","fill":"$--popover","stroke":"$--border","x":1368,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"Tools","name":"Tools"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⌘E","name":"⌘E"}}}},{"path":["name"],"value":"Workspace / Dark / tools-tooltip"}]},
+    {"id":"dZ0c4","mode":"Dark","key":"tools-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["dZ0c4","QxaDH","A9AiQ","J02Au","F4Yjm","tLV19","bhcGw","e2PEn","GsGK2","BIr9n","biol0","Dj7os","ncYoR","xtYOH","A5Dha","n9mHf","U2sH7","BOnta","sDOyW","GBH20","Q8tQDx","d6nTn0","Z8IRj","baKCt","Ox6Mq","vAmI8","lIUdt","dmV3i","arkOL","GjPeI"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","stroke"],"value":"$--ring"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","strokeAlignment"],"value":"outer"},{"path":["children",3,"descendants","hideui:Kjfje/hideui:XHe9v/hideui:OaJhM","strokeWidth"],"value":1},{"path":["children",5],"value":{"id":"H3iU3J","type":"ref","ref":"hideui:tip-shortcut-l","name":"Tools tooltip","fill":"$--popover","stroke":"$--border","x":1368,"y":60,"descendants":{"hideui:tip-shortcut-l-t":{"fill":"$--foreground","content":"Tools","name":"Tools"},"hideui:tip-shortcut-l-k":{"fill":"$--muted-foreground","content":"⌘E","name":"⌘E"}}}},{"path":["name"],"value":"Workspace / Dark / tools-focus"}]},
+    {"id":"OKgI3","mode":"Dark","key":"server-tooltip","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["OKgI3","m4iF9t","m323z","qscy0","X3P5G","SNbTp","aLkGO","R6cY5","a8F2dL","dy3Q3","ps5RH","VF1Iw","ywCKD","Ka43Q","gp9f2","W387Tn","RLzat","O9XiSL","O45l4","helbU","CnhPb","Xg1ub","wOtn0","dCK9y","ZGH7e","i6A7M","SXjia","JzVmK","z9bOs","nLNPI"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:side-panel-tools-toggle"],"value":{"fill":"$--secondary"}},{"path":["children",5],"value":{"id":"DMGu4","type":"ref","ref":"hideui:tip-open-l","name":"Open server tooltip","fill":"$--popover","stroke":"$--border","x":1320,"y":60,"descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"Open server","name":"Open server"}}}},{"path":["name"],"value":"Workspace / Dark / server-tooltip"}]},
+    {"id":"KB1kt","mode":"Dark","key":"server-focus","window":[1456,900],"body":1116,"visibleWidths":{"agents":480,"views":360,"tools":260},"openFileCount":1,"ids":["KB1kt","j31j36","YmE70","X5Auz","JBK8O","m8OdbW","V8Xup9","h85z3","t1o2TK","fuekS","wAreH","o8YzL","QYsSH","v0vEjg","l8CTzO","Y693r8","lbfnX","nhxXs","I3tmy","yj5TW","Ouq8n","iWz53","mPfGb","cEssB","XNsWX","PNanN","WhP9r","qbotF","eWx75","fiGFm"],"changes":[{"path":["children",3,"descendants","hideui:Kjfje/hideui:side-panel-tools-toggle"],"value":{"stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","fill":"$--secondary"}},{"path":["children",5],"value":{"id":"O31Ij","type":"ref","ref":"hideui:tip-open-l","name":"Open server tooltip","fill":"$--popover","stroke":"$--border","x":1320,"y":60,"descendants":{"hideui:tip-open-l-t":{"fill":"$--foreground","content":"Open server","name":"Open server"}}}},{"path":["name"],"value":"Workspace / Dark / server-focus"}]}
   ];
+  const sheet = {
+    "type": "frame",
+    "id": "screen-workspace",
+    "x": 0,
+    "y": 32635,
+    "name": "Screen / Workspace",
+    "width": 2020,
+    "fill": "#EDEDEE",
+    "layout": "vertical",
+    "gap": "$--spacing-xl",
+    "padding": "$--spacing-xl",
+    "children": [
+      {
+        "type": "text",
+        "id": "wlf1z",
+        "name": "Workspace title",
+        "fill": "$--foreground",
+        "content": "Workspace",
+        "fontFamily": "$--font-ui",
+        "fontSize": "$--text-headline",
+        "fontWeight": "600"
+      },
+      {
+        "type": "text",
+        "id": "p47Nai",
+        "name": "Workspace contract",
+        "fill": "$--muted-foreground",
+        "textGrowth": "fixed-width",
+        "width": 1940,
+        "content": "PRD #321 A: Agents | File Views | Tools. Shared toolbar; independent controls; File badge only while hidden. Minima 480/360/260, divider 8, thresholds1116/848. Narrow calls substitute a column. Every scene below is linked to the copied component library; no Tools overlay, Pin or Expand.",
+        "fontFamily": "$--font-ui",
+        "fontSize": "$--text-body",
+        "fontWeight": "normal"
+      },
+      {
+        "type": "frame",
+        "id": "g0S6az",
+        "name": "Light",
+        "theme": {
+          "Mode": "Light"
+        },
+        "width": 1972,
+        "fill": "$--background",
+        "layout": "vertical",
+        "gap": 16,
+        "padding": 16,
+        "children": [
+          {
+            "type": "text",
+            "id": "i8NtD",
+            "name": "Theme",
+            "fill": "$--foreground",
+            "content": "Light",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-headline",
+            "fontWeight": "600"
+          },
+          {
+            "type": "text",
+            "id": "u344ck",
+            "name": "Full body 1116 - docked minima",
+            "fill": "$--foreground",
+            "content": "Full body 1116 - docked minima",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "TUoDW"
+          },
+          {
+            "type": "text",
+            "id": "bvuU6",
+            "name": "1440 window, sidebar open - body 1100 mid fallback",
+            "fill": "$--foreground",
+            "content": "1440 window, sidebar open - body 1100 mid fallback",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "PUDa5"
+          },
+          {
+            "type": "text",
+            "id": "l32P9H",
+            "name": "Body 848 - two columns at minima",
+            "fill": "$--foreground",
+            "content": "Body 848 - two columns at minima",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "e7GLci"
+          },
+          {
+            "type": "text",
+            "id": "D5BQE",
+            "name": "Body 847 - Agents base, stored File View hidden",
+            "fill": "$--foreground",
+            "content": "Body 847 - Agents base, stored File View hidden",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "wU6O3"
+          },
+          {
+            "type": "text",
+            "id": "u0Kzb",
+            "name": "Body 847 - explicitly called File Views replaces Agents",
+            "fill": "$--foreground",
+            "content": "Body 847 - explicitly called File Views replaces Agents",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "l6fpKj"
+          },
+          {
+            "type": "text",
+            "id": "s7jItz",
+            "name": "Body 1100 - explicit Tools call replaces File Views",
+            "fill": "$--foreground",
+            "content": "Body 1100 - explicit Tools call replaces File Views",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "aoV0a"
+          },
+          {
+            "type": "text",
+            "id": "k6cNm",
+            "name": "Body 848 - explicit Tools call replaces File Views",
+            "fill": "$--foreground",
+            "content": "Body 848 - explicit Tools call replaces File Views",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "QJQsr"
+          },
+          {
+            "type": "text",
+            "id": "juVtS",
+            "name": "Body 847 - explicit Tools call replaces Agents",
+            "fill": "$--foreground",
+            "content": "Body 847 - explicit Tools call replaces Agents",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "OdCvV"
+          },
+          {
+            "type": "text",
+            "id": "NToss",
+            "name": "Tools only - zero File Views, no File badge",
+            "fill": "$--foreground",
+            "content": "Tools only - zero File Views, no File badge",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "PmKT5"
+          },
+          {
+            "type": "text",
+            "id": "gyQKy",
+            "name": "Tools with one hidden File View - count 1",
+            "fill": "$--foreground",
+            "content": "Tools with one hidden File View - count 1",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "jEUuK"
+          },
+          {
+            "type": "text",
+            "id": "L2lp9T",
+            "name": "Divider hover - fixed column content",
+            "fill": "$--foreground",
+            "content": "Divider hover - fixed column content",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "DRb4n"
+          },
+          {
+            "type": "text",
+            "id": "ShHZU",
+            "name": "Divider keyboard focus - fixed column content",
+            "fill": "$--foreground",
+            "content": "Divider keyboard focus - fixed column content",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "sPxvx"
+          },
+          {
+            "type": "text",
+            "id": "Q23epb",
+            "name": "Frozen content drag",
+            "fill": "$--foreground",
+            "content": "Pointer drag - guide only, 480/360/260 columns frozen",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "D3d5BU"
+          },
+          {
+            "type": "text",
+            "id": "WiVSZ",
+            "name": "Pointer release - committed 512/596 widths",
+            "fill": "$--foreground",
+            "content": "Pointer release - committed 512/596 widths",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "d6YJdY"
+          },
+          {
+            "type": "text",
+            "id": "gaBp0",
+            "name": "Workspace switch cancels drag - restored 589/640/355",
+            "fill": "$--foreground",
+            "content": "Workspace switch cancels drag - restored 589/640/355",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "ec1uu"
+          },
+          {
+            "type": "text",
+            "id": "I59i4",
+            "name": "Long Korean/English file title - full path tooltip",
+            "fill": "$--foreground",
+            "content": "Long Korean/English file title - full path tooltip",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "OkoMU"
+          },
+          {
+            "type": "text",
+            "id": "gNqDV",
+            "name": "File Views tooltip",
+            "fill": "$--foreground",
+            "content": "File Views - tooltip",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "V6UYh"
+          },
+          {
+            "type": "text",
+            "id": "jpRRu",
+            "name": "File Views focus",
+            "fill": "$--foreground",
+            "content": "File Views - focus",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "Z6h2wQ"
+          },
+          {
+            "type": "text",
+            "id": "prPMi",
+            "name": "Tools tooltip",
+            "fill": "$--foreground",
+            "content": "Tools - tooltip",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "KLhGG"
+          },
+          {
+            "type": "text",
+            "id": "nf0zM",
+            "name": "Tools focus",
+            "fill": "$--foreground",
+            "content": "Tools - focus",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "obv9L"
+          },
+          {
+            "type": "text",
+            "id": "dIeFC",
+            "name": "Open server tooltip",
+            "fill": "$--foreground",
+            "content": "Open server - tooltip",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "EctRK"
+          },
+          {
+            "type": "text",
+            "id": "pgFdF",
+            "name": "Open server focus",
+            "fill": "$--foreground",
+            "content": "Open server - focus",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "tOJtb"
+          }
+        ]
+      },
+      {
+        "type": "frame",
+        "id": "dkzAZ",
+        "name": "Dark",
+        "theme": {
+          "Mode": "Dark"
+        },
+        "width": 1972,
+        "fill": "$--background",
+        "layout": "vertical",
+        "gap": 16,
+        "padding": 16,
+        "children": [
+          {
+            "type": "text",
+            "id": "RCFCu",
+            "name": "Theme",
+            "fill": "$--foreground",
+            "content": "Dark",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-headline",
+            "fontWeight": "600"
+          },
+          {
+            "type": "text",
+            "id": "JCBt8",
+            "name": "Full body 1116 - docked minima",
+            "fill": "$--foreground",
+            "content": "Full body 1116 - docked minima",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "X7Fcc"
+          },
+          {
+            "type": "text",
+            "id": "Kwewr",
+            "name": "1440 window, sidebar open - body 1100 mid fallback",
+            "fill": "$--foreground",
+            "content": "1440 window, sidebar open - body 1100 mid fallback",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "J3ckk6"
+          },
+          {
+            "type": "text",
+            "id": "JeQrI",
+            "name": "Body 848 - two columns at minima",
+            "fill": "$--foreground",
+            "content": "Body 848 - two columns at minima",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "fbxi3"
+          },
+          {
+            "type": "text",
+            "id": "NPmEc",
+            "name": "Body 847 - Agents base, stored File View hidden",
+            "fill": "$--foreground",
+            "content": "Body 847 - Agents base, stored File View hidden",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "Z6s9U8"
+          },
+          {
+            "type": "text",
+            "id": "ecD3E",
+            "name": "Body 847 - explicitly called File Views replaces Agents",
+            "fill": "$--foreground",
+            "content": "Body 847 - explicitly called File Views replaces Agents",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "Ql0b5"
+          },
+          {
+            "type": "text",
+            "id": "IyOM9",
+            "name": "Body 1100 - explicit Tools call replaces File Views",
+            "fill": "$--foreground",
+            "content": "Body 1100 - explicit Tools call replaces File Views",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "nBxva"
+          },
+          {
+            "type": "text",
+            "id": "d9jsX",
+            "name": "Body 848 - explicit Tools call replaces File Views",
+            "fill": "$--foreground",
+            "content": "Body 848 - explicit Tools call replaces File Views",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "V4UiI"
+          },
+          {
+            "type": "text",
+            "id": "Y9l8n",
+            "name": "Body 847 - explicit Tools call replaces Agents",
+            "fill": "$--foreground",
+            "content": "Body 847 - explicit Tools call replaces Agents",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "Dz9IR"
+          },
+          {
+            "type": "text",
+            "id": "Q7ovZH",
+            "name": "Tools only - zero File Views, no File badge",
+            "fill": "$--foreground",
+            "content": "Tools only - zero File Views, no File badge",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "a8qXDY"
+          },
+          {
+            "type": "text",
+            "id": "U5KoMH",
+            "name": "Tools with one hidden File View - count 1",
+            "fill": "$--foreground",
+            "content": "Tools with one hidden File View - count 1",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "Kk60A"
+          },
+          {
+            "type": "text",
+            "id": "gzJZl",
+            "name": "Divider hover - fixed column content",
+            "fill": "$--foreground",
+            "content": "Divider hover - fixed column content",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "uhq8e"
+          },
+          {
+            "type": "text",
+            "id": "PwiVd",
+            "name": "Divider keyboard focus - fixed column content",
+            "fill": "$--foreground",
+            "content": "Divider keyboard focus - fixed column content",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "eI9Uf"
+          },
+          {
+            "type": "text",
+            "id": "h44btJ",
+            "name": "Frozen content drag",
+            "fill": "$--foreground",
+            "content": "Pointer drag - guide only, 480/360/260 columns frozen",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "DPFSq"
+          },
+          {
+            "type": "text",
+            "id": "QQpfQ",
+            "name": "Pointer release - committed 512/596 widths",
+            "fill": "$--foreground",
+            "content": "Pointer release - committed 512/596 widths",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "N8yit"
+          },
+          {
+            "type": "text",
+            "id": "hv9wU",
+            "name": "Workspace switch cancels drag - restored 589/640/355",
+            "fill": "$--foreground",
+            "content": "Workspace switch cancels drag - restored 589/640/355",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "YIxRN"
+          },
+          {
+            "type": "text",
+            "id": "rOn1g",
+            "name": "Long Korean/English file title - full path tooltip",
+            "fill": "$--foreground",
+            "content": "Long Korean/English file title - full path tooltip",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "fDgAU"
+          },
+          {
+            "type": "text",
+            "id": "ZHGGw",
+            "name": "File Views tooltip",
+            "fill": "$--foreground",
+            "content": "File Views - tooltip",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "u7vlOH"
+          },
+          {
+            "type": "text",
+            "id": "hUc27",
+            "name": "File Views focus",
+            "fill": "$--foreground",
+            "content": "File Views - focus",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "I5MCOS"
+          },
+          {
+            "type": "text",
+            "id": "GcM9h",
+            "name": "Tools tooltip",
+            "fill": "$--foreground",
+            "content": "Tools - tooltip",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "m3oMSt"
+          },
+          {
+            "type": "text",
+            "id": "ctqfa",
+            "name": "Tools focus",
+            "fill": "$--foreground",
+            "content": "Tools - focus",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "dZ0c4"
+          },
+          {
+            "type": "text",
+            "id": "pin6N",
+            "name": "Open server tooltip",
+            "fill": "$--foreground",
+            "content": "Open server - tooltip",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "OKgI3"
+          },
+          {
+            "type": "text",
+            "id": "ACTwd",
+            "name": "Open server focus",
+            "fill": "$--foreground",
+            "content": "Open server - focus",
+            "fontFamily": "$--font-ui",
+            "fontSize": "$--text-subhead",
+            "fontWeight": "600"
+          },
+          {
+            "workspaceState": "KB1kt"
+          }
+        ]
+      }
+    ]
+  };
+  const materialized = new Map();
+  function nodes(node, result = []) {
+    result.push(node);
+    for (const child of node.children ?? []) nodes(child, result);
+    return result;
+  }
+  for (const state of states) {
+    const window = structuredClone(windowTemplate);
+    nodes(window).forEach((node, index) => { node.id = state.ids[index]; });
+    for (const change of state.changes) {
+      const parent = change.path.slice(0, -1).reduce((value, key) => value[key], window);
+      const key = change.path.at(-1);
+      if (change.delete) delete parent[key];
+      else parent[key] = structuredClone(change.value);
+    }
+    for (const node of nodes(window)) {
+      if (node.type !== 'ref') continue;
+      if (!node.ref.startsWith(`${ALIAS}:`)) throw new Error(`Workspace reference ${node.ref} must use ${ALIAS}`);
+      const masterId = node.ref.slice(ALIAS.length + 1);
+      const master = findMaster({children: libraryDocument().children}, masterId);
+      if (!master?.reusable) throw new Error(`Workspace needs reusable master ${masterId}`);
+    }
+    materialized.set(state.id, window);
+  }
+  function expand(node) {
+    if (node.workspaceState) {
+      const window = materialized.get(node.workspaceState);
+      if (!window) throw new Error(`Workspace state ${node.workspaceState} is missing`);
+      return window;
+    }
+    return {...node, ...(node.children ? {children: node.children.map(expand)} : {})};
+  }
+  const result = expand(sheet);
+  for (const state of buildWorkspaceSupplemental()) {
+    const parent = nodes(result).find(node => node.id === state.parent);
+    if (!parent) throw new Error(`Workspace supplemental parent ${state.parent} is missing`);
+    parent.children.push(...state.children);
+  }
+  return result;
+}
 
-  // The toolbar spans only the agent column: the path back, and the panel
-  // toggle only while the panel is closed. No Explorer or History toggles.
-  // A remote device in front puts its band, in the device color and with its
-  // name, ahead of the path (PRD home-device-rail D-15); This Mac has none.
-  function toolbar(key, count, remote = null) {
-    const crumbs = remote ? ['Home', 'hide', 'main'] : ['Main', 'demo', 'demo'];
-    return frame(`ws-topbar-${key}`, 'Toolbar', {width: 'fill_container', height: ROW, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm', 0, remote ? 0 : '$--spacing-sm'], fill: '$--sidebar', ...rule}, [
-      frame(`ws-crumbwrap-${key}`, 'Path', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
-        ...(remote ? [frame(`ws-devband-${key}`, 'Device band', {height: ROW, layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-md'], fill: '$--device-remote'}, [
-          icon(`ws-devbandi-${key}`, 'server', {size: 12, fill: '$--primary-foreground'}),
-          text(`ws-devbandt-${key}`, remote, {size: '$--text-caption', weight: '600', fill: '$--primary-foreground'}),
-        ])] : []),
-        frame(`ws-crumb-${key}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-          text(`ws-c1-${key}`, crumbs[0], {fill: '$--muted-foreground'}),
-          text(`ws-c2-${key}`, '/', {fill: '$--muted-foreground'}),
-          text(`ws-c3-${key}`, crumbs[1], {fill: '$--muted-foreground'}),
-          text(`ws-c4-${key}`, '/', {fill: '$--muted-foreground'}),
-          text(`ws-c5-${key}`, crumbs[2], {weight: '600'}),
-        ]),
-      ]),
-      frame(`ws-toolbar-actions-${key}`, 'Workspace actions', {layout:'horizontal', gap:'$--spacing-xs', alignItems:'center'}, [
-        screenIconButton(`ws-open-server-${key}`, 'globe'),
-        ...(count ? [sidePanelToggle(`ws-paneltoggle-${key}`, count)] : []),
-      ]),
-    ]);
-  }
-
-  // The agent column: the toolbar, the agents' tab strip, the pane, the terminal.
-  // The panel never resizes it while it floats over it.
-  function agentArea(key, active = true, remote = false) {
-    return frame(`ws-agentarea-${key}`, 'Agent area', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, fill: '$--background', clip: true, ...(remote ? {stroke: '$--device-remote', strokeWidth: 2, strokeAlignment: 'inner'} : {})}, [
-      frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', fill: active ? '$--background' : '$--card'}, [
-        screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', active ? '탭 이름과 구성 개선' : '검증 결과 확인', active, 'claude'),
-        screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
-        screenIconButton(`ws-agtabadd-${key}`, 'plus', {size: 20}),
-      ]),
-      screenPaneHeader(`ws-panehdr-${key}`, {label: 'w2:p1', status: 'Working', width: 'fill_container'}),
-      // The xterm viewport takes --background in either theme (commit 7052afa).
-      frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
-        TERMINAL.map(([line, fill], index) => text(`ws-term${index}-${key}`, line, {fill, mono: true, size: '$--text-caption'}))),
-    ]);
-  }
-
-  function agentColumn(key, count, groups = false, remote = null, keyboard = true) {
-    const areas = groups
-      ? frame(`ws-agentareas-${key}`, 'Two Agent areas', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [
-        agentArea(`${key}-left`),
-        frame(`ws-agentdivider-${key}`, 'Agent area divider', {width: '$--size-resize-handle', height: 'fill_container', fill: '$--border'}),
-        agentArea(`${key}-right`, false),
-      ])
-      : agentArea(key, keyboard, Boolean(remote));
-    return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [toolbar(key, count, remote), areas]);
-  }
-
-  // Component / Side panel (issue 170, "Side panel hierarchy, revised"), from
-  // flat refs and local tokens: full height beside the agent column's toolbar,
-  // the --spacing-sm gap on its left, the --card card with a --radius-lg
-  // top-left corner and a --border hairline, no shadow.
-  function sidePanel(key) {
-    const tab = (id, title, glyph, fill, active) => themedXref(id, 'view-tab', title, {
-      fill: '$--card', ...(active ? {stroke: '$--foreground', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {}),
-    }, {'view-tab-mark': {icon: glyph, fill}, 'view-tab-title': {content: title, fill: active ? '$--foreground' : '$--subtle-foreground'}, 'view-tab-close': {enabled: active}});
-    // Row 1, at the toolbar row's height: the area's tabs and its New tab, then
-    // the tool-column toggle, Expand, Pin and the panel toggle.
-    const row1 = frame(`ws-sp-row1-${key}`, 'Row 1', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', ...rule}, [
-      frame(`ws-sp-tabs-${key}`, 'Area tabs', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', clip: true}, [
-        tab(`ws-sp-tab1-${key}`, '한글 노트.md', 'file-text', '$--file-blue', true),
-        tab(`ws-sp-tab2-${key}`, 'pen-screens.mjs', 'file-code', '$--file-orange', false),
-        sidePanelButton(`ws-sp-new-${key}`, 'plus', {size: 20}),
-        frame(`ws-sp-tabsgap-${key}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-        frame(`ws-sp-viewactions-${key}`, 'View actions', {width: num(tokens, '--size-tab-overflow-control'), height: ROW, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
-          icon(`ws-sp-viewactions-i-${key}`, 'ellipsis', {size: num(tokens, '--size-icon'), fill: '$--subtle-foreground'}),
-        ]),
-      ]),
-      frame(`ws-sp-actions-${key}`, 'Side panel actions', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-sm', 0, '$--spacing-xs']}, [
-        sidePanelButton(`ws-sp-tools-${key}`, 'panel-right-dashed', {pressed: true}), sidePanelButton(`ws-sp-expand-${key}`, 'maximize-2'),
-        sidePanelButton(`ws-sp-pin-${key}`, 'pin'), sidePanelButton(`ws-sp-hide-${key}`, 'panel-right', {pressed: true}),
-      ]),
-    ]);
-    // The web document header (Editor.tsx): the path, then Live (Markdown), Wrap and Find as ghost buttons.
-    const docHeader = frame(`ws-dochdr-${key}`, 'Document header', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-md'], ...rule}, [
-      text(`ws-docpath-${key}`, 'docs/한글 노트.md', {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
-      frame(`ws-doclinks-${key}`, 'Links', {layout: 'horizontal', gap: '$--spacing-md'}, [
-        text(`ws-doclive-${key}`, 'Live', {weight: '500', fill: '$--foreground'}),
-        text(`ws-docwrap-${key}`, 'Wrap', {weight: '500', fill: '$--muted-foreground'}),
-        text(`ws-docfind-${key}`, 'Find', {weight: '500', fill: '$--muted-foreground'}),
-      ]),
-    ]);
-    const line = (index, code) => frame(`ws-line${index}-${key}`, 'Line', {layout: 'horizontal', gap: '$--spacing-sm'}, [
-      text(`ws-line${index}n-${key}`, String(index), {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
-      text(`ws-line${index}t-${key}`, code, {mono: true, size: '$--text-caption'}),
-    ]);
-    const views = frame(`ws-sp-views-${key}`, 'View areas', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0}, [
-      docHeader,
-      frame(`ws-editor-${key}`, 'Editor body', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', clip: true},
-        ['# 한글 노트', '', '작업 공간의 사이드 패널은 에이전트 위에 뜹니다.', 'Pin 하면 에이전트 옆에 고정됩니다.'].map((code, index) => line(index + 1, code))),
-    ]);
-    // Row 2 over the tool column: the Explorer and History icon tabs, the active one marked.
-    const toolTab = (id, glyph, name, active) => frame(id, name, {width: ROW, height: ROW, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', ...(active ? {stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {})}, [
-      icon(`${id}-i`, glyph, {size: num(tokens, '--size-icon'), fill: active ? '$--foreground' : '$--subtle-foreground'}),
-    ]);
-    const row = (id, name, glyph, fill, {folder = false, status = '', indent = 0} = {}) => frame(`${id}-indent`, 'Tree indent', {width: 'fill_container', layout: 'horizontal', padding: [0, 0, 0, indent]}, [
-      themedXref(id, 'mSu8p', name, {width: 'fill_container'}, {
-        vEOYq: folder ? {icon: 'chevron-down', fill: '$--subtle-foreground'} : {fill: []},
-        LWCQZ: {icon: glyph, fill}, kj232: {content: name}, ZzvYJ: {content: status, fill: '$--warning'},
-      }),
-    ]);
-    const tools = frame(`ws-sp-tools-col-${key}`, 'Tool column', {width: TOOLS_W, height: 'fill_container', layout: 'vertical', gap: 0, stroke: '$--border', strokeWidth: {left: HAIR}, strokeAlignment: 'inner'}, [
-      frame(`ws-sp-tooltabs-${key}`, 'Row 2: tool tabs', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', padding: [0, 0, 0, '$--spacing-xxs'], ...rule}, [
-        toolTab(`ws-sp-explorer-${key}`, 'folder', 'Explorer', true), toolTab(`ws-sp-history-${key}`, 'git-branch', 'History', false),
-      ]),
-      // The Explorer's root row (ExplorerTree.tsx), as tall as a tab strip.
-      frame(`ws-exproot-${key}`, 'Root', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-sm', 0, '$--spacing-md'], ...rule}, [
-        text(`ws-exproott-${key}`, 'demo', {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
-        screenIconButton(`ws-exprefresh-${key}`, 'refresh-cw', {size: 20}),
-      ]),
-      row(`ws-file1-${key}`, 'docs', 'folder-open', '$--subtle-foreground', {folder: true, status: '●'}),
-      row(`ws-file2-${key}`, '한글 노트.md', 'file-text', '$--file-blue', {status: 'M', indent: '$--spacing-md'}),
-      row(`ws-file3-${key}`, 'scripts', 'folder-open', '$--subtle-foreground', {folder: true}),
-      row(`ws-file4-${key}`, 'pen-screens.mjs', 'file-code', '$--file-orange', {status: 'A', indent: '$--spacing-md'}),
-      row(`ws-file5-${key}`, 'README.md', 'file-text', '$--file-blue'),
-    ]);
-    return frame(`ws-sidepanel-${key}`, 'Side panel', {x: MAIN_W - PANEL_W, y: 0, width: PANEL_W, height: MAIN_H, layout: 'horizontal', gap: 0, fill: '$--background'}, [
-      frame(`ws-sp-grip-${key}`, 'Resize grip (the gap)', {width: GAP, height: 'fill_container'}, []),
-      frame(`ws-sp-card-${key}`, 'Card', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, clip: true, fill: '$--card', cornerRadius: ['$--radius-lg', 0, 0, 0], stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
-        row1, frame(`ws-sp-body-${key}`, 'Body', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [views, tools]),
-      ]),
-    ]);
-  }
-
-  // One composition: the sidebar, then the Workspace. Open, the panel runs its
-  // full height over the agent column; closed, the toolbar carries the panel
-  // toggle with the open-view count.
-  function workspace(key, open, groups = false) {
-    const sidebar = screenSidebar(tokens, 'ws-sidebar', key, [
-      {title: 'Agent two', status: 'Working'},
-      {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
-    ]);
-    const main = open
-      ? frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip: true}, [{...agentColumn(key, 0, false, null, false), x: 0, y: 0}, sidePanel(key)])
-       : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip:true}, [{...agentColumn(key, 2, groups), x:0, y:0}, ...(groups ? [] : [frame(`ws-server-picker-${key}`, 'Open server picker', {x:MAIN_W-332,y:ROW+4,width:320,layout:'vertical',gap:'$--spacing-xs',padding:'$--spacing-sm',fill:'$--popover',cornerRadius:'$--radius-md',stroke:'$--border',strokeWidth:HAIR}, [
-          text(`ws-server-title-${key}`, 'Open server', {size:'$--text-caption',fill:'$--muted-foreground'}),
-          ...['127.0.0.1:3000','[::1]:5173'].map((address,index)=>frame(`ws-server-option${index}-${key}`, address, {width:'fill_container',layout:'horizontal',gap:'$--spacing-sm',padding:'$--spacing-sm',alignItems:'center',fill:index===0?'$--accent':'$--popover',cornerRadius:'$--radius-sm'}, [icon(`ws-server-globe${index}-${key}`,'globe'),text(`ws-server-address${index}-${key}`,address,{mono:true,size:'$--text-caption'}),icon(`ws-server-arrow${index}-${key}`,'arrow-up-right')]))
-        ])])]);
-    return frame(`ws-wrap-${key}`, groups ? 'Two Agent areas, independent tab bars and live terminals' : open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
-  }
-  // A remote device in front: no sidebar beside it here, only the column with its band and pane frame.
-  function remoteWorkspace(key) {
-    return frame(`ws-wrap-${key}`, 'Remote device in front, band and pane frame', {layout: 'horizontal', alignItems: 'start'}, [
-      frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2, false, 'mini')]),
-    ]);
-  }
-  function newTab(key, changed) {
-    const choice = (name, glyph, shortcut = '') => frame(`ws-newtab-${name}-${key}`, name, {width: 'fill_container', height: num(tokens, '--size-control-lg'), layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-lg'], fill: '$--secondary', cornerRadius: '$--radius-sm'}, [
-      icon(`ws-newtab-${name}-i-${key}`, glyph, {size: num(tokens, '--size-icon'), fill: '$--subtle-foreground'}),
-      text(`ws-newtab-${name}-t-${key}`, name, {width: 'fill_container', size: '$--text-body', weight: '500'}),
-      ...(shortcut ? [themedXref(`ws-newtab-kbd-${key}`, 'kbd-m', shortcut, {}, {'kbd-t': {content: shortcut}})] : []),
-    ]);
-    return frame(`ws-newtab-${key}`, changed ? 'New tab, checkout has changes' : 'New tab, clean checkout', {width: 480, height: 360, layout: 'vertical', gap: 0, fill: '$--card', clip: true}, [
-      frame(`ws-newtab-tabs-${key}`, 'View tabs', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', ...rule}, [
-        themedXref(`ws-newtab-tab-${key}`, 'view-tab', 'New tab', {fill: '$--card', stroke: '$--foreground', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'}, {'view-tab-mark': {icon: 'globe', fill: '$--subtle-foreground'}, 'view-tab-title': {content: 'New tab', fill: '$--foreground'}, 'view-tab-close': {enabled: true}}),
-        sidePanelButton(`ws-newtab-plus-${key}`, 'plus'),
-      ]),
-      frame(`ws-newtab-address-row-${key}`, 'Address row', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xs', padding: [0, '$--spacing-sm'], alignItems: 'center', ...rule}, [
-        ...['arrow-left', 'arrow-right', 'rotate-cw'].map((glyph, n) => icon(`ws-newtab-nav${n}-${key}`, glyph, {size: num(tokens, '--size-icon'), fill: '$--muted-foreground', opacity: num(tokens, '--opacity-disabled')})),
-        frame(`ws-newtab-address-${key}`, 'Empty focused address', {width: 'fill_container', height: num(tokens, '--size-control-sm'), layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-sm'], fill: '$--background', cornerRadius: '$--radius-sm', stroke: '$--ring', strokeWidth: 1}, [text(`ws-newtab-placeholder-${key}`, 'Enter a URL', {mono: true, size: '$--text-caption', fill: '$--muted-foreground'})]),
-      ]),
-      frame(`ws-newtab-body-${key}`, 'Open', {width: 'fill_container', layout: 'vertical', gap: '$--spacing-sm', padding: '$--spacing-xl'}, [
-        text(`ws-newtab-heading-${key}`, 'Open', {size: '$--text-body', weight: '500', fill: '$--muted-foreground'}),
-        choice('File', 'file-search', '⌘P'), ...(changed ? [choice('Diff', 'git-compare-arrows')] : []),
-      ]),
-    ]);
-  }
-  function focusComparison(suffix) {
-    const area = (active, at) => {
-      const key = `focus-${suffix}-${at}`;
-      return frame(`ws-${key}`, active ? 'Keyboard owner' : 'Other area, retained selection', {width: 'fill_container', height: 'fill_container', layout: 'vertical'}, [
-        frame(`ws-${key}-bar`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', fill: active ? '$--background' : '$--card'}, [
-          themedXref(`ws-${key}-tab1`, 'view-tab', 'Selected Korean tab', {fill: active ? '$--background' : '$--secondary', ...(active ? {stroke: '$--foreground', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {})}, {'view-tab-title': {content: '한글 노트.md', fill: '$--foreground'}, 'view-tab-close': {enabled: true}}),
-          screenViewTab(`ws-${key}-tab2`, {title: '검증 결과.md', active: false}),
-        ]),
-        frame(`ws-${key}-body`, 'Readable Korean content', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: '$--spacing-sm', fill: '$--background'}, [
-          text(`ws-${key}-text`, '# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인', {mono: true, size: '$--text-caption', width: 'fill_container'}),
-        ]),
-      ]);
-    };
-    return frame(`ws-focus-${suffix}`, 'One keyboard area, other selections readable', {width: 960, height: 440, layout: 'horizontal', fill: '$--background'}, [area(true, 1), frame(`ws-focus-divider-${suffix}`, 'Area divider', {width: '$--size-resize-handle', height: 'fill_container', fill: '$--border'}), area(false, 2)]);
-  }
-  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), workspace(`${suffix}g`, false, true), remoteWorkspace(`${suffix}r`), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false), focusComparison(suffix)];
-  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and carries Open server as a globe, reusing attributed listeners, with one opening directly and multiple addresses in a small picker; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping. Below them a remote device in front (PRD home-device-rail D-15): the toolbar starts with a band in the device color (--device-remote) carrying the server glyph and the device name ahead of the path, and the agent pane is framed in the same color; This Mac in front has neither.', build, build);
+// Retained valid review targets are separate from the column condition matrix.
+// Their actual Pen IDs and Korean selection ownership are preserved.
+function buildWorkspaceSupplemental() {
+  return [
+    {"mode":"Light","parent":"g0S6az","children":[{"type":"frame","id":"ws-focus-l","name":"One keyboard area, other selections readable","width":960,"height":440,"fill":"$--background","children":[{"type":"frame","id":"ws-focus-l-1","name":"Keyboard owner","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-l-1-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--background","children":[{"id":"ws-focus-l-1-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--background","stroke":"$--foreground","strokeWidth":{"bottom":"$--size-tab-indicator"},"strokeAlignment":"inner","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-l-1-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-l-1-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-l-1-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]},{"type":"frame","id":"ws-focus-divider-l","name":"Area divider","width":"fit_content(0)","height":"fill_container","fill":"$--border"},{"type":"frame","id":"ws-focus-l-2","name":"Other area, retained selection","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-l-2-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--card","children":[{"id":"ws-focus-l-2-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--secondary","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-l-2-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-l-2-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-l-2-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]}]},{"type":"frame","id":"ewWtp","name":"Multiple running servers; both File Views and Tools off","clip":true,"width":1440,"height":900,"fill":"$--background","layout":"none","children":[{"type":"frame","id":"NlkIg","x":0,"y":0,"name":"Native window chrome - comparison context","width":1440,"height":28,"fill":"$--secondary","stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","layout":"none","children":[{"type":"ellipse","id":"j9wRLv","x":8,"y":8,"name":"Inactive window control 1","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"PbX47","x":28,"y":8,"name":"Inactive window control 2","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"slAYW","x":48,"y":8,"name":"Inactive window control 3","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"text","id":"PXL5q","x":706,"y":5,"name":"Window title","fill":"$--muted-foreground","content":"hide","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"lE5kU","x":0,"y":28,"name":"Device rail","width":48,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"vertical","gap":12,"padding":[8,4],"children":[{"id":"tQ1fK","type":"ref","ref":"hideui:Nyvom","name":"This Mac","width":40,"height":40,"stroke":"$--foreground","strokeWidth":2,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"laptop"}}},{"id":"O9kV0","type":"ref","ref":"hideui:Nyvom","name":"Add device","width":40,"height":32,"stroke":"$--border","strokeWidth":1,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}}]},{"type":"frame","id":"WXmI0","x":48,"y":28,"name":"Projects sidebar","width":292,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"none","children":[{"type":"frame","id":"e1gTd","x":0,"y":0,"name":"This Mac header","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"YhV3w","name":"Device title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"This Mac","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"id":"hjnnU","type":"ref","ref":"hideui:Nyvom","name":"Add project","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}},{"id":"lr1rE","type":"ref","ref":"hideui:Nyvom","name":"Search","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"search"}}}]},{"type":"frame","id":"x47WeE","x":0,"y":32,"name":"Sidebar tab strip","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"zVAh1","name":"Selected tab","fill":"$--foreground","content":"Projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"},{"type":"text","id":"aBZ23","name":"Other tab","fill":"$--muted-foreground","content":"Agents","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"frame","id":"e1Y8X","x":4,"y":68,"name":"Home","width":284,"height":36,"gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"z9Zjo","name":"Home icon","width":14,"height":14,"icon":"house","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"x0S7j","name":"Home title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"Home","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"type":"text","id":"vGB7F","name":"Project count","fill":"$--muted-foreground","content":"0 projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"text","id":"iWAse","x":12,"y":110,"name":"Recent activity","fill":"$--muted-foreground","content":"Projects · Recent activity · 1","fontFamily":"$--font-ui","fontSize":"$--text-micro","fontWeight":"600"},{"type":"frame","id":"vhwXo","x":4,"y":124,"name":"Selected checkout","width":284,"height":36,"fill":"$--secondary","cornerRadius":"$--radius-sm","gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"klozz","name":"Checkout folder","width":14,"height":14,"icon":"folder","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"vmjI1","name":"Checkout label","fill":"$--foreground","content":"fixture","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"D2gM4I","x":0,"y":840,"name":"Sidebar footer","width":292,"height":32,"stroke":"$--border","strokeWidth":{"top":1},"strokeAlignment":"inner","gap":8,"padding":[0,12],"justifyContent":"end","alignItems":"center","children":[{"id":"pDsO7","type":"ref","ref":"hideui:Nyvom","name":"Background usage","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"activity"}}},{"id":"M9bxgS","type":"ref","ref":"hideui:Nyvom","name":"Settings","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"settings"}}}]}]},{"id":"KabPT","type":"ref","ref":"hideui:VMZTz","name":"Shared Workspace toolbar","fill":"$--sidebar","stroke":"$--border","x":340,"y":28,"width":1100,"height":32,"descendants":{"hideui:bkh81":{"fill":"$--subtle-foreground","content":"Home  /  fixture  /  main"},"hideui:Kjfje/hideui:side-panel-tools-toggle/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button":{"fill":[]},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge":{"fill":"$--primary","enabled":false},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count":{"content":"1"},"hideui:Kjfje/hideui:XHe9v/hideui:OaJhM":{"fill":[]},"hideui:Kjfje/hideui:XHe9v/hideui:OaJhM/hideui:ZIZFR":{"fill":"$--subtle-foreground"}}},{"id":"H4VH2","type":"ref","ref":"hideui:side-panel","name":"Docked columns","fill":"$--background","x":340,"y":60,"width":1100,"height":840,"descendants":{"hideui:YpxMC":{"fill":"$--background","enabled":true,"x":0,"y":0,"width":1100,"height":840},"hideui:YpxMC/hideui:m3nqv":{"fill":"$--card","stroke":"$--border"},"hideui:YpxMC/hideui:Yf5g6":{"fill":"$--secondary"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-mark":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:ujfpg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:GYdsi/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:jEy0G":{"fill":"$--background","width":1100},"hideui:YpxMC/hideui:blLvs":{"fill":"$--secondary","stroke":"$--border"},"hideui:YpxMC/hideui:W2jHfs":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:v57l6H":{"fill":"$--foreground"},"hideui:YpxMC/hideui:CG4wC":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:K8ikC/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:a63n6t/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:jPwvc":{"fill":"$--background"},"hideui:YpxMC/hideui:PNaQy":{"fill":"$--foreground"},"hideui:YpxMC/hideui:aTsYy":{"fill":"$--background","stroke":"$--border","enabled":false,"width":0,"height":0},"hideui:YpxMC/hideui:lFQa0":{"fill":"$--card","stroke":"$--border"},"hideui:YpxMC/hideui:ljIwg":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:e7uYn":{"fill":"$--foreground"},"hideui:YpxMC/hideui:uJYZa":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:x9QjtJ/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:E0Mk6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:M6Mnyn":{"fill":"$--background"},"hideui:YpxMC/hideui:QSc1K":{"fill":"$--foreground"},"hideui:gPjhF":{"enabled":false,"x":480,"y":0,"width":0,"height":0},"hideui:gPjhF/hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground"},"hideui:gPjhF/hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border"},"hideui:gPjhF/hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"},"hideui:giyPa":{"fill":"$--card","enabled":false,"x":488,"y":0,"width":612,"height":840},"hideui:giyPa/hideui:tPjjv":{"fill":"$--card","stroke":"$--border"},"hideui:giyPa/hideui:b7bsc7":{"fill":"$--card","width":304},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-mark":{"fill":"$--file-blue"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:N6jVdg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:eeRGB/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:fenJg":{"fill":"$--card","stroke":"$--border"},"hideui:giyPa/hideui:fenJg/hideui:BUboy":{"fill":"$--subtle-foreground","content":"… 제목과 경로 확인.md"},"hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-lb":{"fill":"$--foreground"},"hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-lb":{"fill":"$--foreground"},"hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-lb":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-lb":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:nFrdf":{"fill":"$--card"},"hideui:giyPa/hideui:aX9gF":{"fill":"$--secondary"},"hideui:giyPa/hideui:jOt0p":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:iExJ4":{"fill":"$--file-blue"},"hideui:giyPa/hideui:T1KFmN":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:sfXAM":{"fill":"$--foreground"},"hideui:giyPa/hideui:h10qC":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:fzHJn":{"fill":"$--foreground","content":"한글과 English가 함께 있는 파일을 읽습니다."},"hideui:giyPa/hideui:GQ6yZ":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:oVfkk":{"fill":"$--foreground"},"hideui:w7GZ7c":{"enabled":false,"x":1100,"y":0,"width":0,"height":0},"hideui:w7GZ7c/hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground"},"hideui:w7GZ7c/hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border"},"hideui:w7GZ7c/hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"},"hideui:eNvgI":{"fill":"$--card","enabled":false,"x":1108,"y":0,"width":260,"height":840},"hideui:eNvgI/hideui:H2M1v0":{"stroke":"$--border"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer":{"stroke":"$--primary"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer-glyph":{"fill":"$--foreground"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-history-glyph":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:b22eS":{"stroke":"$--border"},"hideui:eNvgI/hideui:d927zh":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:DVJS6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:NZoEx":{"stroke":"$--border","enabled":false,"height":0,"width":0},"hideui:eNvgI/hideui:iDnaZ":{"fill":"$--muted-foreground"},"hideui:eNvgI/hideui:MmldP":{"stroke":"$--border"},"hideui:eNvgI/hideui:Cwgap":{"fill":"$--file-blue"},"hideui:eNvgI/hideui:x1im3":{"fill":"$--foreground","fontSize":"$--text-caption"},"hideui:eNvgI/hideui:fZi7M":{"stroke":"$--border"},"hideui:eNvgI/hideui:t0QOE":{"fill":"$--file-blue"},"hideui:eNvgI/hideui:aHlvp":{"fill":"$--foreground","fontSize":"$--text-caption","content":"한글과 English 작업 기록 - 긴 파일 제…"}}},{"type":"frame","id":"E3BX0","x":1056,"y":60,"name":"Running servers picker","width":320,"fill":"$--popover","cornerRadius":"$--radius-md","stroke":"$--border","strokeWidth":1,"strokeAlignment":"inner","layout":"vertical","gap":"$--spacing-xs","padding":"$--spacing-sm","children":[{"type":"text","id":"ILw1e","name":"Running servers","fill":"$--popover-foreground","content":"Running servers","fontFamily":"$--font-ui","fontSize":"$--text-caption","fontWeight":"500"},{"id":"u8ij3q","type":"ref","ref":"hideui:btn-m","name":"127.0.0.1:3000","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":"$--accent","stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"127.0.0.1:3000","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}},{"id":"BOKUB","type":"ref","ref":"hideui:btn-m","name":"[::1]:5173","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":[],"stroke":[],"strokeWidth":0,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"[::1]:5173","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}}]}]}]},
+    {"mode":"Dark","parent":"dkzAZ","children":[{"type":"frame","id":"ws-focus-d","name":"One keyboard area, other selections readable","width":960,"height":440,"fill":"$--background","children":[{"type":"frame","id":"ws-focus-d-1","name":"Keyboard owner","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-d-1-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--background","children":[{"id":"ws-focus-d-1-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--background","stroke":"$--foreground","strokeWidth":{"bottom":"$--size-tab-indicator"},"strokeAlignment":"inner","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-d-1-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-d-1-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-d-1-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]},{"type":"frame","id":"ws-focus-divider-d","name":"Area divider","width":"fit_content(0)","height":"fill_container","fill":"$--border"},{"type":"frame","id":"ws-focus-d-2","name":"Other area, retained selection","width":"fill_container","height":"fill_container","layout":"vertical","children":[{"type":"frame","id":"ws-focus-d-2-bar","name":"Tab bar","width":"fill_container","height":32,"fill":"$--card","children":[{"id":"ws-focus-d-2-tab1","type":"ref","ref":"hideui:view-tab","name":"Selected Korean tab","fill":"$--secondary","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--foreground","content":"한글 노트.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:view-tab-close":{"enabled":true}}},{"id":"ws-focus-d-2-tab2","type":"ref","ref":"hideui:view-tab","name":"검증 결과.md","fill":"$--card","descendants":{"hideui:view-tab-mark":{"fill":"$--file-document"},"hideui:view-tab-title":{"fill":"$--subtle-foreground","content":"검증 결과.md"},"hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:view-tab-dirty":{"fill":"$--warning"}}}]},{"type":"frame","id":"ws-focus-d-2-body","name":"Readable Korean content","width":"fill_container","height":"fill_container","fill":"$--background","layout":"vertical","padding":"$--spacing-sm","children":[{"type":"text","id":"ws-focus-d-2-text","name":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인","fontFamily":"$--font-mono","fontSize":"$--text-caption","fontWeight":"normal"}]}]}]},{"type":"frame","id":"es3RE","name":"Multiple running servers; both File Views and Tools off","clip":true,"width":1440,"height":900,"fill":"$--background","layout":"none","children":[{"type":"frame","id":"aTb9G","x":0,"y":0,"name":"Native window chrome - comparison context","width":1440,"height":28,"fill":"$--secondary","stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","layout":"none","children":[{"type":"ellipse","id":"OXSdD","x":8,"y":8,"name":"Inactive window control 1","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"PJTbo","x":28,"y":8,"name":"Inactive window control 2","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"ellipse","id":"FO6Yr","x":48,"y":8,"name":"Inactive window control 3","opacity":0.5,"fill":"$--muted-foreground","width":12,"height":12},{"type":"text","id":"XgiMy","x":706,"y":5,"name":"Window title","fill":"$--muted-foreground","content":"hide","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"uwCzX","x":0,"y":28,"name":"Device rail","width":48,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"vertical","gap":12,"padding":[8,4],"children":[{"id":"m3Yw2","type":"ref","ref":"hideui:Nyvom","name":"This Mac","width":40,"height":40,"stroke":"$--foreground","strokeWidth":2,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"laptop"}}},{"id":"FDTjR","type":"ref","ref":"hideui:Nyvom","name":"Add device","width":40,"height":32,"stroke":"$--border","strokeWidth":1,"cornerRadius":"$--radius-lg","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}}]},{"type":"frame","id":"VJuAf","x":48,"y":28,"name":"Projects sidebar","width":292,"height":872,"fill":"$--sidebar","stroke":"$--border","strokeWidth":{"right":1},"strokeAlignment":"inner","layout":"none","children":[{"type":"frame","id":"ad4af","x":0,"y":0,"name":"This Mac header","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"OA1kQ","name":"Device title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"This Mac","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"id":"k09v3","type":"ref","ref":"hideui:Nyvom","name":"Add project","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"plus"}}},{"id":"CY50L","type":"ref","ref":"hideui:Nyvom","name":"Search","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"search"}}}]},{"type":"frame","id":"USpqd","x":0,"y":32,"name":"Sidebar tab strip","width":292,"height":32,"stroke":"$--border","strokeWidth":{"bottom":"$--size-hairline"},"strokeAlignment":"inner","gap":8,"padding":[0,12],"alignItems":"center","children":[{"type":"text","id":"W0Y3y","name":"Selected tab","fill":"$--foreground","content":"Projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"},{"type":"text","id":"ukkoQ","name":"Other tab","fill":"$--muted-foreground","content":"Agents","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"frame","id":"T6Nm2","x":4,"y":68,"name":"Home","width":284,"height":36,"gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"V84dHa","name":"Home icon","width":14,"height":14,"icon":"house","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"F2k1Um","name":"Home title","fill":"$--foreground","textGrowth":"fixed-width","width":"fill_container","content":"Home","fontFamily":"$--font-ui","fontSize":"$--text-title","fontWeight":"600"},{"type":"text","id":"OrXCs","name":"Project count","fill":"$--muted-foreground","content":"0 projects","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"normal"}]},{"type":"text","id":"vWmVO","x":12,"y":110,"name":"Recent activity","fill":"$--muted-foreground","content":"Projects · Recent activity · 1","fontFamily":"$--font-ui","fontSize":"$--text-micro","fontWeight":"600"},{"type":"frame","id":"RBYXs","x":4,"y":124,"name":"Selected checkout","width":284,"height":36,"fill":"$--secondary","cornerRadius":"$--radius-sm","gap":8,"padding":[0,8],"alignItems":"center","children":[{"type":"icon","id":"tPXqp","name":"Checkout folder","width":14,"height":14,"icon":"folder","library":"lucide","fill":"$--subtle-foreground"},{"type":"text","id":"aYWyU","name":"Checkout label","fill":"$--foreground","content":"fixture","fontFamily":"$--font-ui","fontSize":"$--text-body","fontWeight":"600"}]},{"type":"frame","id":"QuMHI","x":0,"y":840,"name":"Sidebar footer","width":292,"height":32,"stroke":"$--border","strokeWidth":{"top":1},"strokeAlignment":"inner","gap":8,"padding":[0,12],"justifyContent":"end","alignItems":"center","children":[{"id":"xaaDR","type":"ref","ref":"hideui:Nyvom","name":"Background usage","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"activity"}}},{"id":"M3iGzm","type":"ref","ref":"hideui:Nyvom","name":"Settings","descendants":{"hideui:ZIZFR":{"fill":"$--subtle-foreground","icon":"settings"}}}]}]},{"id":"Uw8N7","type":"ref","ref":"hideui:VMZTz","name":"Shared Workspace toolbar","fill":"$--sidebar","stroke":"$--border","x":340,"y":28,"width":1100,"height":32,"descendants":{"hideui:bkh81":{"fill":"$--subtle-foreground","content":"Home  /  fixture  /  main"},"hideui:Kjfje/hideui:side-panel-tools-toggle/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button":{"fill":[]},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-button/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-badge":{"fill":"$--primary","enabled":false},"hideui:Kjfje/hideui:xMinO/hideui:side-panel-toggle-count":{"content":"1"},"hideui:Kjfje/hideui:XHe9v/hideui:OaJhM":{"fill":[]},"hideui:Kjfje/hideui:XHe9v/hideui:OaJhM/hideui:ZIZFR":{"fill":"$--subtle-foreground"}}},{"id":"ejdE4","type":"ref","ref":"hideui:side-panel","name":"Docked columns","fill":"$--background","x":340,"y":60,"width":1100,"height":840,"descendants":{"hideui:YpxMC":{"fill":"$--background","enabled":true,"x":0,"y":0,"width":1100,"height":840},"hideui:YpxMC/hideui:m3nqv":{"fill":"$--card","stroke":"$--border"},"hideui:YpxMC/hideui:Yf5g6":{"fill":"$--secondary"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-mark":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:YpxMC/hideui:Yf5g6/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:ujfpg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:GYdsi/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:jEy0G":{"fill":"$--background","width":1100},"hideui:YpxMC/hideui:blLvs":{"fill":"$--secondary","stroke":"$--border"},"hideui:YpxMC/hideui:W2jHfs":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:v57l6H":{"fill":"$--foreground"},"hideui:YpxMC/hideui:CG4wC":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:K8ikC/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:a63n6t/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:jPwvc":{"fill":"$--background"},"hideui:YpxMC/hideui:PNaQy":{"fill":"$--foreground"},"hideui:YpxMC/hideui:aTsYy":{"fill":"$--background","stroke":"$--border","enabled":false,"width":0,"height":0},"hideui:YpxMC/hideui:lFQa0":{"fill":"$--card","stroke":"$--border"},"hideui:YpxMC/hideui:ljIwg":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:e7uYn":{"fill":"$--foreground"},"hideui:YpxMC/hideui:uJYZa":{"fill":"$--muted-foreground"},"hideui:YpxMC/hideui:x9QjtJ/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:E0Mk6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:YpxMC/hideui:M6Mnyn":{"fill":"$--background"},"hideui:YpxMC/hideui:QSc1K":{"fill":"$--foreground"},"hideui:gPjhF":{"enabled":false,"x":480,"y":0,"width":0,"height":0},"hideui:gPjhF/hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground"},"hideui:gPjhF/hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border"},"hideui:gPjhF/hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"},"hideui:giyPa":{"fill":"$--card","enabled":false,"x":488,"y":0,"width":612,"height":840},"hideui:giyPa/hideui:tPjjv":{"fill":"$--card","stroke":"$--border"},"hideui:giyPa/hideui:b7bsc7":{"fill":"$--card","width":304},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-mark":{"fill":"$--file-blue"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-title":{"fill":"$--foreground"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-strike":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-dirty":{"fill":"$--warning"},"hideui:giyPa/hideui:b7bsc7/hideui:view-tab-close/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:N6jVdg/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:eeRGB/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:fenJg":{"fill":"$--card","stroke":"$--border"},"hideui:giyPa/hideui:fenJg/hideui:BUboy":{"fill":"$--subtle-foreground","content":"… 제목과 경로 확인.md"},"hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:ifLpE/hideui:btn-lb":{"fill":"$--foreground"},"hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:W8pA8k/hideui:btn-lb":{"fill":"$--foreground"},"hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:iFSdQ/hideui:btn-lb":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-ic":{"fill":"$--primary-foreground"},"hideui:giyPa/hideui:fenJg/hideui:lEjtc/hideui:btn-lb":{"fill":"$--subtle-foreground"},"hideui:giyPa/hideui:nFrdf":{"fill":"$--card"},"hideui:giyPa/hideui:aX9gF":{"fill":"$--secondary"},"hideui:giyPa/hideui:jOt0p":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:iExJ4":{"fill":"$--file-blue"},"hideui:giyPa/hideui:T1KFmN":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:sfXAM":{"fill":"$--foreground"},"hideui:giyPa/hideui:h10qC":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:fzHJn":{"fill":"$--foreground","content":"한글과 English가 함께 있는 파일을 읽습니다."},"hideui:giyPa/hideui:GQ6yZ":{"fill":"$--muted-foreground"},"hideui:giyPa/hideui:oVfkk":{"fill":"$--foreground"},"hideui:w7GZ7c":{"enabled":false,"x":1100,"y":0,"width":0,"height":0},"hideui:w7GZ7c/hideui:side-panel-grip-line-top":{"fill":"$--muted-foreground"},"hideui:w7GZ7c/hideui:side-panel-grip-pill":{"fill":"$--card","stroke":"$--border"},"hideui:w7GZ7c/hideui:side-panel-grip-glyph":{"fill":"$--muted-foreground"},"hideui:eNvgI":{"fill":"$--card","enabled":false,"x":1108,"y":0,"width":260,"height":840},"hideui:eNvgI/hideui:H2M1v0":{"stroke":"$--border"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer":{"stroke":"$--primary"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-explorer-glyph":{"fill":"$--foreground"},"hideui:eNvgI/hideui:HWGiW/hideui:side-panel-tool-history-glyph":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:b22eS":{"stroke":"$--border"},"hideui:eNvgI/hideui:d927zh":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:DVJS6/hideui:ZIZFR":{"fill":"$--subtle-foreground"},"hideui:eNvgI/hideui:NZoEx":{"stroke":"$--border","enabled":false,"height":0,"width":0},"hideui:eNvgI/hideui:iDnaZ":{"fill":"$--muted-foreground"},"hideui:eNvgI/hideui:MmldP":{"stroke":"$--border"},"hideui:eNvgI/hideui:Cwgap":{"fill":"$--file-blue"},"hideui:eNvgI/hideui:x1im3":{"fill":"$--foreground","fontSize":"$--text-caption"},"hideui:eNvgI/hideui:fZi7M":{"stroke":"$--border"},"hideui:eNvgI/hideui:t0QOE":{"fill":"$--file-blue"},"hideui:eNvgI/hideui:aHlvp":{"fill":"$--foreground","fontSize":"$--text-caption","content":"한글과 English 작업 기록 - 긴 파일 제…"}}},{"type":"frame","id":"Y0b444","x":1056,"y":60,"name":"Running servers picker","width":320,"fill":"$--popover","cornerRadius":"$--radius-md","stroke":"$--border","strokeWidth":1,"strokeAlignment":"inner","layout":"vertical","gap":"$--spacing-xs","padding":"$--spacing-sm","children":[{"type":"text","id":"eydR1","name":"Running servers","fill":"$--popover-foreground","content":"Running servers","fontFamily":"$--font-ui","fontSize":"$--text-caption","fontWeight":"500"},{"id":"UX8VT","type":"ref","ref":"hideui:btn-m","name":"127.0.0.1:3000","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":"$--accent","stroke":"$--ring","strokeWidth":1,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"127.0.0.1:3000","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}},{"id":"zn5Ax","type":"ref","ref":"hideui:btn-m","name":"[::1]:5173","width":"fill_container","height":28,"justifyContent":"start","gap":"$--spacing-xs","padding":[0,"$--spacing-md"],"fill":[],"stroke":[],"strokeWidth":0,"strokeAlignment":"outer","descendants":{"hideui:btn-ic":{"enabled":true,"icon":"globe","fill":"$--popover-foreground"},"hideui:btn-lb":{"content":"[::1]:5173","fontFamily":"$--font-mono","fontSize":"$--text-caption","fill":"$--popover-foreground"}}}]}]}]}
+  ];
 }
 
 // -- Screen / Project Sessions --------------------------------------------------
