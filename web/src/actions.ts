@@ -586,7 +586,7 @@ export function createActions(send: DispatchFn) {
   /**
    * `changes_select` for a History row of the checkout in front (S4, S7
    * contract 4.2): the core places a diff by the rules a file open follows,
-   * so a closed side panel opens to show it (issue 170).
+   * so File Views turns on to show it (PRD three-column-panel B4).
    */
   const selectChangeIn = (path: string, committed: boolean, preview: boolean, beside: boolean) => {
     const here = explorerContext(rest()).checkout;
