@@ -105,8 +105,14 @@ All shown tabs stay attached and awake, while only the active area's tab receive
 Pane headers, child chips, relationship controls and pane splits remain inside each canvas; find belongs to the focused pane.
 ⌘F on a full-screen Claude Code or Codex pane opens that agent's own search over its whole conversation in the pane, with the agent's own keys and count (Claude Code: type, Enter, `n`/`N`; Codex: type, Enter, Ctrl+P), and no find bar appears; any other pane, and an agent drawing inline, gets the find bar.
 
-An Agent area's tabs share its bar the way a browser's tabs do (the Pen library's `Component / Adaptive Work Tab`): each asks for the preferred width, and all shrink alike while an equal share still holds the title minimum.
-Below that every tab keeps only its marks at the icon identity width, the selected one adding its close control, and the strip scrolls once even the marks overflow.
+An Agent area's tabs share its bar the way a browser's tabs do (the Pen library's `Component / Adaptive Work Tab`), shrinking in three continuous stages so the bar is used to its end and the selected tab keeps its title longest.
+While an equal share still holds the title minimum, each tab asks for the preferred width and all shrink alike with their titles.
+Below that the selected tab keeps the title minimum with its title and close control, and the other tabs split the rest alike down to the icon identity width.
+An unselected tab narrower than the title minimum draws its marks and a truncated title with narrow padding and no close control, and below the icon identity plus one control it draws its marks alone, centred.
+Once every other tab is a mark, the selected tab gives up width from the title minimum, keeping its close control and a truncated title while it holds the icon identity plus two controls, and below that it becomes its marks with its close control; less than one control's width can then stay empty at the bar's end.
+The strip scrolls only when even that selected mark and the other marks overflow.
+The same width and tab count always draw the same strip whichever way the window was resized, a resize never paints an overflowing frame, and opening, closing or selecting a tab shares the bar again at once.
+A tab being renamed keeps the preferred width at every density, and each tab's tooltip and accessible name still give its agent, full title and state.
 Agent and View areas share the drag, divider and narrow-window controls described below.
 A drag keeps its original tab in place and changes no terminal size until a valid drop.
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.

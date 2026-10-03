@@ -8,40 +8,68 @@ import { holdShellDrag } from "./shellDrag";
 import { useUiStore } from "./ui";
 import { IDLE, movePointer, pressTab, relayout, releasePointer, type DragSession } from "./areaDrag";
 import { focusFromKeyboard, installFocusModality } from "./areaFocus";
-import { RATIO_MAX, RATIO_MIN, RESIZE_STEP, areasOf, dropTarget, findArea, iconTabs, locateDisplay, ratioAtOffset, revealedScroll, sameTarget, singleAreaGeometry, steppedRatio, areaGeometry,
+import { RATIO_MAX, RATIO_MIN, RESIZE_STEP, areasOf, dropTarget, findArea, locateDisplay, ratioAtOffset, revealedScroll, sameTarget, singleAreaGeometry, steppedRatio, tabStripFit, areaGeometry,
   type Area, type AreaItem, type AreaLayout, type AreaNode, type AreaSplit, type AreaWords,
-  type DividerBox, type DropTarget, type Geometry, type LayoutSizes, type Point, type Rect, type TabSlot } from "./areaLayout";
+  type DividerBox, type DropTarget, type Geometry, type LayoutSizes, type Point, type Rect, type TabFit, type TabSlot, type TabStripSizes } from "./areaLayout";
 
 /**
- * `icon` says the bar draws its tabs as marks: too many Agent tabs to keep a
- * title each (`iconTabs`), so every tab keeps only its marks and the selected
- * one adds its close control. A View tab is always titled.
+ * `fit` says how the tab draws its contents in its slot (`tabStripFit`): an
+ * Agent tab shrinks from titled through compact to marks as its bar fills;
+ * a View tab is always titled.
  */
-export type AreaTabInteraction = { selected: boolean; icon: boolean; areaActive: boolean; dragging: boolean; press: (event: React.PointerEvent<HTMLElement>) => void; select: () => void };
+export type AreaTabInteraction = { selected: boolean; fit: TabFit; areaActive: boolean; dragging: boolean; press: (event: React.PointerEvent<HTMLElement>) => void; select: () => void };
 
 /**
  * The classes that fit a tab's contents to its slot (`Component / Adaptive
- * Work Tab`): with titles, as the bar always drew them; as marks, centred
- * with nothing else, or on the selected tab with its close control at the end.
+ * Work Tab`): titled, as the bar always drew them; compact, with narrow
+ * padding and a truncated title, the close control kept only by the
+ * selected tab; as marks, centred with nothing else, or on the selected tab
+ * with its close control at the end.
  */
-export function tabFit(selected: boolean, icon: boolean): { tab: string; title: string; close: string } {
-  if (!icon) return { tab: "px-sm", title: "", close: "" };
-  return selected
-    ? { tab: "pl-xs", title: "hidden", close: "ml-auto" }
-    : { tab: "justify-center px-xs", title: "hidden", close: "hidden" };
+export function tabFit(selected: boolean, fit: TabFit): { tab: string; title: string; close: string } {
+  switch (fit) {
+    case "titled":
+      return { tab: "px-sm", title: "", close: "" };
+    case "compact":
+      return { tab: "px-xs", title: "", close: selected ? "" : "hidden" };
+    case "marks":
+      return selected
+        ? { tab: "pl-xs", title: "hidden", close: "ml-auto" }
+        : { tab: "justify-center px-xs", title: "hidden", close: "hidden" };
+  }
 }
 
 /**
- * A tab's slot in its bar. Titled, every tab asks for the preferred width and
- * all shrink alike down to the title minimum; as marks, an unselected tab is
- * the icon identity and the selected one adds its close control. A tab being
- * renamed keeps the preferred width so its field stays usable.
+ * A View tab's slot: every tab asks for the preferred width and all shrink
+ * alike down to the title minimum, then the strip scrolls.
  */
-function tabSlot(selected: boolean, icon: boolean): string {
-  if (!icon) return "flex w-(--size-tab-preferred) min-w-(--size-tab-title-min)";
-  const width = selected ? "w-[calc(var(--size-tab-icon-identity)_+_var(--size-control-sm))]" : "w-(--size-tab-icon-identity)";
-  return `flex shrink-0 ${width} has-data-renaming:w-(--size-tab-preferred)`;
+const VIEW_TAB_SLOT = "flex w-(--size-tab-preferred) min-w-(--size-tab-title-min)";
+
+/**
+ * An Agent tab's slot, at the width `tabStripFit` gave the selected tab or
+ * the others, which the bar writes on its tab list. A tab being renamed keeps
+ * the preferred width so its field stays usable.
+ */
+const AGENT_TAB_SLOT = {
+  selected: "flex shrink-0 w-(--tab-selected-width) has-data-renaming:w-(--size-tab-preferred)",
+  others: "flex shrink-0 w-(--tab-other-width) has-data-renaming:w-(--size-tab-preferred)",
+};
+
+/** The strip's sizes; a token that does not resolve is a broken build, not a strip of empty tabs. */
+function readTabStripSizes(): TabStripSizes {
+  const read = (name: string) => {
+    const value = tokenPx(name);
+    if (!(value > 0)) throw new Error(`design token ${name} did not resolve to a pixel size`);
+    return value;
+  };
+  return {
+    preferred: read("--size-tab-preferred"),
+    titleMin: read("--size-tab-title-min"),
+    icon: read("--size-tab-icon-identity"),
+    control: read("--size-control-sm"),
+  };
 }
+
 export type DrawnArea<I extends AreaItem> = { layout: AreaLayout<I>; geometry: Geometry; sizes: LayoutSizes };
 export type AreaAdapter<I extends AreaItem> = {
   words: AreaWords;
@@ -464,32 +492,40 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
   const tree = useTree();
   const shown = area.displays.find((row) => row.id === area.active) ?? null;
   const selectedId = tree.adapter.shown ? tree.adapter.shown(area)?.id : area.active;
-  // The tabs share the room left of the bar's own controls, and Agent tabs
-  // turn to marks when they could no longer each keep a title (`iconTabs`); a
+  // The tabs share the room left of the bar's own controls. Agent tabs shrink
+  // in stages, the selected one keeping its title longest (`tabStripFit`); a
   // file is not told apart by its type's mark, so View tabs keep their titles
   // and scroll. The room is the zone's, which the bar sizes, so the tabs' own
   // widths never feed back.
   const zone = useRef<HTMLDivElement>(null);
   const newTab = useRef<HTMLButtonElement>(null);
-  const [icon, setIcon] = useState(false);
+  const strip = useRef<HTMLDivElement>(null);
+  const [fits, setFits] = useState<{ selected: TabFit; others: TabFit }>({ selected: "titled", others: "titled" });
   const tabCount = area.displays.length;
+  const hasSelected = area.displays.some((display) => display.id === selectedId);
   useLayoutEffect(() => {
     const node = zone.current;
-    if (column !== "agent" || !node) return;
-    const measure = () => iconTabs(node.clientWidth - (newTab.current?.offsetWidth ?? 0), tabCount, tokenPx("--size-tab-title-min"));
-    setIcon(measure());
-    // A resize lands before paint, so the frame never shows titled tabs overflowing.
-    const observer = new ResizeObserver(() => {
-      const next = measure();
-      flushSync(() => setIcon(next));
-    });
+    const list = strip.current;
+    if (column !== "agent" || !node || !list) return;
+    const sizes = readTabStripSizes();
+    // Fractional bounds, rounded down: the tabs fill the bar to its end and never overflow it by a sliver.
+    const measure = () => tabStripFit(Math.floor(node.getBoundingClientRect().width - (newTab.current?.getBoundingClientRect().width ?? 0)), tabCount, hasSelected, sizes);
+    // The widths go straight onto the tab list; only a change of fit renders
+    // the bar again, so a resize costs a style write, not a render per pixel.
+    // Both land before paint, so the frame never shows tabs overflowing.
+    const apply = (next: ReturnType<typeof measure>, render: (update: () => void) => void) => {
+      const widths = { "--tab-selected-width": `${next.selected.width}px`, "--tab-other-width": `${next.others.width}px` };
+      for (const [name, value] of Object.entries(widths)) list.style.setProperty(name, value);
+      render(() => setFits((drawn) => (drawn.selected === next.selected.fit && drawn.others === next.others.fit ? drawn : { selected: next.selected.fit, others: next.others.fit })));
+    };
+    apply(measure(), (update) => update());
+    const observer = new ResizeObserver(() => apply(measure(), flushSync));
     observer.observe(node);
     return () => observer.disconnect();
-  }, [tabCount]);
+  }, [tabCount, hasSelected]);
   // The shown view's tab stays in sight however many tabs the area holds
   // (B20, B21): the strip scrolls itself, and nothing around it, whenever
   // the shown view changes, the tabs change density or the strip is resized.
-  const strip = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const list = strip.current;
     if (!list) return;
@@ -503,7 +539,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
     const observer = new ResizeObserver(reveal);
     observer.observe(list);
     return () => observer.disconnect();
-  }, [area.active, area.displays.length, icon]);
+  }, [area.active, area.displays.length, fits]);
   return (
     <div className={`flex h-[var(--size-tab-strip)] shrink-0 items-stretch border-b border-border ${active ? "bg-background" : "bg-card"}`} data-area-tab-bar={area.id} {...data("tab-bar", area.id)} {...tree.adapter.barAttributes}>
       <div ref={zone} className="flex min-w-0 flex-1 items-stretch">
@@ -515,11 +551,11 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
               items={() => tree.menu(display.id)}
               onSelect={(id) => tree.adapter.runMenu(id, display.id)}
               onCloseAutoFocus={tree.adapter.onMenuCloseAutoFocus}
-              className={tabSlot(display.id === selectedId, icon)}
+              className={column === "agent" ? AGENT_TAB_SLOT[display.id === selectedId ? "selected" : "others"] : VIEW_TAB_SLOT}
               data-tab-menu={display.id}
               data-area-item={display.id}
             >
-              {tree.adapter.tab(display, { selected: display.id === selectedId, icon, areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
+              {tree.adapter.tab(display, { selected: display.id === selectedId, fit: column === "agent" ? fits[display.id === selectedId ? "selected" : "others"] : "titled", areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
             </EntryContextMenu>
           ))}
         </div>
