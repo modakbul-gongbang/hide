@@ -172,6 +172,7 @@ fn read_activity(work: WatchWork) -> watch::Reading {
 fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBool>) {
     let mut next = Instant::now();
     let mut failure_logs = std::collections::HashMap::<String, Instant>::new();
+    let mut rejection_logs = std::collections::HashMap::<String, Instant>::new();
     let mut slow_log = None::<Instant>;
     while !stop.load(Ordering::Acquire) {
         if Instant::now() < next {
@@ -189,6 +190,7 @@ fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBoo
         let active: std::collections::HashSet<_> =
             work.iter().map(|work| work.id.clone()).collect();
         failure_logs.retain(|id, _| active.contains(id));
+        rejection_logs.retain(|id, _| active.contains(id));
         let mut readings = Vec::with_capacity(work.len());
         let mut work = work.into_iter();
         loop {
@@ -223,6 +225,23 @@ fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBoo
         if !stop.load(Ordering::Acquire) && !readings.is_empty() {
             match client.submit(Effect::Tick(readings), Duration::from_secs(5)) {
                 Ok(answer) => {
+                    if let Some(rejections) = answer["rejections"].as_array() {
+                        for rejection in rejections {
+                            let Some(id) = rejection[0].as_str() else {
+                                continue;
+                            };
+                            if rejection_logs
+                                .get(id)
+                                .is_none_or(|last| last.elapsed() >= Duration::from_secs(600))
+                            {
+                                crate::diagnostic!(
+                                    json!({"component":"delivery","kind":"watch.update_rejected",
+                                    "watch_id":id,"code":rejection[1]})
+                                );
+                                rejection_logs.insert(id.to_owned(), Instant::now());
+                            }
+                        }
+                    }
                     if let Some(failures) = answer["failures"].as_array() {
                         for failure in failures {
                             let Some(id) = failure[0].as_str() else {
@@ -334,7 +353,10 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
     let (actor, target, command) = match &request.effect {
         Effect::Tick(readings) => {
             let tick = watch::tick(ledger, readings, now)?;
-            return Ok((json!({"failures":tick.failures}), tick.transitions));
+            return Ok((
+                json!({"failures":tick.failures,"rejections":tick.rejections}),
+                tick.transitions,
+            ));
         }
         Effect::Bell {
             id,

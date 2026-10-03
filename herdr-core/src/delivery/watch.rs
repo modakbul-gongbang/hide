@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::ledger::Ledger;
-use super::{Actor, INACTIVITY_MS, SECOND_WARNING_MS, WATCH_LIMIT};
+use super::{Actor, FILE_LIMIT, INACTIVITY_MS, SECOND_WARNING_MS, WATCH_LIMIT};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Watch {
@@ -112,14 +112,31 @@ pub struct Reading {
 pub struct Tick {
     pub transitions: bool,
     pub failures: Vec<(String, u32)>,
+    pub rejections: Vec<(String, String)>,
 }
 
-/// A failed metadata read uses only this tick's status evidence. The previous
-/// session timestamp detects resumed activity; it is never a fallback read.
-/// The warning and its count commit together in the caller's ledger transaction.
+/// A failed metadata read uses only this tick's status evidence. The durable
+/// highest accepted activity identifies the episode, never a fallback read.
+/// Each warning and its ordinal are admitted together; a rejected warning
+/// cannot undo another target's exit or activity reset.
 pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick, String> {
     let mut result = Tick::default();
-    for reading in readings {
+    // One full encoding per tick. Subsequent bounded row encodings account for
+    // exact JSON growth without cloning/serializing the ledger per target.
+    let mut size = ledger.bytes()?.len();
+    for reading in readings.iter().filter(|reading| reading.gone) {
+        if let Some(index) = ledger
+            .watches
+            .iter()
+            .position(|watch| watch.id == reading.id)
+        {
+            size -= encoded_len(&ledger.watches[index])? + usize::from(ledger.watches.len() > 1);
+            ledger.watches.remove(index);
+            result.transitions = true;
+        }
+    }
+    let mut admitted = Vec::with_capacity(readings.len());
+    for reading in readings.iter().filter(|reading| !reading.gone) {
         let Some(index) = ledger
             .watches
             .iter()
@@ -127,11 +144,7 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         else {
             continue;
         };
-        if reading.gone {
-            ledger.watches.remove(index);
-            result.transitions = true;
-            continue;
-        }
+        let before = ledger.watches[index].clone();
         let watch = &mut ledger.watches[index];
         if watch.last_status != reading.status
             || watch.last_state_change_seq != reading.state_change_seq
@@ -145,21 +158,51 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             .unwrap_or(0)
             .max(watch.status_changed_at_unix_ms)
             .min(now);
-        if reading.failure.is_some() {
-            watch.activity_failures = watch.activity_failures.saturating_add(1);
-            if watch.activity_failures >= 3 {
-                result
-                    .failures
-                    .push((watch.id.clone(), watch.activity_failures));
-            }
+        watch.activity_failures = if reading.failure.is_some() {
+            watch.activity_failures.saturating_add(1)
         } else {
-            watch.activity_failures = 0;
-        }
+            0
+        };
         if activity > watch.last_activity_at_unix_ms {
             watch.last_activity_at_unix_ms = activity;
             watch.first_warning_at_unix_ms = None;
             watch.warning_count = 0;
         }
+        let updated_size = if watch.valid() {
+            resized(size, encoded_len(&before)?, encoded_len(watch)?)
+        } else {
+            Err("ledger_unavailable".into())
+        };
+        match updated_size {
+            Ok(updated_size) => size = updated_size,
+            Err(code) => {
+                ledger.watches[index] = before;
+                result.rejections.push((reading.id.clone(), code));
+                continue;
+            }
+        }
+        let watch = &ledger.watches[index];
+        if watch.activity_failures >= 3 {
+            result
+                .failures
+                .push((watch.id.clone(), watch.activity_failures));
+        }
+        admitted.push(reading);
+    }
+    for reading in admitted {
+        let Some(index) = ledger
+            .watches
+            .iter()
+            .position(|watch| watch.id == reading.id)
+        else {
+            continue;
+        };
+        let watch = &ledger.watches[index];
+        let activity = reading
+            .session_modified_at_unix_ms
+            .unwrap_or(0)
+            .max(watch.status_changed_at_unix_ms)
+            .min(now);
         let due = match (watch.warning_count, watch.first_warning_at_unix_ms) {
             (0, _) => now.saturating_sub(activity) >= INACTIVITY_MS,
             (1, Some(first)) => now.saturating_sub(first) >= SECOND_WARNING_MS,
@@ -168,8 +211,7 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         if !due {
             continue;
         }
-        let parent = watch.parent.clone();
-        let id = watch.id.clone();
+        let before = watch.clone();
         let count = watch.warning_count + 1;
         let open_requests = ledger
             .letters
@@ -193,22 +235,69 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             now.saturating_sub(activity) / 60_000,
             reading.status
         );
-        super::mailbox::send(
-            ledger,
-            &parent,
-            &parent,
-            &format!("{id}:warning:{count}:{activity}"),
-            &body,
-            "watch",
-            None,
-            now,
-        )?;
-        let watch = &mut ledger.watches[index];
-        watch.first_warning_at_unix_ms.get_or_insert(now);
-        watch.warning_count = count;
-        result.transitions = true;
+        let letters_before = ledger.letters.len();
+        let sequence_before = ledger.next_id;
+        let outcome = (|| {
+            super::mailbox::send(
+                ledger,
+                &before.parent,
+                &before.parent,
+                &format!(
+                    "{}:warning:{count}:{}",
+                    before.id, before.last_activity_at_unix_ms
+                ),
+                &body,
+                "watch",
+                None,
+                now,
+            )?;
+            let watch = &mut ledger.watches[index];
+            watch.first_warning_at_unix_ms.get_or_insert(now);
+            watch.warning_count = count;
+            let letter_growth = if ledger.letters.len() > letters_before {
+                encoded_len(ledger.letters.last().ok_or("ledger_unavailable")?)?
+                    + usize::from(letters_before > 0)
+            } else {
+                0
+            };
+            let next_size = resized(
+                size,
+                encoded_len(&before)?,
+                encoded_len(&ledger.watches[index])?,
+            )?;
+            resized(
+                next_size,
+                sequence_before.to_string().len(),
+                ledger.next_id.to_string().len() + letter_growth,
+            )
+        })();
+        match outcome {
+            Ok(updated_size) => {
+                size = updated_size;
+                result.transitions = true;
+            }
+            Err(code) => {
+                ledger.watches[index] = before;
+                ledger.letters.truncate(letters_before);
+                ledger.next_id = sequence_before;
+                result.rejections.push((reading.id.clone(), code));
+            }
+        }
     }
     Ok(result)
+}
+
+fn encoded_len(value: &impl Serialize) -> Result<usize, String> {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .map_err(|_| "ledger_unavailable".into())
+}
+
+fn resized(size: usize, removed: usize, added: usize) -> Result<usize, String> {
+    size.checked_sub(removed)
+        .and_then(|size| size.checked_add(added))
+        .filter(|size| *size <= FILE_LIMIT)
+        .ok_or_else(|| "capacity".into())
 }
 
 #[cfg(test)]
@@ -220,7 +309,7 @@ mod tests {
             name: id.into(),
             kind: "codex".into(),
             device_id: "local".into(),
-            session: None,
+            session: Some(format!("session-{id}")),
         }
     }
     fn reading(id: &str, activity: u64) -> Reading {
@@ -365,5 +454,184 @@ mod tests {
         reading.gone = true;
         tick(&mut ledger, &[reading], 2 + INACTIVITY_MS).unwrap();
         assert!(ledger.watches.is_empty());
+    }
+
+    fn closed_letter(
+        ledger: &mut Ledger,
+        body: String,
+        open: bool,
+        now: u64,
+    ) -> super::super::ledger::Letter {
+        let sequence = ledger.next_id;
+        ledger.next_id += 1;
+        super::super::ledger::Letter {
+            id: format!("letter-{sequence}"),
+            intent: format!("fill-{sequence}"),
+            sender: actor("filler"),
+            recipient: actor("filler"),
+            kind: "request".into(),
+            body,
+            state: if open {
+                super::super::ledger::State::Delivered
+            } else {
+                super::super::ledger::State::Acknowledged
+            },
+            waiting_answer: open,
+            reply_to: None,
+            created_at_unix_ms: now,
+            finished_at_unix_ms: (!open).then_some(now),
+            bell_errors: 0,
+            bell_sent: false,
+        }
+    }
+
+    fn fill_file_cap(ledger: &mut Ledger, now: u64) {
+        let limit = 16 * 1024 * 1024 - 1;
+        let mut size = ledger.bytes().unwrap().len();
+        while size < limit {
+            let sequence = ledger.next_id;
+            let mut letter = closed_letter(ledger, "x".into(), false, now);
+            let overhead = encoded_len(&letter).unwrap()
+                + usize::from(!ledger.letters.is_empty())
+                + ledger.next_id.to_string().len()
+                - sequence.to_string().len();
+            let mut room = limit - size;
+            if room < overhead {
+                let removed = overhead - room;
+                let last = ledger.letters.last_mut().unwrap();
+                last.body.truncate(last.body.len() - removed);
+                size -= removed;
+                room += removed;
+            }
+            letter.body = "x".repeat(1 + (room - overhead).min(16 * 1024 - 1));
+            size += overhead + letter.body.len() - 1;
+            ledger.letters.push(letter);
+        }
+        assert_eq!(ledger.bytes().unwrap().len(), limit);
+    }
+
+    #[test]
+    fn warning_capacity_preserves_other_target_exit_and_activity_reset() {
+        for cap in ["open", "retained", "file"] {
+            for reverse in [false, true] {
+                let mut ledger = Ledger::default();
+                let parent = actor("parent");
+                let gone = start(&mut ledger, &parent, &actor("gone"), 1).unwrap();
+                let reset = start(&mut ledger, &parent, &actor("resumed"), 1).unwrap();
+                let due = start(&mut ledger, &parent, &actor("inactive"), 1).unwrap();
+                for watch in &mut ledger.watches {
+                    watch.last_status = "idle".into();
+                    watch.last_state_change_seq = Some(1);
+                }
+                ledger.watches[1].warning_count = 1;
+                ledger.watches[1].first_warning_at_unix_ms = Some(10);
+                let now = 1 + INACTIVITY_MS;
+                match cap {
+                    "open" | "retained" => {
+                        let count = if cap == "open" { 1024 } else { 5000 };
+                        for _ in 0..count {
+                            let letter =
+                                closed_letter(&mut ledger, "retained".into(), cap == "open", now);
+                            ledger.letters.push(letter);
+                        }
+                    }
+                    "file" => fill_file_cap(&mut ledger, now),
+                    _ => unreachable!(),
+                }
+                let original_letters = ledger.letters.clone();
+                let original_sequence = ledger.next_id;
+                let mut exit = reading(&gone.id, 1);
+                exit.gone = true;
+                let mut resumed = reading(&reset.id, 1);
+                resumed.session_modified_at_unix_ms = Some(now);
+                let mut readings = vec![exit, resumed, reading(&due.id, 1)];
+                if reverse {
+                    readings.reverse();
+                }
+                let outcome = tick(&mut ledger, &readings, now).unwrap();
+                assert!(outcome.transitions);
+                assert!(
+                    outcome
+                        .rejections
+                        .contains(&(due.id.clone(), "capacity".into())),
+                    "{cap}"
+                );
+                assert!(!ledger.watches.iter().any(|watch| watch.id == gone.id));
+                let reset = ledger
+                    .watches
+                    .iter()
+                    .find(|watch| watch.id == reset.id)
+                    .unwrap();
+                assert_eq!(reset.warning_count, 0);
+                assert_eq!(reset.first_warning_at_unix_ms, None);
+                assert_eq!(reset.last_activity_at_unix_ms, now);
+                let due = ledger
+                    .watches
+                    .iter()
+                    .find(|watch| watch.id == due.id)
+                    .unwrap();
+                assert_eq!(due.warning_count, 0);
+                assert_eq!(due.first_warning_at_unix_ms, None);
+                assert_eq!(ledger.letters, original_letters);
+                assert_eq!(ledger.next_id, original_sequence);
+                ledger.bytes().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn file_only_activity_reset_and_failed_read_start_a_distinct_durable_warning_episode() {
+        for cancel in [false, true] {
+            let mut ledger = Ledger::default();
+            let parent = actor("parent");
+            let watch = start(&mut ledger, &parent, &actor("target"), 1).unwrap();
+            let first = 1 + INACTIVITY_MS;
+            tick(&mut ledger, &[reading(&watch.id, 1)], first).unwrap();
+            let old_id = ledger.letters[0].id.clone();
+            let command = if cancel {
+                super::super::Command::Cancel { id: old_id.clone() }
+            } else {
+                super::super::Command::Confirm {
+                    ids: vec![old_id.clone()],
+                }
+            };
+            super::super::mailbox::apply(&mut ledger, &parent, None, &command, first).unwrap();
+            let accepted_activity = first + 1;
+            let mut resumed = reading(&watch.id, 1);
+            resumed.session_modified_at_unix_ms = Some(accepted_activity);
+            tick(&mut ledger, &[resumed], accepted_activity).unwrap();
+            assert_eq!(ledger.watches[0].warning_count, 0);
+            let mut failed = reading(&watch.id, 1);
+            failed.failure = Some("session_activity_unavailable".into());
+            let new_first = accepted_activity + INACTIVITY_MS;
+            tick(&mut ledger, &[failed.clone()], new_first).unwrap();
+            assert_eq!(ledger.letters.len(), 2);
+            assert_ne!(ledger.letters[1].id, old_id);
+            assert!(ledger.letters[1].body.contains("status_transition_only"));
+            let new_id = ledger.letters[1].id.clone();
+            let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+            tick(
+                &mut restored,
+                &[failed.clone()],
+                new_first + SECOND_WARNING_MS - 1,
+            )
+            .unwrap();
+            assert_eq!(restored.letters.len(), 2);
+            tick(
+                &mut restored,
+                &[failed.clone()],
+                new_first + SECOND_WARNING_MS,
+            )
+            .unwrap();
+            assert_eq!(restored.letters.len(), 3);
+            assert_ne!(restored.letters[2].id, new_id);
+            tick(&mut restored, &[failed], new_first + SECOND_WARNING_MS * 2).unwrap();
+            assert_eq!(restored.letters.len(), 3);
+            assert_eq!(
+                restored.watches[0].first_warning_at_unix_ms,
+                Some(new_first)
+            );
+            assert_eq!(restored.watches[0].warning_count, 2);
+        }
     }
 }
