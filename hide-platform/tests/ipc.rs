@@ -275,6 +275,56 @@ fn a_burst_of_clients_that_connect_and_leave_loses_no_connect() {
     server.join().unwrap();
 }
 
+/// A connect is one connection, never two: nothing the stream does on
+/// either end opens another one behind it.
+#[test]
+fn one_connect_is_one_accepted_connection() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let closer = listener.closer();
+    let (accepted, arrivals) = mpsc::channel();
+    let accepting = thread::spawn(move || {
+        while let Ok(mut stream) = listener.accept() {
+            let line = read_line(&mut stream);
+            accepted.send(line).unwrap();
+        }
+    });
+    let mut client = LocalStream::connect(&path).unwrap();
+    client.write_all(b"one\n").unwrap();
+    assert_eq!(
+        arrivals.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "one\n"
+    );
+    assert_eq!(
+        arrivals.recv_timeout(Duration::from_millis(500)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "a second connection arrived for one connect"
+    );
+    closer.close();
+    drop(client);
+    accepting.join().unwrap();
+}
+
+/// What the listener's end writes just before it is dropped still arrives
+/// whole, however slowly the client reads: the pane bootstrap answers that
+/// way, and a Windows pipe closed with unread bytes throws them away.
+#[test]
+fn an_answer_written_just_before_the_end_is_dropped_arrives_whole() {
+    const ANSWER: usize = 256 * 1024;
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let answering = thread::spawn(move || {
+        let mut stream = listener.accept().unwrap();
+        stream.write_all(&vec![7_u8; ANSWER]).unwrap();
+    });
+    let mut client = LocalStream::connect(&path).unwrap();
+    thread::sleep(Duration::from_millis(300));
+    let mut answer = Vec::new();
+    client.read_to_end(&mut answer).unwrap();
+    assert_eq!(answer.len(), ANSWER);
+    answering.join().unwrap();
+}
+
 #[test]
 fn close_from_another_thread_frees_a_blocked_accept() {
     let (_folder, path) = endpoint();

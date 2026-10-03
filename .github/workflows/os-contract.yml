@@ -41,6 +41,9 @@ jobs:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Contract tests and the client's own tests
+        # Usually a minute or two; a contract test that hangs fails here
+        # rather than holding the runner until the job's timeout.
+        timeout-minutes: 10
         run: cargo test --locked -p hide-platform -p hide-herdr-client
       - name: Lint the platform crates
         run: cargo clippy --locked -p hide-platform -p hide-herdr-client --all-targets -- -D warnings

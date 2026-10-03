@@ -20,8 +20,10 @@
 //!   writes fail with `BrokenPipe`.
 //! - [`LocalListener::bind`] fails with `AddrInUse` while another listener
 //!   answers at the path, and replaces what a dead one left behind.
-//! - Clients that connect and leave, however many and however fast, never
-//!   hold up the next connect, whether or not anyone is in `accept` (#315).
+//! - Clients that connect and leave never hold up the next connect, whether
+//!   or not anyone is in `accept`, up to the listener's backlog (#315): a
+//!   socket's queue on Unix, 64 connections plus the listening instances on
+//!   Windows.
 //! - [`ListenerCloser::close`] called from another thread ends an `accept`
 //!   that is waiting, with `ConnectionAborted`, and every later one.
 //! - Only the account that bound the listener can connect to it.
@@ -37,10 +39,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+#[cfg(unix)]
 use interprocess::local_socket::Stream as RawStream;
+#[cfg(unix)]
 use interprocess::local_socket::prelude::*;
 #[cfg(unix)]
 use interprocess::local_socket::{GenericFilePath, Listener as RawListener, ListenerOptions, Name};
+#[cfg(windows)]
+use sys::Pipe as RawStream;
 
 /// What a listener's path may hold when nobody listens: connecting to it is
 /// refused or finds nothing. A connect that times out is a listener that
@@ -283,8 +289,9 @@ impl fmt::Debug for ListenerCloser {
 
 impl ListenerCloser {
     /// An `accept` waiting on the listener returns `ConnectionAborted`, and
-    /// so does every later one. Idempotent. The endpoint stays bound until
-    /// the listener is dropped.
+    /// so does every later one. Idempotent. The path stays the listener's
+    /// until it is dropped; on Windows the pipe stops taking connects at the
+    /// close.
     pub fn close(&self) {
         self.closing.close();
     }
@@ -632,7 +639,7 @@ mod sys {
 #[cfg(windows)]
 mod sys {
     use std::ffi::c_void;
-    use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle};
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::sync::atomic::AtomicBool;
     use std::sync::{Mutex, mpsc};
     use std::time::Instant;
@@ -647,13 +654,14 @@ mod sys {
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
+        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, FlushFileBuffers, PIPE_ACCESS_DUPLEX,
+        ReadFile, WriteFile,
     };
     use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
     use windows_sys::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
-        PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-        PeekNamedPipe,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
+        GetNamedPipeServerProcessId, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+        PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, PeekNamedPipe,
     };
     use windows_sys::Win32::System::Threading::{
         CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForMultipleObjects,
@@ -680,19 +688,137 @@ mod sys {
         })?;
         let handle = OwnedHandle::try_from(pipe)
             .map_err(|_| io::Error::other("a fresh pipe stream is not split"))?;
-        stream_from_handle(handle)
+        Ok(Pipe::new(handle, false))
     }
 
-    /// Either end of a connected pipe as a stream; `interprocess` asks the
-    /// pipe which end it is.
-    fn stream_from_handle(handle: OwnedHandle) -> io::Result<RawStream> {
-        use interprocess::os::windows::named_pipe::local_socket::Stream as PipeStream;
-        let pipe = PipeStream::try_from(handle).map_err(|error| {
-            error
-                .cause
-                .unwrap_or_else(|| io::Error::other("the pipe handle was not accepted"))
-        })?;
-        Ok(RawStream::from(pipe))
+    /// One connected end of a pipe.
+    ///
+    /// Not `interprocess`'s stream: the only way into it from a handle
+    /// reopens the handle (`ReOpenFile`), and a reopen relative to a pipe
+    /// handle is a new client connect to the same pipe. With one instance
+    /// listening, as `interprocess`'s own listener keeps, that connect fails
+    /// and the original is kept; with several, it takes another instance and
+    /// the original end is closed, so the peer's next write fails with "the
+    /// pipe is being closed" and the instance taken waits for ever.
+    pub(super) struct Pipe {
+        handle: OwnedHandle,
+        /// The listener's end, which asks for the client's pid.
+        server: bool,
+        /// Whether anything was written, which the peer may not have read.
+        written: AtomicBool,
+    }
+
+    impl Pipe {
+        fn new(handle: OwnedHandle, server: bool) -> Self {
+            Self {
+                handle,
+                server,
+                written: AtomicBool::new(false),
+            }
+        }
+
+        /// One read or write, overlapped as the handle was opened, waited for
+        /// on this thread's own event so a read and a write on two threads
+        /// never take each other's completion.
+        fn io(&self, start: impl FnOnce(HANDLE, *mut OVERLAPPED) -> i32) -> io::Result<usize> {
+            thread_local! {
+                static EVENT: std::cell::OnceCell<OwnedHandle> = const { std::cell::OnceCell::new() };
+            }
+            EVENT.with(|cell| {
+                let event = match cell.get() {
+                    Some(event) => event,
+                    None => {
+                        let made = event()?;
+                        cell.get_or_init(|| made)
+                    }
+                };
+                let handle = self.handle.as_raw_handle();
+                // SAFETY: an all-zero OVERLAPPED is valid; only the event is set.
+                let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+                overlapped.hEvent = event.as_raw_handle();
+                if start(handle, &mut overlapped) == 0 {
+                    let code = last_error_code();
+                    if code != ERROR_IO_PENDING {
+                        return Err(os_error(code));
+                    }
+                }
+                let mut transferred = 0_u32;
+                // SAFETY: the operation started on this OVERLAPPED, which
+                // stays on this frame until the wait below has seen it end.
+                if unsafe { GetOverlappedResult(handle, &overlapped, &mut transferred, 1) } == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(transferred as usize)
+            })
+        }
+
+        fn peer_pid(&self) -> io::Result<u32> {
+            let mut pid = 0_u32;
+            let handle = self.handle.as_raw_handle();
+            // SAFETY: the handle is open while `self` is borrowed and the out
+            // pointer refers to a live local.
+            let answered = unsafe {
+                if self.server {
+                    GetNamedPipeClientProcessId(handle, &mut pid)
+                } else {
+                    GetNamedPipeServerProcessId(handle, &mut pid)
+                }
+            };
+            if answered == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(pid)
+        }
+    }
+
+    /// Closing an end throws away what it wrote and the peer has not read
+    /// yet, so an end that wrote is kept open by a thread of its own until
+    /// the peer has read it all or gone (`FlushFileBuffers`), as
+    /// `interprocess` does. The answer a listener writes just before it drops
+    /// the stream is how the pane bootstrap replies.
+    impl Drop for Pipe {
+        fn drop(&mut self) {
+            if !*self.written.get_mut() {
+                return;
+            }
+            let Ok(kept) = self.handle.try_clone() else {
+                return;
+            };
+            let _ = std::thread::Builder::new()
+                .name("hide-ipc-linger".to_owned())
+                .spawn(move || {
+                    // SAFETY: the handle is open for the whole call.
+                    unsafe { FlushFileBuffers(kept.as_raw_handle()) };
+                });
+        }
+    }
+
+    impl Read for &Pipe {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+            let data = buffer.as_mut_ptr();
+            // SAFETY: the buffer outlives the operation, which `io` waits for.
+            self.io(|handle, overlapped| unsafe {
+                ReadFile(handle, data, length, std::ptr::null_mut(), overlapped)
+            })
+        }
+    }
+
+    impl Write for &Pipe {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            let length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+            let data = buffer.as_ptr();
+            // SAFETY: the buffer outlives the operation, which `io` waits for.
+            let written = self.io(|handle, overlapped| unsafe {
+                WriteFile(handle, data, length, std::ptr::null_mut(), overlapped)
+            })?;
+            self.written.store(true, Ordering::Relaxed);
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     /// The marker file is the only thing a listener leaves on Windows.
@@ -718,8 +844,7 @@ mod sys {
     }
 
     pub(super) fn raw_handle(raw: &RawStream) -> *mut c_void {
-        let RawStream::NamedPipe(pipe) = raw;
-        pipe.as_handle().as_raw_handle()
+        raw.handle.as_raw_handle()
     }
 
     pub(super) fn set_read_timeout(_: &Shared, _: Option<Duration>) -> io::Result<()> {
@@ -850,11 +975,7 @@ mod sys {
     }
 
     pub(super) fn peer_pid(shared: &Shared) -> io::Result<u32> {
-        shared
-            .raw
-            .peer_creds()?
-            .pid()
-            .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
+        shared.raw.peer_pid()
     }
 
     /// A pipe has no unnamed pair, so the two ends meet on a private name that
@@ -1024,7 +1145,7 @@ mod sys {
             };
             match accepted.recv() {
                 _ if self.closing.closed.load(Ordering::SeqCst) => Err(listener_closed()),
-                Ok(Ok(pipe)) => stream_from_handle(pipe),
+                Ok(Ok(handle)) => Ok(Pipe::new(handle, true)),
                 Ok(Err(error)) => Err(error),
                 // The thread ends only when closed or when every instance
                 // failed, and it queued each failure first.
@@ -1038,9 +1159,10 @@ mod sys {
             self.closing.close();
             // A thread waiting for room in the queue gives up once the queue
             // is gone.
-            if let Ok(mut accepted) = self.accepted.lock() {
-                accepted.take();
-            }
+            self.accepted
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
             if let Some(serving) = self.serving.take() {
                 let _ = serving.join();
             }
@@ -1122,9 +1244,12 @@ mod sys {
         }
 
         /// Frees the instance a client left, so it can listen again.
-        fn clear(&mut self) {
+        fn clear(&mut self) -> io::Result<()> {
             // SAFETY: the pipe is open; no connect is in flight on it.
-            unsafe { DisconnectNamedPipe(self.pipe()) };
+            if unsafe { DisconnectNamedPipe(self.pipe()) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
         }
 
         /// Ends a connect in flight and waits until the system lets go of the
@@ -1215,10 +1340,15 @@ mod sys {
     ) -> bool {
         match outcome {
             Ok(Outcome::Pending) => true,
-            Ok(Outcome::Gone) => {
-                slot.clear();
-                true
-            }
+            Ok(Outcome::Gone) => match slot.clear() {
+                Ok(()) => true,
+                // An instance that cannot be cleared would answer "gone" to
+                // every connect after it; it is given up like a failed one.
+                Err(error) => {
+                    slot.instance = None;
+                    queue.send(Err(error)).is_ok()
+                }
+            },
             Ok(Outcome::Connected) => {
                 let Some(instance) = slot.instance.as_mut() else {
                     return true;
