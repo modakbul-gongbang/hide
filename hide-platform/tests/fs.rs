@@ -685,7 +685,10 @@ fn unsupported_durable_access_preserves_existing_bytes_acl_and_the_namespace() {
         }
         assert_eq!(read(&path), "old");
         assert_eq!(identity::file_id(&path).unwrap(), before_id);
-        assert_eq!(Permissions::of(&File::open(&path).unwrap()).unwrap(), before);
+        assert_eq!(
+            Permissions::of(&File::open(&path).unwrap()).unwrap(),
+            before
+        );
     }
     let fresh = outer.path().join("fresh");
     assert!(matches!(
@@ -711,7 +714,10 @@ fn a_durable_unix_write_preserves_kept_permissions_and_private_executable_access
     atomic::write_file_durable(&path, b"new", Access::KeepOrPrivate).unwrap();
 
     assert_eq!(read(&path), "new");
-    assert_eq!(Permissions::of(&File::open(&path).unwrap()).unwrap(), before);
+    assert_eq!(
+        Permissions::of(&File::open(&path).unwrap()).unwrap(),
+        before
+    );
     let program = outer.path().join("program");
     atomic::write_file_durable(&program, b"private program", Access::PrivateExecutable).unwrap();
     assert_eq!(read(&program), "private program");
