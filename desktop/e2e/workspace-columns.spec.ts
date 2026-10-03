@@ -33,7 +33,10 @@ async function nativeCapture(app: ElectronApplication, page: Page, name: string)
   });
   const geometry = await page.evaluate(() => ({
     body: document.querySelector<HTMLElement>("[data-column-row=true]")!.clientWidth,
-    columns: Array.from(document.querySelectorAll<HTMLElement>("[data-column]")).map((column) => ({ name: column.dataset.column, width: column.clientWidth, mounted: true, visible: column.checkVisibility({ visibilityProperty: true }) })),
+    theme: document.documentElement.className,
+    columns: Array.from(document.querySelectorAll<HTMLElement>("[data-column]")).map((column) => ({ name: column.dataset.column, left: column.getBoundingClientRect().left, width: column.clientWidth, mounted: true, visible: column.checkVisibility({ visibilityProperty: true }) })),
+    controls: Array.from(document.querySelectorAll<HTMLElement>("[data-column-toggles] button")).map((control) => ({ name: control.getAttribute("aria-label"), pressed: control.getAttribute("aria-pressed"), badge: control.querySelector("[data-column-badge]")?.textContent ?? null, focused: control.matches(":focus-visible") })),
+    tooltip: document.querySelector<HTMLElement>('[data-slot="tooltip-content"]')?.textContent ?? null,
   }));
   const captured = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.window.split(":")[1]!, path.join(dir, `${name}.png`)], { encoding: "utf8" });
   expect(captured.status, captured.stderr).toBe(0);
@@ -95,6 +98,8 @@ test("Workspace columns preserve geometry, dock once on release and show native 
   let app: ElectronApplication | null = null;
   try {
     const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
+    const init = spawnSync("git", ["-C", checkout, "init", "-q", "--initial-branch=main"], { env: herdr.env, encoding: "utf8" });
+    expect(init.status, init.stderr).toBe(0);
     fs.writeFileSync(path.join(checkout, "notes.md"), "# 작업 기록\n\n한글과 English를 나란히 읽습니다.\n");
     const longName = "한글과 English 작업 기록 - 긴 파일 제목과 경로 확인.md";
     fs.writeFileSync(path.join(checkout, longName), "# 긴 제목의 작업 기록\n\n한글과 English가 함께 있는 파일을 읽습니다.\n");
@@ -330,19 +335,59 @@ test("Workspace columns preserve geometry, dock once on release and show native 
         await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + 100);
         await page.mouse.up();
         await expect(page.locator("[data-column-guide=true]")).toHaveCount(0);
-        for (const [column, name, shortcut] of [["views", "File Views", "⇧⌘B"], ["tools", "Tools", "⌘E"]]) {
-          await page.locator('[data-column-toggle="' + column + '"]').hover();
+        for (const [selector, name, shortcut] of [['[data-open-server="true"]', "Open server", null], ['[data-column-toggle="views"]', "File Views", "⇧⌘B"], ['[data-column-toggle="tools"]', "Tools", "⌘E"]] as const) {
+          const control = page.locator(selector);
+          const capture = name === "Open server" ? "server" : name === "File Views" ? "views" : "tools";
+          await control.hover();
           const tooltip = page.locator('[data-slot="tooltip-content"]');
-          await expect(tooltip).toContainText(name!);
-          await expect(tooltip).toContainText(shortcut!);
-          await nativeCapture(app, page, "columns-" + theme + "-" + column + "-tooltip");
+          await expect(tooltip).toContainText(name);
+          if (shortcut) await expect(tooltip).toContainText(shortcut);
+          await nativeCapture(app, page, `columns-${theme}-${capture}-tooltip`);
+          await rest(page);
+          await keyboardFocus(page, control);
+          await nativeCapture(app, page, `columns-${theme}-${capture}-focus`);
           await rest(page);
         }
+        await page.locator('[data-view-tab-bar] [data-display]').filter({ hasText: longName }).hover();
+        await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(path.join(checkout, longName));
+        await nativeCapture(app, page, `columns-${theme}-full-file-path-tooltip`);
+        await rest(page);
+        await bodyWidth(app, page, 1100);
+        await page.locator('[data-column-toggle="tools"]').click();
+        await expect(workspace).toHaveAttribute("data-tools", "shown");
+        await expect(page.locator('[data-column="tools"]')).toHaveJSProperty("clientWidth", 355);
+        await expect(page.locator('[data-column="agents"]')).toHaveJSProperty("clientWidth", 737);
+        await nativeCapture(app, page, `columns-${theme}-body-1100-called-tools`);
+        await bodyWidth(app, page, 848);
+        await expect(page.locator('[data-column="tools"]')).toHaveJSProperty("clientWidth", 355);
+        await expect(page.locator('[data-column="agents"]')).toHaveJSProperty("clientWidth", 485);
+        await nativeCapture(app, page, `columns-${theme}-body-848-called-tools`);
+        await bodyWidth(app, page, 847);
+        await expect(page.locator('[data-column="agents"]')).toBeVisible();
+        await expect(workspace).toHaveAttribute("data-tools", "hidden");
+        await nativeCapture(app, page, `columns-${theme}-body-847-agents`);
+        await page.locator('[data-column-toggle="tools"]').click();
+        await expect(workspace).toHaveAttribute("data-tools", "shown");
+        await expect(page.locator('[data-column="agents"]')).toBeHidden();
+        await expect(page.locator('[data-column="tools"]')).toHaveJSProperty("clientWidth", 847);
+        await nativeCapture(app, page, `columns-${theme}-body-847-called-tools`);
+        await bodyWidth(app, page, 1116);
         await page.locator('[data-column-toggle="views"]').click();
         await expect(workspace).toHaveAttribute("data-file-views", "off");
         await expect(page.locator('[data-column-toggle="views"] [data-column-badge]')).toBeVisible();
         await nativeCapture(app, page, `columns-${theme}-tools-only`);
         await page.locator('[data-column-toggle="views"]').click();
+        await expect(workspace).toHaveAttribute("data-file-views", "shown");
+        for (let remaining = await page.locator('[data-view-tab-bar] [data-display]').count(); remaining > 0; remaining -= 1) {
+          await page.getByRole("button", { name: /^Close view / }).first().click();
+          await expect(page.locator('[data-view-tab-bar] [data-display]')).toHaveCount(remaining - 1);
+        }
+        await expect(workspace).toHaveAttribute("data-file-views", "off");
+        await expect(page.locator('[data-column-toggle="views"] [data-column-badge]')).toHaveCount(0);
+        await expect(page.locator('[data-column="views"]')).toHaveCount(0);
+        await expect(page.locator('[data-column="tools"]')).toHaveJSProperty("clientWidth", 355);
+        await nativeCapture(app, page, `columns-${theme}-zero-views-tools`);
+        await page.locator(`[data-explorer-row$="/${longName}"]`).click();
         await expect(workspace).toHaveAttribute("data-file-views", "shown");
       }
     }
