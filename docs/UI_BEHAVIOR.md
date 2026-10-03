@@ -277,7 +277,8 @@ Widening the window brings back what the Workspace stores, whether each column i
 
 ### Library masters
 
-The three columns have no masters in `design/hide-ui.lib.pen` yet: the operator approved the layout without a Pen board (PRD three-column-panel D-13), and the `Component / Side panel` sheets there still draw the side panel the columns replaced until a board replaces them through the design workflow.
+PRD three-column-panel D-13 requires a real `Screen / Workspace` board and column masters replacing the old `Component / Side panel` sheets through the design workflow.
+The operator delegated final design judgment within the approved direction; delivery requires that review to compare the board with actual native captures in both themes and to confirm B35.
 The View area masters in `design/hide-ui.lib.pen` are `Component / View tab`, `Component / View insertion line`, `Component / View split overlay`, `Component / View tab menu`, and `Component / View area message`.
 Their sheets draw every state as refs: the View tab sheet draws preview, pinned, hover, active-in-the-active-area, active-in-another-area, dirty, unavailable, diff, a long title, and the floating drag copy; the placement sheet draws a reorder, a move into another area, a right and a down split, and an ineligible target; the tab menu sheet draws a preview's menu and a pinned view's menu with a disabled Split and its reason; the area states sheet draws each view's opening, waiting, and unavailable states.
 The browser display's toolbar and its loading, load failed, and plain browser tab states are on `Component / Browser file diff toolbars`.
