@@ -58,9 +58,12 @@ fn bootstrap_local(env: &Env, request: &Value) -> Result<PathBuf, String> {
     stream
         .set_read_timeout(Some(TIMEOUT))
         .map_err(|_| "hide_unavailable".to_owned())?;
-    stream
-        .set_write_timeout(Some(TIMEOUT))
-        .map_err(|_| "hide_unavailable".to_owned())?;
+    match stream.set_write_timeout(Some(TIMEOUT)) {
+        // A Windows pipe has no write timeout; the request is one line that
+        // fits the pipe's buffer, and the read that follows is bounded.
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {}
+        result => result.map_err(|_| "hide_unavailable".to_owned())?,
+    }
     writeln!(stream, "{request}").map_err(|_| "hide_unavailable".to_owned())?;
     read_bootstrap_answer(&mut stream)
 }

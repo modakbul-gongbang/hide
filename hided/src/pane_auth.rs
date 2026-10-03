@@ -807,7 +807,13 @@ pub async fn serve(
     shutdown: Arc<Notify>,
 ) {
     use tokio::sync::Semaphore;
-    let closer = listener.closer();
+    // Closed however this future ends, a drop included, so the accept
+    // thread never outlives it.
+    let closing = CloseOnDrop {
+        closer: listener.closer(),
+        closed: Arc::new(AtomicBool::new(false)),
+    };
+    let closed = Arc::clone(&closing.closed);
     let (accepted, mut arrivals) = tokio::sync::mpsc::channel(MAX_BOOTSTRAPS);
     let accepting = std::thread::Builder::new()
         .name("pane-bootstrap-accept".to_owned())
@@ -819,7 +825,10 @@ pub async fn serve(
                             return;
                         }
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::ConnectionAborted => {
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::ConnectionAborted
+                            && closed.load(Ordering::SeqCst) =>
+                    {
                         return;
                     }
                     Err(error) => {
@@ -865,7 +874,20 @@ pub async fn serve(
             answer_bootstrap(stream, &registry, &core, herdr_socket.as_deref(), port);
         });
     }
-    closer.close();
+}
+
+struct CloseOnDrop {
+    closer: hide_platform::ipc::ListenerCloser,
+    /// Set before the close, so the accept thread tells its own stop from an
+    /// accept that failed.
+    closed: Arc<AtomicBool>,
+}
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.closer.close();
+    }
 }
 
 /// The bootstrap listener stopped accepting for a reason other than the
