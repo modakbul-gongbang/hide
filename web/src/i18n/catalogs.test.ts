@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { catalogs, english } from "./catalogs";
 import { commandsEnglish } from "./resources/commands";
+import { boardEnglish } from "./resources/board";
 import { cleanupEnglish } from "./resources/cleanup";
 import { commonEnglish } from "./resources/common";
 import { devicesEnglish } from "./resources/devices";
@@ -35,6 +36,7 @@ describe("interface resources", () => {
       requestsEnglish,
       issuesEnglish,
       prWorkEnglish,
+      boardEnglish,
     ].flatMap((schema) => Object.keys(schema));
     expect(new Set(keys).size).toBe(keys.length);
   });

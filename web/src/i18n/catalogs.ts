@@ -1,4 +1,5 @@
 import { commandsCatalogs, commandsEnglish } from "./resources/commands";
+import { boardCatalogs, boardEnglish } from "./resources/board";
 import { cleanupCatalogs, cleanupEnglish } from "./resources/cleanup";
 import { commonCatalogs, commonEnglish } from "./resources/common";
 import { devicesCatalogs, devicesEnglish } from "./resources/devices";
@@ -27,6 +28,7 @@ export const english = {
   ...requestsEnglish,
   ...issuesEnglish,
   ...prWorkEnglish,
+  ...boardEnglish,
 } as const;
 
 export type MessageKey = keyof typeof english;
@@ -47,6 +49,7 @@ export const catalogs = {
     ...requestsCatalogs.ko,
     ...issuesCatalogs.ko,
     ...prWorkCatalogs.ko,
+    ...boardCatalogs.ko,
   },
   "zh-CN": {
     ...commonCatalogs["zh-CN"],
@@ -62,6 +65,7 @@ export const catalogs = {
     ...requestsCatalogs["zh-CN"],
     ...issuesCatalogs["zh-CN"],
     ...prWorkCatalogs["zh-CN"],
+    ...boardCatalogs["zh-CN"],
   },
   ja: {
     ...commonCatalogs.ja,
@@ -77,5 +81,6 @@ export const catalogs = {
     ...requestsCatalogs.ja,
     ...issuesCatalogs.ja,
     ...prWorkCatalogs.ja,
+    ...boardCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;
