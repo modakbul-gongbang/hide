@@ -102,6 +102,7 @@ pub fn stop(ledger: &mut Ledger, parent: &Actor, id: &str) -> Result<(), String>
 pub struct Reading {
     pub id: String,
     pub status: String,
+    pub status_available: bool,
     pub state_change_seq: Option<u64>,
     pub status_changed_at_unix_ms: u64,
     pub session_modified_at_unix_ms: Option<u64>,
@@ -147,18 +148,23 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         };
         let before = ledger.watches[index].clone();
         let watch = &mut ledger.watches[index];
-        if watch.last_status != reading.status
-            || watch.last_state_change_seq != reading.state_change_seq
+        if reading.status_available
+            && (watch.last_status != reading.status
+                || watch.last_state_change_seq != reading.state_change_seq)
         {
             watch.last_status = reading.status.clone();
             watch.last_state_change_seq = reading.state_change_seq;
             watch.status_changed_at_unix_ms = reading.status_changed_at_unix_ms.min(now);
         }
-        let activity = reading
-            .session_modified_at_unix_ms
-            .unwrap_or(0)
-            .max(watch.status_changed_at_unix_ms)
-            .min(now);
+        let activity = if reading.status_available {
+            reading
+                .session_modified_at_unix_ms
+                .unwrap_or(0)
+                .max(watch.status_changed_at_unix_ms)
+                .min(now)
+        } else {
+            watch.last_activity_at_unix_ms
+        };
         watch.activity_failures = if reading.failure.is_some() {
             watch.activity_failures.saturating_add(1)
         } else {
@@ -199,11 +205,15 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             continue;
         };
         let watch = &ledger.watches[index];
-        let activity = reading
-            .session_modified_at_unix_ms
-            .unwrap_or(0)
-            .max(watch.status_changed_at_unix_ms)
-            .min(now);
+        let activity = if reading.status_available {
+            reading
+                .session_modified_at_unix_ms
+                .unwrap_or(0)
+                .max(watch.status_changed_at_unix_ms)
+                .min(now)
+        } else {
+            watch.last_activity_at_unix_ms
+        };
         let due = match (watch.warning_count, watch.first_warning_at_unix_ms) {
             (0, _) => now.saturating_sub(activity) >= INACTIVITY_MS,
             (1, Some(first)) => now.saturating_sub(first) >= SECOND_WARNING_MS,
@@ -223,7 +233,9 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
                         || letter.recipient.pane_id == watch.target.pane_id)
             })
             .count();
-        let basis = if reading.session_modified_at_unix_ms.is_some() {
+        let basis = if !reading.status_available {
+            "projection_unavailable"
+        } else if reading.session_modified_at_unix_ms.is_some() {
             "session_file"
         } else {
             "status_transition_only"
@@ -234,7 +246,11 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             watch.id,
             watch.target.name,
             now.saturating_sub(activity) / 60_000,
-            reading.status
+            if reading.status_available {
+                reading.status.as_str()
+            } else {
+                "unavailable"
+            }
         );
         let letters_before = ledger.letters.len();
         let sequence_before = ledger.next_id;
@@ -317,6 +333,7 @@ mod tests {
         Reading {
             id: id.into(),
             status: "idle".into(),
+            status_available: true,
             state_change_seq: Some(activity),
             status_changed_at_unix_ms: activity,
             session_modified_at_unix_ms: None,
@@ -473,6 +490,7 @@ mod tests {
         let mut reading = Reading {
             id: watch.id.clone(),
             status: "unknown".into(),
+            status_available: true,
             state_change_seq: None,
             status_changed_at_unix_ms: 1,
             session_modified_at_unix_ms: None,

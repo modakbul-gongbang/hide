@@ -308,12 +308,25 @@ impl Runtime {
             .watches
             .iter()
             .map(|watch| {
-                let observation = self
-                    .delivery_observations
-                    .get(&watch.target.pane_id)
-                    .filter(|observation| observation.actor.same_identity(&watch.target))
+                let current = self.delivery_observations.get(&watch.target.pane_id);
+                let observation = current
+                    .filter(|observation| {
+                        watch.target.require_native_identity().is_ok()
+                            && observation.actor.require_native_identity().is_ok()
+                            && observation.actor.same_identity(&watch.target)
+                    })
                     .cloned();
-                let gone = observation.is_none()
+                // Acquisition or temporary loss of a native reference does
+                // not prove an execution ended. Preserve the original binding
+                // and clocks, and withhold unproven status/file metadata.
+                let proven_absence_or_replacement = match current {
+                    None => true,
+                    Some(observation) => matches!(
+                        (&watch.target.session, &observation.actor.session),
+                        (Some(original), Some(current)) if original != current
+                    ),
+                };
+                let gone = proven_absence_or_replacement
                     && self.delivery_connected.contains(&watch.target.device_id)
                     && !self.delivery_overflow.contains(&watch.target.device_id);
                 let channel = if watch.target.device_id != "local" && observation.is_some() {

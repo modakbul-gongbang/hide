@@ -9,6 +9,8 @@ Remote recipients, hcoord retirement, human Inbox UI and automatic draft clearin
 These commands need the running daemon and a current agent pane in a registered checkout; they work without an open renderer.
 The daemon binds the caller through the existing Workspace credential boundary and resolves the actual pane, provider and native-session identity from Herdr.
 A pane hint cannot replace that binding, and an absent, ambiguous or changed occupant returns an explicit error.
+Mailbox callers and new recipients require a positive native-session binding; a missing binding returns `native_identity_required`.
+Two missing native references in the same pane never authorize retained mail.
 Target names and pane IDs resolve against the daemon's current observations.
 Sending to a remote recipient returns `remote_delivery_unsupported`.
 
@@ -38,6 +40,10 @@ Working agents, drafts, uncertain menus and unknown layouts leave the letter pen
 The adapter never copies, clears or restores a draft.
 Its bounded visible ANSI read preserves the styling that distinguishes a placeholder from identical typed text.
 A changed TUI that cannot be classified safely falls back to manual intake.
+Each letter has at most three durable doorbell reservations, including successful input and attempts interrupted before confirmation.
+The reservation is persisted before input, and the adapter repeats the native/composer inspection after the persistence wait.
+A crash or changed composer after reservation may consume an attempt while leaving the letter pending.
+Legacy records with a successful bell but no total count conservatively have no automatic attempts left; manual and prompt-hook intake remain available.
 
 The next `UserPromptSubmit` hook pulls the oldest pending letters, emits their context, flushes stdout, then confirms those IDs.
 Transport arrival and the doorbell alone do not confirm intake.
@@ -48,7 +54,7 @@ The hook has one total two-second budget; failure succeeds without context, reco
 Manual `hide inbox` and `hide request show` remain available when the hook is missing or fails.
 
 The pinned Herdr API has no atomic composer guard.
-Hide checks the occupant and state twice and checks its memory state immediately before the off-lock pane write, but direct external Herdr/TUI input can race that final write.
+Hide checks the occupant and composer before and after the durable reservation and checks its memory state immediately before the off-lock pane write, but direct external Herdr/TUI input can race that final write.
 That residual limit is the approved D-18 boundary; external input is not represented as a Hide key event.
 
 ## Persistence, clocks and limits
@@ -62,6 +68,7 @@ Capacity errors retain existing letters and watches.
 | --- | --- |
 | Pending delivery deadline | 10 minutes, then `undelivered`; visible through CLI |
 | Hide-key quiet period | 30 seconds |
+| Doorbell reservations per letter | Three total, persisted across restart |
 | First inactivity warning | 20 minutes without activity |
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
 | Intent retention and finished-letter cleanup | 30 days; open letters remain |
@@ -81,10 +88,16 @@ Activity is the later of Herdr's status-transition time and the confirmed native
 A local read and the device helper's `session_activity` use the same session ownership and root-confinement checks.
 The helper returns only modification time and file size; conversation text, paths and native IDs do not appear in the activity answer.
 A missing reference or failed helper read falls back to the current status-transition evidence, includes the reason in the digest and does not suppress warnings.
+That status must still be attributable to the watch's original native binding.
+An uncertain acquisition or loss of native identity preserves the original watch and clocks without rebinding or accepting new file metadata.
+Its digest reports `projection_unavailable` and an unavailable current status; two missing references do not prove an unchanged execution.
+Proven original-target absence or a different positive native identity ends the watch.
 There is no cached response or retry during the same tick.
 Three consecutive read failures produce a rate-limited diagnostic.
 
 The minute tick admits at most one read per watched target, at most four remote reads at once, each with a five-second deadline.
+Different parents watching one exact target share that tick's activity sample while keeping independent warning clocks and intent keys.
+A warning rejected by capacity leaves other targets' exits and activity resets intact.
 It compares metadata and integers outside `Mutex<Runtime>` and publishes only watch start, warning and end transitions.
 A target exit or parent's explicit stop ends the watch.
 A normal reply closes the request's answer wait and leaves the watch active.

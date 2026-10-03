@@ -114,6 +114,7 @@ pub(crate) enum Effect {
     },
 }
 
+#[derive(Clone)]
 pub(crate) struct WatchWork {
     pub id: String,
     pub observation: Option<Observation>,
@@ -129,6 +130,7 @@ fn read_activity(work: WatchWork) -> watch::Reading {
     let mut reading = watch::Reading {
         id: work.id,
         status: work.status,
+        status_available: work.observation.is_some(),
         state_change_seq: work.state_change_seq,
         status_changed_at_unix_ms: work.status_changed_at_unix_ms,
         session_modified_at_unix_ms: None,
@@ -173,6 +175,54 @@ fn read_activity(work: WatchWork) -> watch::Reading {
     reading
 }
 
+fn same_target(left: &WatchWork, right: &WatchWork) -> bool {
+    let (Some(left_observed), Some(right_observed)) = (&left.observation, &right.observation)
+    else {
+        // An unresolved watch keeps its own original clocks; it is not a
+        // current sample that can be shared with another execution.
+        return false;
+    };
+    left_observed.actor == right_observed.actor
+        && left_observed.session == right_observed.session
+        && left_observed.host_scope == right_observed.host_scope
+        && left_observed.status == right_observed.status
+        && left_observed.state_change_seq == right_observed.state_change_seq
+        && left_observed.status_changed_at_unix_ms == right_observed.status_changed_at_unix_ms
+        && left.home == right.home
+        && match (&left.channel, &right.channel) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+fn group_targets(work: Vec<WatchWork>) -> Vec<Vec<WatchWork>> {
+    let mut groups = Vec::<Vec<WatchWork>>::new();
+    for work in work {
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| same_target(&group[0], &work))
+        {
+            group.push(work);
+        } else {
+            groups.push(vec![work]);
+        }
+    }
+    groups
+}
+
+fn read_target(mut group: Vec<WatchWork>) -> Vec<watch::Reading> {
+    let sample = read_activity(group.remove(0));
+    let mut readings = Vec::with_capacity(group.len() + 1);
+    for work in group {
+        let mut reading = sample.clone();
+        reading.id = work.id;
+        readings.push(reading);
+    }
+    readings.push(sample);
+    readings
+}
+
 fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBool>) {
     let mut next = Instant::now();
     let mut failure_logs = std::collections::HashMap::<String, Instant>::new();
@@ -196,7 +246,9 @@ fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBoo
         failure_logs.retain(|id, _| active.contains(id));
         rejection_logs.retain(|id, _| active.contains(id));
         let mut readings = Vec::with_capacity(work.len());
-        let mut work = work.into_iter();
+        let groups = group_targets(work);
+        let target_count = groups.len();
+        let mut work = groups.into_iter();
         loop {
             if stop.load(Ordering::Acquire) {
                 break;
@@ -208,7 +260,7 @@ fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBoo
             let answers = thread::scope(|scope| {
                 let threads: Vec<_> = group
                     .into_iter()
-                    .map(|work| scope.spawn(move || read_activity(work)))
+                    .map(|work| scope.spawn(move || read_target(work)))
                     .collect();
                 threads
                     .into_iter()
@@ -217,7 +269,7 @@ fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBoo
             });
             for answer in answers {
                 match answer {
-                    Ok(reading) => readings.push(reading),
+                    Ok(sample) => readings.extend(sample),
                     Err(_) => {
                         crate::diagnostic!(
                             json!({"component":"delivery","kind":"watch.reader_failed"})
@@ -272,7 +324,7 @@ fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBoo
             && slow_log.is_none_or(|last| last.elapsed() >= Duration::from_secs(600))
         {
             crate::diagnostic!(
-                json!({"component":"delivery","kind":"watch.slow_tick","elapsed_ms":started.elapsed().as_millis(),"targets":active.len()})
+                json!({"component":"delivery","kind":"watch.slow_tick","elapsed_ms":started.elapsed().as_millis(),"targets":target_count,"watches":active.len()})
             );
             slow_log = Some(Instant::now());
         }
@@ -737,6 +789,203 @@ mod tests {
     use super::*;
     use crate::model::{CoreOptions, SCHEMA_VERSION};
     use crate::sidebar::SessionSnapshotPayload;
+
+    struct ActivityPeer(std::sync::atomic::AtomicU64);
+    impl crate::host_access::HostChannel for ActivityPeer {
+        fn call(
+            &self,
+            call: hide_host::protocol::Call,
+            timeout: Duration,
+        ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
+            assert!(matches!(
+                call,
+                hide_host::protocol::Call::SessionActivity { .. }
+            ));
+            assert_eq!(timeout, Duration::from_secs(5));
+            let sample = self.0.fetch_add(100, Ordering::Relaxed) + 100;
+            Ok(json!({"modified_at_unix_ms":sample,"bytes":10}).into())
+        }
+    }
+
+    #[test]
+    fn two_parent_watches_share_one_target_sample_and_refresh_it_next_tick() {
+        let mut ledger = Ledger::default();
+        let parent = |id: &str| Actor {
+            pane_id: id.into(),
+            name: id.into(),
+            kind: "codex".into(),
+            device_id: "local".into(),
+            session: Some(format!("native-{id}")),
+        };
+        let target = Actor {
+            pane_id: "remote:device:pane:target".into(),
+            name: "target".into(),
+            kind: "codex".into(),
+            device_id: "device".into(),
+            session: Some("native-target".into()),
+        };
+        let first = watch::start(&mut ledger, &parent("one"), &target, 1).unwrap();
+        let second = watch::start(&mut ledger, &parent("two"), &target, 1).unwrap();
+        let peer = Arc::new(ActivityPeer(std::sync::atomic::AtomicU64::new(0)));
+        let channel: Arc<dyn crate::host_access::HostChannel> = peer.clone();
+        let observed = Observation {
+            actor: target,
+            raw_pane_id: "target".into(),
+            status: "idle".into(),
+            state_change_seq: Some(1),
+            status_changed_at_unix_ms: 1,
+            last_input_at_unix_ms: 0,
+            session: Some(hide_session::session_activity::SessionActivityRequest {
+                agent: hide_session::Agent::Codex,
+                reference_kind: "id".into(),
+                reference_value: "native-target".into(),
+                cwd: None,
+            }),
+            host_scope: Some("fixture".into()),
+        };
+        for expected in [100, 200] {
+            let work = [&first, &second]
+                .into_iter()
+                .map(|watch| WatchWork {
+                    id: watch.id.clone(),
+                    observation: Some(observed.clone()),
+                    gone: false,
+                    status: "idle".into(),
+                    state_change_seq: Some(1),
+                    status_changed_at_unix_ms: 1,
+                    home: None,
+                    channel: Some(channel.clone()),
+                })
+                .collect();
+            let readings: Vec<_> = group_targets(work)
+                .into_iter()
+                .flat_map(read_target)
+                .collect();
+            watch::tick(&mut ledger, &readings, 300).unwrap();
+            assert_eq!(ledger.watches.len(), 2);
+            assert!(
+                ledger
+                    .watches
+                    .iter()
+                    .all(|watch| watch.last_activity_at_unix_ms == expected)
+            );
+            assert_eq!(peer.0.load(Ordering::Relaxed), expected);
+        }
+        assert_ne!(ledger.watches[0].parent, ledger.watches[1].parent);
+    }
+
+    fn observe_recipient(runtime: &mut Runtime, native: Option<&str>, reference: Option<Value>) {
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":1,"lineage_session":native,"agent_session":reference},
+        ]})).unwrap();
+        runtime.observe_delivery("local", &payload, None);
+    }
+
+    #[test]
+    fn uncertain_native_acquisition_or_loss_preserves_unbound_watch_and_original_clocks() {
+        for (original, current) in [
+            (None, Some("recipient-session")),
+            (Some("recipient-session"), None),
+            (None, None),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let (runtime, parent, observed, _) = fixture(root.path());
+            let mut target = observed.actor;
+            target.session = original.map(str::to_owned);
+            let mut ledger = Ledger::default();
+            watch::start(&mut ledger, &parent, &target, 10).unwrap();
+            ledger.watches[0].last_status = "idle".into();
+            ledger.watches[0].last_state_change_seq = Some(1);
+            ledger.watches[0].warning_count = 1;
+            ledger.watches[0].first_warning_at_unix_ms = Some(20);
+            let before = ledger.watches[0].clone();
+            let mut guard = runtime.lock().unwrap();
+            guard.publish_delivery(Arc::new(ledger.clone()), false);
+            observe_recipient(
+                &mut guard,
+                current,
+                Some(json!({"kind":"path","value":"unproven-file"})),
+            );
+            let work = guard.delivery_watch_work();
+            drop(guard);
+            assert_eq!(work.len(), 1);
+            assert!(!work[0].gone);
+            assert!(work[0].observation.is_none());
+            let sample = read_activity(work.into_iter().next().unwrap());
+            assert_eq!(sample.failure.as_deref(), Some("projection_unavailable"));
+            assert!(!sample.status_available);
+            assert_eq!(sample.session_modified_at_unix_ms, None);
+            watch::tick(&mut ledger, &[sample], 100).unwrap();
+            let after = &ledger.watches[0];
+            assert_eq!(after.target, before.target);
+            assert_eq!(after.view(), before.view());
+            assert_eq!(
+                after.status_changed_at_unix_ms,
+                before.status_changed_at_unix_ms
+            );
+            assert_eq!(after.last_status, before.last_status);
+            assert_eq!(after.last_state_change_seq, before.last_state_change_seq);
+            assert!(ledger.letters.is_empty());
+        }
+    }
+
+    #[test]
+    fn same_native_metadata_acquisition_is_accepted_but_positive_replacement_or_absence_ends_watch()
+    {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, parent, observed, _) = fixture(root.path());
+        let path = root
+            .path()
+            .join(".codex/sessions/2026/01/01/recipient.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"recipient-session\"}}\nprivate\n",
+        )
+        .unwrap();
+        let mut ledger = Ledger::default();
+        watch::start(&mut ledger, &parent, &observed.actor, 1).unwrap();
+        let mut guard = runtime.lock().unwrap();
+        guard.publish_delivery(Arc::new(ledger.clone()), false);
+        observe_recipient(
+            &mut guard,
+            Some("recipient-session"),
+            Some(json!({"kind":"path","value":path})),
+        );
+        let work = guard.delivery_watch_work();
+        drop(guard);
+        let sample = read_activity(work.into_iter().next().unwrap());
+        assert!(sample.status_available);
+        assert_eq!(sample.failure, None);
+        let activity = sample.session_modified_at_unix_ms.unwrap();
+        watch::tick(&mut ledger, &[sample], activity).unwrap();
+        assert_eq!(ledger.watches[0].last_activity_at_unix_ms, activity);
+        assert_eq!(ledger.watches[0].target, observed.actor);
+
+        for present in [true, false] {
+            let mut guard = runtime.lock().unwrap();
+            guard.publish_delivery(Arc::new(ledger.clone()), false);
+            if present {
+                observe_recipient(&mut guard, Some("replacement-session"), None);
+            } else {
+                let empty: SessionSnapshotPayload =
+                    serde_json::from_value(json!({"agents":[]})).unwrap();
+                guard.observe_delivery("local", &empty, None);
+            }
+            let work = guard.delivery_watch_work();
+            drop(guard);
+            assert!(work[0].gone);
+            let mut candidate = ledger.clone();
+            watch::tick(
+                &mut candidate,
+                &[read_activity(work.into_iter().next().unwrap())],
+                activity,
+            )
+            .unwrap();
+            assert!(candidate.watches.is_empty());
+        }
+    }
 
     fn fixture(root: &std::path::Path) -> (Arc<Mutex<Runtime>>, Actor, Observation, PathBuf) {
         let state = root.join("state");
