@@ -61,23 +61,26 @@ const scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hi
 const unpacked = path.join(scratch, "unpacked");
 const home = path.join(scratch, "home");
 const state = path.join(scratch, "state");
-try {
-  fs.mkdirSync(unpacked);
-  fs.mkdirSync(home);
 
-  check("unpack", () => {
-    if (process.platform === "win32") {
-      execFileSync("pwsh", ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $env:SMOKE_ARCHIVE -DestinationPath $env:SMOKE_DESTINATION"], {
-        env: { ...process.env, SMOKE_ARCHIVE: path.resolve(archive), SMOKE_DESTINATION: unpacked },
-        stdio: "inherit",
-      });
-    } else {
-      execFileSync("tar", ["-xzf", path.resolve(archive), "-C", unpacked], { stdio: "inherit" });
-    }
-    const top = fs.readdirSync(unpacked);
-    if (top.length !== 1) throw new Error(`the archive holds ${top.length} top-level entries, not one folder: ${top.join(", ")}`);
-    return top[0];
-  });
+/** Each fixture starts from the actual archive, as an operator's extraction does. */
+function unpackInto(destination) {
+  fs.mkdirSync(destination);
+  if (process.platform === "win32") {
+    execFileSync("pwsh", ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $env:SMOKE_ARCHIVE -DestinationPath $env:SMOKE_DESTINATION"], {
+      env: { ...process.env, SMOKE_ARCHIVE: path.resolve(archive), SMOKE_DESTINATION: destination },
+      stdio: "inherit",
+    });
+  } else {
+    execFileSync("tar", ["-xzf", path.resolve(archive), "-C", destination], { stdio: "inherit" });
+  }
+  const top = fs.readdirSync(destination);
+  if (top.length !== 1) throw new Error(`the archive holds ${top.length} top-level entries, not one folder: ${top.join(", ")}`);
+  return top[0];
+}
+
+try {
+  fs.mkdirSync(home);
+  check("unpack", () => unpackInto(unpacked));
 
   const app = path.join(unpacked, fs.readdirSync(unpacked)[0]);
   let resources = path.join(app, "resources");
@@ -155,7 +158,9 @@ try {
   // changes the production build hash without a second release build.
   const upgraded = path.join(scratch, "new 한글 package");
   check("prepare a second complete package", () => {
-    fs.cpSync(app, upgraded, { recursive: true });
+    const secondUnpacked = path.join(scratch, "upgrade-unpacked");
+    const folder = unpackInto(secondUnpacked);
+    fs.renameSync(path.join(secondUnpacked, folder), upgraded);
     for (const file of ["app.asar", ...["hide", "hided", "hide-agent-hooks", "herdr"].map((name) => `${name}${exe}`)]) {
       if (!fs.statSync(path.join(upgraded, "resources", file), { throwIfNoEntry: false })?.isFile()) throw new Error(`second package is missing resources/${file}`);
     }
