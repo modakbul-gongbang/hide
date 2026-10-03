@@ -87,7 +87,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
   try {
     gate = await focusGate(herdr);
     daemon = await startHided({ ...herdr, socket: gate.socket }, "focus-ordering");
-    type Diagnostic = { kind: string; message: string };
+    type Diagnostic = { kind: string; message: string; occurred_at: number };
     let diagnostics: Diagnostic[] = [];
     page.on("websocket", (socket) => socket.on("framereceived", ({ payload }) => {
       const frame = JSON.parse(String(payload)) as {
@@ -104,13 +104,17 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     for (const pane of panes) await expect(pane).toHaveAttribute("data-transport", "controlling");
     await expect.poll(() => herdrHasFocus(herdr, first)).toBe(true);
     const boxes = await Promise.all(panes.map((pane) => pane.boundingBox()));
+    let lastClickAt = 0;
     const click = async (index: number) => {
       const box = boxes[index]!;
+      lastClickAt = Date.now();
       await page.mouse.click(box.x + 100, box.y + 100);
     };
     const confirmed = () => {
       const last = diagnostics.filter((entry) => entry.kind.startsWith("pane.focus")).at(-1);
-      return last?.kind === "pane.focus" && last.message.startsWith(`Pane ${first} focus confirmed`);
+      return last?.kind === "pane.focus"
+        && last.message.startsWith(`Pane ${first} focus confirmed`)
+        && last.occurred_at >= lastClickAt;
     };
 
     const held = gate.arm();
