@@ -43,6 +43,16 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
     expect(parseSync({ ...sync, displays: [{ ...display, area_id }], retained: [{ ...retained[0], area_id }] })).not.toBeNull();
   });
 
+  it("preserves an optional bounded exact attachment epoch and rejects malformed epochs", () => {
+    expect(parseSync(sync)).toEqual(sync);
+    for (const attachment_epoch of ["epoch-1", "A0-z9", "a".repeat(64), "893b5942-eaa5-49ae-95d1-073c35c07ecb"]) {
+      expect(parseSync({ ...sync, attachment_epoch })).toEqual({ ...sync, attachment_epoch });
+    }
+    for (const attachment_epoch of [null, false, 1, {}, "", "a".repeat(65), "a_b", "a b", "é", "a\n", "a\u0000b", "a\u0001b"]) {
+      expect(parseSync({ ...sync, attachment_epoch })).toBeNull();
+    }
+  });
+
   it("matches ownership by the complete Workspace, display and authoritative area", () => {
     expect(parseSync({ ...sync, retained: [{ workspace: "local\u0000/other", id: "d1", area_id: "a1" }] })).toBeNull();
     expect(parseSync({ ...sync, retained: [{ workspace: "ssh\u0000/r", id: "d1", area_id: "a1" }] })).toBeNull();

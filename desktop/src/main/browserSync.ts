@@ -60,7 +60,8 @@ function rect(value: unknown): BrowserRect | null | undefined {
 /** A sync message, or null when any part of it is out of shape. */
 export function parseSync(value: unknown): BrowserSync | null {
   if (typeof value !== "object" || value === null) return null;
-  const { workspace, displays, retained } = value as Record<string, unknown>;
+  const { workspace, displays, retained, attachment_epoch } = value as Record<string, unknown>;
+  if (attachment_epoch !== undefined && (typeof attachment_epoch !== "string" || attachment_epoch.length === 0 || attachment_epoch.length > 64 || /[^A-Za-z0-9-]/.test(attachment_epoch))) return null;
   if (workspace !== null && !workspaceIdentity(workspace)) return null;
   if (!Array.isArray(displays) || displays.length > MAX_SYNCED_DISPLAYS) return null;
   if (!Array.isArray(retained) || retained.length > MAX_RETAINED_DISPLAYS) return null;
@@ -88,7 +89,7 @@ export function parseSync(value: unknown): BrowserSync | null {
   }
   if (workspace === null && parsed.length > 0) return null;
   if (workspace && parsed.some((display) => ownedAreas.get(viewKey(workspace, display.id)) !== display.area_id)) return null;
-  return { workspace: workspace as string | null, displays: parsed, retained: owned };
+  return { workspace: workspace as string | null, displays: parsed, retained: owned, ...(attachment_epoch === undefined ? {} : { attachment_epoch }) };
 }
 
 /** A display named by the shell for a still or a command. */

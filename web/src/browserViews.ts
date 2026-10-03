@@ -205,8 +205,33 @@ class BrowserSyncLoop {
   private lastSent = "";
   private watching = false;
   private focus: { workspace: string; id: string } | null = null;
+  private attachmentEpoch: string | undefined;
+  private attachmentConnectionWatch: (() => void) | null = null;
 
   constructor(private readonly bridge: BrowserBridge) {}
+
+  mountAttachments(): () => void {
+    this.attachmentConnectionWatch?.();
+    this.attachmentEpoch = crypto.randomUUID();
+    const unsubscribe = useShellStore.subscribe((current, previous) => {
+      if (current.connection === previous.connection) return;
+      if (current.connection === "live") {
+        this.attachmentEpoch = crypto.randomUUID();
+        this.schedule();
+      } else {
+        clearBrowserAttachments();
+      }
+    });
+    this.attachmentConnectionWatch = unsubscribe;
+    this.schedule();
+    return () => {
+      if (this.attachmentConnectionWatch !== unsubscribe) return;
+      unsubscribe();
+      this.attachmentConnectionWatch = null;
+      this.attachmentEpoch = undefined;
+      clearBrowserAttachments();
+    };
+  }
 
   noteAttachment(event: Extract<BrowserHostEvent, { kind: "attached" | "gone" }>): void {
     if (event.kind === "attached" && typeof event.attached !== "boolean") return;
@@ -329,7 +354,12 @@ class BrowserSyncLoop {
     }
     this.shown = shown;
     this.forget((id) => !shown.has(id));
-    const sync: BrowserSync = front ? { workspace: front.workspace, displays: placements(front.rows, rects, hidden), retained: this.retained } : { workspace: null, displays: [], retained: this.retained };
+    const sync: BrowserSync = {
+      workspace: front?.workspace ?? null,
+      displays: front ? placements(front.rows, rects, hidden) : [],
+      retained: this.retained,
+      ...(this.attachmentEpoch === undefined ? {} : { attachment_epoch: this.attachmentEpoch }),
+    };
     this.visible = sync.displays.flatMap((row) => (row.visible && row.rect ? [row.rect] : []));
     const text = JSON.stringify(sync);
     if (text !== this.lastSent) {
@@ -459,6 +489,11 @@ function syncLoop(): BrowserSyncLoop | null {
 export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined, inventory: { device_id: string; path: string; view_id: string; area_id: string }[]): void {
   syncLoop()?.setFront(workspace ? { workspace: workspaceKey(workspace), rows: browserDisplays(layout) } : null,
     inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id, area_id: row.area_id })));
+}
+
+/** One controller mount and connection observer; its owner releases both on unmount. */
+export function mountBrowserAttachments(): () => void {
+  return syncLoop()?.mountAttachments() ?? (() => undefined);
 }
 
 /** The rects of the pages the host shows now, in the shell's points; none in a plain browser tab. */

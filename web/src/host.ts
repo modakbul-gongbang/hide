@@ -39,6 +39,8 @@ export type BrowserSync = {
   displays: BrowserPlacement[];
   /** Core-owned inventory; a hidden native page absent here is closed. */
   retained: { workspace: string; id: string; area_id: string }[];
+  /** Changes on controller mount or reconnect so the host replays actual attachment facts once. */
+  attachment_epoch?: string;
 };
 
 export type BrowserCommand = "back" | "forward" | "reload" | "stop" | "focus";
