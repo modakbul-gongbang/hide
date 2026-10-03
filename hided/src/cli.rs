@@ -685,6 +685,7 @@ impl ConnectError {
 fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
     let build = crate::build_id::of_file(&daemon_binary().map_err(ConnectError::StartFailed)?)
         .map_err(ConnectError::StartFailed)?;
+    #[cfg(unix)]
     move_legacy_state(env).map_err(ConnectError::StartFailed)?;
     let _serialized = state_file::lock_connect(&env.state_dir)
         .map_err(|error| ConnectError::StartFailed(format!("the connect lock: {error}")))?;
@@ -739,6 +740,7 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
 /// for a daemon (PRD hide-home-layout D-05). The daemon running from it is
 /// the one that answers its own `/health` as the pid its state names, the
 /// same rule that keeps a reused pid from ever being signalled.
+#[cfg(unix)]
 fn move_legacy_state(env: &Env) -> Result<(), String> {
     let Some(legacy) = env.legacy_state_dir.as_deref() else {
         return Ok(());

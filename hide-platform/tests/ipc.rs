@@ -201,12 +201,64 @@ fn bind_keeps_a_regular_file_at_the_path() {
     assert_eq!(std::fs::read(&path).unwrap(), b"mine");
 }
 
+/// Serves `listener` until it is closed: answers each line in capitals, and
+/// passes over a stream whose client already left.
+fn serve_lines(listener: LocalListener) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        while let Ok(mut stream) = listener.accept() {
+            let line = read_line(&mut stream);
+            if !line.is_empty() {
+                stream.write_all(line.to_uppercase().as_bytes()).unwrap();
+            }
+        }
+    })
+}
+
+/// A connect that answers within the bound, or names the attempt that did
+/// not. Windows waits two seconds for a busy pipe before `TimedOut`.
+fn connect_promptly(path: &Path, attempt: usize) -> LocalStream {
+    let started = Instant::now();
+    let stream = LocalStream::connect(path)
+        .unwrap_or_else(|error| panic!("connect {attempt} failed: {error:?}"));
+    let waited = started.elapsed();
+    assert!(
+        waited < Duration::from_secs(1),
+        "connect {attempt} waited {waited:?}"
+    );
+    stream
+}
+
 #[test]
-fn a_read_after_shutdown_ends_and_a_write_fails_however_often_it_is_asked() {
-    // Many fresh streams, each shut down before its first read: the race the
-    // blocked-read test cannot reach, a shutdown that arrives first.
-    for _ in 0..50 {
-        let (mut client, _server) = LocalStream::pair().unwrap();
+fn clients_that_leave_before_accept_never_hold_up_the_next_connect() {
+    // #315: on Windows a client that connected and left kept the listener's
+    // only pipe instance, and every later connect timed out until an accept
+    // cleared it. Nobody accepts here until the leavers are gone.
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let closer = listener.closer();
+    for attempt in 0..40 {
+        drop(connect_promptly(&path, attempt));
+    }
+    let server = serve_lines(listener);
+    let mut client = connect_promptly(&path, 40);
+    client.write_all(b"stayed\n").unwrap();
+    assert_eq!(read_line(&mut client), "STAYED\n");
+    closer.close();
+    server.join().unwrap();
+}
+
+#[test]
+fn a_burst_of_clients_that_connect_and_leave_loses_no_connect() {
+    // #315 as it was seen: an accept loop running, and clients connecting and
+    // leaving as fast as they can (the 33rd of 50 timed out on Windows). Each
+    // is also shut down before its first read, the race the blocked-read test
+    // cannot reach.
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let closer = listener.closer();
+    let server = serve_lines(listener);
+    for attempt in 0..200 {
+        let mut client = connect_promptly(&path, attempt);
         let handle = client.shutdown_handle();
         handle.shutdown();
         handle.shutdown();
@@ -216,6 +268,85 @@ fn a_read_after_shutdown_ends_and_a_write_fails_however_often_it_is_asked() {
             std::io::ErrorKind::BrokenPipe
         );
     }
+    let mut client = connect_promptly(&path, 200);
+    client.write_all(b"after\n").unwrap();
+    assert_eq!(read_line(&mut client), "AFTER\n");
+    closer.close();
+    server.join().unwrap();
+}
+
+/// A connect is one connection, never two: nothing the stream does on
+/// either end opens another one behind it.
+#[test]
+fn one_connect_is_one_accepted_connection() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let closer = listener.closer();
+    let (accepted, arrivals) = mpsc::channel();
+    let accepting = thread::spawn(move || {
+        while let Ok(mut stream) = listener.accept() {
+            let line = read_line(&mut stream);
+            accepted.send(line).unwrap();
+        }
+    });
+    let mut client = LocalStream::connect(&path).unwrap();
+    client.write_all(b"one\n").unwrap();
+    assert_eq!(
+        arrivals.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "one\n"
+    );
+    assert_eq!(
+        arrivals.recv_timeout(Duration::from_millis(500)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "a second connection arrived for one connect"
+    );
+    closer.close();
+    drop(client);
+    accepting.join().unwrap();
+}
+
+/// What the listener's end writes just before it is dropped still arrives
+/// whole, however slowly the client reads: the pane bootstrap answers that
+/// way, and a Windows pipe closed with unread bytes throws them away.
+#[test]
+fn an_answer_written_just_before_the_end_is_dropped_arrives_whole() {
+    const ANSWER: usize = 256 * 1024;
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let answering = thread::spawn(move || {
+        let mut stream = listener.accept().unwrap();
+        stream.write_all(&vec![7_u8; ANSWER]).unwrap();
+    });
+    let mut client = LocalStream::connect(&path).unwrap();
+    thread::sleep(Duration::from_millis(300));
+    let mut answer = Vec::new();
+    client.read_to_end(&mut answer).unwrap();
+    assert_eq!(answer.len(), ANSWER);
+    answering.join().unwrap();
+}
+
+#[test]
+fn close_from_another_thread_frees_a_blocked_accept() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let closer = listener.closer();
+    let (done, finished) = mpsc::channel();
+    thread::spawn(move || {
+        let first = listener.accept().map(drop).map_err(|error| error.kind());
+        let later = listener.accept().map(drop).map_err(|error| error.kind());
+        let _ = done.send((first, later));
+    });
+    // The accept is waiting well before this wakes it.
+    thread::sleep(Duration::from_millis(300));
+    let started = Instant::now();
+    closer.close();
+    closer.close();
+    let (first, later) = finished
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the waiting accept was not freed");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(first, Err(std::io::ErrorKind::ConnectionAborted));
+    assert_eq!(later, Err(std::io::ErrorKind::ConnectionAborted));
 }
 
 #[test]

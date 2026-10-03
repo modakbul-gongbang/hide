@@ -1,8 +1,5 @@
 //! The daemon end to end: its state file, the WebSocket handshake, the
 //! registration and Explorer lines, against a running hided.
-// A daemon starts only where it can listen for panes locally, which Windows
-// cannot yet (#315).
-#![cfg(unix)]
 
 use std::time::Duration;
 
@@ -97,6 +94,32 @@ async fn state_file_is_private() {
     running.stop();
 }
 
+/// The `hide` CLI reaches the daemon's pane bootstrap and the daemon itself
+/// answers: this test process names no pane and sits in no registered
+/// checkout, so the answer is a refusal, and never `hide_unavailable`, which
+/// is what a caller that could not reach the listener says.
+#[tokio::test]
+async fn the_pane_bootstrap_answers_a_caller_on_the_local_stream() {
+    let (dir, mut env) = test_env(true);
+    let running = hided::start_daemon(env.clone())
+        .await
+        .expect("start daemon");
+    env.pane_id = None;
+    let answer = tokio::task::spawn_blocking(move || hided::workspace_cli::bootstrap(&env, true))
+        .await
+        .unwrap();
+    // Unix reads the caller's working directory and finds no checkout there;
+    // Windows cannot read it, so the caller is unavailable to bind.
+    let expected = if cfg!(unix) {
+        "checkout_not_registered"
+    } else {
+        "caller_unavailable"
+    };
+    assert_eq!(answer.unwrap_err(), expected);
+    running.stop();
+    drop(dir);
+}
+
 #[tokio::test]
 async fn invalid_token_is_refused() {
     let (_dir, running) = start().await;
@@ -135,25 +158,19 @@ async fn traversal_of_the_ui_dir_is_404() {
     ))
     .await;
     assert_eq!(code, 404);
-    let escaped = tokio::process::Command::new("/usr/bin/curl")
-        .args([
-            "-s",
-            "--path-as-is",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            &format!(
-                "http://127.0.0.1:{}/assets/../../{}/hided.json",
-                running.port,
-                dir.path().join("hided.json").display()
-            ),
-        ])
-        .output()
-        .await
-        .unwrap();
-    let body_code = String::from_utf8(escaped.stdout).unwrap();
-    assert_eq!(body_code, "404");
+    // The state folder's own path after the climb; a URI spells it with `/`.
+    let escaped = reqwest_status(&format!(
+        "http://127.0.0.1:{}/assets/../../{}",
+        running.port,
+        dir.path()
+            .join("hided.json")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+    ))
+    .await;
+    assert_eq!(escaped, 404);
     running.stop();
 }
 
@@ -349,46 +366,37 @@ async fn wait_close(
     .flatten()
 }
 
-async fn reqwest_get(url: &str) -> String {
-    let output = tokio::process::Command::new("/usr/bin/curl")
-        .args(["-fsS", url])
-        .output()
-        .await
+/// One request's status and body. The path is sent as written, `..`
+/// included, as `curl --path-as-is` would, and no test needs a `curl` on the
+/// runner.
+async fn request(method: &str, url: &str) -> (u16, String) {
+    use http_body_util::{BodyExt, Empty};
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+    let client = Client::builder(TokioExecutor::new()).build_http::<Empty<hyper::body::Bytes>>();
+    let request = hyper::Request::builder()
+        .method(method)
+        .uri(url)
+        .body(Empty::new())
         .unwrap();
-    String::from_utf8(output.stdout).unwrap()
+    let response = client.request(request).await.unwrap();
+    let status = response.status().as_u16();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(body.to_vec()).unwrap())
+}
+
+async fn reqwest_get(url: &str) -> String {
+    let (status, body) = request("GET", url).await;
+    assert_eq!(status, 200, "{url}: {body}");
+    body
 }
 
 async fn reqwest_post(url: &str) -> u16 {
-    let output = tokio::process::Command::new("/usr/bin/curl")
-        .args([
-            "-s",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "-X",
-            "POST",
-            url,
-        ])
-        .output()
-        .await
-        .unwrap();
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .parse()
-        .unwrap_or(0)
+    request("POST", url).await.0
 }
 
 async fn reqwest_status(url: &str) -> u16 {
-    let output = tokio::process::Command::new("/usr/bin/curl")
-        .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", url])
-        .output()
-        .await
-        .unwrap();
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .parse()
-        .unwrap_or(0)
+    request("GET", url).await.0
 }
 
 // --- $HOME boundary over the socket (PRD S2 B10) -------------------------
@@ -428,6 +436,9 @@ async fn send_event(
     }
 }
 
+// The escapes are Unix symbolic links. A Windows folder link is a junction,
+// which the boundary's final-path check judges; that is not proved here.
+#[cfg(unix)]
 #[tokio::test]
 async fn registration_refusals_are_answered_by_hided() {
     let (dir, running) = start().await;
@@ -565,16 +576,28 @@ async fn send_event_expecting(
         ))
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    // What the core last said about the editor and its status, for the
+    // report when no answer comes.
+    let mut editor = Value::Null;
+    let mut status = Value::Null;
+    let answer = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let frame = first_frame(socket).await;
             if frame["type"] == "path_refused" || answered(&frame) {
                 return frame;
             }
+            if !frame["payload"]["editor"].is_null() {
+                editor = frame["payload"]["editor"].clone();
+            }
+            if !frame["payload"]["rest"]["status"].is_null() {
+                status = frame["payload"]["rest"]["status"].clone();
+            }
         }
     })
-    .await
-    .unwrap_or_else(|_| panic!("an answer to the {kind} event"))
+    .await;
+    answer.unwrap_or_else(|_| {
+        panic!("an answer to the {kind} event; the core's last editor: {editor}; its last status: {status}")
+    })
 }
 
 /// The reaction predicate of a step whose only expected answer is the refusal
@@ -608,13 +631,16 @@ fn seed_registration(state_dir: &std::path::Path, id: &str, path: &std::path::Pa
 #[tokio::test]
 async fn explorer_paths_are_checked_against_the_registered_checkout() {
     let (dir, env) = test_env(true);
+    // Joined one component at a time: Windows spells the canonical home with
+    // a `\\?\` prefix, after which `/` is not a separator.
     let home = dir.path().canonicalize().unwrap();
-    let checkout = home.join("projects/alpha");
+    let checkout = home.join("projects").join("alpha");
+    let main = checkout.join("src").join("main.rs");
     std::fs::create_dir_all(checkout.join("src")).unwrap();
-    std::fs::write(checkout.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(&main, "fn main() {}\n").unwrap();
     // A directory under home that no registration covers: the registration
     // line would accept it, the Explorer line must not.
-    let notes = home.join("projects/notes");
+    let notes = home.join("projects").join("notes");
     std::fs::create_dir_all(&notes).unwrap();
     std::fs::write(notes.join("todo.md"), "- [ ] x\n").unwrap();
     seed_registration(&env.state_dir, "w-alpha", &checkout);
@@ -635,7 +661,7 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
     let checkout_id = workspace["checkouts"][0]["id"].as_str().unwrap().to_owned();
     let checkout_path = checkout.display().to_string();
     let notes_path = notes.join("todo.md").display().to_string();
-    let file_path = checkout.join("src/main.rs").display().to_string();
+    let file_path = main.display().to_string();
 
     // A path under home that no checkout covers is refused as such, for an
     // open and for a change alike.
@@ -702,28 +728,36 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
     assert_eq!(refused["payload"]["path"], "../escape.rs");
 
     // A path inside the registered checkout is the Explorer's: the core opens
-    // it, and the tab it makes carries the file's own name.
-    let opened = send_event_expecting(
-        &mut socket,
-        "file_open",
-        json!({
-            "path": file_path,
-            "workspace_id": workspace_id,
-            "checkout_id": checkout_id,
-            "preview": false,
-        }),
-        |frame| frame["payload"]["editor"]["tabs"][0]["label"] == "main.rs",
-    )
-    .await;
-    assert_eq!(opened["type"], "delta", "the open has to reach the core");
-    assert_eq!(
-        opened["payload"]["editor"]["tabs"][0]["label"], "main.rs",
-        "the tab the core makes carries the file's own name"
-    );
+    // it, and the tab it makes carries the file's own name. Not on Windows
+    // yet: the core's `files::relative_under` takes a checkout-relative path
+    // after a `/`, so a `\`-separated file is "not inside its checkout"
+    // (`file.open_failed`); the Windows path model is a later slice's.
+    if cfg!(unix) {
+        let opened = send_event_expecting(
+            &mut socket,
+            "file_open",
+            json!({
+                "path": file_path,
+                "workspace_id": workspace_id,
+                "checkout_id": checkout_id,
+                "preview": false,
+            }),
+            |frame| frame["payload"]["editor"]["tabs"][0]["label"] == "main.rs",
+        )
+        .await;
+        assert_eq!(opened["type"], "delta", "the open has to reach the core");
+        assert_eq!(
+            opened["payload"]["editor"]["tabs"][0]["label"], "main.rs",
+            "the tab the core makes carries the file's own name"
+        );
+    }
 
     running.stop();
 }
 
+// The escapes are Unix symbolic links. A Windows folder link is a junction,
+// which the boundary's final-path check judges; that is not proved here.
+#[cfg(unix)]
 #[tokio::test]
 async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
     let (dir, env) = test_env(true);
@@ -1082,6 +1116,9 @@ async fn a_change_in_a_watched_checkout_is_announced() {
     running.stop();
 }
 
+// The index answers relative paths with the system's separator (`src\main.rs`
+// on Windows); which one the wire carries there is not settled yet.
+#[cfg(unix)]
 #[tokio::test]
 async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     let (dir, env) = test_env(true);
@@ -1324,17 +1361,26 @@ async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
 
 /// A Herdr server that answers every request on `socket`, refusing all but
 /// `ping`; the daemon's session sync gets nothing it can use and keeps
-/// retrying, which is all this needs.
-fn answering_herdr(socket: &std::path::Path) -> std::os::unix::net::UnixListener {
+/// retrying, which is all this needs. It answers until dropped.
+struct AnsweringHerdr {
+    closer: hide_platform::ipc::ListenerCloser,
+}
+
+impl Drop for AnsweringHerdr {
+    fn drop(&mut self) {
+        self.closer.close();
+    }
+}
+
+fn answering_herdr(socket: &std::path::Path) -> AnsweringHerdr {
     use std::io::{BufRead, Write};
-    let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
-    let serving = listener.try_clone().unwrap();
+    let listener = hide_platform::ipc::LocalListener::bind(socket).unwrap();
+    let closer = listener.closer();
     std::thread::spawn(move || {
-        for stream in serving.incoming() {
-            let Ok(mut stream) = stream else { return };
+        while let Ok(mut stream) = listener.accept() {
             std::thread::spawn(move || {
                 let mut line = String::new();
-                if std::io::BufReader::new(stream.try_clone().unwrap())
+                if std::io::BufReader::new(&mut stream)
                     .read_line(&mut line)
                     .is_err()
                 {
@@ -1352,7 +1398,7 @@ fn answering_herdr(socket: &std::path::Path) -> std::os::unix::net::UnixListener
             });
         }
     });
-    listener
+    AnsweringHerdr { closer }
 }
 
 #[tokio::test]
@@ -1360,11 +1406,15 @@ async fn the_daemon_outlives_the_idle_window_while_its_herdr_answers() {
     let (dir, mut env) = test_env(false);
     env.idle_secs = 1;
     // A Unix socket path has a hard length limit; a tempdir may be too deep.
-    let herdr_dir =
-        std::path::PathBuf::from("/tmp").join(format!("hided-idle-{}", std::process::id()));
+    let base = if cfg!(unix) {
+        std::path::PathBuf::from("/tmp")
+    } else {
+        std::env::temp_dir()
+    };
+    let herdr_dir = base.join(format!("hided-idle-{}", std::process::id()));
     std::fs::create_dir_all(&herdr_dir).unwrap();
     let socket = herdr_dir.join("herdr.sock");
-    let listener = answering_herdr(&socket);
+    let herdr = answering_herdr(&socket);
     env.herdr_socket_path = Some(socket.display().to_string());
     let running = std::sync::Arc::new(hided::start_daemon(env).await.expect("start daemon"));
     let announced = tokio::spawn({
@@ -1378,7 +1428,7 @@ async fn the_daemon_outlives_the_idle_window_while_its_herdr_answers() {
         "a daemon whose Herdr answers keeps making labels with no window open"
     );
     assert!(state_file::state_path(dir.path()).exists());
-    drop(listener);
+    drop(herdr);
     let _ = std::fs::remove_dir_all(&herdr_dir);
     announced.abort();
 }

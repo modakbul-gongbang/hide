@@ -41,10 +41,11 @@ pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a re
 pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(unix)]
 const MAX_BOOTSTRAPS: usize = 8;
-#[cfg(unix)]
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(5);
+/// The longest bootstrap socket path the record may hold: a short `/tmp`
+/// path on Unix, the account's temporary folder on Windows.
+const BOOTSTRAP_RECORD_CAP: u64 = 1024;
 
 /// How a capability was bound to its caller, and what its validation rechecks.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -704,22 +705,27 @@ fn inspect_pane(
     })
 }
 
-/// The listener a pane's process asks for a capability on: a Unix socket,
-/// whose kernel reports the caller's pid. Windows has none yet: hided does
-/// not listen locally there until the named-pipe listener holds under
-/// connect-and-drop (#315), so nothing can construct one.
-#[cfg(unix)]
-pub type BootstrapListener = tokio::net::UnixListener;
-#[cfg(windows)]
-pub enum BootstrapListener {}
+/// The listener a pane's process asks for a capability on: a Unix socket or
+/// a named pipe, whose system reports the caller's pid.
+pub type BootstrapListener = hide_platform::ipc::LocalListener;
 
-#[cfg(unix)]
+/// Where the bootstrap's private folder goes. A Unix socket path is limited
+/// to about a hundred bytes, so a short folder under `/tmp` there, whose
+/// random name another user cannot reserve; a pipe name has no such limit,
+/// so the account's own temporary folder on Windows.
+fn bootstrap_parent() -> PathBuf {
+    if cfg!(windows) {
+        std::env::temp_dir()
+    } else {
+        PathBuf::from("/tmp")
+    }
+}
+
 pub fn bind(state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
-    // A random private leaf keeps the Unix path short even for a long state
-    // directory, and cannot be pre-created by another /tmp user.
+    let parent = bootstrap_parent();
     let directory = (0..8)
         .find_map(|_| {
-            let candidate = Path::new("/tmp").join(format!("hide-pane-{}", &new_token()[..24]));
+            let candidate = parent.join(format!("hide-pane-{}", &new_token()[..24]));
             match private::create_dir(&candidate) {
                 Ok(()) => Some(Ok(candidate)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
@@ -735,7 +741,6 @@ pub fn bind(state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
         let staging = record.with_extension(format!("{}.tmp", &new_token()[..16]));
         let mut file = private::create_new_file(&staging).map_err(|error| error.to_string())?;
         let published = (|| {
-            // The path is ASCII: `/tmp`, a hex leaf and the socket name.
             let text = path.to_str().ok_or("pane bootstrap path is not text")?;
             file.write_all(text.as_bytes())
                 .map_err(|error| error.to_string())?;
@@ -755,11 +760,6 @@ pub fn bind(state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
     result
 }
 
-#[cfg(windows)]
-pub fn bind(_state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
-    Err("the pane bootstrap socket is not available on Windows yet (#315)".to_owned())
-}
-
 pub fn bootstrap_socket_record(state_dir: &Path) -> PathBuf {
     state_dir.join("pane-capabilities/bootstrap-socket")
 }
@@ -771,11 +771,11 @@ pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
     let record = bootstrap_socket_record(state_dir);
     let file = private::open_own_file(&record, false).map_err(|_| "hide_unavailable".to_owned())?;
     let metadata = file.metadata().map_err(|_| "hide_unavailable".to_owned())?;
-    if !private::is_private(&record).unwrap_or(false) || metadata.len() > 100 {
+    if !private::is_private(&record).unwrap_or(false) || metadata.len() > BOOTSTRAP_RECORD_CAP {
         return Err("invalid_bootstrap_socket_record".to_owned());
     }
     let mut bytes = Vec::new();
-    file.take(100)
+    file.take(BOOTSTRAP_RECORD_CAP)
         .read_to_end(&mut bytes)
         .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
     let path = PathBuf::from(
@@ -795,19 +795,9 @@ pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-#[cfg(windows)]
-pub async fn serve(
-    listener: BootstrapListener,
-    _registry: Arc<Registry>,
-    _core: Arc<CoreHandle>,
-    _herdr_socket: Option<PathBuf>,
-    _port: u16,
-    _shutdown: Arc<Notify>,
-) {
-    match listener {}
-}
-
-#[cfg(unix)]
+/// Answers bootstrap requests until `shutdown`. The listener accepts on a
+/// thread of its own, because an accept blocks; the closer frees it when the
+/// daemon stops, and a failed accept ends the bootstrap with a diagnostic.
 pub async fn serve(
     listener: BootstrapListener,
     registry: Arc<Registry>,
@@ -816,14 +806,47 @@ pub async fn serve(
     port: u16,
     shutdown: Arc<Notify>,
 ) {
-    use hide_host::pane_peer::peer_pid;
-    use std::io::{BufRead, BufReader};
     use tokio::sync::Semaphore;
+    // Closed however this future ends, a drop included, so the accept
+    // thread never outlives it.
+    let closing = CloseOnDrop {
+        closer: listener.closer(),
+        closed: Arc::new(AtomicBool::new(false)),
+    };
+    let closed = Arc::clone(&closing.closed);
+    let (accepted, mut arrivals) = tokio::sync::mpsc::channel(MAX_BOOTSTRAPS);
+    let accepting = std::thread::Builder::new()
+        .name("pane-bootstrap-accept".to_owned())
+        .spawn(move || {
+            loop {
+                match listener.accept() {
+                    Ok(stream) => {
+                        if accepted.blocking_send(Ok(stream)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::ConnectionAborted
+                            && closed.load(Ordering::SeqCst) =>
+                    {
+                        return;
+                    }
+                    Err(error) => {
+                        let _ = accepted.blocking_send(Err(error));
+                        return;
+                    }
+                }
+            }
+        });
+    if let Err(error) = accepting {
+        note_bootstrap_stopped(&error);
+        return;
+    }
     let limit = Arc::new(Semaphore::new(MAX_BOOTSTRAPS));
     let mut sweep = tokio::time::interval(Duration::from_secs(5));
     loop {
-        let accepted = tokio::select! {
-            accepted = listener.accept() => accepted,
+        let arrival = tokio::select! {
+            arrival = arrivals.recv() => arrival,
             _ = sweep.tick() => {
                 let registry = Arc::clone(&registry);
                 let core = Arc::clone(&core);
@@ -832,7 +855,14 @@ pub async fn serve(
             }
             _ = shutdown.notified() => break,
         };
-        let Ok((stream, _)) = accepted else { break };
+        let stream = match arrival {
+            Some(Ok(stream)) => stream,
+            Some(Err(error)) => {
+                note_bootstrap_stopped(&error);
+                break;
+            }
+            None => break,
+        };
         let Ok(permit) = Arc::clone(&limit).try_acquire_owned() else {
             continue;
         };
@@ -841,61 +871,97 @@ pub async fn serve(
         let herdr_socket = herdr_socket.clone();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let Some(peer) = peer_pid(&stream) else {
-                return;
-            };
-            let Ok(stream) = stream.into_std() else {
-                return;
-            };
-            let _ = stream.set_nonblocking(false);
-            let _ = stream.set_read_timeout(Some(BOOTSTRAP_TIMEOUT));
-            let _ = stream.set_write_timeout(Some(BOOTSTRAP_TIMEOUT));
-            let mut line = String::new();
-            let result = BufReader::new(&stream)
-                .take(4096)
-                .read_line(&mut line)
-                .map_err(|_| "invalid_request")
-                .and_then(|_| {
-                    serde_json::from_str::<BootstrapRequest>(&line).map_err(|_| "invalid_request")
-                })
-                .and_then(|request| {
-                    let (attestation, pane_reason) =
-                        attest_bootstrap(peer, &request, herdr_socket.as_deref(), &core)?;
-                    let holder = if request.one_shot {
-                        Some((peer, process_start(peer).ok_or("caller_unavailable")?))
-                    } else {
-                        None
-                    };
-                    let issued = registry.issue(&attestation, &request.nonce, port, holder);
-                    if let Some(pane_reason) = pane_reason {
-                        note_checkout_capability(
-                            match issued {
-                                Ok(_) => "checkout_capability.issued",
-                                Err(_) => "checkout_capability.refused",
-                            },
-                            "bootstrap",
-                            Some(peer),
-                            Some(!request.one_shot),
-                            Some(&attestation.context),
-                            issued.as_ref().err().copied(),
-                            Some(pane_reason),
-                        );
-                    }
-                    issued
-                });
-            let answer = match &result {
-                Ok((path, _)) => json!({"ok": true, "reference": path}),
-                Err(reason) => json!({"ok": false, "reason": reason}),
-            };
-            let mut stream = stream;
-            if writeln!(stream, "{answer}").is_err()
-                && let Ok((path, true)) = result
-                && let Ok(bytes) = fs::read(path)
-                && let Ok(reference) = serde_json::from_slice::<Reference>(&bytes)
-            {
-                registry.revoke(&reference.token);
-            }
+            answer_bootstrap(stream, &registry, &core, herdr_socket.as_deref(), port);
         });
+    }
+}
+
+struct CloseOnDrop {
+    closer: hide_platform::ipc::ListenerCloser,
+    /// Set before the close, so the accept thread tells its own stop from an
+    /// accept that failed.
+    closed: Arc<AtomicBool>,
+}
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.closer.close();
+    }
+}
+
+/// The bootstrap listener stopped accepting for a reason other than the
+/// daemon's own stop; panes cannot get a capability until hided restarts.
+fn note_bootstrap_stopped(error: &std::io::Error) {
+    herdr_core::diagnostic!(json!({
+        "component": "pane_auth",
+        "kind": "bootstrap.stopped",
+        "message": error.to_string(),
+    }));
+}
+
+/// Reads one bootstrap request from a caller, attests the caller by the pid
+/// the system reports for it, and writes the answer.
+fn answer_bootstrap(
+    mut stream: hide_platform::ipc::LocalStream,
+    registry: &Registry,
+    core: &CoreHandle,
+    herdr_socket: Option<&Path>,
+    port: u16,
+) {
+    use std::io::{BufRead, BufReader};
+    let Some(peer) = stream
+        .peer_pid()
+        .ok()
+        .and_then(|pid| i32::try_from(pid).ok())
+    else {
+        return;
+    };
+    let _ = stream.set_read_timeout(Some(BOOTSTRAP_TIMEOUT));
+    // A Windows pipe has no write timeout; the answer is one short line.
+    let _ = stream.set_write_timeout(Some(BOOTSTRAP_TIMEOUT));
+    let mut line = String::new();
+    let result = BufReader::new(&mut stream)
+        .take(4096)
+        .read_line(&mut line)
+        .map_err(|_| "invalid_request")
+        .and_then(|_| {
+            serde_json::from_str::<BootstrapRequest>(&line).map_err(|_| "invalid_request")
+        })
+        .and_then(|request| {
+            let (attestation, pane_reason) = attest_bootstrap(peer, &request, herdr_socket, core)?;
+            let holder = if request.one_shot {
+                Some((peer, process_start(peer).ok_or("caller_unavailable")?))
+            } else {
+                None
+            };
+            let issued = registry.issue(&attestation, &request.nonce, port, holder);
+            if let Some(pane_reason) = pane_reason {
+                note_checkout_capability(
+                    match issued {
+                        Ok(_) => "checkout_capability.issued",
+                        Err(_) => "checkout_capability.refused",
+                    },
+                    "bootstrap",
+                    Some(peer),
+                    Some(!request.one_shot),
+                    Some(&attestation.context),
+                    issued.as_ref().err().copied(),
+                    Some(pane_reason),
+                );
+            }
+            issued
+        });
+    let answer = match &result {
+        Ok((path, _)) => json!({"ok": true, "reference": path}),
+        Err(reason) => json!({"ok": false, "reason": reason}),
+    };
+    if writeln!(stream, "{answer}").is_err()
+        && let Ok((path, true)) = result
+        && let Ok(bytes) = fs::read(path)
+        && let Ok(reference) = serde_json::from_slice::<Reference>(&bytes)
+    {
+        registry.revoke(&reference.token);
     }
 }
 
@@ -903,24 +969,32 @@ pub async fn serve(
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn long_state_directory_keeps_a_short_private_bootstrap_socket() {
         let directory = tempfile::tempdir().unwrap();
-        let state_dir = directory.path().join("long-state-segment/".repeat(12));
+        // Long enough to pass a Unix socket's limit of about a hundred bytes.
+        // Windows has no such limit, and hide-platform's private files there
+        // take paths below MAX_PATH (260), so the folder stays under it.
+        let depth = if cfg!(unix) { 12 } else { 4 };
+        let state_dir = (0..depth).fold(directory.path().to_path_buf(), |path, _| {
+            path.join("long-state-segment")
+        });
         fs::create_dir_all(state_dir.join("pane-capabilities")).unwrap();
         let (listener, socket) = bind(&state_dir).unwrap();
-        assert!(socket.as_os_str().len() < 100);
+        assert!(!socket.starts_with(&state_dir));
+        if cfg!(unix) {
+            assert!(socket.as_os_str().len() < 100);
+        }
         assert_eq!(socket, bootstrap_socket_path(&state_dir).unwrap());
         assert!(private::is_private(socket.parent().unwrap()).unwrap());
+        // The listener takes its endpoint with it.
         drop(listener);
-        fs::remove_file(&socket).unwrap();
+        assert!(!socket.exists());
         fs::remove_dir(socket.parent().unwrap()).unwrap();
         let (listener, next) = bind(&state_dir).unwrap();
         assert_ne!(socket, next);
         assert_eq!(next, bootstrap_socket_path(&state_dir).unwrap());
         drop(listener);
-        fs::remove_file(&next).unwrap();
         fs::remove_dir(next.parent().unwrap()).unwrap();
     }
 
@@ -1068,6 +1142,8 @@ mod tests {
         .unwrap()
     }
 
+    // Windows cannot read a process's working directory (`cwd_of`).
+    #[cfg(unix)]
     #[test]
     fn bootstrap_without_a_herdr_socket_still_reaches_the_checkout_fallback() {
         let directory = tempfile::tempdir().unwrap();
@@ -1106,6 +1182,8 @@ mod tests {
         core.shutdown();
     }
 
+    // Windows cannot read a process's working directory (`cwd_of`).
+    #[cfg(unix)]
     #[test]
     fn process_cwd_reads_the_callers_working_directory() {
         let expected = std::env::current_dir().unwrap().canonicalize().unwrap();

@@ -281,7 +281,8 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
     );
     // Judged by the folder, not by which variable named it: `hide connect`
     // hands the daemon it starts the default folder through HIDE_STATE_DIR.
-    let legacy_state_dir = (state_dir == hide_kit::layout::default_state_dir(&home))
+    // Only a Mac ever had the old folder.
+    let legacy_state_dir = (cfg!(unix) && state_dir == hide_kit::layout::default_state_dir(&home))
         .then(|| hide_kit::layout::legacy_state_dir(&home));
     let keep_alive = match read(HIDE_KEEP_ALIVE).as_deref() {
         None => false,
@@ -510,7 +511,7 @@ mod tests {
         assert_eq!(env.state_dir, PathBuf::from("/Users/example/.hide/state"));
         assert_eq!(
             env.legacy_state_dir.as_deref(),
-            Some(Path::new("/Users/example/.local/state/hide"))
+            cfg!(unix).then_some(Path::new("/Users/example/.local/state/hide"))
         );
         for relocated in [
             ("HIDE_STATE_DIR", "/isolated/state"),

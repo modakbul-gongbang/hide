@@ -18,6 +18,8 @@ pub mod remote_bridge;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
+// The old folder is this Mac's history; no Windows build ever wrote it.
+#[cfg(unix)]
 pub mod state_move;
 pub mod watch;
 pub mod workspace_cli;
@@ -280,6 +282,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
     let core = Arc::new(CoreHandle::spawn(options)?);
     // After the core installed the diagnostic log beside its state.
+    #[cfg(unix)]
     state_move::log_left_behind(env.legacy_state_dir.as_deref(), &env.state_dir);
     let pane_capabilities = Arc::new(pane_auth::Registry::new(&env.state_dir)?);
     let remote_bridges = remote_bridge::Supervisor::spawn(

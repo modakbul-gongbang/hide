@@ -122,12 +122,14 @@ jobs:
   # lists the Unix-only code at the bottom of the dependency graph (the
   # summary step groups it by crate), and it shrinks as the port lands. The
   # web suite and the desktop typecheck pass today, so a failure of either
-  # turns this job red: that is a Windows regression. Promote the job into
-  # `needs` only once the compile check is green.
+  # turns this job red: that is a Windows regression. hided's end-to-end
+  # tests and hided against the pinned Herdr (a pane opened through `/ws` and
+  # a typed line echoed back) pass today too, so they gate this job the same
+  # way. Promote the job into `needs` only once the compile check is green.
   windows-check:
     name: windows check
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     defaults:
       run:
         shell: bash
@@ -169,6 +171,27 @@ jobs:
         with:
           name: windows-cargo-check-log
           path: ${{ runner.temp }}/cargo-check.log
+      - name: hided's pane bootstrap and end-to-end tests
+        timeout-minutes: 25
+        run: |
+          cargo test --locked -p hided --lib pane_auth
+          cargo test --locked -p hided --test handshake
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        # The proof below stands on its own, so it runs whatever the step
+        # above answered.
+        if: ${{ !cancelled() }}
+        # Assigned first, so a failed fetch fails this step rather than
+        # handing the next one an empty path.
+        run: |
+          bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: hided against the pinned Herdr
+        if: ${{ !cancelled() && steps.herdr.outcome == 'success' }}
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: cargo test --locked -p hided --test real_herdr -- --ignored --nocapture
       - uses: pnpm/action-setup@v6
         with:
           version: 10

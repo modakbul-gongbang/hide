@@ -419,6 +419,10 @@ mod sys {
             let queue = Arc::clone(&self.queue);
             let keep = self.keep;
             let root = dir.to_path_buf();
+            // The folder is watched only from the first read on, so `watch`
+            // returns once the thread has started it: a change made right
+            // after would be lost otherwise.
+            let (armed, started) = std::sync::mpsc::sync_channel(1);
             let thread = std::thread::Builder::new()
                 .name("hide-watch".to_owned())
                 .spawn(move || {
@@ -429,8 +433,12 @@ mod sys {
                         &root,
                         keep,
                         &queue,
+                        armed,
                     )
                 })?;
+            // An `Err` is a thread that ended at once, which put its reason
+            // on the queue.
+            let _ = started.recv();
             self.watches.insert(
                 dir.to_path_buf(),
                 Watch {
@@ -462,7 +470,9 @@ mod sys {
         root: &Path,
         keep: Keep,
         queue: &Queue,
+        armed: std::sync::mpsc::SyncSender<()>,
     ) {
+        let mut armed = Some(armed);
         let mut buffer = vec![0u32; BUFFER_WORDS];
         loop {
             // SAFETY: an all-zero OVERLAPPED is its documented initial state.
@@ -486,6 +496,9 @@ mod sys {
             if started == 0 {
                 let error = io::Error::last_os_error();
                 return queue.lost(format!("the system stopped watching: {error}"));
+            }
+            if let Some(armed) = armed.take() {
+                let _ = armed.send(());
             }
             let handles = [done.0, stop];
             // SAFETY: both handles are open events.
