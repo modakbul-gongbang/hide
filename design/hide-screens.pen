@@ -16953,6 +16953,197 @@
                     },
                     {
                       "type": "frame",
+                      "id": "ov-rqg35-l",
+                      "name": "멈춤",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ov-rqg35-l-head",
+                          "name": "Head",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ov-rqg35-l-label",
+                              "name": "멈춤 1",
+                              "content": "멈춤 1",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "height": 28
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-rq-stopped-l",
+                          "name": "설정 화면 스위치 추가",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-rq-stopped-l-top",
+                              "name": "Title line",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-rq-stopped-l-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "ov-rq-stopped-l-mark-ring",
+                                      "name": "Ring",
+                                      "width": 7,
+                                      "height": 7,
+                                      "stroke": "$--muted-foreground",
+                                      "strokeWidth": 1,
+                                      "strokeAlignment": "inner"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-rq-stopped-l-p",
+                                  "name": "Provider artwork",
+                                  "children": [],
+                                  "width": 12,
+                                  "height": 12,
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../web/src/assets/agent-claude.png",
+                                    "mode": "fit"
+                                  }
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-l-t",
+                                  "name": "설정 화면 스위치 추가",
+                                  "content": "설정 화면 스위치 추가",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-rq-stopped-l-sp",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-l-place",
+                                  "name": "prd/agent-summary-s…",
+                                  "content": "prd/agent-summary-s…",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-l-age",
+                                  "name": "6m",
+                                  "content": "6m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": "fill_container"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-rq-stopped-l-req",
+                              "name": "Request line",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-l-who",
+                                  "name": "나 ›",
+                                  "content": "나 ›",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-l-rh",
+                                  "name": "Settings에 에이전트 요약 스위치 넣어 줘",
+                                  "content": "Settings에 에이전트 요약 스위치 넣어 줘",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": "fill_container"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-rq-stopped-l-res",
+                              "name": "Result line",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-l-rs",
+                                  "name": "테스트 환경이 없어 멈췄어요",
+                                  "content": "테스트 환경이 없어 멈췄어요",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-rq-stopped-l-rsp",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1188,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": 0,
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "frame",
                       "id": "ov-rqg4-l",
                       "name": "결과 볼 것",
                       "children": [
@@ -43222,6 +43413,197 @@
                                 {
                                   "type": "frame",
                                   "id": "ov-rq-review-d-rsp",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1188,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": 0,
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-rqg35-d",
+                      "name": "멈춤",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ov-rqg35-d-head",
+                          "name": "Head",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ov-rqg35-d-label",
+                              "name": "멈춤 1",
+                              "content": "멈춤 1",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "height": 28
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-rq-stopped-d",
+                          "name": "설정 화면 스위치 추가",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-rq-stopped-d-top",
+                              "name": "Title line",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-rq-stopped-d-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "ov-rq-stopped-d-mark-ring",
+                                      "name": "Ring",
+                                      "width": 7,
+                                      "height": 7,
+                                      "stroke": "$--muted-foreground",
+                                      "strokeWidth": 1,
+                                      "strokeAlignment": "inner"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-rq-stopped-d-p",
+                                  "name": "Provider artwork",
+                                  "children": [],
+                                  "width": 12,
+                                  "height": 12,
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../web/src/assets/agent-claude.png",
+                                    "mode": "fit"
+                                  }
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-d-t",
+                                  "name": "설정 화면 스위치 추가",
+                                  "content": "설정 화면 스위치 추가",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-rq-stopped-d-sp",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-d-place",
+                                  "name": "prd/agent-summary-s…",
+                                  "content": "prd/agent-summary-s…",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-d-age",
+                                  "name": "6m",
+                                  "content": "6m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": "fill_container"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-rq-stopped-d-req",
+                              "name": "Request line",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-d-who",
+                                  "name": "나 ›",
+                                  "content": "나 ›",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-d-rh",
+                                  "name": "Settings에 에이전트 요약 스위치 넣어 줘",
+                                  "content": "Settings에 에이전트 요약 스위치 넣어 줘",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": "fill_container"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-rq-stopped-d-res",
+                              "name": "Result line",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ov-rq-stopped-d-rs",
+                                  "name": "테스트 환경이 없어 멈췄어요",
+                                  "content": "테스트 환경이 없어 멈췄어요",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-rq-stopped-d-rsp",
                                   "name": "Spacer",
                                   "children": [],
                                   "width": "fill_container",

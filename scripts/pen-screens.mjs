@@ -1482,6 +1482,7 @@ function requestRowsOf(project = null) {
     answer: {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', project, request: '#192 hided가 SIGTERM에서 AI 자식부터 정리하게 해 줘', result: '기존 stdin 종료 경로도 남길까요?', place: '192-hided-sigterm-handler', age: '12m', issue: gh(192)},
     fix: {mark: 'seen', title: '탭 그룹 회귀 수정', project, request: 'CI 실패한 거 고쳐 줘', result: 'e2e 두 개를 고쳤습니다', fix: true, place: 'prd/agent-tab-groups', age: '8m', pr: {number: 217, tone: 'open', checks: 'failed'}, more: 1},
     review: {mark: 'seen', title: 'Herdr 서버 시작 구현', project, request: '#191 데스크톱 호스트가 Herdr 서버를 띄우게', result: 'PR 올림 · CI 통과', place: '191-desktop-starts-herdr', age: '20m', pr: {number: 222, tone: 'open', checks: 'passing'}, issue: gh(191)},
+    stopped: {mark: 'seen', title: '설정 화면 스위치 추가', project, request: 'Settings에 에이전트 요약 스위치 넣어 줘', result: '테스트 환경이 없어 멈췄어요', place: 'prd/agent-summary-switch', age: '6m'},
     result: {mark: 'done', title: '설치 키트 항목 추가', project, request: 'Codex를 pane마다 실행하는 키트 항목 추가해 줘', result: '키트 항목을 추가했고 테스트가 통과했습니다', place: 'prd/codex-per-pane', age: '3m', opens: ['report', 'kit.rs']},
     working: {mark: 'work', title: '요청 보기 웹 화면 구현', project, request: LONG_REQUEST, result: '요청 보기 행을 그리는 중', place: 'prd/overview-request-view', age: '1m', later: 'ci-lead'},
     waiting: {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', project, request: '#192 SIGTERM 정리 맡겨서 끝까지 봐 줘', sender: '나', result: '리뷰어 결과를 기다리는 중', place: 'main', age: '25m', children: '자식 2 · 일하는 중 1', asking: 1},
@@ -1824,6 +1825,7 @@ function buildProjectOverview(tokens) {
       requestGroup(`ov-rqg1-${suffix}`, '답할 것', 1, r('answer', rows.answer)),
       requestGroup(`ov-rqg2-${suffix}`, '고칠 것', 1, r('fix', rows.fix)),
       requestGroup(`ov-rqg3-${suffix}`, '리뷰·머지', 1, r('review', rows.review)),
+      requestGroup(`ov-rqg35-${suffix}`, '멈춤', 1, r('stopped', rows.stopped)),
       requestGroup(`ov-rqg4-${suffix}`, '결과 볼 것', 1, r('result', {...rows.result, hover: true, expanded: {
         request: ['Codex를 pane마다 실행하는 키트 항목 추가해 줘', '', 'Settings › Devices 줄에서 끄고 켤 수 있게'],
         reply: ['키트 항목을 추가했고 테스트가 통과했습니다.', '보고서는 https://example.com/report 에 있습니다.'],
