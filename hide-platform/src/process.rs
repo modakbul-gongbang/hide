@@ -662,6 +662,7 @@ mod sys {
     use windows_sys::Win32::Foundation::{
         CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE,
     };
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
@@ -754,10 +755,17 @@ mod sys {
             return Err(io::Error::last_os_error());
         }
         // Suspended, so the child cannot start a process of its own before it
-        // is inside the job. A console program gets a console without a
-        // window: an owner with no console of its own (a detached daemon)
-        // would otherwise open a visible one for every child.
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_SUSPENDED);
+        // is inside the job. An owner with no console of its own (a detached
+        // daemon) would have Windows open a visible console window for every
+        // console child, so such a child gets a console without a window; an
+        // owner with a console shares it, as before.
+        // SAFETY: a plain call; a null window means no console.
+        let windowless = if unsafe { GetConsoleWindow() }.is_null() {
+            CREATE_NO_WINDOW
+        } else {
+            0
+        };
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | windowless | CREATE_SUSPENDED);
         let mut child = command.spawn()?;
         // SAFETY: both handles are open; the child's is owned by `child`.
         let assigned = unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) };
