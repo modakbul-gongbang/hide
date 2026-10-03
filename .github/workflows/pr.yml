@@ -171,12 +171,18 @@ jobs:
         with:
           name: windows-cargo-check-log
           path: ${{ runner.temp }}/cargo-check.log
-      - name: hided's end-to-end tests
+      - name: hided's pane bootstrap and end-to-end tests
         timeout-minutes: 25
-        run: cargo test --locked -p hided --test handshake
+        run: |
+          cargo test --locked -p hided --lib pane_auth
+          cargo test --locked -p hided --test handshake
       - name: Fetch the pinned Herdr runtime
         id: herdr
-        run: echo "bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')" >> "$GITHUB_OUTPUT"
+        # Assigned first, so a failed fetch fails this step rather than
+        # handing the next one an empty path.
+        run: |
+          bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: hided against the pinned Herdr
         timeout-minutes: 10
         env:

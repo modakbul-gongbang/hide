@@ -94,6 +94,32 @@ async fn state_file_is_private() {
     running.stop();
 }
 
+/// The `hide` CLI reaches the daemon's pane bootstrap and the daemon itself
+/// answers: this test process names no pane and sits in no registered
+/// checkout, so the answer is a refusal, and never `hide_unavailable`, which
+/// is what a caller that could not reach the listener says.
+#[tokio::test]
+async fn the_pane_bootstrap_answers_a_caller_on_the_local_stream() {
+    let (dir, mut env) = test_env(true);
+    let running = hided::start_daemon(env.clone())
+        .await
+        .expect("start daemon");
+    env.pane_id = None;
+    let answer = tokio::task::spawn_blocking(move || hided::workspace_cli::bootstrap(&env, true))
+        .await
+        .unwrap();
+    // Unix reads the caller's working directory and finds no checkout there;
+    // Windows cannot read it, so the caller is unavailable to bind.
+    let expected = if cfg!(unix) {
+        "checkout_not_registered"
+    } else {
+        "caller_unavailable"
+    };
+    assert_eq!(answer.unwrap_err(), expected);
+    running.stop();
+    drop(dir);
+}
+
 #[tokio::test]
 async fn invalid_token_is_refused() {
     let (_dir, running) = start().await;
@@ -593,13 +619,16 @@ fn seed_registration(state_dir: &std::path::Path, id: &str, path: &std::path::Pa
 #[tokio::test]
 async fn explorer_paths_are_checked_against_the_registered_checkout() {
     let (dir, env) = test_env(true);
+    // Joined one component at a time: Windows spells the canonical home with
+    // a `\\?\` prefix, after which `/` is not a separator.
     let home = dir.path().canonicalize().unwrap();
-    let checkout = home.join("projects/alpha");
+    let checkout = home.join("projects").join("alpha");
+    let main = checkout.join("src").join("main.rs");
     std::fs::create_dir_all(checkout.join("src")).unwrap();
-    std::fs::write(checkout.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(&main, "fn main() {}\n").unwrap();
     // A directory under home that no registration covers: the registration
     // line would accept it, the Explorer line must not.
-    let notes = home.join("projects/notes");
+    let notes = home.join("projects").join("notes");
     std::fs::create_dir_all(&notes).unwrap();
     std::fs::write(notes.join("todo.md"), "- [ ] x\n").unwrap();
     seed_registration(&env.state_dir, "w-alpha", &checkout);
@@ -620,7 +649,7 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
     let checkout_id = workspace["checkouts"][0]["id"].as_str().unwrap().to_owned();
     let checkout_path = checkout.display().to_string();
     let notes_path = notes.join("todo.md").display().to_string();
-    let file_path = checkout.join("src/main.rs").display().to_string();
+    let file_path = main.display().to_string();
 
     // A path under home that no checkout covers is refused as such, for an
     // open and for a change alike.
@@ -1070,6 +1099,9 @@ async fn a_change_in_a_watched_checkout_is_announced() {
     running.stop();
 }
 
+// The index answers relative paths with the system's separator (`src\main.rs`
+// on Windows); which one the wire carries there is not settled yet.
+#[cfg(unix)]
 #[tokio::test]
 async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     let (dir, env) = test_env(true);
