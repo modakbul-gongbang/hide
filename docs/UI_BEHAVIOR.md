@@ -100,7 +100,7 @@ This boundary is an Observer-approved, user-vetoable implementation assumption f
 
 Agent Views has its own area tree, separate from File Views' View tree.
 Each area has a tab bar, a New tab button and the active tab's live pane canvas; dividers separate areas.
-Only the area holding the keyboard carries the strong selected-tab accent and content boundary, across both Agent and View columns.
+Only the area holding the keyboard carries the foreground-colored selected-tab underline, across both Agent and View columns.
 Clicking a tab or pane activates its area and sends the keyboard to that pane.
 All shown tabs stay attached and awake, while only the active area's tab receives read and sleep-visit updates.
 Pane headers, child chips, relationship controls and pane splits remain inside each canvas; find belongs to the focused pane.
@@ -148,8 +148,9 @@ Retry close reuses that intent's shell, while Dismiss ends the failed intent; de
 File Views holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
 A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
 Each layout keeps its own active area for opening and layout actions.
-The recorded keyboard owner alone gives one Agent or View area the strong tab accent and content boundary.
-Every other area's tab bar uses the card background, and its selected tab keeps a foreground title and secondary background without the strong accent.
+The recorded keyboard owner alone gives one Agent or View area the foreground-colored selected-tab underline.
+Every other area's tab bar uses the card background, and its selected tab keeps a foreground title and secondary background without the underline.
+Areas have no visible focus perimeter; their transparent content border reserves the same space as before.
 The content stays readable and unfiltered; focus adds no content blur, opacity reduction, capture loop or geometry change.
 The same rule applies at every File Views width, in the narrow single-area presentation and in both themes.
 An area's tabs each ask for the preferred width and shrink alike down to the title minimum; a file's type mark does not tell files apart, so a View tab keeps its title and never turns to marks the way an Agent tab does.
@@ -285,7 +286,7 @@ Several View areas leave Agent Views as it was already drawn: the toolbar's icon
 
 A pane header reads, left to right: the Return mark of a child pane, the agent's status mark and provider mark under the sidebar row's rules (a plain shell has the neutral `>_` mark and no status mark), the title, the zoom control, the status caption, then the overflow control and ×.
 While the tab is zoomed, the zoomed pane's header carries a zoom control that names how many panes it hides (`+1`) and unzooms the tab when pressed; an unzoomed header has none.
-When a tab shows more than one pane, a primary-colored outline surrounds the pane whose terminal holds the keyboard, and stays while that pane's menu is open; a lone or zoomed pane has no outline, and moving the keyboard to a View area, the sidebar, or another app removes it while the header wash stays on the focused pane.
+When a tab shows more than one pane, a thin subtle-foreground outline surrounds the pane whose terminal holds the keyboard, and stays while that pane's menu is open; a lone or zoomed pane has no outline, and moving the keyboard to a View area, the sidebar, or another app removes it while the header wash stays on the focused pane.
 The focused pane's header reads in the foreground color and every other pane's header in the muted one, so the wash is not the only difference.
 Web owner: `web/src/PaneView.tsx`, `web/src/PaneGrid.tsx`.
 
@@ -976,23 +977,26 @@ A Home agent reads and edits the projects through their links, the change shows 
 
 Web owner: `web/src/recent.ts`, `web/src/areaCycle.ts`, `web/src/viewFocus.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
 
-Focused-area cycling (⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser) follows where the keyboard is.
+Recent Agent pane or View tab cycling (⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser) follows where the keyboard is.
 In a View area it walks the tabs of that exact area, in recent-use order.
 The View scope includes device, checkout and area ID, so an Agent area with the same ID or another checkout cannot widen it.
 A document, diff, View tab bar or visible native browser page names its View area.
-In the Agent area it walks the agent panes the keyboard has been in this session, one row per pane, across every device, project and checkout, in recent-use order (issue #301).
+Everywhere outside a View area it walks the agent panes the keyboard has been in this session, one row per pane, across every device, project and checkout, in recent-use order (issue #301).
 A terminal pane in a tab an Agent area of the Workspace in front draws (its normal tab or a delegated child's canvas), or that area's tab bar, puts the keyboard in the Agent area; from a tab bar the pane in use is the one the core focuses in that tab.
 A pane joins the order the first time the keyboard is in it, and a commit's passing frames on the way to its pane are not visits; a pane that closes leaves the order.
 A pane row is titled by the agent it runs, with the place as Recent Panels names it and `Terminal` beneath, and the agent's status mark; a pane running no agent, a View display, an Overview and a project are never rows.
-From a pane running no agent the first chord lands on the most recent agent pane.
-A hidden View, tool, search, Settings, dialog or Overview supplies no scope; a View area of zero or one tab, or an Agent area with no visited agent pane besides the one in use, is a no-op.
+From a pane running no agent, or from the sidebar, tools, search, Settings, a dialog, Main or Overview, the first chord lands on the most recent agent pane.
+Outside the Agent area, opening the cycle neither invents a pane origin nor records the underlying pane as visited.
+Main and Overview still open the Agent cycle when a shortcut left the previous Workspace's View owner recorded, because that View is no longer drawn.
+A focused View area keeps its own scope even when it has zero or one tab or its target retired; it never falls through to Agent panes.
+With no visited agent pane, or no other visited agent besides the pane in use, the Agent cycle is a no-op.
 Holding the chord's actual modifier freezes the order and scope and previews in Recent Agent panes or Recent View tabs without moving the committed tab, layout or keyboard owner.
 Repeated forward and backward chords walk that frozen order; Escape or losing the window cancels without a selection event.
 Releasing the modifier on a View tab commits one in-place selection; on a pane it brings the pane's device, project, tab and pane forward with one event, as choosing it in the Agents list does, and the pane receives the keyboard.
 Closed or moved View tabs leave the frozen candidates; removal of the origin area or checkout cancels, and no other area replaces it.
 Closed panes and panes whose agent ended leave the frozen Agent candidates; a highlight that left moves to the next surviving pane, and with none left the cycle ends.
 
-Global Recent Panels is a separate, named command, unbound by default and assignable in Settings alongside the focused-area commands.
+Global Recent Panels is a separate, named command, unbound by default and assignable in Settings alongside the Agent pane and View tab commands.
 It walks every unified surface in recent-use order across projects, checkouts and connected devices: terminal tabs, View files, diffs and browser displays, plus every visited Home and Project Overview.
 An Overview revisit moves its one row to the front; its saved tile, modes, selected lane and folds remain page-local, and it leaves the order with its Project or device.
 A Global Recent Panels commit shows an Overview at once or brings one Workspace surface forward with one event; a View target also receives the keyboard.
@@ -1165,7 +1169,7 @@ Ownership is drawn as emphasis, not as a new color or container: the operator's 
 A child's question or completion reaches the operator through its ancestors: the ancestor row turns unread and its descendant badge changes, and the ancestor's own group does not move.
 An uninstrumented mark (agent detected but its subagents not visible to Hide) is drawn only where an agent was detected, is a mark plus an accessible name and never a color alone, and its subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
-The header wash marks the pane Hide is showing, while the outer primary indicator marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
+The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
@@ -1225,20 +1229,116 @@ A notification's title is the task name and its body 내 확인 대기 or 끝 wi
 A revoked phone shows "이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요." and drops its own push subscription.
 The app follows the phone's light or dark setting, draws text a quarter larger than the desktop, and keeps every control at least 44 points tall.
 
+## Keyboard shortcuts per system
+
+Web owner: `web/src/shortcuts.ts` (the registry, the rule and its exceptions), `web/src/keys.ts` (terminal keys), `web/src/shortcutLabels.ts` (every chord a screen prints), `web/src/keyboard.ts` (the window listener); desktop owner: `desktop/src/main/menu.ts` (the menu's accelerators); test owners: `web/src/shortcuts.test.ts`, `web/src/keys.test.ts`, `desktop/src/main/menu.test.ts`, and `web/e2e/chords.ts`, through which every web e2e presses its chords as the runner's system does.
+
+The rest of this document writes chords as macOS has them; this section is how Windows and Linux press each one.
+Which system applies is the one the operator types on: the desktop app's, or the browser's for a browser tab, whatever system the daemon runs on.
+
+### The rule
+
+On Windows and Linux every ⌘ is Ctrl+Shift, as in Windows Terminal, GNOME Terminal, WezTerm and kitty, so a plain Ctrl key reaches the shell and the agent CLIs (Ctrl+C, Ctrl+R, Ctrl+W, Ctrl+K, Ctrl+D and the rest); the only plain Ctrl keys the app takes are text size and, in a browser tab, the ones Chrome keeps for itself.
+A ⇧ or ⌥ that a macOS chord adds to ⌘ makes it Alt+Shift there, the layer Windows Terminal puts its panes on (Alt+Shift+D splits a pane there too): ⌘T is Ctrl+Shift+T and ⇧⌘T is Alt+Shift+T, so no chord needs more than three keys.
+The chords the rule puts on that layer take no key a shell or an agent CLI documents: readline reads Alt+Shift+B as Alt+B (`do-lowercase-version`), so Alt+B, Alt+D and Alt+T still reach the shell and Claude Code.
+None of them is a key Windows, GNOME or Chrome lists as its own, except Chrome's Alt+Shift+T (below).
+Windows can be set to switch the input language on Alt+Shift, and a Linux layout can be too (`grp:alt_shift_toggle`); a chord still runs there, because chords match the physical key, but whether the layout switches as well is unconfirmed on a real Windows machine.
+A chord without ⌘ is the same keys on every system: ⌃Tab is Ctrl+Tab and ⌥1 is Alt+1, so those Alt chords take keys a shell reads as Meta, as they do on a Mac whose terminal sends Option as Meta.
+Chords are written in words joined with `+`, in Windows' order Ctrl, Alt, Shift, as Windows Terminal writes them, so every chord the rule makes begins with `Ctrl+Shift+` or `Alt+Shift+`.
+AltGr types a character on Windows and Linux layouts (Windows reports it as Ctrl+Alt), and a key pressed with it is never a chord.
+A stored chord set keeps macOS chords, so a set a Mac saved means the same keys through the rule on Windows and Linux, except that ⇧⌘X, ⌥⌘X and ⌥⇧X are all Alt+Shift+X there, so a set binding two of them, or binding one onto a default that is another, is refused whole and the defaults run, and a chord recorded there as Alt+Shift+X is stored as ⇧⌘X; on those systems a desktop pane chord needs Ctrl+Shift or Alt+Shift, a browser chord Ctrl or Alt, and the Windows or Super key is refused because the system keeps it.
+
+### Exceptions
+
+Each exception has a dominant convention on Windows and Linux, or a chord the system keeps, behind it.
+
+- Text size is Ctrl and =, - or 0, as in Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser.
+- The recent project cycle is Ctrl+Shift+` (previous Ctrl+Alt+Shift+`): Alt+Tab is the system's window switcher on Windows and Linux and never reaches an app, so the cycle moves to ` under the rule, the key macOS keeps for its own window cycle.
+  Going back adds Alt to the Ctrl+Shift the cycle already holds, the one four-key desktop chord: a held cycle commits when its Ctrl is released, so the rule's Alt+Shift+` could not step back inside it, and GNOME keeps Alt+Shift+` for switching between an app's windows.
+- In a browser tab, Reopen closed tab is Ctrl+Alt+Shift+T: Chrome keeps Alt+Shift+T to focus its toolbar, which keyboard users rely on, and the macOS browser chord ⌥⇧T is those same keys there.
+- Not yet handled: a browser tab's area cycle is Alt+` and Alt+Shift+` on Windows and Linux (Chrome keeps Ctrl+Tab, as it keeps ⌃Tab on macOS), and stock GNOME and KDE take both to switch between an app's windows, so on those desktops the cycle reaches the page only once the desktop's keys are changed or the cycle is bound to another chord in Settings, Shortcuts.
+- Move to Trash in the Explorer is Delete, as in Windows Explorer and the Linux file managers.
+- Inside a text field, a palette, a board or a document, no terminal holds the keyboard, so the system's own command key applies: ⌘↵ is Ctrl+Enter (send a form, open a ⌘P result to the side, open a pull request on GitHub), ⌘-click is Ctrl-click (a link, a pull request, an issue), and Ctrl+S saves the document in front as well as Ctrl+Shift+S.
+- Tab digits follow the rule (Ctrl+Shift+1-9, as in WezTerm): Windows Terminal, GNOME Terminal and the browsers each use a different modifier, so no convention outweighs the rule.
+
+### In a terminal
+
+| Action | macOS | Windows and Linux |
+| --- | --- | --- |
+| Copy the selection | `⌘C` | `Ctrl+Shift+C` (the terminal's even with nothing selected, so Chrome's element inspector never opens), or `Ctrl+C` while text is selected |
+| Interrupt the program | `⌃C` | `Ctrl+C` with nothing selected |
+| Paste | `⌘V` | `Ctrl+Shift+V` |
+| Delete to the line start, go to the line start or end | `⌘⌫`, `⌘←`, `⌘→` (sent as ^U, ^A, ^E) | `Ctrl+U`, `Home` and `End`, which the terminal sends as typed |
+| A newline the agent keeps in its prompt | `⇧↩` | `Shift+Enter` |
+
+Ctrl+C copies only while text is selected and clears the selection as it copies, as Windows Terminal does, so the next Ctrl+C interrupts; with nothing selected it reaches the program.
+Every other plain Ctrl key reaches the program, apart from text size (Ctrl+=, Ctrl+- and Ctrl+0).
+Settings, Shortcuts refuses a binding on the terminal's copy or paste chord.
+
+### Every command
+
+The hold hint follows the same table: holding Ctrl+Shift alone in the desktop app on Windows and Linux floats the tab numbers, and holding Alt alone the Agents-list numbers.
+A command marked none has no chord until the operator binds one in Settings, Shortcuts, where it can be bound; the browser tab's moved chords are the ones Chrome keeps for itself on that system.
+
+| Command | Desktop app, macOS | Desktop app, Windows and Linux | Browser tab, macOS | Browser tab, Windows and Linux |
+| --- | --- | --- | --- | --- |
+| New tab | `⌘T` | `Ctrl+Shift+T` | `⌥T` | `Alt+T` |
+| Close focused view or pane | `⌘W` | `Ctrl+Shift+W` | `⌥W` | `Alt+W` |
+| Reopen closed tab (exception) | `⇧⌘T` | `Alt+Shift+T` | `⌥⇧T` | `Ctrl+Alt+Shift+T` |
+| Select tab 1-9 | `⌘1 … ⌘9` | `Ctrl+Shift+1 … Ctrl+Shift+9` | none | none |
+| Add project | `⇧⌘N` | `Alt+Shift+N` | none | none |
+| Start agent | `⌘N` | `Ctrl+Shift+N` | none | none |
+| Next recent Agent pane or View tab | `⌃⇥` | `Ctrl+Tab` | `` ⌥` `` | `` Alt+` `` |
+| Previous recent Agent pane or View tab | `⌃⇧⇥` | `Ctrl+Shift+Tab` | `` ⌥⇧` `` | `` Alt+Shift+` `` |
+| Next global recent panel | none | none | none | none |
+| Previous global recent panel | none | none | none | none |
+| Next recent project (exception) | `⌥⇥` | `` Ctrl+Shift+` `` | `⌥⇥` | `` Ctrl+Shift+` `` |
+| Previous recent project (exception) | `⌥⇧⇥` | `` Ctrl+Alt+Shift+` `` | `⌥⇧⇥` | `` Ctrl+Alt+Shift+` `` |
+| Select agent 1-9 | `⌥1 … ⌥9` | `Alt+1 … Alt+9` | none | none |
+| Search | `⌘K` | `Ctrl+Shift+K` | `⌘K` | `Ctrl+Shift+K` |
+| Open file | `⌘P` | `Ctrl+Shift+P` | `⌘P` | `Ctrl+Shift+P` |
+| Project home | `⇧⌘H` | `Alt+Shift+H` | `⇧⌘H` | `Alt+Shift+H` |
+| Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |
+| Toggle sidebar view | none | none | none | none |
+| Toggle device rail | none | none | none | none |
+| Toggle Tools | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
+| Toggle File Views | `⇧⌘B` | `Alt+Shift+B` | `⇧⌘B` | `Alt+Shift+B` |
+| Find in pane | `⌘F` | `Ctrl+Shift+F` | `⌘F` | `Ctrl+Shift+F` |
+| Save file | `⌘S` | `Ctrl+Shift+S` | `⌘S` | `Ctrl+Shift+S` |
+| Keep open | `⇧⌘K` | `Alt+Shift+K` | `⇧⌘K` | `Alt+Shift+K` |
+| Split right | `⌘D` | `Ctrl+Shift+D` | `⌘D` | `Ctrl+Shift+D` |
+| Split down | `⇧⌘D` | `Alt+Shift+D` | `⇧⌘D` | `Alt+Shift+D` |
+| Zoom pane | `⌥⌘↩` | `Alt+Shift+Enter` | `⌥⌘↩` | `Alt+Shift+Enter` |
+| Close pane | `⇧⌘W` | `Alt+Shift+W` | `⌥⇧W` | `Alt+Shift+W` |
+| Larger text (exception) | `⌘=` | `Ctrl+=` | `⌘=` | `Ctrl+=` |
+| Smaller text (exception) | `⌘-` | `Ctrl+-` | `⌘-` | `Ctrl+-` |
+| Reset text size (exception) | `⌘0` | `Ctrl+0` | `⌘0` | `Ctrl+0` |
+| Focus next Agent area | none | none | none | none |
+| Focus previous Agent area | none | none | none | none |
+| Grow Agent area | none | none | none | none |
+| Shrink Agent area | none | none | none | none |
+| Focus next View area | none | none | none | none |
+| Focus previous View area | none | none | none | none |
+| Grow View area | none | none | none | none |
+| Shrink View area | none | none | none | none |
+| Move to Trash (exception) | `⌘⌫` | `Delete` | `⌘⌫` | `Delete` |
+| Settings | `⌘,` | `Ctrl+Shift+,` | `⌥,` | `Ctrl+Shift+,` |
+| Keyboard shortcuts | `⌘/` | `Ctrl+Shift+/` | `⌘/` | `Ctrl+Shift+/` |
+
 ## Keycaps, tooltips, and icon buttons
 
 Every icon-only control has a tooltip and an accessible name carrying the same words as the tooltip.
 A chorded tooltip reads the label followed by the shortcut chord; a chordless control shows only the label.
 There is no native platform tooltip layered underneath the shared one; the shared tooltip is the only tooltip in the main shell.
 Tooltip hover has a short reveal delay, and an exact modifier hold reveals shortcut hints faster than a hover tooltip does.
-In the desktop app, holding ⌘ alone floats each tab's number at its top right in the agent tab strip in front, and holding ⌥ alone floats each Agents-list row's number at its top right: a keycap in the popover colors with a border, a small shadow and one mono digit, positioned over the tab or row rather than in it, so a title, an inline Rename field, a row's time, and its fold slot never move.
+In the desktop app, holding ⌘ alone (Ctrl+Shift on Windows and Linux) floats each tab's number at its top right in the agent tab strip in front, and holding ⌥ alone floats each Agents-list row's number at its top right: a keycap in the popover colors with a border, a small shadow and one mono digit, positioned over the tab or row rather than in it, so a title, an inline Rename field, a row's time, and its fold slot never move.
 The number is the screen order at that moment, first to ninth, left to right for tabs and top to bottom for the rows the Agents list draws (a folded parent's descendants are not rows), and an item past the ninth carries none.
 While Projects is on screen the same hold shows those Agents-list numbers, since ⌥n still selects by them, each once: on the agent's raised row, else on its row under the checkout that owns its pane.
 The hint appears only after a short hold of the exact modifier; releasing it before then shows nothing, so a ⌘C never flashes numbers.
 Releasing the modifier, adding another, pressing any key during the hold (including the numbered chord itself), losing the window, hiding the page, or opening a sheet, menu, dialog, palette, or cycle clears the numbers at once; the same modifiers still held after that show nothing until they are released and held again.
 The keycaps and the hover tooltip never share space: a tooltip hangs beside its trigger and a keycap sits inside the trigger's own box.
 In the desktop app a tooltip avoids the browser pages on screen: it opens on its usual side, else the opposite one, else across, whichever first fits the window clear of every page, because a page is drawn over the shell (Browser displays).
-A browser host has no numbered chords, so holding ⌘ or ⌥ there shows nothing.
+A browser host has no numbered chords, so holding ⌘ or ⌥ (Ctrl+Shift or Alt on Windows and Linux) there shows nothing.
 Pane focus, active tab, tab order, zoom state, and disappearing anchors all update which controls can show a hint or tooltip; pointer exit, mouse down, scroll, key down, losing key window status, and anchor removal all dismiss an open tooltip.
 
 Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action, except in the sheet that closes an agent with the agents it spawned.

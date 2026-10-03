@@ -19,9 +19,8 @@ import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { workspaceKey } from "./viewLayout";
 import { columnFrame, dividerLanding, workspaceViewOf, type ColumnFrame, type ColumnSizes, type SideColumn, type WorkspaceView } from "./workspace";
-import { hostKind } from "./host";
 import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
-import { displayCommand, hostRegistry } from "./shortcuts";
+import { commandLabel } from "./shortcutLabels";
 import "./columnCalls";
 
 // A Workspace (PRD S6 D-01..D-05; S7 B12, B13; PRD three-column-panel D-01,
@@ -309,8 +308,8 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
   const setScreen = useUiStore((s) => s.setScreen);
   // The chords as bound, so a rebound one shows as bound (B7).
-  const viewsChord = useShellStore((s) => displayCommand("toggle_right_panel", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
-  const toolsChord = useShellStore((s) => displayCommand("toggle_explorer", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
+  const viewsChord = useShellStore((s) => commandLabel("toggle_right_panel", s.rest?.ui_state));
+  const toolsChord = useShellStore((s) => commandLabel("toggle_explorer", s.rest?.ui_state));
   const name = checkout.branch ?? checkout.label;
   // What the toolbar acts on is this Workspace: its columns, its path and
   // its Project (B15). Opening the menu changes none of them.

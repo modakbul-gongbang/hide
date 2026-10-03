@@ -36,8 +36,9 @@ import {
   type CheckoutPresentation,
   type ProjectRow,
 } from "./projects";
-import { hostBridge, hostKind, revealHost } from "./host";
-import { displayCommand, hostRegistry, type Digit } from "./shortcuts";
+import { hostBridge, revealHost } from "./host";
+import { commandLabel } from "./shortcutLabels";
+import type { Digit } from "./shortcuts";
 import { contextAgents, contextHome, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
@@ -86,7 +87,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
   }, [devices, frontId, remoteStatus, actions]);
   useHomeStart();
   // The switch has no chord of its own until the operator binds one (issue 170).
-  const switchChord = useShellStore((s) => displayCommand("toggle_sidebar_view", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
+  const switchChord = useShellStore((s) => commandLabel("toggle_sidebar_view", s.rest?.ui_state));
   const storedWidth = useShellStore((s) => s.rest?.ui_state?.sidebar_width ?? null);
   // A drag draws the nav alone at the width under the pointer, over the
   // center, so nothing beside it (a terminal above all) reflows per move; the
@@ -147,8 +148,8 @@ export function Sidebar({ actions }: { actions: Actions }) {
             mode={mode}
             deviceMenu={deviceMenu}
             switchChord={switchChord || null}
-            searchChord={displayCommand("search", hostKind()) || null}
-            newWorkspaceChord={displayCommand("new_workspace", hostKind()) || null}
+            searchChord={commandLabel("search") || null}
+            newWorkspaceChord={commandLabel("new_workspace") || null}
             onMode={actions.showSidebarMode}
             onSearch={() => actions.openSearch()}
             onNewWorkspace={hostBridge() ? () => actions.openAddProject() : null}
@@ -161,7 +162,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
               <span className="flex-1" />
               <WeeklyUsage actions={actions} />
-              <Hint label={`Settings (${displayCommand("settings", hostKind())})`}>
+              <Hint label={`Settings (${commandLabel("settings")})`}>
                 <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
                   <SettingsIcon />
                 </Button>
@@ -1382,8 +1383,7 @@ const NO_AGENT_ROWS: AgentRow[] = [];
 
 /** What a row's menu reads from the host when it opens: the OS file manager, and the new-tab chord the registry binds here. */
 function menuHost(): MenuHost {
-  const host = hostKind();
-  return { reveal: revealHost(), newTabChord: displayCommand("new_tab", host, hostRegistry(useShellStore.getState().rest?.ui_state, host).registry) };
+  return { reveal: revealHost(), newTabChord: commandLabel("new_tab") };
 }
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
@@ -1443,8 +1443,7 @@ function useAgentRowMenu(actions: Actions): AgentRowMenu {
       items: (agent) => {
         const state = useShellStore.getState();
         const number = agentNumber(state, agent.pane_id);
-        const host = hostKind();
-        const chord = number === null ? "" : displayCommand(`select_agent_${number}`, host, hostRegistry(state.rest?.ui_state, host).registry);
+        const chord = number === null ? "" : commandLabel(`select_agent_${number}`, state.rest?.ui_state);
         return agentMenu(agent, chord);
       },
       onSelect: (agent, item) => {

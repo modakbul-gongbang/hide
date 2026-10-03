@@ -10,11 +10,12 @@ import { spawnSync } from "node:child_process";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 150_000 });
 
 async function openFromPalette(page: Page) {
-  await page.keyboard.press("Meta+KeyK");
+  await page.keyboard.press(chord("search"));
   const input = page.locator('[data-palette="Search"] [data-palette-input]');
   await expect(input).toBeFocused();
   await page.keyboard.type("에이전트");

@@ -10,6 +10,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot, showExplorer } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -46,7 +47,7 @@ function tokenFile(): Record<string, { type: string; value: string; light?: stri
 }
 
 async function openAppearance(page: Page): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await page.locator('[data-settings-tab="appearance"]').click();
 }

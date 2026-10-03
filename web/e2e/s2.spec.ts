@@ -9,6 +9,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { countSent, registerFolder, screenshot, sendEvent } from "./wire";
+import { chord, mod, SYSTEM } from "./chords";
 
 type Daemon = { origin: string; token: string; home: string; stop: () => void };
 
@@ -31,16 +32,13 @@ async function settledFocus(page: Page, paneId: string): Promise<void> {
 }
 
 /**
- * Copies what the focused pane has selected, the way the system's copy chord
- * does. Playwright binds its editing commands, copy among them, to the host
- * system's chord: ⌘C on macOS, which is what the app's users press. Elsewhere
- * that press is not a copy and Ctrl+C reaches the terminal as an interrupt, so
- * the browser's own copy command runs instead; both raise the same `copy`
- * event the pane's handler answers.
+ * Copies what the focused pane has selected with the system's terminal copy
+ * chord: ⌘C on macOS, the browser's own copy, and Ctrl+Shift+C on Windows and
+ * Linux, which the pane answers itself. Both raise the same `copy` event the
+ * pane's handler answers.
  */
 async function copy(page: Page): Promise<void> {
-  if (process.platform === "darwin") await page.keyboard.press("Meta+KeyC");
-  else await page.evaluate(() => document.execCommand("copy"));
+  await page.keyboard.press(mod("KeyC"));
 }
 
 async function screen(page: Page): Promise<string> {
@@ -122,7 +120,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
 
     // ⌥T is one create_tab; the new tab is active with the core's next label.
     const nextLabel = (await page.locator("[data-new-agent-tab]").first().getAttribute("aria-label"))!.replace("New tab ", "");
-    await page.keyboard.press("Alt+KeyT");
+    await page.keyboard.press(chord("new_tab"));
     await expect(page.locator("[role=tab]")).toHaveCount(4);
     // The label is Herdr's: the strip shows an automatic label only until
     // Herdr reports the pane's process, which then names the tab.
@@ -148,7 +146,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.locator(`[data-tab="${herdr.tab}"]`).click();
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
     await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("claude");
-    await page.keyboard.press("Meta+KeyD");
+    await page.keyboard.press(chord("split_right"));
     await expect(page.locator("[data-pane-view]")).toHaveCount(3);
     await expect(page.locator("[data-split]")).toHaveCount(2);
     await expect.poll(() => sent.get("create_pane")).toBe(1);
@@ -289,7 +287,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await expect(page.locator("[data-pane-focus-outline]")).toHaveCount(1);
     await expect(shellPane.locator("[data-pane-focus-outline]")).toBeVisible();
 
-    await page.keyboard.press("Meta+Alt+Enter");
+    await page.keyboard.press(chord("toggle_zoom"));
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-zoomed", "true");
     await expect.poll(() => sent.get("toggle_zoom")).toBe(1);
     // The zoomed header names the two panes it hides and draws no outline.
@@ -336,7 +334,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     expect(Math.abs(zoomedBox.height - canvasBox.height)).toBeLessThan(2);
     expect(Math.abs(zoomedBox.x - canvasBox.x)).toBeLessThan(2);
     await screenshot(page, "s2-zoomed");
-    await page.keyboard.press("Meta+Alt+Enter");
+    await page.keyboard.press(chord("toggle_zoom"));
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-zoomed", "false");
     await expect(page.locator("[data-pane-view]")).toHaveCount(3);
 
@@ -360,7 +358,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // ⌥⇧W closes the focused idle pane; Herdr's new geometry redraws the grid,
     // and the closed pane's terminal is disposed, not parked (D-05).
     const closingPane = (await page.evaluate(() => window.__hideProbe?.paneId()))!;
-    await page.keyboard.press("Alt+Shift+KeyW");
+    await page.keyboard.press(chord("close_pane"));
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
     await expect.poll(() => sent.get("close_pane")).toBe(1);
     await expect(page.locator("[data-confirm-close]")).toHaveCount(0);
@@ -393,16 +391,15 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.locator(`[data-tab="${herdr.tab}"]`).click();
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
 
-    // ⌘/ opens the sheet from the registry with the seven moved chords marked.
+    // ⌘/ opens the sheet from the registry with the moved chords marked.
     // The pane keeps keyboard focus under the sheet, and the Escape that
     // closes it is the shell's alone: no ESC byte reaches the program.
     await page.locator('[data-pane-view][data-focused="true"] .xterm-helper-textarea').focus();
     const keysBeforeSheet = sent.get("key") ?? 0;
-    await page.keyboard.press("Meta+Slash");
+    await page.keyboard.press(chord("shortcuts"));
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
-    // The S5 Settings row (⌥, in place of Chrome's ⌘,) is a move and Add
-    // project (desktop app only) no longer is, so seven rows are moved;
-    // Toggle Tools is the 28th row, and the two numbered
+    // On macOS the S5 Settings row (⌥, in place of Chrome's ⌘,) is a move
+    // and Add project (desktop app only) no longer is; Toggle Tools is the 28th row, and the two numbered
     // families (Select tab 1-9, Select agent 1-9) fold into one row each,
     // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
     // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st,
@@ -411,7 +408,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // move; the global Recent Panels pair has no default chord), and the eight
     // Agent and View area commands (no default chord either) the 35th to 42nd.
     await expect(page.locator("[data-shortcut]")).toHaveCount(42);
-    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(7);
+    // Chrome keeps seven desktop chords on macOS and five on Windows and Linux.
+    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(SYSTEM === "mac" ? 7 : 5);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-shortcut-sheet]")).toHaveCount(0);
@@ -423,7 +421,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     const findsBefore = sent.get("pane_find_open") ?? 0;
     const heard = () => herdr.inputLogs.map((file) => (fs.existsSync(file) ? fs.readFileSync(file, "latin1") : "")).join("");
     const heardBefore = heard().split("\x0f/").length;
-    await page.keyboard.press("Meta+KeyF");
+    await page.keyboard.press(chord("find_in_pane"));
     await expect.poll(() => sent.get("pane_find_open") ?? 0).toBe(findsBefore + 1);
     // The agent hears its keys before the typing below, which would
     // otherwise interleave with them.
@@ -489,7 +487,7 @@ test("registration under home succeeds; outside home and a .. path are refused",
     await expect(page.locator("[data-sidebar-new-workspace]")).toHaveCount(0);
     await expect(page.locator("[data-main-add-project]")).toHaveCount(0);
     await page.keyboard.press("Alt+Shift+KeyN");
-    await page.keyboard.press("Meta+Shift+KeyN");
+    await page.keyboard.press(chord("new_workspace", "electron"));
     await expect(page.locator("[data-add-project]")).toHaveCount(0);
 
     // hided's $HOME line judges every folder a client sends (the desktop

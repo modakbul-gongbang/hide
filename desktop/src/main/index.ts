@@ -6,7 +6,7 @@ import { loadEnv } from "./env";
 import { DesktopHost } from "./host";
 import { HostLog } from "./log";
 import { SHOW_INACTIVE_SWITCH } from "./launchSwitches";
-import { REGISTRY, type Command } from "../../../web/src/shortcuts";
+import { keySystemOf, systemRegistry, type Command } from "../../../web/src/shortcuts";
 import { menuBindings, menuTemplate } from "./menu";
 
 const env = loadEnv(process.env);
@@ -33,6 +33,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", () => host.quit());
 
   // The menu is rebuilt only when the chords it shows change.
+  const system = keySystemOf(process.platform);
   let shown: string | null = null;
   const showMenu = (registry: readonly Command[]) => {
     host.setBrowserRegistry(registry);
@@ -40,11 +41,11 @@ if (!app.requestSingleInstanceLock()) {
     if (chords === shown) return;
     shown = chords;
     Menu.setApplicationMenu(
-      Menu.buildFromTemplate(menuTemplate({ appName: app.getName(), send: (id) => host.sendCommand(id), developer: !app.isPackaged, registry })),
+      Menu.buildFromTemplate(menuTemplate({ appName: app.getName(), send: (id) => host.sendCommand(id), developer: !app.isPackaged, system, registry })),
     );
   };
   host.listenBindings((reported) => {
-    const resolved = menuBindings(reported);
+    const resolved = menuBindings(reported, system);
     if ("refused" in resolved) {
       log.event("bindings.refused", { reason: resolved.refused });
       return;
@@ -55,7 +56,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(
     () => {
-      showMenu(REGISTRY);
+      showMenu(systemRegistry(system));
       host.start();
     },
     (error: unknown) => {

@@ -20,6 +20,8 @@ import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, registerFolder, screenshot } from "./wire";
+import { chord, field, label, SYSTEM } from "./chords";
+import { fieldChord } from "../src/shortcuts";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -29,7 +31,7 @@ const rowIds = (page: Page) => rows(page).evaluateAll((nodes) => nodes.map((node
 
 /** Opens ⌘K with the query field focused. */
 async function openSearch(page: Page): Promise<void> {
-  await page.keyboard.press("Meta+KeyK");
+  await page.keyboard.press(chord("search"));
   await expect(input(page)).toBeFocused();
 }
 
@@ -360,10 +362,10 @@ test("⌘P then ⌘↵ opens the highlighted file beside the area in use, and �
     await enterWorkspace(page, "fixture");
 
     // ↵ alone opens the pick in the checkout's preview tab.
-    await page.keyboard.press("Meta+KeyP");
+    await page.keyboard.press(chord("open_file"));
     const files = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(files).toBeFocused();
-    await expect(page.locator('[data-palette-hint="beside"]')).toHaveText("⌘↵ 옆에 열기");
+    await expect(page.locator('[data-palette-hint="beside"]')).toHaveText(`${label(fieldChord("Enter", SYSTEM))} 옆에 열기`);
     await page.keyboard.type("first.txt");
     await expect(page.locator('[data-palette-row$="/first.txt"]')).toHaveAttribute("aria-selected", "true");
     await page.keyboard.press("Enter");
@@ -374,12 +376,12 @@ test("⌘P then ⌘↵ opens the highlighted file beside the area in use, and �
     const opens = sent.get("file_open") ?? 0;
 
     // ⌘↵ opens the highlighted row beside, pinned: one event, a second area.
-    await page.keyboard.press("Meta+KeyP");
+    await page.keyboard.press(chord("open_file"));
     await expect(files).toBeFocused();
     await page.keyboard.type("second.txt");
     const second = page.locator('[data-palette-row$="/second.txt"]');
     await expect(second).toHaveAttribute("aria-selected", "true");
-    await page.keyboard.press("Meta+Enter");
+    await page.keyboard.press(field("Enter"));
     await expect(files).toHaveCount(0);
     await expect.poll(() => sent.get("file_open")).toBe(opens + 1);
     expect(last.get("file_open")).toMatchObject({ beside: true, preview: false });
@@ -436,9 +438,9 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
     });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
-    await page.keyboard.press("Alt+Comma");
+    await page.keyboard.press(chord("settings"));
     await expect(page.locator("[data-settings]")).toBeVisible();
-    await page.keyboard.press("Meta+KeyK");
+    await page.keyboard.press(chord("search"));
     await expect(input(page)).toBeFocused();
     await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Recent"]);
     await expect(page.locator('[data-palette-group="recent"] [data-palette-row]')).toHaveCount(3);

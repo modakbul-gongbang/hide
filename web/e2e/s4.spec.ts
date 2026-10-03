@@ -9,6 +9,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { countSent, registerFolder, screenshot, showExplorer, showTool } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -65,9 +66,9 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
     // ⌘E turns the Tools column off and brings it back on the same tool
     // (PRD three-column-panel B4).
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await showExplorer(page);
 

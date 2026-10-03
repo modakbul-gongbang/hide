@@ -25,6 +25,7 @@ import path from "node:path";
 import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, sessionOf, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, screenshot } from "./wire";
+import { chord, field } from "./chords";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -144,7 +145,7 @@ async function open(page: Page, daemon: Daemon): Promise<void> {
 }
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await page.locator('[data-settings-tab="appearance"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
@@ -465,7 +466,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
 
     // ⌘⇧H from that Workspace opens the graph with its box selected (B1).
     await page.locator("body").click({ position: { x: 1, y: 1 } });
-    await page.keyboard.press("Meta+Shift+KeyH");
+    await page.keyboard.press(chord("project_home"));
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await expect(askingBox).toHaveAttribute("data-selected", "true");
     await expect(overview.locator('[data-graph-box][data-selected="true"]')).toHaveCount(1);
@@ -473,7 +474,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await overview.locator(`[data-graph-open="${workingPane}"]`).click();
     await expect(page.locator(`[data-pane-view="${workingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await page.locator("body").click({ position: { x: 1, y: 1 } });
-    await page.keyboard.press("Meta+Shift+KeyH");
+    await page.keyboard.press(chord("project_home"));
     await expect(workingBox).toHaveAttribute("data-selected", "true");
     // The keyboard: a head takes focus, ↓ moves to its row, ← to the row drawn beside it, ↵ opens it (B35).
     await workingBox.locator("[data-graph-head-open]").focus();
@@ -486,10 +487,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.keyboard.press("Escape");
     await expect(workspace).toBeVisible();
     // A head's click is its Workspace, main's included (B15).
-    await page.keyboard.press("Meta+Shift+KeyH");
+    await page.keyboard.press(chord("project_home"));
     await mainBox.locator("[data-graph-head-open]").click();
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toBeVisible();
-    await page.keyboard.press("Meta+Shift+KeyH");
+    await page.keyboard.press(chord("project_home"));
 
     // `N merged → 정리` opens the disk cleanup sheet on the finished filter and
     // leaves the 정리할 것 fold as it was; Escape closes the sheet, the
@@ -910,13 +911,13 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await localPanel.locator("[data-issue-panel-edit]").click();
     await editor.locator("[data-issue-editor-title]").fill("");
     await editor.locator("[data-issue-editor-body]").fill("고친 본문");
-    await page.keyboard.press("Meta+Enter");
+    await page.keyboard.press(field("Enter"));
     await expect(editor.locator("[data-issue-editor-failure]")).toBeVisible();
     await expect(editor.locator("[data-issue-editor-body]")).toHaveValue("고친 본문");
     await expect(localCard.locator("[data-card-title]")).toHaveText("폴더 이슈");
     const updatesBefore = sent.get("local_issue_update") ?? 0;
     await editor.locator("[data-issue-editor-title]").fill("고친 폴더 이슈");
-    await page.keyboard.press("Meta+Enter");
+    await page.keyboard.press(field("Enter"));
     await expect(editor).toHaveCount(0);
     await expect(localCard.locator("[data-card-title]")).toHaveText("고친 폴더 이슈");
     await expect(localPanel.locator("[data-issue-body=ready]")).toContainText("고친 본문");
@@ -956,7 +957,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(overview).toBeVisible();
 
     // Settings › Issues: the sources, each project's source, and how work starts.
-    await page.keyboard.press("Alt+Comma");
+    await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="issues"]').click();
     await expect(page.locator("[data-settings-issues]")).toBeVisible();
     await expect(page.getByRole("combobox", { name: "repo 이슈 출처" })).toHaveText("자동 (GitHub)");
@@ -985,7 +986,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     expect(started).toBeTruthy();
     await expect.poll(() => agentsIn(herdr, started as string), { timeout: 60_000 }).toContain("claude");
     await expect(page.locator('[data-task-agent="failed"]')).toHaveCount(0);
-    await page.keyboard.press("Meta+Shift+KeyH");
+    await page.keyboard.press(chord("project_home"));
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     // A fresh agent only rests, so its box is folded away: main's box carries the selection until the fold is opened (B1).
     await expect(box("3-graph-view")).toHaveCount(0);

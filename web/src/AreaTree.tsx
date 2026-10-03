@@ -460,7 +460,7 @@ function AreaView({ area, index, count, switcher }: { area: Area<I>; index: numb
     >
       <AreaTabBar area={area} active={keyboard} index={index} count={count} switcher={switcher} />
       <div
-        className={`flex min-h-0 min-w-0 flex-1 flex-col border ${keyboard ? "border-primary" : "border-transparent"}`}
+        className="flex min-h-0 min-w-0 flex-1 flex-col border border-transparent"
         {...data("body", area.id)}
         onPointerDown={claim}
         onFocus={() => {

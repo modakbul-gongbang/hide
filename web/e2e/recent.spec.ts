@@ -2,9 +2,9 @@
 // (docs/UI_BEHAVIOR.md, Recent navigation): explicitly bound global Recent Panels
 // walks one order over Herdr tabs and View displays across checkouts and
 // commits one event on releasing ⌥; Recent Projects (⌥Tab) brings the
-// previous project back on the surface it was last used on. In the Agent
-// area ⌥` walks the Agent panes the keyboard has been in, across projects
-// (issue 301).
+// previous project back on the surface it was last used on. Outside a View
+// area ⌥` walks the Agent panes the keyboard has been in, across projects;
+// a focused View keeps its local tabs.
 
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -13,6 +13,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { chord, held, label } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 test.use({ actionTimeout: 15_000 });
@@ -55,7 +56,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await page.locator('[data-shortcut-record="recent_panel"]').click();
     await page.keyboard.press("Alt+KeyG");
     await page.locator('[data-shortcut-apply="recent_panel"]').click();
-    await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText("⌥G");
+    await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText(label({ code: "KeyG", alt: true }));
     await page.keyboard.press("Escape");
 
     // plan.txt pinned in the fixture Workspace's View area, the keyboard in it.
@@ -100,14 +101,15 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
     await expect.poll(() => sent.get("focus_tab") ?? 0).toBe(focusTabs + 1);
 
-    // ⌥Tab: Recent Projects puts fixture first, on the display it was left on.
+    // ⌥Tab (Ctrl+Shift+` off macOS): Recent Projects puts fixture first, on the display it was left on.
     const beforeProjects = sent.get("focus_checkout") ?? 0;
-    await page.keyboard.down("Alt");
-    await page.keyboard.press("Tab");
+    const projects = held("recent_project");
+    for (const key of projects.modifiers) await page.keyboard.down(key);
+    await page.keyboard.press(projects.key);
     await expect(page.locator("[data-cycle=projects]")).toContainText("Recent Projects");
     await expect(cycleRow).toContainText("plan.txt");
     await screenshot(page, "recent-projects");
-    await page.keyboard.up("Alt");
+    for (const key of projects.modifiers.toReversed()) await page.keyboard.up(key);
     await expect.poll(() => sent.get("focus_checkout") ?? 0).toBe(beforeProjects + 1);
     expect(last.get("focus_checkout")).toMatchObject({ display_id: display });
     await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[data-view-area]") !== null)).toBe(true);
@@ -165,6 +167,72 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await expect.poll(() => sent.get("focus_pane") ?? 0).toBe(paneFocuses + 1);
     expect(last.get("focus_pane")).toMatchObject({ pane_id: betaPane });
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
+
+    // A sidebar control owns the keyboard: recent agents still open, starting
+    // at the most recent pane, without marking an underlying pane as visited.
+    const projectsMode = page.locator('[data-sidebar-mode="projects"]');
+    await projectsMode.focus();
+    await expect(projectsMode).toBeFocused();
+    let focuses = sent.get("focus_pane") ?? 0;
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("Backquote");
+    await expect(cycleRow).toHaveAttribute("data-cycle-row", betaPane);
+    await page.keyboard.press("Backquote");
+    await expect(cycleRow).toHaveAttribute("data-cycle-row", fixturePane);
+    expect(sent.get("focus_pane") ?? 0).toBe(focuses);
+    await page.keyboard.up("Alt");
+    await expect.poll(() => sent.get("focus_pane") ?? 0).toBe(focuses + 1);
+    await expect(canvas).not.toHaveAttribute("data-canvas", betaTab);
+
+    // The Explorer also opens the agent list; Escape cancels without a move.
+    await showExplorer(page);
+    const file = page.locator(`[data-explorer-row="${path.join(root, "plan.txt")}"]`);
+    const explorer = page.locator('[data-workspace-tools] [role="tree"]');
+    await explorer.focus();
+    await expect(explorer).toBeFocused();
+    focuses = sent.get("focus_pane") ?? 0;
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("Backquote");
+    await expect(agents).toBeVisible();
+    await expect(cycleRow).toHaveAttribute("data-cycle-row", fixturePane);
+    await screenshot(page, "recent-agents-from-explorer");
+    await page.keyboard.press("Escape");
+    await page.keyboard.up("Alt");
+    await expect(page.locator("[data-cycle]")).toHaveCount(0);
+    expect(sent.get("focus_pane") ?? 0).toBe(focuses);
+
+    // A focused file keeps its View scope. One file is a no-op even when
+    // recent agents exist; another file enables only that area's View cycle.
+    await file.dblclick();
+    await editor.click();
+    await page.keyboard.press("Alt+Backquote");
+    await expect(page.locator("[data-cycle]")).toHaveCount(0);
+    expect(sent.get("focus_pane") ?? 0).toBe(focuses);
+    fs.writeFileSync(path.join(herdr.root, "fixture", "notes.txt"), "notes line\n");
+    await page.locator(`[data-explorer-row="${path.join(root, "notes.txt")}"]`).dblclick();
+    await expect(editor).toContainText("notes line");
+    await editor.click();
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("Backquote");
+    await expect(page.locator("[data-cycle=area]")).toContainText("Recent View tabs");
+    await expect(page.locator("[data-cycle=agents]")).toHaveCount(0);
+    await page.keyboard.up("Alt");
+    await expect(editor).toContainText("plan line");
+    expect(sent.get("focus_pane") ?? 0).toBe(focuses);
+
+    // Overview has no drawn Agent area; reverse cycling still selects an
+    // agent and returns to its Workspace with one event on release.
+    await page.keyboard.press(chord("project_home"));
+    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("Shift+Backquote");
+    await expect(agents).toBeVisible();
+    const chosenPane = await cycleRow.getAttribute("data-cycle-row");
+    expect(sent.get("focus_pane") ?? 0).toBe(focuses);
+    await page.keyboard.up("Alt");
+    await expect.poll(() => sent.get("focus_pane") ?? 0).toBe(focuses + 1);
+    expect(last.get("focus_pane")).toMatchObject({ pane_id: chosenPane });
+    await expect(page.locator(`[data-pane-view="${chosenPane}"] .xterm-helper-textarea`)).toBeFocused();
   } finally {
     daemon?.stop();
     herdr.stop();

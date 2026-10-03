@@ -17,6 +17,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
+import { chord } from "./chords";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
 const RAIL = 48;
@@ -780,7 +781,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     // The area commands have no default chord (PRD cmdk-navigation D-05): the
     // three this flow runs are bound in Settings first.
     await bindChordlessCommand(page, "focus_previous_view_area", "Alt+Shift+KeyJ");
-    await bindChordlessCommand(page, "focus_next_view_area", "Alt+Shift+KeyK");
+    await bindChordlessCommand(page, "focus_next_view_area", "Alt+Shift+KeyU");
     await bindChordlessCommand(page, "grow_view_area", "Alt+Shift+KeyL");
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
 
@@ -857,7 +858,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     // is the active tab's menu item (B20).
     await page.keyboard.press("Alt+Shift+KeyL");
     await expect.poll(async () => Number(await divider.getAttribute("aria-valuenow"))).toBe(dragged - 5);
-    await page.keyboard.press("Alt+Shift+KeyK");
+    await page.keyboard.press("Alt+Shift+KeyU");
     await expect.poll(() => shape(page)).toBe("(a.txt >c.txt) | @(d.txt >b.txt)");
     await tabTo(page, tab(page, "b.txt"), "Shift+Tab");
     await menuByKeyboard(page, "close_view");
@@ -869,7 +870,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
     // Closing the last view turns File Views off (PRD three-column-panel B17).
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "views" in event.payload).length;
     await page.locator('[data-column-divider="views"]').focus();
@@ -884,7 +885,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     // The core turns File Views off as part of closing the view, without another dispatch.
     expect(stack.events.filter((event) => event.kind === "workspace_view" && "views" in event.payload).length).toBe(panelsBefore);
     await screenshot(page, "s7-keys-closed");
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
@@ -1134,7 +1135,7 @@ test("a narrow body shows one column, File Views with one area and a way to the 
     const herdrBefore = herdrIds(stack.herdr);
     const closes = () => viewEvents(stack).filter((event) => event.payload.action === "close").length;
     const closesBefore = closes();
-    await page.keyboard.press("Alt+KeyW");
+    await page.keyboard.press(chord("close_tab"));
     await expect.poll(closes).toBe(closesBefore + 1);
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     expect(stack.events.filter((event) => event.kind === "close_tab" || event.kind === "close_pane")).toHaveLength(0);
@@ -1416,7 +1417,7 @@ test("the column toggles, tools, kind marks and an open while File Views is off 
     await expect(page.locator("[data-view-area-id]")).toHaveCount(0);
     await expect(page.locator("[data-column-badge]")).toHaveText("3");
     const sentBefore = viewsSent();
-    await page.keyboard.press("Meta+KeyP");
+    await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
     await input.fill("c.txt");

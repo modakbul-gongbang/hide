@@ -1,5 +1,5 @@
 // The focused-area cycle. In a View area it narrows the page MRU to that one
-// drawn area; in the Agent area it walks every agent pane the keyboard has
+// drawn area; everywhere else it walks every agent pane the keyboard has
 // been in, across devices, projects and checkouts (issue 301).
 // No committed selection lives here.
 import { areaFrame } from "./areaFrames";
@@ -92,14 +92,16 @@ export function agentOrigin(rest: SnapshotRest | null, owner: KeyboardOwner = ke
 }
 
 /**
- * The Agent area cycle: the pane in use, then every agent pane the keyboard
+ * The Agent pane cycle: the pane in use, then every agent pane the keyboard
  * has been in, most recent first, on any device, project or checkout. When
  * the pane in use runs no agent, or there is none, the first chord lands on
- * the most recent agent pane, so the cycle starts before it.
+ * the most recent agent pane, so the cycle starts before it. Only View
+ * ownership on the Workspace excludes this list; the sidebar, tools and
+ * other screens do not need a drawn Agent area, and do not supply a pane visit.
  */
-export function agentCycle(rest: SnapshotRest | null, owner?: KeyboardOwner): Cycle | null {
-  const origin = agentOrigin(rest, owner);
-  if (!origin) return null;
+export function agentCycle(rest: SnapshotRest | null, owner: KeyboardOwner = keyboardOwner()): Cycle | null {
+  if (owner.kind === "view" && useUiStore.getState().screen?.kind === "workspace") return null;
+  const origin = agentOrigin(rest, owner) ?? { paneId: null };
   const ids = [...(origin.paneId ? [origin.paneId] : []), ...recentPanes().filter((id) => id !== origin.paneId)];
   const items = ids.map((id) => paneItem(rest, id)).filter((item): item is CycleItem => item !== null);
   const originKey = origin.paneId ? paneKey(origin.paneId) : undefined;

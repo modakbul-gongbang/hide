@@ -24,7 +24,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { mapModifiedKey } from "./keys";
+import { submitFiles } from "./attachments";
+import { keySystem } from "./host";
+import { terminalKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
 import { remoteControl, remoteTargetOfPane } from "./remote";
 import { bufferRow, selectionToText, type CellRow } from "./selection";
@@ -386,6 +388,50 @@ export function pasteText(paneId: string, text: string) {
   instances.get(paneId)?.term.paste(text);
 }
 
+/**
+ * Puts the pane's selection on the clipboard, for the menu's Copy and the
+ * copy chord alike; a refused write is a diagnostic and the answer is false,
+ * so the caller keeps the selection.
+ */
+export async function copySelection(paneId: string, where: string): Promise<boolean> {
+  const text = terminalSelectionText(paneId);
+  if (text === null) return false;
+  const { noteDiagnostic } = useShellStore.getState();
+  if (!navigator.clipboard) {
+    noteDiagnostic(`${where} copy: no clipboard in this host`);
+    return false;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    noteDiagnostic(`${where} copy: clipboard write refused`);
+    return false;
+  }
+}
+
+/**
+ * Pastes the clipboard into the pane, for the menu's Paste and the paste
+ * chord alike: an image as an attachment, the way ⌘V of one is, and text
+ * as typed input, in bracketed paste when the program asked for it.
+ */
+export async function pasteClipboard(paneId: string, where: string): Promise<void> {
+  const { noteDiagnostic } = useShellStore.getState();
+  if (!navigator.clipboard) return noteDiagnostic(`${where} paste: no clipboard in this host`);
+  try {
+    for (const item of navigator.clipboard.read ? await navigator.clipboard.read() : []) {
+      const type = item.types.find((name) => name.startsWith("image/"));
+      if (!type) continue;
+      const image = await item.getType(type);
+      return void submitFiles(paneId, [new File([image], `clipboard.${type.slice("image/".length)}`, { type })], true, bracketedPaste(paneId));
+    }
+    const text = await navigator.clipboard.readText();
+    if (text) pasteText(paneId, text);
+  } catch {
+    noteDiagnostic(`${where} paste: clipboard read refused`);
+  }
+}
+
 /** Selects the pane's whole text, for Copy to take; the pane keeps no scrollback, so that is what it shows. */
 export function selectAllText(paneId: string) {
   instances.get(paneId)?.term.selectAll();
@@ -444,12 +490,19 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
       kind: "key",
       payload: { pane_id: paneId, bytes_base64: bytesBase64(bytes) },
     });
+  const system = keySystem();
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") return true;
-    const mapped = mapModifiedKey(event);
-    if (!mapped) return true;
+    const action = terminalKey(event, system, term.hasSelection());
+    if (!action) return true;
     event.preventDefault();
-    send(mapped);
+    if (action.kind === "bytes") send(action.bytes);
+    // The page's own Ctrl+Shift+V is paste-as-plain-text, which drops an
+    // image, so the chord reads the clipboard itself.
+    else if (action.kind === "paste") void pasteClipboard(paneId, "terminal");
+    // Clearing the selection once it is copied lets the next Ctrl+C
+    // interrupt; a refused copy keeps it. Nothing selected copies nothing.
+    else if (term.hasSelection()) void copySelection(paneId, "terminal").then((copied) => copied && term.clearSelection());
     return false;
   });
   term.onData((data) => send(new TextEncoder().encode(data)));

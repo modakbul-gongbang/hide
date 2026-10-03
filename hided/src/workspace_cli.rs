@@ -403,7 +403,14 @@ mod tests {
     /// about it, and the end of its exec channel ends it.
     #[test]
     fn a_remote_bridge_answers_this_device_and_ends_with_its_channel() {
-        let directory = tempfile::tempdir().unwrap();
+        // A Unix socket path is limited to about a hundred bytes, and the
+        // bridge binds two folders below this one, so a long TMPDIR overflows it.
+        let directory = if cfg!(unix) {
+            tempfile::Builder::new().prefix("hb").tempdir_in("/tmp")
+        } else {
+            tempfile::Builder::new().prefix("hb").tempdir()
+        }
+        .unwrap();
         let bridges = directory.path().join("bridges");
         let (channel, mut daemon) = std::io::pipe().unwrap();
         let (sent, lines) = mpsc::channel();

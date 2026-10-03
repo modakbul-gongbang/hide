@@ -21,6 +21,7 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { taskFor } from "./workspaceManage";
 import { useErrorSince } from "./WorkspaceDialogs";
+import { fieldLabel } from "./shortcutLabels";
 
 /** A request this dialog sent, by the id the core answers under. */
 type Sent = { id: string; at: number };
@@ -199,7 +200,7 @@ export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions:
             {!working ? (
               <Button type="submit" disabled={!title.trim()} data-pr-new-issue-submit={failed ? "retry" : "create"}>
                 {failed ? retryLabel(answer, github ? "다시 만들고 쓰기" : "다시 만들기") : github ? "만들고 쓰기" : "만들고 잇기"}
-                <Kbd>⌘↵</Kbd>
+                <Kbd>{fieldLabel("Enter")}</Kbd>
               </Button>
             ) : null}
           </DialogFooter>
@@ -301,7 +302,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
             <Button variant="secondary" onClick={onClose}>{working ? "숨기기" : "취소"}</Button>
             <Button type="submit" disabled={working || !branch} data-pr-delegate-submit="true">
               {working ? "시작하는 중…" : "시작"}
-              <Kbd>⌘↵</Kbd>
+              <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>
           </DialogFooter>
         </form>

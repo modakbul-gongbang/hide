@@ -23,6 +23,7 @@ import path from "node:path";
 import { elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -222,7 +223,7 @@ async function openMobileSettings(page: Page, daemon: Daemon): Promise<void> {
   await page.goto("about:blank");
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
   await expect(page.locator("[data-sidebar-mode]").first()).toBeVisible({ timeout: 20_000 });
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await page.locator('[data-settings-tab="mobile"]').click();
   await expect(page.locator('[data-mobile-tab="true"]')).toBeVisible();
 }

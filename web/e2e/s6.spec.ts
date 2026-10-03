@@ -13,6 +13,7 @@ import path from "node:path";
 import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chooseColumn, countSent, screenshot } from "./wire";
+import { chord, commandLabel } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -83,10 +84,10 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(viewsToggle).toHaveAttribute("aria-pressed", "false");
     await toolsToggle.hover();
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Tools");
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("⌘E");
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(commandLabel("toggle_explorer"));
     await viewsToggle.hover();
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("File Views");
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("⇧⌘B");
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(commandLabel("toggle_right_panel"));
     await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
 
     // The Tools icon turns Tools on by result value, alone beside the agents
@@ -109,15 +110,15 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
 
     // ⌘E turns Tools on; its icon tabs swap the one tool it holds, and a
     // tool kept while Tools is off comes back with it.
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(workspace).toHaveAttribute("data-tools", "shown");
     await toolsColumn.locator('[data-tool-tab="changes"]').click();
     expect(last.get("workspace_view")).toEqual({ tool: "changes" });
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(toolsColumn).toHaveCount(0);
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await toolsColumn.locator('[data-tool-tab="explorer"]').click();
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
@@ -145,7 +146,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
 
     // ⌘⇧B with no view open opens File Views on the New tab page (B16), and
     // closing that untouched tab turns File Views off again; Tools stays.
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     expect(last.get("workspace_view")).toEqual({ views: true });
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(viewsColumn.locator("[data-new-tab-page]")).toBeVisible();
@@ -249,12 +250,13 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await childHost.click({ position: { x: 40, y: 60 } });
     await expect.poll(mouseReports, { timeout: 10_000 }).toBe(reportsBefore + 2);
     const heardBefore = fs.readFileSync(herdr.inputLogs[1], "latin1").length;
-    await page.keyboard.press("Meta+f");
+    await page.keyboard.press(chord("find_in_pane"));
     await expect.poll(() => JSON.stringify(fs.readFileSync(herdr.inputLogs[1], "latin1").slice(heardBefore)), { timeout: 10_000 }).toBe(JSON.stringify("\x0f/"));
     expect(last.get("pane_find_open")).toMatchObject({ pane_id: child });
     await expect(page.locator(".cm-search")).toHaveCount(0);
+    await expect(page.locator("[data-find-bar]")).toHaveCount(0);
     await viewsColumn.locator("[data-editor-body] .cm-content").click();
-    await page.keyboard.press("Meta+f");
+    await page.keyboard.press(chord("find_in_pane"));
     await expect(page.locator(".cm-search")).toBeVisible();
     await page.keyboard.press("Escape");
     await screenshot(page, "s6-columns-wide");
@@ -265,7 +267,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await settled();
     const resizesBeforeHide = resizes();
     await viewsColumn.locator("[data-editor-body] .cm-content").click();
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(workspace).toHaveAttribute("data-file-views", "off");
     expect(last.get("workspace_view")).toEqual({ views: false });
     await expect(workspace).toHaveAttribute("data-tools", "shown");
@@ -306,12 +308,12 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(workspace).toHaveAttribute("data-workspace-body", "mid");
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(workspace).toHaveAttribute("data-tools", "hidden");
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(workspace).toHaveAttribute("data-tools", "shown");
     await expect(workspace).toHaveAttribute("data-file-views", "hidden");
     await expect(toolsToggle).toHaveAttribute("aria-pressed", "true");
     await expect(viewsToggle).toHaveAttribute("aria-pressed", "false");
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(workspace).toHaveAttribute("data-tools", "hidden");
     expect(sent.get("workspace_view") ?? 0).toBe(sentBeforeNarrow);
@@ -329,7 +331,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await viewsToggle.click();
     await expect(workspace).toHaveAttribute("data-file-views", "hidden");
     await expect(agentArea).toBeVisible();
-    await page.keyboard.press("Meta+KeyE");
+    await page.keyboard.press(chord("toggle_explorer"));
     await expect(workspace).toHaveAttribute("data-tools", "shown");
     // An agent chosen from the sidebar returns the body to Agent Views.
     await page.locator(`[data-agent-open="${child}"]`).first().click();

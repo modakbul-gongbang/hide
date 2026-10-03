@@ -97,6 +97,7 @@ export function CodeMirrorEditor({
   findTarget,
   held = false,
   onDraft,
+  onSave,
 }: {
   tabId: string;
   /** The display this view draws and its document, scoped to its Workspace: the selection and scroll are kept under it. */
@@ -111,6 +112,8 @@ export function CodeMirrorEditor({
   /** Read-only while unsaved drafts cannot be stored (S5.5 B44). */
   held?: boolean;
   onDraft: (contents: string) => void;
+  /** Saves the document: the editor's own Mod-s (docs/UI_BEHAVIOR.md, Keyboard shortcuts per system). */
+  onSave: () => void;
 }) {
   const bodyHost = useRef<HTMLDivElement>(null);
   const frontHost = useRef<HTMLDivElement>(null);
@@ -125,6 +128,8 @@ export function CodeMirrorEditor({
   const carried = useRef<{ tabId: string; state: PeerState } | null>(null);
   const onDraftRef = useRef(onDraft);
   onDraftRef.current = onDraft;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
 
   const contents = document.contents_utf8 ?? "";
   const contentsRef = useRef(contents);
@@ -180,6 +185,10 @@ export function CodeMirrorEditor({
         channel?.publish(front + body);
         onDraftRef.current(front + body);
       });
+    // Ctrl+S saves inside a document on Windows and Linux, as in every editor,
+    // without the window taking Ctrl+S from a terminal (XOFF, forward search).
+    // On macOS the window's own ⌘S has answered before this keymap runs.
+    const save = keymap.of([{ key: "Mod-s", run: () => { onSaveRef.current(); return true; } }]);
     const shared = [
       highlightSpecialChars(),
       history(),
@@ -201,6 +210,7 @@ export function CodeMirrorEditor({
           lineNumbers(),
           highlightActiveLineGutter(),
           search({ top: true }),
+          save,
           keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
           languageConf.of([]),
           liveConf.of(live ? [markdownLive(), liveTheme] : []),
@@ -217,6 +227,7 @@ export function CodeMirrorEditor({
           doc: parts.front,
           extensions: [
             ...shared,
+            save,
             keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
             listeners("front"),
           ],

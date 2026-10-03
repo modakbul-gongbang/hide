@@ -174,6 +174,33 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
     await expect(canvas).toHaveAttribute("data-canvas", tabs[0]!);
     await exactlyOnce(sent, "focus_pane", focused + 1, page);
 
+    // Sidebar focus also opens recent Agent panes. It has no pane origin,
+    // so the first chord selects the most recent pane, then walks the list.
+    const projectsMode = page.locator('[data-sidebar-mode="projects"]');
+    await projectsMode.focus();
+    await expect(projectsMode).toBeFocused();
+    focused = sent.get("focus_pane") ?? 0;
+    await page.keyboard.down("Control");
+    await page.keyboard.press("Tab");
+    await expect(cycleRow("agents")).toHaveAttribute("data-cycle-row", paneOf.get(tabs[0]!)!);
+    await page.keyboard.press("Tab");
+    await expect(cycleRow("agents")).toHaveAttribute("data-cycle-row", paneOf.get(tabs[2]!)!);
+    await screenshot(page, "desktop-recent-agents-from-sidebar");
+    const captureDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (captureDir) {
+      const candidate = await app!.evaluate(({ BrowserWindow }) => {
+        const windows = BrowserWindow.getAllWindows();
+        if (windows.length !== 1) throw new Error("expected one isolated candidate window");
+        return { pid: process.pid, windowId: windows[0]!.getMediaSourceId().split(":")[1]! };
+      });
+      fs.writeFileSync(path.join(captureDir, "desktop-recent-agents-candidate.json"), JSON.stringify(candidate));
+      execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", candidate.windowId, path.join(captureDir, "desktop-recent-agents-from-sidebar-native.png")]);
+    }
+    expect(sent.get("focus_pane") ?? 0).toBe(focused);
+    await page.keyboard.up("Control");
+    await expect(canvas).toHaveAttribute("data-canvas", tabs[2]!);
+    await exactlyOnce(sent, "focus_pane", focused + 1, page);
+
     // Recent Projects gamma, beta, fixture: fixture is current.
     await page.locator('[data-sidebar-mode="projects"]').click();
     const checkout = (name: string) => page.locator("[data-project]", { hasText: name }).locator("[data-checkout]").first();

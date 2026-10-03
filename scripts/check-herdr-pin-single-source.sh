@@ -29,6 +29,7 @@ derived_sources=(
   scripts/fetch-herdr-runtime.sh
   scripts/fetch-herdr-runtime.ps1
   desktop/scripts/package.mjs
+  desktop/scripts/smoke-package.mjs
   desktop/src/main/cli.ts
   web/e2e/herdr-fixture.ts
   desktop/e2e/fixture.ts

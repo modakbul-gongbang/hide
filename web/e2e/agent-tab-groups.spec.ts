@@ -5,6 +5,7 @@ import path from "node:path";
 import { startHerdr, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -64,7 +65,7 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
     for (const [index, pane] of live.entries()) execFileSync(herdr.bin, ["pane", "run", pane, `for n in 1 2 3; do printf 'area-${index}-live-%s\\n' "$n"; sleep 0.1; done`], { env: herdr.env, timeout: 10_000 });
     for (const [index, pane] of live.entries()) await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneText(id) ?? "", pane)).toContain(`area-${index}-live-3`);
     await screenshot(page, "agent-groups-two-live-areas");
-    await page.keyboard.press("Alt+Comma");
+    await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="appearance"]').click();
     await page.locator('[data-theme-option="light"]').click();
     await expect(page.locator("html")).toHaveClass(/(^|\s)light(\s|$)/);
@@ -188,13 +189,13 @@ test("New tab and Reopen use the requested area and Rename works in either bar",
     await tab(page, createdId).getByRole("button", { name: /^Close tab/ }).click();
     await expect(tab(page, createdId)).toHaveCount(0);
     await tab(page, secondId).click();
-    await page.keyboard.press("Alt+Shift+KeyT");
+    await page.keyboard.press(chord("reopen_closed_tab"));
     await expect(left.locator('[role="tab"]')).toHaveCount(2);
     await expect(left).toHaveAttribute("data-active-area", "true");
     await tab(page, secondId).hover();
     await tab(page, secondId).getByRole("button", { name: /^Close tab/ }).click();
     await expect(areas(page)).toHaveCount(1);
-    await page.keyboard.press("Alt+Shift+KeyT");
+    await page.keyboard.press(chord("reopen_closed_tab"));
     await expect(left.locator('[role="tab"]')).toHaveCount(3);
     await expect(areas(page)).toHaveCount(1);
     await screenshot(page, "agent-groups-reopen-placement");
