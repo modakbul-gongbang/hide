@@ -178,7 +178,7 @@ describe("the result line (D-12, B5, B10)", () => {
   const reply = { text: "테스트를 돌렸습니다.\n\n모두 통과했어요.", cut: false, at_unix_ms: NOW };
 
   it("is the label's line when the agent has one", () => {
-    const [row] = requestRows([lens(agent("a", "result", { detail: "테스트 통과", request: block("result", { reply }) }))], []);
+    const [row] = requestRows([lens(agent("a", "result", { request: block("result", { reply, line: "테스트 통과" }) }))], []);
     expect(resultLine(row!)).toBe("테스트 통과");
   });
 

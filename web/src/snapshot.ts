@@ -72,6 +72,8 @@ export type AgentRequest = {
   verb_since_unix_ms: number;
   /** The agent's own name for its session (D-12). */
   native_title?: string;
+  /** The label's line for the turn (B18, B47); absent with summaries off or no analysis, when the reply stands in (D-12). */
+  line?: string;
   /** The operator's last request, else the last one another agent sent. */
   request: { text: string; cut: boolean; images: number; at_unix_ms: number; sender: RequestSender } | null;
   /** Who sent a request after the operator's last one (B4). */
@@ -1020,6 +1022,8 @@ export type AiProvider = {
 export type BackgroundAi = {
   provider: string;
   chosen: boolean;
+  /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
+  agent_summary?: boolean;
   providers: AiProvider[];
   unavailable_reason: string | null;
 };

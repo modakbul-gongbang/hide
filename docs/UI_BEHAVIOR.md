@@ -470,6 +470,7 @@ The facts line's right end carries the chosen view's controls: the status chips,
 The request view is one row per agent of the scope: what the operator asked it, what came of it, and what is the operator's to do now.
 Its groups stand in this order, each headed `name count`, a group with no row not drawn: 답할 것, 고칠 것, 리뷰·머지, 멈춤, 결과 볼 것, 일하는 중, 기다리는 중, and 쉬는 중, which is one folded line `쉬는 중 N · 펼치기` until its head opens it.
 A row's group is the verb the core gives it; the web only sorts and draws.
+멈춤 holds a row whose turn the agent label read as unfinished, and a wait the label read on something other than a pull request is 기다리는 중; without the label (Settings › Background AI `에이전트 요약` off, no provider, a failed analysis) no row stops, a written question is a finished turn like any other, and the view stands in the same shape with no warning.
 A to-do group puts the row that has waited longest first and shows how long it has held that verb; the other groups put the most recent activity first and show the time since it.
 A delegated child is not a row of its own while its parent is in the scope: the parent's row carries `자식 N · 일하는 중 M`, with a warning `질문 K` when descendants ask, and a child whose parent is gone is a row.
 On the Home Overview each row carries its project's name.
@@ -1206,6 +1207,7 @@ Removing a device asks once, names in one line what comes off that device (with 
 When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
 
 Settings > Agents lists the hook parts of every machine, This Mac first and then each device in the Devices order, with Reinstall on a part that needs it and nowhere else (B27).
+Its Background AI group ends with `에이전트 요약`, a switch on by default and kept on this Mac across launches (PRD overview-request-view D-11, B21): off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for.
 
 ## Mobile companion
 

@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::issues::IssueReference;
+use crate::labels::analysis::LabelEnd;
 use crate::labels::facts::{Reply, Request, Requester};
 use crate::model::{
     GithubSnapshot, PullRequestBadge, PullRequestChecks, PullRequestSnapshot, SidebarAgentSnapshot,
@@ -54,6 +55,11 @@ pub struct RowFacts {
     pub(crate) reply: Option<Reply>,
     /// `(lowercase owner/name, number, when its tool printed it)`.
     pub(crate) created_prs: Vec<(String, u64, u64)>,
+    /// How the label analysis read the turn's end and its line; `None`
+    /// without one (summaries off, a failed analysis, a turn not judged
+    /// yet).
+    pub(crate) end: Option<LabelEnd>,
+    pub(crate) line: Option<String>,
 }
 
 /// Who sent the request a row shows.
@@ -113,6 +119,10 @@ pub struct AgentRequestSnapshot {
     /// The agent's own name for its session (D-12).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_title: Option<String>,
+    /// The label's line for the turn (B18, B47); absent without one, when
+    /// the row shows its reply instead (D-12).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
     pub request: Option<RequestLineSnapshot>,
     /// Who sent a request after the operator's last one (B4).
     pub later_by: Option<RequestSender>,
@@ -209,6 +219,7 @@ pub(crate) fn apply<'a>(
             verb,
             verb_since_unix_ms: since,
             native_title: facts.native_title.clone(),
+            line: facts.line.clone(),
             request: shown.map(|(request, sender)| RequestLineSnapshot {
                 text: request.text.clone(),
                 cut: request.cut,
@@ -443,13 +454,19 @@ fn verb_of(row: &SidebarAgentSnapshot, pull_requests: &[AgentPullRequestSnapshot
     ]) {
         return RequestVerb::Review;
     }
+    // Only the label analysis reads a turn as unfinished (D-33); a row
+    // without one never stops here.
+    let end = row.row_facts.as_ref().and_then(|facts| facts.end);
+    if end == Some(LabelEnd::Unfinished) && !row.waiting_on_descendants {
+        return RequestVerb::Stopped;
+    }
     if open(&[PullRequestChecks::Pending]) {
         return RequestVerb::Waiting;
     }
     if (row.completed && row.unread) || duty().any(|pull_request| pull_request.badge.is_settled()) {
         return RequestVerb::Result;
     }
-    if row.waiting_on_descendants {
+    if row.waiting_on_descendants || end == Some(LabelEnd::Waiting) {
         return RequestVerb::Waiting;
     }
     RequestVerb::Idle

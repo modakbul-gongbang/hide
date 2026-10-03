@@ -1,8 +1,8 @@
 //! Agent labels, made by the core (PRD labels-in-hided).
 //!
-//! What each agent pane is doing (its task title, progress, the reply it
-//! asks for, whether it asked a question) used to come from a separate Herdr
-//! plugin through pane tokens. The core now makes them itself: each Herdr
+//! What each agent pane is doing (the session's goal, one line for its turn,
+//! how the turn ended) used to come from a separate Herdr plugin through
+//! pane tokens. The core now makes them itself: each Herdr
 //! server's session-sync coordinator owns a [`worker::LabelWorker`], the
 //! core owns one [`analyzer::LabelAnalyzer`] for all of them, and
 //! [`store::LabelStore`] keeps `labels.json` beside the daemon's state.

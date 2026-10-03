@@ -1061,6 +1061,9 @@ pub(super) struct AiSettingsPayload {
     /// selected.
     #[serde(default)]
     pub(super) model: Option<String>,
+    /// The agent-summary switch (PRD overview-request-view D-11).
+    #[serde(default)]
+    pub(super) agent_summary: Option<bool>,
 }
 
 /// One pane search. An empty `term` clears the search rather than needing its

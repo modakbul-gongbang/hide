@@ -947,6 +947,10 @@ export function createActions(dispatch: DispatchFn) {
     chooseAi(provider: string, model?: string) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: model === undefined ? { provider } : { provider, model } });
     },
+    /** The `에이전트 요약` switch (PRD overview-request-view D-11): off, agent labels are neither asked for nor shown. */
+    setAgentSummary(on: boolean) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { agent_summary: on } });
+    },
 
     /** Reinstall on a machine's row repairs every part that needs it; a hook row names its one part. */
     reinstallKit(deviceId: string, components?: KitComponentId[]) {

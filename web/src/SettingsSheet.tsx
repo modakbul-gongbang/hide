@@ -513,6 +513,18 @@ function AgentsTab({ actions }: { actions: Actions }) {
             </SelectContent>
           </Select>
         </Row>
+        <Row label="에이전트 요약" detail={<Note>꺼 두면 에이전트 제목과 한 줄이 AI 없이 세션 원문으로 보입니다.</Note>}>
+          <Switch
+            checked={ai?.agent_summary ?? true}
+            disabled={!ai}
+            onCheckedChange={(checked) => {
+              setChangedAt(Date.now());
+              actions.setAgentSummary(checked);
+            }}
+            aria-label="에이전트 요약"
+            data-ai-agent-summary={String(ai?.agent_summary ?? true)}
+          />
+        </Row>
         {selected && selected.state !== "ready" && selected.state !== "unread" ? (
           <Row label={<Note tone="warn" data-ai-degraded="true">{selected.label}: {selected.headline || selected.state}. Background requests go to the other agent until {selected.label} can answer.</Note>} />
         ) : null}

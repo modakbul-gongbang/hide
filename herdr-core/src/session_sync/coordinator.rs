@@ -242,10 +242,9 @@ fn run_coordinator(
                     context.notifier.notify();
                 }
             }
-            if labels
-                .as_mut()
-                .is_some_and(|worker| worker.tick(Instant::now()))
-                && subscription.is_some()
+            if labels.as_mut().is_some_and(|worker| {
+                take_label_switch(&context, worker) | worker.tick(Instant::now())
+            }) && subscription.is_some()
                 && let Some(current) = replica.as_mut()
                 && !publish_replica(
                     &context,
@@ -758,6 +757,7 @@ fn publish_replica(
     let mut payload = replica.project();
     let overlay = labels.as_mut().map(|worker| {
         take_pull_request_times(context, worker);
+        take_label_switch(context, worker);
         observe_labels(worker, replica);
         worker.overlay()
     });
@@ -908,6 +908,18 @@ fn take_pull_request_times(context: &SessionSyncContext, worker: &mut LabelWorke
         .upgrade()
         .and_then(|runtime| runtime.lock().ok().map(|guard| guard.pull_request_times()));
     times.is_some_and(|times| worker.set_pull_request_times(times))
+}
+
+/// Hands the worker the operator's agent-summary switch, under a brief lock,
+/// on every tick and publish: a turned switch reaches the screen and the
+/// running request within one tick. Returns whether the shown labels
+/// changed.
+fn take_label_switch(context: &SessionSyncContext, worker: &mut LabelWorker) -> bool {
+    let on = context
+        .runtime
+        .upgrade()
+        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.agent_summary()));
+    on.is_some_and(|on| worker.set_summaries(on, Instant::now()))
 }
 
 /// Hands the worker the agents and the complete pane topology the replica

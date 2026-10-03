@@ -43,13 +43,14 @@ fn a_projection_from_another_path_keeps_the_published_label_of_its_session() {
     let mut runtime = runtime();
     let record = PaneRecord {
         owner: hide_session::label_reference_token("claude", "id", SESSION),
-        task: Some("파서 버그 수정 작업".to_owned()),
+        goal: Some("파서 버그 수정 작업".to_owned()),
         changed_unix_ms: 1_000,
         ..PaneRecord::default()
     };
     let records = [(PANE.to_owned(), record)];
     runtime.set_label_overlay(LabelOverlay::of_records(
         records.iter().map(|(pane, record)| (pane, record)),
+        true,
         true,
     ));
 
@@ -118,16 +119,29 @@ fn an_operator_submit_is_recorded_for_the_agent_pane_and_an_approval_enter_is_no
 
 /// A runtime whose agent row carries `facts` for its current session.
 fn runtime_with_facts(facts: crate::labels::facts::SessionFacts, status: &str) -> Runtime {
+    runtime_with_record(
+        PaneRecord {
+            facts,
+            ..PaneRecord::default()
+        },
+        status,
+        true,
+    )
+}
+
+/// A runtime whose agent row carries `record` for its current session, with
+/// agent summaries `summaries`.
+fn runtime_with_record(record: PaneRecord, status: &str, summaries: bool) -> Runtime {
     let mut runtime = runtime();
     let record = PaneRecord {
         owner: hide_session::label_reference_token("claude", "id", SESSION),
-        facts,
-        ..PaneRecord::default()
+        ..record
     };
     let records = [(PANE.to_owned(), record)];
     runtime.set_label_overlay(LabelOverlay::of_records(
         records.iter().map(|(pane, record)| (pane, record)),
         true,
+        summaries,
     ));
     let mut payload = projection(SESSION);
     for agent in &mut payload.agents {
@@ -163,6 +177,45 @@ fn a_row_without_a_label_shows_the_sessions_own_title_and_the_request() {
     assert_eq!(row["request"]["native_title"], "요청 보기 만들기");
     assert_eq!(row["request"]["request"]["text"], "요청 보기를 만들어줘");
     assert_eq!(row["request"]["request"]["sender"]["kind"], "operator");
+}
+
+/// B14, B18, B21: an unfinished turn stops the row and a wait on something
+/// other than a pull request waits; with agent summaries off the same row
+/// is named by its own title, carries no line and never stops.
+#[test]
+fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away() {
+    use crate::labels::analysis::LabelEnd;
+    let record = |end| PaneRecord {
+        goal: Some("요청 보기와 AI 스위치".to_owned()),
+        line: "테스트 환경이 막혀 멈췄어요".to_owned(),
+        end: Some(end),
+        facts: operator_asked("요청 보기 만들어줘"),
+        ..PaneRecord::default()
+    };
+    let stopped = row(&runtime_with_record(
+        record(LabelEnd::Unfinished),
+        "idle",
+        true,
+    ));
+    assert_eq!(stopped["identity_label"], "요청 보기와 AI 스위치");
+    assert_eq!(stopped["request"]["line"], "테스트 환경이 막혀 멈췄어요");
+    assert_eq!(stopped["request"]["verb"], "stopped");
+    let waiting = row(&runtime_with_record(
+        record(LabelEnd::Waiting),
+        "idle",
+        true,
+    ));
+    assert_eq!(waiting["request"]["verb"], "waiting");
+
+    let off = row(&runtime_with_record(
+        record(LabelEnd::Unfinished),
+        "idle",
+        false,
+    ));
+    assert_eq!(off["identity_label"], "요청 보기 만들기");
+    assert!(off["request"].get("line").is_none(), "{off}");
+    assert_ne!(off["request"]["verb"], "stopped");
+    assert_eq!(off["request"]["request"]["text"], "요청 보기 만들어줘");
 }
 
 /// B15, D-29: opening a finished row reads the pane as a focus would, and

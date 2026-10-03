@@ -8,7 +8,9 @@
 // result and its open chips, the descendants (B4, B13, B42, B49, B52);
 // clicking expands it and a finished row is read (B6, B15); the keyboard
 // walks it and ⌘Enter opens the pane (B7, B8); nothing is sent while
-// nothing changes (B30). Light and Dark captures land in
+// nothing changes (B30); a turn the label read as unfinished stops its row,
+// and the `에이전트 요약` switch takes that and every AI title away and
+// brings them back (B14, B21). Light and Dark captures land in
 // HIDE_E2E_SCREENSHOT_DIR.
 
 import { expect, test, type Page } from "@playwright/test";
@@ -103,7 +105,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);
     const tree = (name: string) => path.join(herdr.root, `repo-${name}`);
-    for (const name of ["child", "asking", "done", "resting"]) {
+    for (const name of ["child", "asking", "done", "resting", "stopped"]) {
       git(repo, ["worktree", "add", "-b", `prd/${name}`, tree(name)]);
       git(tree(name), ["commit", "--allow-empty", "-m", `${name} work`]);
     }
@@ -122,6 +124,8 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await finishFixtureTurn(herdr, donePane, elsewhereTab(herdr));
     const restingPane = await agentAt(herdr, tree("resting"));
     labelAgent(herdr, restingPane, { task: "문서 정리 작업 마무리" });
+    const stoppedPane = await agentAt(herdr, tree("stopped"));
+    labelAgent(herdr, stoppedPane, { task: "설정 화면 스위치 추가", progress: "테스트 환경이 없어 멈췄어요", end: "unfinished" });
 
     daemon = await startHided(herdr, "requests");
     const last = new Map<string, Record<string, unknown>>();
@@ -141,17 +145,19 @@ test("the request view: what each agent was asked, what came of it, and what is 
     const row = (pane: string) => overview.locator(`[data-request-row="${pane}"]`);
     const groups = () => overview.locator("[data-request-group]").evaluateAll((sections) => sections.map((section) => section.getAttribute("data-request-group")));
     // The groups in D-06's order; the delegated child is its parent's, not a row (B3, B13).
-    await expect.poll(groups, { timeout: 30_000 }).toEqual(["answer", "result", "waiting", "idle"]);
+    await expect.poll(groups, { timeout: 30_000 }).toEqual(["answer", "stopped", "result", "waiting", "idle"]);
+    await expect(row(stoppedPane)).toHaveAttribute("data-request-verb", "stopped");
+    await expect(row(stoppedPane)).toContainText("테스트 환경이 없어 멈췄어요");
     await expect(row(childPane)).toHaveCount(0);
     await expect(row(askingPane)).toHaveAttribute("data-request-verb", "answer");
     await expect(row(donePane)).toHaveAttribute("data-request-verb", "result");
     await expect(row(mainPane)).toHaveAttribute("data-request-verb", "waiting");
 
-    // The tile: two to do, one to answer, the bar by verb, no sentence (B2).
+    // The tile: three to do, one to answer, the bar by verb, no sentence (B2).
     const tile = overview.locator('[data-lens-tile="requests"]');
-    await expect(tile.locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "2");
+    await expect(tile.locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "3");
     await expect(tile.locator("[data-lens-tile-badge]")).toHaveText("1");
-    await expect(tile.locator("[data-lens-tile-bar]")).toHaveAttribute("data-lens-tile-bar", "answer:1 fix:0 review:0 stopped:0 result:1");
+    await expect(tile.locator("[data-lens-tile-bar]")).toHaveAttribute("data-lens-tile-bar", "answer:1 fix:0 review:0 stopped:1 result:1");
 
     // The resting group is one folded line until it is opened (B3).
     const restingHead = overview.locator('[data-request-group-head="idle"]');
@@ -205,7 +211,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await expect.poll(() => (sent.get("overview_open_result") ?? 0) - before).toBe(1);
     expect(last.get("overview_open_result")?.pane_id).toBe(donePane);
     await expect(row(donePane)).toHaveAttribute("data-request-verb", "idle", { timeout: 15_000 });
-    await expect(tile.locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "1");
+    await expect(tile.locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "2");
     // A row to answer stays one to answer once expanded (D-29).
     await row(askingPane).locator(`[data-request-toggle="${askingPane}"]`).click();
     await expect(row(askingPane)).toHaveAttribute("data-request-verb", "answer");
@@ -251,6 +257,33 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await expect(main.locator(`[data-request-row="${askingPane}"]`)).toContainText("repo");
     await atRest(page);
     await screenshot(page, "requests-all-projects-light");
+
+    // Turning agent summaries off (B21): no row stops, every title is the
+    // session's own or the provider's, and the request stays as written.
+    const summary = async (on: boolean) => {
+      await page.keyboard.press("Alt+Comma");
+      await page.locator('[data-settings-tab="agents"]').click();
+      const toggle = page.locator("[data-ai-agent-summary]");
+      await expect(toggle).toHaveAttribute("data-ai-agent-summary", String(!on));
+      await toggle.click();
+      await expect(toggle).toHaveAttribute("data-ai-agent-summary", String(on));
+      await expect.poll(() => last.get("ai_settings")?.agent_summary).toBe(on);
+      if (!on) await screenshot(page, "settings-agent-summary-off-light");
+      await page.keyboard.press("Escape");
+    };
+    const stoppedRow = main.locator(`[data-request-row="${stoppedPane}"]`);
+    await expect(stoppedRow).toHaveAttribute("data-request-verb", "stopped");
+    await summary(false);
+    await expect(main.locator('[data-request-group="stopped"]')).toHaveCount(0, { timeout: 15_000 });
+    const mainResting = main.locator('[data-request-group-head="idle"]');
+    if ((await mainResting.innerText()).includes("펼치기")) await mainResting.click();
+    await expect(stoppedRow).toHaveAttribute("data-request-verb", "idle");
+    await expect(stoppedRow.locator("[data-request-title]")).toHaveText("Claude");
+    await expect(stoppedRow.locator("[data-request-result]")).not.toHaveText("테스트 환경이 없어 멈췄어요");
+    await expect(main.locator(`[data-request-row="${askingPane}"]`)).toHaveAttribute("data-request-verb", "answer");
+    await summary(true);
+    await expect(stoppedRow).toHaveAttribute("data-request-verb", "stopped", { timeout: 15_000 });
+    await expect(stoppedRow.locator("[data-request-title]")).toHaveText("설정 화면 스위치 추가");
   } finally {
     daemon?.stop();
     herdr.stop();

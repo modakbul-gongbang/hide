@@ -247,6 +247,18 @@ impl SessionFacts {
         added
     }
 
+    /// Whether the label analysis reads the person's message at `offset`
+    /// (D-09): the operator's, the session's first request (which a
+    /// delegated child's parent sent), and one not judged yet.
+    pub(crate) fn feeds_analysis(&self, offset: u64) -> bool {
+        self.first_request_offset == Some(offset)
+            || self
+                .verdicts
+                .iter()
+                .find(|verdict| verdict.offset == offset)
+                .is_none_or(|verdict| verdict.requester.is_operator())
+    }
+
     /// A rewritten conversation: the offsets the requesters were kept by no
     /// longer name the same messages.
     pub(crate) fn forget_offsets(&mut self) {

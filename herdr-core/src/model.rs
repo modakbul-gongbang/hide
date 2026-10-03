@@ -3476,6 +3476,8 @@ pub struct BackgroundAiSnapshot {
     pub provider: String,
     /// Whether `provider` is a saved choice rather than the default.
     pub chosen: bool,
+    /// The `에이전트 요약` switch: agent labels are asked for and shown.
+    pub agent_summary: bool,
     /// One row per provider Hide can route to, in the offered order. A
     /// provider that is not on this Mac is still a row, because "not here"
     /// and "not signed in" are different answers.
@@ -3506,6 +3508,7 @@ impl BackgroundAiSnapshot {
                     models_unavailable_reason: None,
                 })
                 .collect(),
+            agent_summary: true,
             ..Self::default()
         }
     }

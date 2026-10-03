@@ -1409,10 +1409,28 @@ impl Runtime {
             }
         }
 
+        if let Some(on) = payload.agent_summary {
+            let mut settings = self.ai_settings.clone().unwrap_or_default();
+            settings.agent_summary = on;
+            if self.ai_settings.as_ref() != Some(&settings) {
+                self.ai_settings = Some(settings.clone());
+                self.pending_ai_settings_save = Some(settings);
+                changed = true;
+            }
+        }
+
         if changed {
             self.refresh_background_ai();
         }
         true
+    }
+
+    /// Whether agent labels are asked of a provider and shown (D-11). On
+    /// until the settings say otherwise.
+    pub(crate) fn agent_summary(&self) -> bool {
+        self.ai_settings
+            .as_ref()
+            .is_none_or(|settings| settings.agent_summary)
     }
 
     /// What the provider probe should ask, and whether it should ask at all.
@@ -1514,6 +1532,7 @@ impl Runtime {
             }
         }
         self.snapshot.status.background_ai.provider = settings.provider.as_str().to_owned();
+        self.snapshot.status.background_ai.agent_summary = settings.agent_summary;
         self.snapshot.status.background_ai.providers = providers;
     }
 

@@ -211,7 +211,7 @@ function lastLine(text: string): string {
  */
 export function resultLine(row: RequestRow): string {
   const { agent } = row.lens;
-  const label = agent.detail?.trim();
+  const label = agent.request?.line?.trim();
   if (label) return label;
   const reply = agent.request?.reply?.text ?? "";
   if (row.verb === "working") return reply.split(/\s+/u).filter(Boolean).join(" ");

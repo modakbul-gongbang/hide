@@ -1,11 +1,11 @@
 //! What one analysis is asked and when a pane owes one.
 //!
-//! Moved from the retired `agent-context-labels` plugin without changing a
-//! rule (PRD labels-in-hided D-05): the context still carries the first
-//! three and last eight human turns or, once a task exists, only the new
-//! human turns and the latest exchange; it is masked and cut at 4000
-//! characters; a turn costs at most two requests, one at its start and one
-//! at its end; and a `task_changed: false` answer keeps the task verbatim.
+//! The context carries the operator's requests only (PRD overview-request-view
+//! D-09): the first three and last eight or, once a goal exists, the new ones
+//! and the latest exchange; it is masked and cut at 4000 characters. A turn
+//! costs at most two requests, one at its start and one at its end, and one
+//! more only when the end's timed out (D-33); a `goal_changed: false` answer
+//! keeps the goal verbatim.
 
 use std::collections::VecDeque;
 use std::collections::hash_map::DefaultHasher;
@@ -20,10 +20,10 @@ use regex::Regex;
 /// Upper bound on the analysis context. This also guards against one
 /// enormous turn while the initial or rolling sections are being assembled.
 pub(crate) const MAX_ANALYSIS_CONTEXT_CHARS: usize = 4_000;
-pub(crate) const MAX_TASK_CHARS: usize = 30;
-/// The longest `expected_reply` kept. The sidebar draws it in one line; the
-/// prompt asks for this length and the parser cuts whatever came back.
-pub(crate) const MAX_EXPECTED_REPLY_CHARS: usize = 40;
+pub(crate) const MAX_GOAL_CHARS: usize = 30;
+/// The longest `line` kept. Every surface draws it in one line; the prompt
+/// asks for this length and the parser cuts whatever came back.
+pub(crate) const MAX_LINE_CHARS: usize = 40;
 /// The initial view includes a small head and a bounded tail of human turns.
 pub(crate) const INITIAL_FIRST_USER_TURNS: usize = 3;
 /// How many of the session's latest human turns feed the initial task
@@ -41,12 +41,30 @@ pub(crate) const PROVIDER_RECOVERY_INTERVAL: Duration = Duration::from_secs(600)
 /// One provider verdict, already judged usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Analysis {
-    pub(crate) task: String,
-    pub(crate) task_changed: bool,
-    pub(crate) progress: String,
-    pub(crate) expected_reply: String,
-    /// The agent's last message asks the operator something specific.
-    pub(crate) question: bool,
+    /// What the session is to have made when it ends (D-38).
+    pub(crate) goal: String,
+    pub(crate) goal_changed: bool,
+    /// This turn's work while it runs, its result once over, or what the
+    /// operator is to answer or do when it ended on a question.
+    pub(crate) line: String,
+    pub(crate) end: LabelEnd,
+}
+
+/// How the turn stands by the agent's last word (D-08). Only a question,
+/// an unfinished turn and a wait on something other than a pull request
+/// move a row's verb; the rest come from Herdr and GitHub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum LabelEnd {
+    Working,
+    /// The agent asks the operator something specific.
+    Question,
+    Done,
+    /// It waits on something other than a pull request: a build, another
+    /// agent.
+    Waiting,
+    /// It stopped before the request was done, without asking.
+    Unfinished,
 }
 
 /// Why one analysis produced no verdict.
@@ -82,6 +100,12 @@ impl AnalysisFailure {
         }
     }
 
+    /// A provider that ran out of time may answer the same context when
+    /// asked again; a turn's end gets that one more request (D-33).
+    pub(crate) fn timed_out(&self) -> bool {
+        matches!(self, Self::Provider(AiError::Timeout))
+    }
+
     /// A class for the diagnostic log: an error class or a reason code,
     /// never provider output.
     pub(crate) fn detail(&self) -> String {
@@ -93,21 +117,21 @@ impl AnalysisFailure {
     }
 }
 
-/// Cut a task title to the display budget without splitting a word.
-pub(crate) fn truncate_task(text: &str) -> String {
-    if text.chars().count() <= MAX_TASK_CHARS {
+/// Cut a goal to the display budget without splitting a word.
+pub(crate) fn truncate_goal(text: &str) -> String {
+    if text.chars().count() <= MAX_GOAL_CHARS {
         return text.to_owned();
     }
-    let budget: String = text.chars().take(MAX_TASK_CHARS - 1).collect();
+    let budget: String = text.chars().take(MAX_GOAL_CHARS - 1).collect();
     let head = budget
         .rsplit_once(char::is_whitespace)
         .map(|(head, _)| head)
-        .filter(|head| head.chars().count() * 2 >= MAX_TASK_CHARS)
+        .filter(|head| head.chars().count() * 2 >= MAX_GOAL_CHARS)
         .unwrap_or(&budget);
     format!("{}…", head.trim_end())
 }
 
-pub(crate) fn normalize_task(raw: &str) -> Option<String> {
+pub(crate) fn normalize_goal(raw: &str) -> Option<String> {
     let candidate = raw
         .rsplit("</think>")
         .next()
@@ -118,12 +142,12 @@ pub(crate) fn normalize_task(raw: &str) -> Option<String> {
     if candidate.chars().count() < 8 || candidate.chars().any(char::is_control) {
         return None;
     }
-    Some(truncate_task(candidate))
+    Some(truncate_goal(candidate))
 }
 
 /// Normalize a one-line non-title field without silently accepting a
-/// multiline answer. Empty values are valid for `progress` and
-/// `expected_reply` when the boundary has nothing more to say.
+/// multiline answer. An empty `line` is valid when the boundary has nothing
+/// more to say.
 pub(crate) fn normalize_text_field(raw: &str, allow_empty: bool) -> Option<String> {
     let candidate = raw.trim();
     if (!allow_empty && candidate.is_empty()) || candidate.chars().any(char::is_control) {
@@ -190,40 +214,47 @@ fn latest_turn_exchange(events: &[LabelEvent]) -> String {
     render(&conversation[start..])
 }
 
-fn initial_human_requests(events: &[LabelEvent]) -> Option<String> {
-    let humans = events
+fn initial_operator_requests(
+    events: &[LabelEvent],
+    operator: &dyn Fn(&LabelEvent) -> bool,
+) -> Option<String> {
+    let requests = events
         .iter()
-        .filter(|event| event.kind == LabelEventKind::Human)
+        .filter(|event| event.kind == LabelEventKind::Human && operator(event))
         .collect::<Vec<_>>();
-    if humans.is_empty() {
+    if requests.is_empty() {
         return None;
     }
-    let recent_start = humans.len().saturating_sub(MAX_USER_REQUEST_TURNS);
-    let first_count = humans.len().min(INITIAL_FIRST_USER_TURNS);
+    let recent_start = requests.len().saturating_sub(MAX_USER_REQUEST_TURNS);
+    let first_count = requests.len().min(INITIAL_FIRST_USER_TURNS);
     let omitted = recent_start.saturating_sub(first_count);
-    let mut requests = humans[..first_count]
+    let mut lines = requests[..first_count]
         .iter()
         .map(|event| format!("user: {}", event.text))
         .collect::<Vec<_>>();
-    requests.push(format!(
-        "<omitted-human-turns>{omitted}개 사람 턴 생략</omitted-human-turns>"
+    lines.push(format!(
+        "<omitted-requests>{omitted}개 요청 생략</omitted-requests>"
     ));
-    requests.extend(
-        humans[recent_start..]
+    lines.extend(
+        requests[recent_start..]
             .iter()
             .skip(first_count.saturating_sub(recent_start))
             .map(|event| format!("user: {}", event.text)),
     );
-    let requests = requests.join("\n---\n");
+    let lines = lines.join("\n---\n");
     Some(format!(
-        "<initial-human-requests>\n{requests}\n</initial-human-requests>"
+        "<initial-operator-requests>\n{lines}\n</initial-operator-requests>"
     ))
 }
 
 /// The initial text handed to the provider: the first three and last eight
-/// human turns with an explicit omission marker, and the latest exchange.
-pub(crate) fn analysis_context(events: &[LabelEvent]) -> String {
-    let Some(initial) = initial_human_requests(events) else {
+/// of the operator's requests (`operator` says which person's messages are)
+/// with an explicit omission marker, and the latest exchange.
+pub(crate) fn analysis_context(
+    events: &[LabelEvent],
+    operator: &dyn Fn(&LabelEvent) -> bool,
+) -> String {
+    let Some(initial) = initial_operator_requests(events, operator) else {
         return String::new();
     };
     let transcript = latest_exchange(events);
@@ -231,15 +262,15 @@ pub(crate) fn analysis_context(events: &[LabelEvent]) -> String {
     redact(&strip_code_fences(&combined))
 }
 
-/// The rolling text for a task that already exists: only the new human
-/// events as task evidence, and the latest exchange for the attention
-/// verdict at the end boundary.
+/// The rolling text for a goal that already exists: the operator's new
+/// requests as goal evidence, and the latest exchange for the line and the
+/// end.
 pub(crate) fn rolling_analysis_context(
-    previous_task: &str,
-    new_human_turns: &[LabelEvent],
+    previous_goal: &str,
+    new_requests: &[LabelEvent],
     events: &[LabelEvent],
 ) -> String {
-    let delta = new_human_turns
+    let delta = new_requests
         .iter()
         .filter(|event| event.kind == LabelEventKind::Human)
         .map(|event| format!("user: {}", event.text))
@@ -251,7 +282,7 @@ pub(crate) fn rolling_analysis_context(
         delta
     };
     let combined = format!(
-        "<previous-task>{previous_task}</previous-task>\n<new-human-turns>\n{delta}\n</new-human-turns>\n<latest-exchange>\n{}\n</latest-exchange>",
+        "<previous-goal>{previous_goal}</previous-goal>\n<new-operator-requests>\n{delta}\n</new-operator-requests>\n<latest-exchange>\n{}\n</latest-exchange>",
         latest_turn_exchange(events)
     );
     redact(&strip_code_fences(&combined))
@@ -482,25 +513,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_truncates_on_a_word_boundary_and_rejects_short_or_multiline_titles() {
+    fn goal_truncates_on_a_word_boundary_and_rejects_short_or_multiline_titles() {
         assert_eq!(
-            truncate_task("Refactor the authentication middleware to use JWT tokens"),
+            truncate_goal("Refactor the authentication middleware to use JWT tokens"),
             "Refactor the authentication…"
         );
-        assert_eq!(normalize_task("짧음"), None);
-        assert_eq!(normalize_task("two\nlines here ok"), None);
+        assert_eq!(normalize_goal("짧음"), None);
+        assert_eq!(normalize_goal("two\nlines here ok"), None);
         assert_eq!(
-            normalize_task("**라벨 생성기 옮기기**").as_deref(),
+            normalize_goal("**라벨 생성기 옮기기**").as_deref(),
             Some("라벨 생성기 옮기기")
         );
     }
 
     #[test]
-    fn initial_context_spans_the_first_three_and_last_eight_human_turns() {
+    fn initial_context_spans_the_first_three_and_last_eight_operator_requests() {
         let events = (0..15)
             .map(|index| human(&format!("turn {index}"), index))
             .collect::<Vec<_>>();
-        let context = analysis_context(&events);
+        let context = analysis_context(&events, &|_| true);
         for kept in [0, 1, 2, 7, 14] {
             assert!(
                 context.contains(&format!("user: turn {kept}\n"))
@@ -508,11 +539,29 @@ mod tests {
             );
         }
         assert!(!context.contains("user: turn 5\n"));
-        assert!(context.contains("<omitted-human-turns>4개 사람 턴 생략</omitted-human-turns>"));
+        assert!(context.contains("<omitted-requests>4개 요청 생략</omitted-requests>"));
     }
 
     #[test]
-    fn rolling_context_carries_only_the_previous_task_and_the_new_human_delta() {
+    fn another_agents_request_never_reaches_the_goal_evidence() {
+        let events = vec![
+            human("요청 보기 만들기", 1),
+            assistant("착수", 2),
+            human("hcoord: 테스트 결과 알려줘", 3),
+            assistant("결과", 4),
+        ];
+        let context = analysis_context(&events, &|event| event.offset != 3);
+        let (requests, exchange) = context
+            .split_once("<latest-exchange>")
+            .expect("the context has both sections");
+        assert!(requests.contains("user: 요청 보기 만들기"));
+        assert!(!requests.contains("테스트 결과"));
+        // The exchange still carries it: the line and the end judge the turn.
+        assert!(exchange.contains("테스트 결과 알려줘"));
+    }
+
+    #[test]
+    fn rolling_context_carries_only_the_previous_goal_and_the_new_requests() {
         let events = vec![
             human("old request", 1),
             assistant("done", 2),
@@ -521,7 +570,7 @@ mod tests {
         let cursor = task_input_cursor(&events[..1]);
         let delta = new_human_turns(&events, cursor);
         let context = rolling_analysis_context("이전 작업 제목", &delta, &events);
-        assert!(context.contains("<previous-task>이전 작업 제목</previous-task>"));
+        assert!(context.contains("<previous-goal>이전 작업 제목</previous-goal>"));
         assert!(context.contains("user: new request"));
         assert!(!context.contains("user: old request"));
     }
@@ -553,10 +602,13 @@ mod tests {
 
     #[test]
     fn masking_removes_secrets_emails_and_home_paths_and_keeps_prose() {
-        let context = analysis_context(&[human(
-            "token=abc123 메일 me@example.com 파일 /Users/example/project 그대로 두기",
-            1,
-        )]);
+        let context = analysis_context(
+            &[human(
+                "token=abc123 메일 me@example.com 파일 /Users/example/project 그대로 두기",
+                1,
+            )],
+            &|_| true,
+        );
         assert!(context.contains("[redacted-secret]"));
         assert!(context.contains("[redacted-personal]"));
         assert!(context.contains("[redacted-path]"));

@@ -20,6 +20,7 @@ use hide_session::ConversationCheckpoint;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::analysis::LabelEnd;
 use super::facts::SessionFacts;
 
 pub(crate) const LABELS_FILE: &str = "labels.json";
@@ -38,16 +39,23 @@ pub(crate) struct PaneRecord {
     /// shown it; an id reference proves itself.
     #[serde(default)]
     pub(crate) proven_reference: Option<String>,
+    /// The session's goal (D-38); a v3 record named it `task`.
+    #[serde(default, alias = "task")]
+    pub(crate) goal: Option<String>,
+    /// The last analysis's line; a v3 record's `progress`.
+    #[serde(default, alias = "progress")]
+    pub(crate) line: String,
+    /// How the last analyzed turn ended, until the agent runs again.
     #[serde(default)]
-    pub(crate) task: Option<String>,
-    #[serde(default)]
-    pub(crate) progress: String,
-    #[serde(default)]
-    pub(crate) expected_reply: String,
-    /// The last analysis read a question to the operator.
-    #[serde(default)]
-    pub(crate) question: bool,
-    /// The last human event that fed task analysis.
+    pub(crate) end: Option<LabelEnd>,
+    /// A v3 record's question and the reply it asked for, read only to
+    /// carry a pending question into `end` and `line` on load; retired with
+    /// the v3 records (`upgrade_v3`).
+    #[serde(default, rename = "question", skip_serializing)]
+    pub(crate) v3_question: bool,
+    #[serde(default, rename = "expected_reply", skip_serializing)]
+    pub(crate) v3_expected_reply: String,
+    /// The last human event that fed goal analysis.
     #[serde(default)]
     pub(crate) task_input_cursor: Option<u64>,
     /// The turn whose start was named and the turn whose end was judged.
@@ -113,14 +121,24 @@ impl PaneRecord {
         )
     }
 
+    /// Carries a v3 record's pending question into v5's fields, so a row
+    /// that was asking still asks after the upgrade.
+    fn upgrade_v3(&mut self) {
+        let question = std::mem::take(&mut self.v3_question);
+        let reply = std::mem::take(&mut self.v3_expected_reply);
+        if self.end.is_none() && question && !reply.trim().is_empty() {
+            self.end = Some(LabelEnd::Question);
+            self.line = reply;
+        }
+    }
+
     /// A new session in the pane: nothing the old one said or decided stays.
     pub(crate) fn reset_session(&mut self, owner: Option<String>) {
         self.owner = owner;
         self.proven_reference = None;
-        self.task = None;
-        self.progress.clear();
-        self.expected_reply.clear();
-        self.question = false;
+        self.goal = None;
+        self.line.clear();
+        self.end = None;
         self.facts = SessionFacts::default();
         self.reset_analysis();
     }
@@ -210,12 +228,16 @@ impl LabelStore {
                 LabelsFile::default()
             }
         };
+        let mut targets = file.targets;
+        for record in targets.values_mut().flat_map(BTreeMap::values_mut) {
+            record.upgrade_v3();
+        }
         let store = Self {
             path: Some(path),
             writing: Mutex::new(()),
             file: Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
-                targets: file.targets,
+                targets,
             }),
         };
         // An import is written at once, so the kit's later removal of the
@@ -301,7 +323,7 @@ mod tests {
     fn record(owner: &str) -> PaneRecord {
         PaneRecord {
             owner: Some(owner.to_owned()),
-            task: Some("라벨 저장소 확인".to_owned()),
+            goal: Some("라벨 저장소 확인".to_owned()),
             state_change_seq: 3,
             changed_unix_ms: 1_000,
             ..PaneRecord::default()
@@ -318,6 +340,28 @@ mod tests {
         let reopened = LabelStore::open(Some(root.path()), None);
         assert_eq!(reopened.target(LOCAL_TARGET), records);
         assert!(hide_platform::fs::private::is_private(&root.path().join(LABELS_FILE)).unwrap());
+    }
+
+    #[test]
+    fn a_v3_record_keeps_its_goal_and_its_pending_question() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join(LABELS_FILE),
+            r#"{"version":1,"targets":{"local":{
+                "w1:p1":{"owner":"v1:a","task":"요청 보기 만들기","progress":"테스트 중","question":true,"expected_reply":"A/B 선택"},
+                "w1:p2":{"owner":"v1:b","task":"라벨 저장소 확인","progress":"끝남"}}}}"#,
+        )
+        .unwrap();
+        let records = LabelStore::open(Some(root.path()), None).target(LOCAL_TARGET);
+        let asking = &records["w1:p1"];
+        assert_eq!(asking.goal.as_deref(), Some("요청 보기 만들기"));
+        assert_eq!(asking.end, Some(LabelEnd::Question));
+        assert_eq!(asking.line, "A/B 선택");
+        let done = &records["w1:p2"];
+        assert_eq!(done.end, None);
+        assert_eq!(done.line, "끝남");
+        let written = std::fs::read_to_string(root.path().join(LABELS_FILE)).unwrap();
+        assert!(!written.contains("expected_reply"), "{written}");
     }
 
     #[test]

@@ -202,7 +202,7 @@ function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, ac
             <StatusMark symbol={agent.symbol} className={markTone(agent)} />
             <AgentMark kind={agent.agent_kind} />
             <span className="min-w-0 flex-1 truncate text-body text-foreground">
-              {agent.identity_label}
+              <span data-request-title={agent.pane_id}>{agent.identity_label}</span>
               {scope === "all" ? <span className="text-caption text-muted-foreground"> · {project.label}</span> : null}
             </span>
             {children ? (
@@ -498,7 +498,7 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
               <AgentMark kind={child.agent_kind} />
               <span className="min-w-0 max-w-[40%] shrink-0 truncate text-foreground">{child.identity_label}</span>
               <span className="shrink-0 text-subtle-foreground">{VERB_LABEL[child.request?.verb ?? (child.group === "working" ? "working" : "idle")]}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{child.detail ?? child.request?.reply?.text.split("\n").at(-1) ?? ""}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{child.request?.line ?? child.request?.reply?.text.split("\n").at(-1) ?? ""}</span>
               <button type="button" data-request-focus="chip" data-request-child-open={child.pane_id} className="shrink-0 rounded-xs text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => handlers.openAgent(child.pane_id)}>
                 열기
               </button>

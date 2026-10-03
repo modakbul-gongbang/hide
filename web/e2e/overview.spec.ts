@@ -256,14 +256,13 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // which is working, so the Observer waits on it (B14, B21).
     declareParent(herdr, workingPane, mainPane);
     await setFixtureLifecycle(herdr, workingPane, "working");
-    // An agent asking the operator: its label's expected reply is its
-    // question, and its progress the rest of what it said; the node shows
-    // the question, its popover the whole message (B21, B22).
+    // An agent at an approval prompt: its label's one line says what it
+    // asks; the node and its popover show it (B21, B22; overview-request-view
+    // B47). The approval comes from Herdr, not from the label.
     await setFixtureLifecycle(herdr, askingPane, "blocked");
     labelAgent(herdr, askingPane, {
       task: "사이드바 상태 규칙 구현",
-      progress: "사이드바 상태 규칙을 세 곳에 적용했고 Done 그룹만 남았습니다.",
-      reply: "Done 그룹 회색 링을 바꿔도 될까요?",
+      progress: "Done 그룹 회색 링을 바꿔도 될까요?",
     });
     // A project with only a shell: no agent at all.
     const quiet = path.join(herdr.root, "quiet");
@@ -346,6 +345,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(overview.locator('[data-stat="behind"]')).toHaveCount(0, { timeout: 20_000 });
     await expect(overview.locator('[data-stat="open-prs"], [data-stat="open-issues"]')).toHaveCount(0);
     // The filter is at the right end of that line: three status chips and a search, and no device choice with one device (B24).
+    await toGraph();
     await expect(overview.locator("[data-graph-chip]")).toHaveCount(3);
     await expect(overview.locator("[data-graph-search]")).toBeVisible();
     await expect(overview.locator("[data-graph-devices]")).toHaveCount(0);
@@ -453,7 +453,6 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const message = page.locator(`[data-lens-message="${askingPane}"]`);
     await expect(message).toBeVisible();
     await expect(message).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
-    await expect(message).toContainText("사이드바 상태 규칙을 세 곳에 적용했고 Done 그룹만 남았습니다.");
     await expect(message.locator("[data-lens-message-context]")).toContainText("prd/asking");
     await expect(message.locator("[data-lens-message-context]")).toContainText("직접 시작");
     await expect(row(askingPane).locator("[data-graph-row-hint]")).toHaveText("↵ 답하기");
@@ -487,6 +486,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(page.locator(`[data-pane-view="${workingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await page.keyboard.press("Meta+Shift+KeyH");
+    await toGraph();
     await expect(workingBox).toHaveAttribute("data-selected", "true");
     // The keyboard: a head takes focus, ↓ moves to its row, ← to the row drawn beside it, ↵ opens it (B35).
     await workingBox.locator("[data-graph-head-open]").focus();
@@ -500,9 +500,11 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(workspace).toBeVisible();
     // A head's click is its Workspace, main's included (B15).
     await page.keyboard.press("Meta+Shift+KeyH");
+    await toGraph();
     await mainBox.locator("[data-graph-head-open]").click();
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toBeVisible();
     await page.keyboard.press("Meta+Shift+KeyH");
+    await toGraph();
 
     // `N merged → 정리` opens the disk cleanup sheet on the finished filter and
     // leaves the 정리할 것 fold as it was; Escape closes the sheet, the
@@ -632,9 +634,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.keyboard.press("Alt+Shift+KeyP");
     await expect(overview).toBeVisible();
     await expect(chip("working")).toHaveAttribute("data-state", "on");
-    // Any other entry resets it to the graph without a filter or an open fold (B29).
+    // Any other entry resets it to the request view; the graph has no filter or open fold (B29).
     await repoRow.click();
     await repoRow.click();
+    await toGraph();
     await expect(chip("working")).toHaveAttribute("data-state", "off");
     await expect(cleanupFold).toHaveAttribute("aria-expanded", "false");
 
