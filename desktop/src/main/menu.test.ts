@@ -1,3 +1,4 @@
+import type { MenuItemConstructorOptions } from "electron";
 import { describe, expect, it } from "vitest";
 import { EDITABLE_PANE_COMMANDS, REGISTRY } from "../../../web/src/shortcuts";
 import { accelerator, BINDINGS_CAP, KEYBOARD_ONLY, MENU_LAYOUT, menuBindings, menuTemplate } from "./menu";
@@ -91,5 +92,33 @@ describe("the app menu (B9)", () => {
     if ("refused" in resolved) throw new Error(resolved.refused);
     expect(resolved.diagnostic).toBeNull();
     expect(menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc", registry: resolved.registry }).flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : [])).find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Control+Alt+Shift+Return");
+  });
+
+  it("leaves plain Ctrl keys on Windows and Linux to the edit roles and text size", () => {
+    // Electron's own role keys on Linux, the stricter of the two (Windows
+    // gives quit none), for every role that does not name its accelerator.
+    const ROLE_KEYS: Record<string, string> = {
+      undo: "Control+Z",
+      redo: "Shift+Control+Z",
+      cut: "Control+X",
+      copy: "Control+C",
+      paste: "Control+V",
+      pasteAndMatchStyle: "Shift+Control+V",
+      selectAll: "Control+A",
+      quit: "Control+Q",
+      reload: "Control+R",
+      toggleDevTools: "Control+Shift+I",
+      togglefullscreen: "F11",
+      close: "Control+W",
+      minimize: "Control+M",
+    };
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: true, system: "pc" });
+    const flat = (menu: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+      menu.flatMap((item) => [item, ...(Array.isArray(item.submenu) ? flat(item.submenu) : [])]);
+    const plainCtrl = flat(template)
+      .map((item) => ({ name: item.role ?? item.id, keys: item.accelerator ?? (item.role === "windowMenu" ? "Control+W" : ROLE_KEYS[item.role ?? ""]) }))
+      .filter(({ keys }) => keys?.includes("Control") && !keys.includes("Shift"))
+      .map(({ name }) => name);
+    expect(plainCtrl.sort()).toEqual(["copy", "cut", "paste", "selectAll", "text_larger", "text_reset", "text_smaller", "undo"]);
   });
 });

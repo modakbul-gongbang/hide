@@ -132,9 +132,17 @@ export function menuTemplate(options: {
 }): MenuItemConstructorOptions[] {
   const { appName, send, developer, system } = options;
   const registry = options.registry ?? systemRegistry(system);
+  const mac = system === "mac";
   // Services and hiding the app are macOS's own; Windows and Linux have neither.
-  const macOnly: MenuItemConstructorOptions[] =
-    system === "mac" ? [{ role: "services" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }] : [];
+  const macOnly: MenuItemConstructorOptions[] = mac
+    ? [{ role: "services" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }]
+    : [];
+  // Electron gives quit, reload and the Window menu's close and minimize
+  // plain Ctrl keys on Windows and Linux, which belong to the shell there
+  // (operator decision 2026-10-03): quit and reload take the rule's
+  // Ctrl+Shift, and the Window menu stays macOS's, since those windows close
+  // and minimize from their own title bar. Only the edit roles keep plain Ctrl.
+  const pcKeys = (accelerator: string) => (mac ? {} : { accelerator });
   return [
     {
       label: appName,
@@ -144,7 +152,7 @@ export function menuTemplate(options: {
         ...items(MENU_LAYOUT.app, send, registry),
         { type: "separator" },
         ...macOnly,
-        { role: "quit" },
+        { role: "quit", ...pcKeys("Control+Shift+Q") },
       ],
     },
     { label: "File", submenu: items(MENU_LAYOUT.File, send, registry) },
@@ -167,13 +175,13 @@ export function menuTemplate(options: {
       label: "View",
       submenu: [
         ...items(MENU_LAYOUT.View, send, registry),
-        ...(developer ? ([{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[]) : []),
+        ...(developer ? ([{ type: "separator" }, { role: "reload", ...pcKeys("Control+Shift+R") }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[]) : []),
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
     },
     { label: "Pane", submenu: items(MENU_LAYOUT.Pane, send, registry) },
-    { role: "windowMenu" },
+    ...(mac ? ([{ role: "windowMenu" }] as MenuItemConstructorOptions[]) : []),
     { role: "help", submenu: items(MENU_LAYOUT.Help, send, registry) },
   ];
 }
