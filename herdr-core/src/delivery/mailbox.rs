@@ -40,6 +40,19 @@ pub enum Command {
     WatchList,
 }
 
+pub(crate) fn existing_intent<'a>(
+    ledger: &'a Ledger,
+    sender: &Actor,
+    intent: &str,
+    now: u64,
+) -> Option<&'a Letter> {
+    ledger.letters.iter().find(|letter| {
+        letter.sender.same_identity(sender)
+            && letter.intent == intent
+            && (letter.open() || now.saturating_sub(letter.created_at_unix_ms) < RETENTION_MS)
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "The private transaction validates each immutable envelope field before persistence"
@@ -63,11 +76,7 @@ pub(crate) fn send(
     if !super::valid_key(intent) {
         return Err("invalid_intent".into());
     }
-    if let Some(letter) = ledger.letters.iter().find(|letter| {
-        letter.sender.same_identity(sender)
-            && letter.intent == intent
-            && (letter.open() || now.saturating_sub(letter.created_at_unix_ms) < RETENTION_MS)
-    }) {
+    if let Some(letter) = existing_intent(ledger, sender, intent, now) {
         return Ok(letter.clone());
     }
     if body.len() > BODY_LIMIT
@@ -107,27 +116,22 @@ pub fn apply(
     command: &Command,
     now: u64,
 ) -> Result<Value, String> {
+    if let Command::Send { intent, .. } | Command::Reply { intent, .. } = command
+        && let Some(letter) = existing_intent(ledger, actor, intent, now)
+    {
+        return Ok(json!(letter));
+    }
     match command {
-        Command::Send { intent, body, .. } => {
-            if let Some(letter) = ledger.letters.iter().find(|letter| {
-                letter.sender.same_identity(actor)
-                    && letter.intent == *intent
-                    && (letter.open()
-                        || now.saturating_sub(letter.created_at_unix_ms) < RETENTION_MS)
-            }) {
-                return Ok(json!(letter));
-            }
-            Ok(json!(send(
-                ledger,
-                actor,
-                target.ok_or("target_unavailable")?,
-                intent,
-                body,
-                "request",
-                None,
-                now
-            )?))
-        }
+        Command::Send { intent, body, .. } => Ok(json!(send(
+            ledger,
+            actor,
+            target.ok_or("target_unavailable")?,
+            intent,
+            body,
+            "request",
+            None,
+            now
+        )?)),
         Command::Reply { id, intent, body } => {
             let original = authorized(ledger, actor, id)?.clone();
             if !original.recipient.same_identity(actor) {
@@ -186,7 +190,8 @@ pub fn apply(
                 .letters
                 .iter()
                 .filter(|letter| letter.recipient.same_identity(actor)
-                    && matches!(letter.state, State::Pending | State::Undelivered))
+                    && matches!(letter.state, State::Pending | State::Undelivered)
+                    || letter.sender.same_identity(actor) && letter.state == State::Undelivered)
                 .collect::<Vec<_>>()
         )),
         Command::Pull => Ok(json!(pull(ledger, actor))),
@@ -396,6 +401,64 @@ mod tests {
             "capacity"
         );
         assert_eq!(ledger.letters[0].id, letter.id);
+        let inbox = apply(&mut ledger, &a, None, &Command::Inbox, 20).unwrap();
+        assert_eq!(inbox[0]["state"], "undelivered");
+    }
+
+    #[test]
+    fn repeated_intent_does_not_require_a_live_target_or_close_another_request() {
+        let mut ledger = Ledger::default();
+        let a = actor("a");
+        let b = actor("b");
+        let first = send(&mut ledger, &a, &b, "first", "work", "request", None, 1).unwrap();
+        let retry = apply(
+            &mut ledger,
+            &a,
+            None,
+            &Command::Send {
+                target: "gone".into(),
+                intent: "first".into(),
+                body: "changed".into(),
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(retry["id"], first.id);
+        let second = send(&mut ledger, &a, &b, "second", "other", "request", None, 3).unwrap();
+        let reply = apply(
+            &mut ledger,
+            &b,
+            None,
+            &Command::Reply {
+                id: first.id,
+                intent: "reply".into(),
+                body: "done".into(),
+            },
+            4,
+        )
+        .unwrap();
+        let retry = apply(
+            &mut ledger,
+            &b,
+            None,
+            &Command::Reply {
+                id: second.id.clone(),
+                intent: "reply".into(),
+                body: "different decision".into(),
+            },
+            5,
+        )
+        .unwrap();
+        assert_eq!(retry["id"], reply["id"]);
+        assert!(
+            ledger
+                .letters
+                .iter()
+                .find(|letter| letter.id == second.id)
+                .unwrap()
+                .waiting_answer
+        );
+        assert_eq!(ledger.letters.len(), 3);
     }
 
     #[test]

@@ -75,6 +75,7 @@ impl Ledger {
         for letter in &self.letters {
             if !ids.insert(&letter.id)
                 || !super::valid_key(&letter.id)
+                || !letter.id.starts_with("letter-")
                 || !super::valid_key(&letter.intent)
                 || !letter.sender.valid()
                 || !letter.recipient.valid()
@@ -82,6 +83,7 @@ impl Ledger {
                 || letter.sender.device_id != "local"
                 || letter.recipient.device_id != "local"
                 || letter.body.len() > BODY_LIMIT
+                || letter.body.trim().is_empty()
                 || letter.bell_errors > 3
                 || (!letter.open() && letter.finished_at_unix_ms.is_none())
                 || (matches!(
@@ -94,16 +96,17 @@ impl Ledger {
         }
         let mut watches = HashSet::new();
         for watch in &self.watches {
-            if !watches.insert(&watch.id) || !watch.valid() {
+            if !watches.insert(&watch.id) || !watch.valid() || !watch.id.starts_with("watch-") {
                 return Err("ledger_unavailable".into());
             }
         }
+        let mut sequences = HashSet::new();
         for id in ids.into_iter().chain(watches) {
             let sequence = id
                 .split_once('-')
                 .and_then(|(_, value)| value.parse::<u64>().ok())
                 .ok_or("ledger_unavailable")?;
-            if sequence >= self.next_id {
+            if sequence == 0 || sequence >= self.next_id || !sequences.insert(sequence) {
                 return Err("ledger_unavailable".into());
             }
         }

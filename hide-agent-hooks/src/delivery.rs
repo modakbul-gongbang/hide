@@ -100,12 +100,13 @@ fn run_cli(arguments: &[&str], deadline: Instant) -> Result<serde_json::Value, &
     };
     let _ = child.kill_tree();
     let bytes = reader.join().map_err(|_| "cli")?.map_err(|_| "cli")?;
+    let status = status?;
     let value: serde_json::Value = if bytes.len() <= OUTPUT_LIMIT {
         serde_json::from_slice(&bytes).map_err(|_| "format")?
     } else {
         return Err("format");
     };
-    if !status?.success() || value["ok"] != true {
+    if !status.success() || value["ok"] != true {
         return Err(match value["reason"].as_str() {
             Some("ledger_unavailable") => "ledger",
             Some("capacity") => "capacity",

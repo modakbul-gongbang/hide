@@ -283,6 +283,28 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_of_unchanged_status_keeps_the_durable_activity_clock() {
+        let mut ledger = Ledger::default();
+        let watch = start(&mut ledger, &actor("parent"), &actor("target"), 10).unwrap();
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        let mut bootstrap = reading(&watch.id, 10);
+        bootstrap.status_changed_at_unix_ms = 10 + INACTIVITY_MS + SECOND_WARNING_MS;
+        tick(
+            &mut restored,
+            &[bootstrap],
+            10 + INACTIVITY_MS + SECOND_WARNING_MS,
+        )
+        .unwrap();
+        assert_eq!(restored.letters.len(), 2);
+        assert_eq!(restored.watches[0].warning_count, 2);
+        assert_eq!(
+            restored.watches[0].first_warning_at_unix_ms,
+            Some(10 + INACTIVITY_MS)
+        );
+    }
+
+    #[test]
     fn reply_does_not_stop_watch_and_failed_reads_do_not_suppress_it() {
         let mut ledger = Ledger::default();
         let parent = actor("parent");

@@ -787,6 +787,16 @@ async fn scoped_client_loop(
                                 value["command"].clone(),
                             )
                             .ok()
+                            .filter(|_| {
+                                value.get("caller_pane").is_none_or(|hint| {
+                                    hint.is_null()
+                                        || hint.as_str().is_some_and(|hint| {
+                                            !hint.is_empty()
+                                                && hint.len() <= 256
+                                                && !hint.chars().any(char::is_control)
+                                        })
+                                })
+                            })
                             .map(|command| {
                                 ScopedRequest::Delivery(
                                     command,

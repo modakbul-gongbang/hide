@@ -118,7 +118,9 @@ impl Runtime {
                 status_changed_at_unix_ms: changed_at,
                 last_input_at_unix_ms: previous.map(|old| old.last_input_at_unix_ms).unwrap_or(now),
                 session,
-                host_scope: host_scope.map(str::to_owned),
+                host_scope: host_scope
+                    .filter(|scope| scope.len() <= 4096)
+                    .map(str::to_owned),
             };
             self.delivery_observations.insert(pane_id, observation);
         }
@@ -170,7 +172,20 @@ impl Runtime {
             .ok_or("agent_pane_required")?
             .actor
             .clone();
+        let repeated = match &command {
+            Command::Send { intent, .. } => self.delivery_ledger.as_ref().is_ok_and(|ledger| {
+                crate::delivery::mailbox::existing_intent(
+                    ledger,
+                    &actor,
+                    intent,
+                    unix_milliseconds(),
+                )
+                .is_some()
+            }),
+            _ => false,
+        };
         let target = match &command {
+            Command::Send { .. } if repeated => None,
             Command::Send { target, .. } | Command::WatchStart { target } => {
                 let mut matches = self.delivery_observations.values().filter(|observation| {
                     observation.actor.pane_id == *target || observation.actor.name == *target
@@ -227,6 +242,44 @@ impl Runtime {
         self.delivery_observations
             .get(&actor.pane_id)
             .is_some_and(|observation| observation.actor.same_identity(actor))
+    }
+
+    pub(crate) fn delivery_bell_context(
+        &self,
+    ) -> Option<(Arc<Ledger>, Arc<dyn hide_herdr_client::ApiConnector>)> {
+        Some((
+            self.delivery_state().ok()?,
+            self.live.as_ref()?.api_connector.clone(),
+        ))
+    }
+
+    pub(crate) fn delivery_observation(&self, actor: &Actor) -> Option<Observation> {
+        self.delivery_observations
+            .get(&actor.pane_id)
+            .filter(|observation| observation.actor.same_identity(actor))
+            .cloned()
+    }
+
+    /// The final memory guard immediately before the off-lock pane write.
+    pub(crate) fn delivery_bell_current(&self, id: &str, observed: &Observation) -> bool {
+        let Some(current) = self.delivery_observations.get(&observed.actor.pane_id) else {
+            return false;
+        };
+        current.actor.same_identity(&observed.actor)
+            && current.status == observed.status
+            && current.state_change_seq == observed.state_change_seq
+            && current.last_input_at_unix_ms == observed.last_input_at_unix_ms
+            && crate::delivery::doorbell::eligible(current, unix_milliseconds())
+            && self.delivery_ledger.as_ref().is_ok_and(|ledger| {
+                ledger.letters.iter().any(|letter| {
+                    letter.id == id
+                        && letter.recipient.same_identity(&observed.actor)
+                        && letter.state == crate::delivery::ledger::State::Pending
+                        && letter.bell_errors < 3
+                        && unix_milliseconds().saturating_sub(letter.created_at_unix_ms)
+                            < crate::delivery::DELIVERY_EXPIRY_MS
+                })
+            })
     }
 
     pub(crate) fn delivery_watch_work(&mut self) -> Vec<crate::delivery::worker::WatchWork> {

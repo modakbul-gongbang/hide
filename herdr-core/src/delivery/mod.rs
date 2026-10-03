@@ -1,4 +1,5 @@
 //! Durable agent delivery, owned by the core independently of hcoord.
+pub(crate) mod doorbell;
 pub mod ledger;
 pub mod mailbox;
 pub mod watch;

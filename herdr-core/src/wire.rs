@@ -1272,6 +1272,52 @@ pub(crate) fn agent_state(value: Value) -> Result<AgentState, String> {
     }
 }
 
+/// Fresh delivery guard, converted here rather than exposing generated types.
+pub(crate) struct DeliveryAgent {
+    pub pane_id: String,
+    pub name: String,
+    pub kind: Option<String>,
+    pub session: Option<String>,
+    pub status: String,
+    pub state_change_seq: u64,
+    pub ready: bool,
+}
+
+pub(crate) fn delivery_agent(value: Value) -> Result<DeliveryAgent, String> {
+    match response(value, "delivery_agent_format")? {
+        res::ResponseResult::AgentInfo { agent } => Ok(DeliveryAgent {
+            name: agent.name.unwrap_or_else(|| agent.pane_id.clone()),
+            pane_id: agent.pane_id,
+            kind: agent.agent,
+            session: agent
+                .agent_session
+                .and_then(|session| session_digest(&session.value)),
+            status: agent.agent_status.to_string(),
+            state_change_seq: agent.state_change_seq,
+            ready: agent.interactive_ready && !agent.launch_pending,
+        }),
+        _ => Err("delivery_agent_format".into()),
+    }
+}
+
+pub(crate) fn delivery_screen_params(pane: &str) -> Result<Value, String> {
+    params(req::PaneReadParams {
+        pane_id: pane.into(),
+        source: req::ReadSource::Detection,
+        lines: Some(128),
+        format: req::ReadFormat::Text,
+        strip_ansi: false,
+    })
+}
+
+pub(crate) fn delivery_input_params(pane: &str, text: &str) -> Result<Value, String> {
+    params(req::PaneSendInputParams {
+        pane_id: pane.into(),
+        text: Some(text.into()),
+        keys: Some(vec!["enter".into()]),
+    })
+}
+
 /// Which process group holds a pane's terminal, which is its shell's, and
 /// the processes in the foreground group.
 #[derive(Clone, Debug, Eq, PartialEq)]

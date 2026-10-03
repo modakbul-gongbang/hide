@@ -286,6 +286,14 @@ impl Worker {
             thread: Some(thread),
             producers: Vec::new(),
         };
+        let bell_runtime = runtime.clone();
+        let bell_client = client.clone();
+        let bell_stop = Arc::clone(&worker.stop);
+        let producer = thread::Builder::new()
+            .name("hide-delivery-doorbell".into())
+            .spawn(move || super::doorbell::run(bell_runtime, bell_client, bell_stop))
+            .map_err(|_| "delivery_unavailable".to_owned())?;
+        worker.producers.push(producer);
         let watch_runtime = runtime;
         let watch_client = client.clone();
         let watch_stop = Arc::clone(&worker.stop);
@@ -494,7 +502,7 @@ fn run(
             results.push(result);
         }
         let changed = candidate != *state;
-        let saved = if changed {
+        let mut saved = if changed {
             ledger::save(&path, &candidate)
         } else {
             Ok(())
@@ -505,12 +513,20 @@ fn run(
             );
         }
         if saved.is_ok() && changed {
-            let published = runtime
-                .lock()
-                .map(|mut guard| guard.publish_delivery(Arc::new(candidate), transitions))
-                .unwrap_or(false);
-            if published {
-                notifier.notify();
+            match runtime.lock() {
+                Ok(mut guard) => {
+                    let published = guard.publish_delivery(Arc::new(candidate), transitions);
+                    drop(guard);
+                    if published {
+                        notifier.notify();
+                    }
+                }
+                Err(_) => {
+                    saved = Err("delivery_unavailable".into());
+                    crate::diagnostic!(
+                        json!({"component":"delivery","kind":"ledger.publish_failed"})
+                    );
+                }
             }
         }
         for (request, result) in batch.into_iter().zip(results) {
@@ -549,6 +565,9 @@ fn probe_read<T: for<'a> Deserialize<'a>>(
     deadline: Instant,
 ) -> Result<Vec<T>, &'static str> {
     const OUTPUT: usize = 1024 * 1024;
+    if Instant::now() >= deadline {
+        return Err("conflict_probe_timeout");
+    }
     let mut command = ProcessCommand::new("hcoord");
     command
         .args([topic, "list", "--json"])
@@ -654,5 +673,122 @@ fn conflict_probe(target: &Observation) -> Result<bool, &'static str> {
         Err("conflict_binding_unavailable")
     } else {
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{CoreOptions, SCHEMA_VERSION};
+    use crate::sidebar::SessionSnapshotPayload;
+
+    fn fixture(root: &std::path::Path) -> (Arc<Mutex<Runtime>>, Actor, Observation, PathBuf) {
+        let state = root.join("state");
+        let options: CoreOptions = serde_json::from_value(json!({
+            "schema_version":SCHEMA_VERSION,"home":root,"herdr_socket_path":null,
+            "app_state_path":state.join("app.json"),
+        }))
+        .unwrap();
+        let mut runtime = Runtime::new(
+            options,
+            crate::environment::EnvironmentReport {
+                statuses: Vec::new(),
+                home_path: Some(root.to_owned()),
+                codex_home: None,
+            },
+        );
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1},
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1},
+        ]})).unwrap();
+        runtime.observe_delivery("local", &payload, None);
+        let actor = Actor {
+            pane_id: "sender".into(),
+            name: "sender".into(),
+            kind: "codex".into(),
+            device_id: "local".into(),
+            session: None,
+        };
+        let target = runtime
+            .delivery_observation(&Actor {
+                pane_id: "recipient".into(),
+                name: "recipient".into(),
+                kind: "codex".into(),
+                device_id: "local".into(),
+                session: None,
+            })
+            .unwrap();
+        (
+            Arc::new(Mutex::new(runtime)),
+            actor,
+            target,
+            hide_kit::layout::delivery_ledger(&state),
+        )
+    }
+
+    #[test]
+    fn success_is_durable_and_a_failed_save_never_publishes_the_letter() {
+        for writable in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let (runtime, actor, target, path) = fixture(root.path());
+            if !writable {
+                std::fs::write(path.parent().unwrap(), b"blocked parent").unwrap();
+            }
+            let (worker, client) = Worker::spawn(
+                Arc::downgrade(&runtime),
+                ChangeNotifier::new(),
+                path.clone(),
+            )
+            .unwrap();
+            let result = client.submit(
+                Effect::Command {
+                    actor,
+                    target: Some(Box::new(target)),
+                    command: Command::Send {
+                        target: "recipient".into(),
+                        intent: "send-once".into(),
+                        body: "private fixture".into(),
+                    },
+                },
+                Duration::from_secs(5),
+            );
+            if writable {
+                let id = result.unwrap()["id"].as_str().unwrap().to_owned();
+                let persisted = ledger::load(&path).unwrap();
+                assert_eq!(persisted.letters[0].id, id);
+                assert_eq!(
+                    runtime
+                        .lock()
+                        .unwrap()
+                        .delivery_state()
+                        .unwrap()
+                        .letters
+                        .len(),
+                    1
+                );
+                drop(worker);
+                let (restarted, _, _, _) = fixture(root.path());
+                assert_eq!(
+                    restarted.lock().unwrap().delivery_state().unwrap().letters[0].id,
+                    id
+                );
+            } else {
+                assert_eq!(result.unwrap_err(), "ledger_unavailable");
+                assert!(
+                    runtime
+                        .lock()
+                        .unwrap()
+                        .delivery_state()
+                        .unwrap()
+                        .letters
+                        .is_empty()
+                );
+                assert_eq!(
+                    std::fs::read(path.parent().unwrap()).unwrap(),
+                    b"blocked parent"
+                );
+                drop(worker);
+            }
+        }
     }
 }
