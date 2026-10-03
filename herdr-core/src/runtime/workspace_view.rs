@@ -90,17 +90,18 @@ pub(super) struct WorkspaceViewStore {
 
 /// What an event asks of a Workspace's columns once it has moved the screen
 /// (D-03, D-08): a document, diff or page opened or focused turns the front
-/// Workspace's File Views on, and so does a path a link names, applied to its
-/// own checkout's Workspace when it settles (`settle_reveal_path`): a file it
-/// opens leaves Tools as it was (B4), and only a folder, which no tab can
-/// show, turns Tools on with the Explorer. The Explorer's own reveal (B5) is
-/// a `workspace_view` `reveal`, not an intent.
+/// Workspace's File Views on and numbers that call, and so does a file a
+/// terminal link names, applied to its own checkout's Workspace when it
+/// settles (`settle_reveal_path`), leaving Tools as it was (B4). A folder a
+/// link names opens nothing in File Views, so it turns only Tools on with the
+/// Explorer and is no File Views call. The Explorer's own reveal (B5) is a
+/// `workspace_view` `reveal`, not an intent.
 /// Choosing an agent or a tab changes no column (D-17); nothing else moves
 /// a column on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AreaIntent {
     Views,
-    /// A folder a link names also turns the Tools column on, on the Explorer.
+    /// A folder a link names: Tools on, on the Explorer, and File Views as it was.
     RevealFolder,
 }
 
@@ -346,14 +347,18 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };
-        store.views_calls += 1;
-        store.views_called.insert(key.clone(), store.views_calls);
+        if intent == AreaIntent::Views {
+            store.views_calls += 1;
+            store.views_called.insert(key.clone(), store.views_calls);
+        }
         let entry = store.views.entry(&key.0, &key.1);
         let before = (entry.views, entry.tool, entry.tools);
-        entry.views = true;
-        if intent == AreaIntent::RevealFolder {
-            entry.tool = Tool::Explorer;
-            entry.tools = true;
+        match intent {
+            AreaIntent::Views => entry.views = true,
+            AreaIntent::RevealFolder => {
+                entry.tool = Tool::Explorer;
+                entry.tools = true;
+            }
         }
         if before != (entry.views, entry.tool, entry.tools) {
             self.persist_workspace_views();

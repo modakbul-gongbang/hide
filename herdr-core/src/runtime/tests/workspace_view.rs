@@ -293,8 +293,8 @@ fn file_views_turned_on_with_no_view_opens_a_new_tab_page() {
 /// tool; choosing one turns Tools on with it, a reveal turns Tools on with
 /// the Explorer and leaves File Views as it was, and `reveal_path` (a
 /// terminal link) turns File Views on with the file it opens and
-/// leaves Tools as it was (B4), unless it names a folder, which only the
-/// Explorer shows.
+/// leaves Tools as it was (B4); a folder, which only the Explorer shows,
+/// turns Tools on and leaves File Views as it was.
 #[test]
 fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
     let (runtime, _checkout_id, directory) = strip_checkout("tool-opens");
@@ -353,18 +353,30 @@ fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
     assert_eq!(tools(&runtime), (Tool::Explorer, false));
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
+    // A linked folder opens nothing in File Views: it turns Tools on with
+    // the Explorer, leaves File Views off and is no File Views call.
+    layout(&mut runtime, serde_json::json!({"views": false}));
+    let folder = directory.join("docs");
+    std::fs::create_dir_all(&folder).unwrap();
+    let calls = runtime.workspace_views.as_ref().unwrap().views_calls;
     runtime.dispatch_json(&explorer_event(
         "reveal_path",
         serde_json::json!({
-            "path": directory, "workspace_id": runtime.snapshot.navigator.focused_workspace_id,
+            "path": folder, "workspace_id": runtime.snapshot.navigator.focused_workspace_id,
             "checkout_id": checkout_id, "is_directory": true,
         }),
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(
-        tools(&runtime),
-        (Tool::Explorer, true),
-        "a linked folder shows in the Explorer"
+        columns(&runtime),
+        (false, true),
+        "a linked folder shows in the Explorer alone"
+    );
+    assert_eq!(tools(&runtime), (Tool::Explorer, true));
+    assert_eq!(
+        runtime.workspace_views.as_ref().unwrap().views_calls,
+        calls,
+        "a linked folder is no File Views call"
     );
 }
 

@@ -85,8 +85,9 @@ export type Actions = ReturnType<typeof createActions>;
 
 /**
  * The column an event calls into sight in a narrow Workspace body (PRD
- * three-column-panel D-07): File Views turned on calls File Views, a tool or
- * a reveal calls Tools, and an agent or tab chosen calls Agent Views. Read
+ * three-column-panel D-07): File Views turned on calls File Views, a tool, a
+ * reveal or a linked folder calls Tools, and an agent or tab chosen calls
+ * Agent Views. Read
  * here, where every operator event passes, so no path can forget it; it is
  * page state and never sent. An open, a History selection or a Recent Panels
  * display calls File Views through the core's call number instead
@@ -98,6 +99,9 @@ export function columnCalled(event: Parameters<DispatchFn>[0]): Column | null {
   switch (event.kind) {
     case "workspace_view":
       return payload.views === true ? "views" : payload.tools === true || payload.tool !== undefined || payload.reveal !== undefined ? "tools" : null;
+    case "reveal_path":
+      // A folder a terminal link names shows only in the Explorer.
+      return payload.is_directory ? "tools" : null;
     case "focus_pane":
     case "focus_tab":
       return "agents";

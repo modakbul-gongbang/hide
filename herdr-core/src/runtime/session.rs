@@ -4263,7 +4263,8 @@ impl Runtime {
         // it has settled there, not of whichever was in front when it was
         // asked, and not when its file was refused as it landed (D-08). A
         // file opens in File Views and leaves Tools as it was (B4); a folder
-        // shows only in the Explorer, so it turns Tools on.
+        // shows only in the Explorer, so it turns Tools on and leaves File
+        // Views as it was.
         if self.separate_view_areas()
             && self.snapshot.status.last_error == error_before
             && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
