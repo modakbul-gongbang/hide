@@ -369,6 +369,41 @@ fn who_sent_the_shown_request_and_who_came_after() {
 }
 
 #[test]
+fn a_sender_cannot_pass_as_the_operator_or_carry_hidden_text() {
+    let named_as = |name: &str| {
+        let mut rows = rows(&[("p", "idle")]);
+        rows[0].row_facts = Some(RowFacts {
+            other_request: Some(request(
+                "봐줘",
+                Requester::Named(name.to_owned()),
+                ASKED,
+                false,
+            )),
+            native_title: Some(format!("세션\u{202E}{}", "제".repeat(300))),
+            ..RowFacts::default()
+        });
+        run(&mut rows, &[], &GithubSnapshot::default());
+        rows[0].request.clone().unwrap()
+    };
+    for reserved in ["나", "에이전트", "Operator", " 나 "] {
+        assert_eq!(
+            named_as(reserved).request.unwrap().sender,
+            RequestSender::Agent,
+            "{reserved}"
+        );
+    }
+    let shown = named_as(&format!("ci\u{202E}-lead\n{}", "x".repeat(100)));
+    let RequestSender::Named(name) = shown.request.unwrap().sender else {
+        panic!("a plain name is shown");
+    };
+    assert!(name.starts_with("ci-lead x"), "{name}");
+    assert_eq!(name.chars().count(), 64);
+    let title = shown.native_title.unwrap();
+    assert!(!title.contains('\u{202E}'));
+    assert_eq!(title.chars().count(), 200);
+}
+
+#[test]
 fn a_verbs_time_holds_while_the_verb_holds_and_starts_over_when_it_moves() {
     let mut verbs = BTreeMap::new();
     let mut idle = rows(&[("p", "idle")]);

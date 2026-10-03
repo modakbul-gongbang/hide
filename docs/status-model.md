@@ -411,6 +411,7 @@ A settled pull request counts as live only when it settled after the operator's 
 The verb's time is kept per pane in `core-state.json` (`request_verbs`), so a restart does not restart the wait.
 Opening a finished row in the request view (`overview_open_result`) reads the pane the way a focus does and moves no focus; a demand outlives the read as everywhere else.
 Who sent a request is the label worker's verdict (ARCHITECTURE.md, Agent labels in the core); a delegated child's first request is its parent's, by the parent row's title.
+A name another program chose is shown as one line without control or bidirectional formatting characters, a sender's at most 64 characters and a session title at most 200, and a sender named as the row names the operator or an unnamed agent (`나`, `에이전트`, `operator`) is shown as an unnamed agent.
 Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull request links, duty and senders, and `runtime::tests::labels` for the title ladder, the stopped and waiting verbs with the switch on and off, the open-result read and the running-checks re-read.
 
 ### The second line

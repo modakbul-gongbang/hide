@@ -9,6 +9,9 @@
 //! guessed from the rest of the text; `contracts/hcoord-envelope.json` holds
 //! the examples this reader and hcoord's writer both test against.
 
+/// The most characters of a sender's name a message's facts keep.
+const MAX_SENDER_CHARS: usize = 128;
+
 /// The sender a message's hcoord header names, or `None` when the message
 /// carries no header. hcoord's own notices name `hcoord`.
 pub fn envelope_sender(text: &str) -> Option<String> {
@@ -22,9 +25,11 @@ pub fn envelope_sender(text: &str) -> Option<String> {
     {
         return None;
     }
+    // The name is the sender's own choice; the facts keep a bounded copy and
+    // the core decides how it is shown.
     let named = |from: &str| {
         let name = from.split(" (").next().unwrap_or(from).trim();
-        (!name.is_empty()).then(|| name.to_owned())
+        (!name.is_empty()).then(|| name.chars().take(MAX_SENDER_CHARS).collect())
     };
     if kind == "HCOORD_WATCH_CHECK" {
         let watched = rest.rsplit_once(" cycle ").map_or(rest, |(name, _)| name);

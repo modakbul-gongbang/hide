@@ -55,7 +55,7 @@ pub(crate) struct Analysis {
 /// move a row's verb; the rest come from Herdr and GitHub.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum LabelEnd {
+pub enum LabelEnd {
     Working,
     /// The agent asks the operator something specific.
     Question,

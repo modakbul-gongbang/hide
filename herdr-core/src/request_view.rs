@@ -230,7 +230,10 @@ pub(crate) fn apply<'a>(
         row.request = Some(AgentRequestSnapshot {
             verb,
             verb_since_unix_ms: since,
-            native_title: facts.native_title.clone(),
+            native_title: facts
+                .native_title
+                .as_deref()
+                .and_then(|title| shown_name(title, MAX_TITLE_CHARS)),
             line: facts.line.clone(),
             end: facts.end,
             request: shown.map(|(request, sender)| RequestLineSnapshot {
@@ -285,16 +288,57 @@ fn sender(request: &Request, delegated: bool, parent: Option<&String>) -> Reques
     let parents_first = request.first && delegated;
     match &request.requester {
         Requester::Operator => RequestSender::Operator,
-        Requester::Unobserved if parents_first => parent
-            .map(|name| RequestSender::Named(name.clone()))
-            .unwrap_or(RequestSender::Agent),
+        Requester::Unobserved if parents_first => {
+            parent.map_or(RequestSender::Agent, |name| named(name))
+        }
         Requester::Unobserved => RequestSender::Operator,
-        Requester::Named(name) => RequestSender::Named(name.clone()),
-        Requester::Agent if parents_first => parent
-            .map(|name| RequestSender::Named(name.clone()))
-            .unwrap_or(RequestSender::Agent),
+        Requester::Named(name) => named(name),
+        Requester::Agent if parents_first => {
+            parent.map_or(RequestSender::Agent, |name| named(name))
+        }
         Requester::Agent => RequestSender::Agent,
     }
+}
+
+/// The longest sender name a row shows; hcoord names are short handles.
+const MAX_SENDER_CHARS: usize = 64;
+/// The longest agent-written session title a row carries.
+const MAX_TITLE_CHARS: usize = 200;
+/// What the row writes for the operator and for an unnamed agent, so no
+/// sender can pass as either (an hcoord name is whatever its sender chose).
+const RESERVED_SENDERS: [&str; 3] = ["나", "에이전트", "operator"];
+
+fn named(name: &str) -> RequestSender {
+    match shown_name(name, MAX_SENDER_CHARS) {
+        Some(name)
+            if !RESERVED_SENDERS
+                .iter()
+                .any(|reserved| name.eq_ignore_ascii_case(reserved)) =>
+        {
+            RequestSender::Named(name)
+        }
+        _ => RequestSender::Agent,
+    }
+}
+
+/// A name another program wrote, as one line the row can show: control and
+/// bidirectional formatting characters dropped, at most `max` characters,
+/// `None` when nothing is left.
+fn shown_name(text: &str, max: usize) -> Option<String> {
+    let bidi = |c: char| matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+    let kept: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .filter(|&c| !bidi(c))
+        .collect();
+    let kept: String = kept
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max)
+        .collect();
+    (!kept.is_empty()).then_some(kept)
 }
 
 struct Linked<'a> {
