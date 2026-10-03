@@ -233,7 +233,9 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
     })
 }
 
-/// The entry Hide writes: one command hook, carrying its own marker.
+/// The entry Hide writes: one command hook, carrying its own marker, in the
+/// form this system's runtimes run a hook command (`docs/agent-hooks.md`,
+/// What is written, and where).
 ///
 /// The command runs the helper only while it is there. A hook outlives the
 /// bundle or helper folder that wrote it: the app is moved to the Trash, a
@@ -243,26 +245,151 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
 /// missing helper is a hook that does nothing and succeeds (PRD
 /// device-parity D-11, B3).
 fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
-    let quoted = shell_quote(&helper.display().to_string());
-    let command = format!(
-        "if [ -x {quoted} ]; then exec {quoted} hook --runtime {} --event {} --memory-injection --source {}; fi",
+    let hook = if cfg!(windows) {
+        windows_hook(helper, runtime, event)
+    } else {
+        posix_hook(helper, runtime, event)
+    };
+    serde_json::json!({ "hooks": [hook] })
+}
+
+/// The arguments the helper runs with, after its path.
+fn helper_arguments(runtime: AgentRuntime, event: HookEvent) -> String {
+    format!(
+        "hook --runtime {} --event {} --memory-injection --source {}",
         runtime.id(),
         event.name(),
         hook_source_id()
+    )
+}
+
+/// macOS and Linux: both runtimes hand the command to a POSIX shell (Claude
+/// Code `sh -c`, Codex the session's shell, zsh or bash, with `-c`).
+fn posix_hook(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
+    let quoted = Quoting::Posix.quote(&helper.display().to_string());
+    let command = format!(
+        "if [ -x {quoted} ]; then exec {quoted} {}; fi",
+        helper_arguments(runtime, event)
     );
     serde_json::json!({
-        "hooks": [{
-            "type": "command",
-            "command": command,
-            "timeout": 8,
-        }]
+        "type": "command",
+        "command": command,
+        "timeout": 8,
     })
 }
 
-/// Single-quote a path for `/bin/sh`, the shell both runtimes run a command
-/// hook through.
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
+/// Windows: one PowerShell guard for both runtimes. Codex runs a command in
+/// the session's shell, which on Windows is PowerShell (`-NoProfile
+/// -Command`), so the guard is the command. Claude Code runs a command
+/// through Git Bash when it is installed and PowerShell otherwise, so its
+/// entry names PowerShell itself in exec form (`args`), which no shell
+/// re-parses and which runs the same on every machine.
+fn windows_hook(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
+    let quoted = Quoting::PowerShell.quote(&helper.display().to_string());
+    let guard = format!(
+        "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} {} }}",
+        helper_arguments(runtime, event)
+    );
+    match runtime {
+        AgentRuntime::ClaudeCode => serde_json::json!({
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-NonInteractive", "-Command", guard],
+            "timeout": 8,
+        }),
+        AgentRuntime::Codex => serde_json::json!({
+            "type": "command",
+            "command": guard,
+            "timeout": 8,
+        }),
+    }
+}
+
+/// How a path is quoted in the command this system writes, and read back.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Quoting {
+    /// Single quotes, a quote inside written `'\''`.
+    Posix,
+    /// Single quotes, a quote inside doubled. PowerShell takes the
+    /// typographic single quotes for `'` as well, so they are doubled too.
+    PowerShell,
+}
+
+impl Quoting {
+    const NATIVE: Self = if cfg!(windows) {
+        Self::PowerShell
+    } else {
+        Self::Posix
+    };
+
+    const POWERSHELL_QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
+
+    fn quote(self, value: &str) -> String {
+        match self {
+            Self::Posix => format!("'{}'", value.replace('\'', "'\\''")),
+            Self::PowerShell => {
+                let mut quoted = String::with_capacity(value.len() + 2);
+                quoted.push('\'');
+                for character in value.chars() {
+                    if Self::POWERSHELL_QUOTES.contains(&character) {
+                        quoted.push(character);
+                    }
+                    quoted.push(character);
+                }
+                quoted.push('\'');
+                quoted
+            }
+        }
+    }
+
+    /// The first single-quoted word of `command`, unquoted: the helper path,
+    /// in the guarded command and in the bare one versions before 6 wrote.
+    fn first_quoted(self, command: &str) -> Option<String> {
+        let start = command.find('\'')? + 1;
+        let mut rest = &command[start..];
+        let mut path = String::new();
+        match self {
+            Self::Posix => loop {
+                let end = rest.find('\'')?;
+                path.push_str(&rest[..end]);
+                rest = &rest[end + 1..];
+                match rest.strip_prefix("\\''") {
+                    Some(after) => {
+                        path.push('\'');
+                        rest = after;
+                    }
+                    None => return Some(path),
+                }
+            },
+            Self::PowerShell => {
+                let mut characters = rest.chars().peekable();
+                while let Some(character) = characters.next() {
+                    if !Self::POWERSHELL_QUOTES.contains(&character) {
+                        path.push(character);
+                    } else if characters.peek() == Some(&character) {
+                        path.push(character);
+                        characters.next();
+                    } else {
+                        return Some(path);
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+/// The strings of one hook a runtime runs: its `command`, then its exec-form
+/// `args`, where Claude Code's Windows entry carries the guard.
+fn hook_texts(hook: &Value) -> impl Iterator<Item = &str> {
+    let command = hook.get("command").and_then(Value::as_str);
+    let args = hook
+        .get("args")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    command.into_iter().chain(args)
 }
 
 fn group_marker_version(group: &Value) -> Option<u32> {
@@ -270,7 +397,7 @@ fn group_marker_version(group: &Value) -> Option<u32> {
         .get("hooks")?
         .as_array()?
         .iter()
-        .filter_map(|hook| hook.get("command")?.as_str())
+        .flat_map(hook_texts)
         .filter_map(marker_version_in)
         .min()
 }
@@ -286,37 +413,12 @@ fn installed_helper(hooks: &Map<String, Value>) -> Option<String> {
         .filter_map(Value::as_array)
         .flatten()
         .filter(|group| group_marker_version(group).is_some())
-        .filter_map(|group| {
-            group
-                .get("hooks")?
-                .as_array()?
-                .first()?
-                .get("command")?
-                .as_str()
+        .filter_map(|group| group.get("hooks")?.as_array()?.first())
+        .find_map(|hook| {
+            hook_texts(hook)
+                .filter(|text| text.contains('\''))
+                .find_map(|text| Quoting::NATIVE.first_quoted(text))
         })
-        .find_map(parse_quoted_helper)
-}
-
-/// Reads the helper path back out of a command Hide wrote: the first
-/// single-quoted word, which is the path in both the guarded command and the
-/// bare one versions before 6 wrote. Quotes inside the path are written as
-/// `'\''`, and read back the same way.
-fn parse_quoted_helper(command: &str) -> Option<String> {
-    let start = command.find('\'')? + 1;
-    let mut path = String::new();
-    let mut rest = &command[start..];
-    loop {
-        let end = rest.find('\'')?;
-        path.push_str(&rest[..end]);
-        rest = &rest[end + 1..];
-        match rest.strip_prefix("\\''") {
-            Some(after) => {
-                path.push('\'');
-                rest = after;
-            }
-            None => return Some(path),
-        }
-    }
 }
 
 /// The helper Hide's entries in `runtime`'s file name, when there are any.
@@ -581,10 +683,101 @@ mod tests {
         assert!(session_start_command.contains("--runtime codex"));
         assert!(session_start_command.contains("--memory-injection"));
         assert!(session_start_command.contains("--source hide-subagents@6"));
+        let guard = if cfg!(windows) {
+            "if (Test-Path -LiteralPath '"
+        } else {
+            "if [ -x '"
+        };
         assert!(
-            session_start_command.starts_with("if [ -x '"),
+            session_start_command.starts_with(guard),
             "the command runs the helper only while it is there"
         );
+    }
+
+    /// The bytes a Mac or Linux machine's files carry. Changing them makes
+    /// every installed entry read as another build's, so they are pinned as
+    /// `origin/main` at 91877ba9 wrote them, quote escaping included.
+    #[test]
+    fn the_posix_entry_is_exactly_what_macos_and_linux_have_installed() {
+        let helper = Path::new("/Users/o'brien/hide.app/Contents/Resources/hide-agent-hooks");
+        let pinned = [
+            (
+                AgentRuntime::ClaudeCode,
+                HookEvent::SessionStart,
+                r#"{"type":"command","command":"if [ -x '/Users/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime claude-code --event SessionStart --memory-injection --source hide-subagents@6; fi","timeout":8}"#,
+            ),
+            (
+                AgentRuntime::Codex,
+                HookEvent::Stop,
+                r#"{"type":"command","command":"if [ -x '/Users/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime codex --event Stop --memory-injection --source hide-subagents@6; fi","timeout":8}"#,
+            ),
+        ];
+        for (runtime, event, bytes) in pinned {
+            let written = posix_hook(helper, runtime, event);
+            assert_eq!(serde_json::to_string(&written).unwrap(), bytes);
+            let command = written["command"].as_str().unwrap();
+            assert_eq!(
+                Quoting::Posix.first_quoted(command).as_deref(),
+                helper.to_str()
+            );
+        }
+        if !cfg!(windows) {
+            assert_eq!(
+                hook_group(helper, AgentRuntime::Codex, HookEvent::Stop),
+                serde_json::json!({ "hooks": [posix_hook(helper, AgentRuntime::Codex, HookEvent::Stop)] })
+            );
+        }
+    }
+
+    /// Windows: Claude Code's entry runs PowerShell in exec form, Codex's
+    /// command is the PowerShell guard its session shell runs. A path with
+    /// a space, a quote and a typographic quote PowerShell also takes for
+    /// one is read back as it was written, and the marker is found in
+    /// either shape.
+    #[test]
+    fn the_windows_entries_are_powershell_guards_hide_reads_back() {
+        let helper = Path::new("C:\\Users\\Ann O'Brien\\it\u{2019}s\\hide-agent-hooks.exe");
+        let quoted = "'C:\\Users\\Ann O''Brien\\it\u{2019}\u{2019}s\\hide-agent-hooks.exe'";
+        let guard = |runtime: &str| {
+            format!(
+                "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} hook --runtime {runtime} --event Stop --memory-injection --source hide-subagents@6 }}"
+            )
+        };
+        let codex = windows_hook(helper, AgentRuntime::Codex, HookEvent::Stop);
+        assert_eq!(
+            codex,
+            serde_json::json!({ "type": "command", "command": guard("codex"), "timeout": 8 })
+        );
+        let claude = windows_hook(helper, AgentRuntime::ClaudeCode, HookEvent::Stop);
+        assert_eq!(
+            claude,
+            serde_json::json!({
+                "type": "command",
+                "command": "powershell.exe",
+                "args": ["-NoProfile", "-NonInteractive", "-Command", guard("claude-code")],
+                "timeout": 8,
+            })
+        );
+        for hook in [claude, codex] {
+            let group = serde_json::json!({ "hooks": [hook] });
+            assert_eq!(
+                group_marker_version(&group),
+                Some(crate::runtime::HOOK_VERSION)
+            );
+            let text = hook_texts(&group["hooks"][0])
+                .find(|text| text.contains('\''))
+                .unwrap();
+            assert_eq!(
+                Quoting::PowerShell.first_quoted(text).as_deref(),
+                helper.to_str()
+            );
+        }
+        if cfg!(windows) {
+            assert_eq!(
+                hook_group(helper, AgentRuntime::Codex, HookEvent::Stop),
+                serde_json::json!({ "hooks": [windows_hook(helper, AgentRuntime::Codex, HookEvent::Stop)] })
+            );
+        }
     }
 
     #[test]
@@ -677,7 +870,7 @@ mod tests {
     fn an_older_marker_version_reads_as_outdated() {
         let fixture = Fixture::new("outdated");
         let helper_path = helper(&fixture);
-        let quoted = shell_quote(&helper_path.display().to_string());
+        let quoted = Quoting::NATIVE.quote(&helper_path.display().to_string());
         let mut document = serde_json::json!({ "hooks": {} });
         for event in HookEvent::ALL {
             document["hooks"][event.name()] = serde_json::json!([{

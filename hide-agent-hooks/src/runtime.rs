@@ -12,10 +12,15 @@ use serde::{Deserialize, Serialize};
 /// D-31, D-57). Nothing outside this crate may write it.
 pub const HOOK_SOURCE_NAME: &str = "hide-subagents";
 
-/// The hook helper's file name, as the bundle ships it. The app looks for it
-/// beside its own executable and hands the path to [`crate::install`], so the
-/// name is stated once here rather than in the app and the build script both.
-pub const HELPER_BINARY_NAME: &str = "hide-agent-hooks";
+/// The hook helper's file name on this system, as the bundle ships it
+/// (`.exe` on Windows). The kit looks for it in its kit folder and hands the
+/// path to [`crate::install`], so the name is stated once here rather than in
+/// the app and the build script both.
+pub const HELPER_BINARY_NAME: &str = if cfg!(windows) {
+    "hide-agent-hooks.exe"
+} else {
+    "hide-agent-hooks"
+};
 
 /// The version of the installed entry. Raise it when the command Hide writes
 /// changes shape, so an older entry is reported as outdated and the operator
