@@ -126,6 +126,141 @@ fn private_folders_are_made_down_to_the_last_and_an_existing_one_is_left_alone()
 }
 
 #[test]
+fn durable_bootstrap_refuses_escape_and_over_budget_paths_before_creation() {
+    use private::DirectoryDurabilityError;
+
+    let outer = folder();
+    let mut too_deep = outer.path().to_path_buf();
+    for _ in 0..65 {
+        too_deep.push("child");
+    }
+    for invalid in [
+        too_deep,
+        outer.path().join("first").join("..").join("escape"),
+        outer.path().parent().unwrap().join("outside"),
+    ] {
+        assert!(matches!(
+            private::create_dir_all_durable(&invalid, outer.path()),
+            Err(DirectoryDurabilityError::BeforeCreate { source })
+                if source.kind() == ErrorKind::InvalidInput
+        ));
+        assert!(names(outer.path()).is_empty());
+    }
+    assert!(matches!(
+        private::create_dir_all_durable(Path::new("relative/child"), Path::new("relative")),
+        Err(DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::InvalidInput
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_bootstrap_creates_a_private_chain_up_to_its_bound_and_rechecks_it() {
+    let outer = folder();
+    let mut deepest = outer.path().to_path_buf();
+    for _ in 0..64 {
+        deepest.push("d");
+    }
+    // The supplied ancestor boundary is the caller's precondition. These
+    // outcomes establish checked OS operations, not physical power loss.
+    private::create_dir_all_durable(&deepest, outer.path()).unwrap();
+    let mut checked = deepest.as_path();
+    while checked != outer.path() {
+        assert!(private::is_private(checked).unwrap());
+        assert!(private::owned_by_current_user(checked).unwrap());
+        checked = checked.parent().unwrap();
+    }
+    private::create_dir_all_durable(&deepest, outer.path()).unwrap();
+    private::create_dir_all_durable(outer.path(), outer.path()).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_bootstrap_preserves_existing_permissions_and_refuses_untrusted_directories() {
+    use private::DirectoryDurabilityError;
+
+    let outer = folder();
+    let shared_read = outer.path().join("readable");
+    private::create_dir(&shared_read).unwrap();
+    widen(&shared_read, false);
+    let child = shared_read.join("private");
+    private::create_dir_all_durable(&child, outer.path()).unwrap();
+    assert!(!private::is_private(&shared_read).unwrap());
+    assert!(private::is_private(&child).unwrap());
+    let writable = outer.path().join("writable");
+    private::create_dir(&writable).unwrap();
+    widen(&writable, true);
+    assert!(matches!(
+        private::create_dir_all_durable(&writable.join("refused"), outer.path()),
+        Err(DirectoryDurabilityError::Uncertain { path, source, .. })
+            if path == writable && source.kind() == ErrorKind::PermissionDenied
+    ));
+    assert!(names(&writable).is_empty());
+    assert!(private::others_can_modify(&writable).unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_bootstrap_never_follows_a_link_or_removes_existing_entries_on_failure() {
+    use private::DirectoryDurabilityError;
+
+    let outer = folder();
+    let target = outer.path().join("target");
+    private::create_dir(&target).unwrap();
+    let planted = outer.path().join("link");
+    link::create_link(&target, &planted).unwrap();
+    assert!(matches!(
+        private::create_dir_all_durable(&planted.join("refused"), outer.path()),
+        Err(DirectoryDurabilityError::Uncertain { path, source, .. })
+            if path == planted && source.kind() == ErrorKind::PermissionDenied
+    ));
+    assert!(names(&target).is_empty());
+    assert!(
+        fs::symlink_metadata(&planted)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let file = outer.path().join("file");
+    fs::write(&file, "kept").unwrap();
+    assert!(matches!(
+        private::create_dir_all_durable(&file.join("refused"), outer.path()),
+        Err(DirectoryDurabilityError::Uncertain { source, .. })
+            if source.kind() == ErrorKind::PermissionDenied
+    ));
+    assert_eq!(read(&file), "kept");
+    assert!(matches!(
+        private::create_dir_all_durable(&planted, &planted),
+        Err(DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::PermissionDenied
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_durable_bootstrap_reports_unsupported_without_creating_a_chain() {
+    use private::DirectoryDurabilityError;
+
+    let outer = folder();
+    let end = outer.path().join("first").join("second");
+    assert!(matches!(
+        private::create_dir_all_durable(&end, outer.path()),
+        Err(DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::Unsupported
+    ));
+    assert!(names(outer.path()).is_empty());
+    private::create_dir_all(&end).unwrap();
+    let kept = end.join("kept");
+    fs::write(&kept, "kept").unwrap();
+    assert!(matches!(
+        private::create_dir_all_durable(&end, outer.path()),
+        Err(DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::Unsupported
+    ));
+    assert_eq!(read(&kept), "kept");
+}
+
+#[test]
 fn a_private_file_is_the_current_accounts_alone_and_is_not_made_twice() {
     let outer = folder();
     let made = outer.path().join("secret");
