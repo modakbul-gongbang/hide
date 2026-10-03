@@ -25,7 +25,7 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
     key: "HIDE_CLI_PATH",
     requirement: "optional",
     shape: "absolute path of an executable `hide` CLI",
-    fallback: "this worktree's target/{debug,release}/hide when run unpackaged, then PATH, the CLI that last attached, the login shell's PATH (packaged only), and ~/.local/bin, /opt/homebrew/bin, /usr/local/bin",
+    fallback: "this worktree's target/{debug,release}/hide when run unpackaged, the app's own bundled CLI when packaged, then PATH, the CLI that last attached, the login shell's PATH (packaged, macOS and Linux only), and each system's install folders (`cli.ts`, `wellKnownDirs`)",
     note: "Names the CLI the host asks for the daemon; when it is set but not executable the window says the CLI was not found instead of searching on",
   },
   {
@@ -68,7 +68,7 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
     requirement: "optional",
     shape: "absolute directory path; read on Windows only, where it names the account's home as HOME does elsewhere",
     fallback: "the account's home directory",
-    note: "Names the `~/.local/bin` the CLI search tries and every `hide` child's PATH gains on Windows, the folder Hide's kit links `hide.exe` into and Claude Code's installer puts `claude.exe` in",
+    note: "Names the `~/.local/bin` the CLI search tries and every `hide` child's PATH gains on Windows, the folder Claude Code's installer puts `claude.exe` in",
   },
   {
     key: "LOCALAPPDATA",
@@ -125,6 +125,15 @@ export type DesktopEnv = {
   inherited: Record<string, string | undefined>;
 };
 
+/** The account's login shell in the user database; null where it names none or the account has no entry there. */
+function accountShell(): string | null {
+  try {
+    return os.userInfo().shell || null;
+  } catch {
+    return null;
+  }
+}
+
 export type EnvProblem = { key: string; kind: string };
 
 /** Validates every key at once; a problem names the key and the kind, never the value. */
@@ -145,7 +154,7 @@ export function loadEnv(source: Record<string, string | undefined>): DesktopEnv 
     userDataDir: absolute("HIDE_DESKTOP_USER_DATA_DIR"),
     herdrBinPath: absolute("HERDR_BIN_PATH"),
     herdrPaneId: source.HERDR_PANE_ID || null,
-    shell: HAS_LOGIN_SHELL ? (absolute("SHELL") ?? (os.userInfo().shell || null)) : null,
+    shell: HAS_LOGIN_SHELL ? (absolute("SHELL") ?? accountShell()) : null,
     home: (process.platform === "win32" ? absolute("USERPROFILE") : absolute("HOME")) ?? os.userInfo().homedir,
     localAppData: windows("LOCALAPPDATA"),
     appData: windows("APPDATA"),

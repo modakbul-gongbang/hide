@@ -33,12 +33,14 @@ const result = (stdout: string, extra: Partial<ChildResult> = {}): ChildResult =
   ...extra,
 });
 
+/** An absolute path written in POSIX for the reader, on a drive on Windows, where a path without one is not absolute. */
+const abs = (posix: string): string => (process.platform === "win32" ? `C:${posix}` : posix);
 /** The CLI's file name, spelled here rather than taken from the product so a wrong name fails. */
 const CLI_FILE = process.platform === "win32" ? "hide.exe" : "hide";
 /**
  * A path the resolver builds, written in POSIX for the reader and spelled
  * the way this system's `path.join` spells it, with the CLI's file name for
- * `hide` (`\w\target\debug\hide.exe` on Windows). Paths the resolver
+ * `hide` (`C:\w\target\debug\hide.exe` on Windows). Paths the resolver
  * only passes along (an override, the remembered CLI) are compared as given.
  */
 const built = (posix: string): string => (path.posix.basename(posix) === "hide" ? path.join(path.posix.dirname(posix), CLI_FILE) : path.join(posix));
@@ -54,73 +56,78 @@ const probe = (files: Record<string, number>): FileProbe => {
 };
 
 describe("resolveCli (B2)", () => {
-  const input: CliSearch = { override: null, worktreeRoot: "/w", bundledDir: null, searchPath: dirs("/usr/local/bin", "/opt/bin"), remembered: null, loginPath: null, wellKnown: ["/h/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"] };
-  const packaged: CliSearch = { ...input, worktreeRoot: null, searchPath: dirs("/usr/bin", "/bin") };
+  const input: CliSearch = { override: null, worktreeRoot: abs("/w"), bundledDir: null, searchPath: dirs(abs("/usr/local/bin"), abs("/opt/bin")), remembered: null, loginPath: null, wellKnown: [abs("/h/.local/bin"), abs("/opt/homebrew/bin"), abs("/usr/local/bin")] };
+  const packaged: CliSearch = { ...input, worktreeRoot: null, searchPath: dirs(abs("/usr/bin"), abs("/bin")) };
   const login = (answer: string | null) => {
     const asked = { count: 0 };
     return { asked, loginPath: async () => (asked.count++, answer) };
   };
 
   it("takes the override first and never searches past an unusable one", async () => {
-    expect((await resolveCli({ ...input, override: "/x/hide" }, probe({ "/x/hide": 1, "/w/target/debug/hide": 1 }))).found).toEqual({ path: "/x/hide", source: "env" });
-    const missing = await resolveCli({ ...input, override: "/x/hide", remembered: "/r/hide" }, probe({ "/w/target/debug/hide": 1, "/r/hide": 1 }));
-    expect(missing).toEqual({ found: null, tried: ["/x/hide"] });
+    expect((await resolveCli({ ...input, override: abs("/x/hide") }, probe({ [abs("/x/hide")]: 1, [abs("/w/target/debug/hide")]: 1 }))).found).toEqual({ path: abs("/x/hide"), source: "env" });
+    const missing = await resolveCli({ ...input, override: abs("/x/hide"), remembered: abs("/r/hide") }, probe({ [abs("/w/target/debug/hide")]: 1, [abs("/r/hide")]: 1 }));
+    expect(missing).toEqual({ found: null, tried: [abs("/x/hide")] });
   });
 
   it("takes the newest worktree build before PATH", async () => {
-    const files = { "/w/target/debug/hide": 10, "/w/target/release/hide": 20, "/opt/bin/hide": 30 };
-    expect((await resolveCli(input, probe(files))).found).toEqual({ path: built("/w/target/release/hide"), source: "worktree" });
+    const files = { [abs("/w/target/debug/hide")]: 10, [abs("/w/target/release/hide")]: 20, [abs("/opt/bin/hide")]: 30 };
+    expect((await resolveCli(input, probe(files))).found).toEqual({ path: built(abs("/w/target/release/hide")), source: "worktree" });
   });
 
   it("searches PATH in order when no build exists, and reports every path it tried", async () => {
-    const resolved = await resolveCli(input, probe({ "/opt/bin/hide": 1 }));
-    expect(resolved.found).toEqual({ path: built("/opt/bin/hide"), source: "path" });
-    expect(resolved.tried).toEqual(["/w/target/debug/hide", "/w/target/release/hide", "/usr/local/bin/hide", "/opt/bin/hide"].map(built));
+    const resolved = await resolveCli(input, probe({ [abs("/opt/bin/hide")]: 1 }));
+    expect(resolved.found).toEqual({ path: built(abs("/opt/bin/hide")), source: "path" });
+    expect(resolved.tried).toEqual([abs("/w/target/debug/hide"), abs("/w/target/release/hide"), abs("/usr/local/bin/hide"), abs("/opt/bin/hide")].map(built));
   });
 
   it("takes the CLI the app ships after the worktree build and before PATH, and never remembers it", async () => {
-    const shipped: CliSearch = { ...packaged, bundledDir: "/App.app/Contents/Resources", ...login("/l") };
-    const bundled = await resolveCli(shipped, probe({ "/App.app/Contents/Resources/hide": 1, "/usr/bin/hide": 1, "/l/hide": 1 }));
-    expect(bundled).toEqual({ found: { path: built("/App.app/Contents/Resources/hide"), source: "bundled" }, tried: [built("/App.app/Contents/Resources/hide")] });
+    const shipped: CliSearch = { ...packaged, bundledDir: abs("/App.app/Contents/Resources"), ...login(abs("/l")) };
+    const bundled = await resolveCli(shipped, probe({ [abs("/App.app/Contents/Resources/hide")]: 1, [abs("/usr/bin/hide")]: 1, [abs("/l/hide")]: 1 }));
+    expect(bundled).toEqual({ found: { path: built(abs("/App.app/Contents/Resources/hide")), source: "bundled" }, tried: [built(abs("/App.app/Contents/Resources/hide"))] });
     expect(REMEMBERED_SOURCES.has("bundled")).toBe(false);
-    const build = await resolveCli({ ...shipped, worktreeRoot: "/w" }, probe({ "/w/target/debug/hide": 1, "/App.app/Contents/Resources/hide": 1 }));
-    expect(build.found).toEqual({ path: built("/w/target/debug/hide"), source: "worktree" });
+    const build = await resolveCli({ ...shipped, worktreeRoot: abs("/w") }, probe({ [abs("/w/target/debug/hide")]: 1, [abs("/App.app/Contents/Resources/hide")]: 1 }));
+    expect(build.found).toEqual({ path: built(abs("/w/target/debug/hide")), source: "worktree" });
     // A bundle whose CLI cannot run is logged as tried and the search goes on (D-07), so a missing bundle still reaches an installed CLI.
-    const broken = await resolveCli(shipped, probe({ "/usr/bin/hide": 1 }));
-    expect(broken).toEqual({ found: { path: built("/usr/bin/hide"), source: "path" }, tried: ["/App.app/Contents/Resources/hide", "/usr/bin/hide"].map(built) });
+    const broken = await resolveCli(shipped, probe({ [abs("/usr/bin/hide")]: 1 }));
+    expect(broken).toEqual({ found: { path: built(abs("/usr/bin/hide")), source: "path" }, tried: [abs("/App.app/Contents/Resources/hide"), abs("/usr/bin/hide")].map(built) });
   });
 
   it("prefers PATH to the remembered CLI, and the remembered CLI to asking the login shell", async () => {
-    const shell = login("/l");
-    const onPath = await resolveCli({ ...packaged, searchPath: "/opt/bin", remembered: "/r/hide", ...shell }, probe({ "/opt/bin/hide": 1, "/r/hide": 1 }));
-    expect(onPath.found).toEqual({ path: built("/opt/bin/hide"), source: "path" });
-    const remembered = await resolveCli({ ...packaged, remembered: "/r/hide", ...shell }, probe({ "/r/hide": 1, "/l/hide": 1 }));
-    expect(remembered).toEqual({ found: { path: "/r/hide", source: "remembered" }, tried: [built("/usr/bin/hide"), built("/bin/hide"), "/r/hide"] });
+    const shell = login(abs("/l"));
+    const onPath = await resolveCli({ ...packaged, searchPath: abs("/opt/bin"), remembered: abs("/r/hide"), ...shell }, probe({ [abs("/opt/bin/hide")]: 1, [abs("/r/hide")]: 1 }));
+    expect(onPath.found).toEqual({ path: built(abs("/opt/bin/hide")), source: "path" });
+    const remembered = await resolveCli({ ...packaged, remembered: abs("/r/hide"), ...shell }, probe({ [abs("/r/hide")]: 1, [abs("/l/hide")]: 1 }));
+    expect(remembered).toEqual({ found: { path: abs("/r/hide"), source: "remembered" }, tried: [built(abs("/usr/bin/hide")), built(abs("/bin/hide")), abs("/r/hide")] });
     expect(shell.asked.count).toBe(0);
   });
 
   it("asks the login shell once the remembered CLI is gone, skipping what PATH already tried", async () => {
-    const shell = login(dirs("/usr/bin", "/l"));
-    const resolved = await resolveCli({ ...packaged, remembered: "/r/hide", ...shell }, probe({ "/l/hide": 1 }));
-    expect(resolved).toEqual({ found: { path: built("/l/hide"), source: "login" }, tried: [built("/usr/bin/hide"), built("/bin/hide"), "/r/hide", built("/l/hide")] });
+    const shell = login(dirs(abs("/usr/bin"), abs("/l")));
+    const resolved = await resolveCli({ ...packaged, remembered: abs("/r/hide"), ...shell }, probe({ [abs("/l/hide")]: 1 }));
+    expect(resolved).toEqual({ found: { path: built(abs("/l/hide")), source: "login" }, tried: [built(abs("/usr/bin/hide")), built(abs("/bin/hide")), abs("/r/hide"), built(abs("/l/hide"))] });
     expect(shell.asked.count).toBe(1);
   });
 
   it("looks in the usual install directories when the login shell does not answer", async () => {
-    const resolved = await resolveCli({ ...packaged, ...login(null) }, probe({ "/opt/homebrew/bin/hide": 1 }));
+    const resolved = await resolveCli({ ...packaged, ...login(null) }, probe({ [abs("/opt/homebrew/bin/hide")]: 1 }));
     expect(resolved).toEqual({
-      found: { path: built("/opt/homebrew/bin/hide"), source: "well-known" },
-      tried: ["/usr/bin/hide", "/bin/hide", "/h/.local/bin/hide", "/opt/homebrew/bin/hide"].map(built),
+      found: { path: built(abs("/opt/homebrew/bin/hide")), source: "well-known" },
+      tried: [abs("/usr/bin/hide"), abs("/bin/hide"), abs("/h/.local/bin/hide"), abs("/opt/homebrew/bin/hide")].map(built),
     });
     const missing = await resolveCli({ ...packaged, ...login(null) }, probe({}));
     expect(missing.found).toBeNull();
-    expect(missing.tried.at(-1)).toBe(built("/usr/local/bin/hide"));
+    expect(missing.tried.at(-1)).toBe(built(abs("/usr/local/bin/hide")));
+  });
+
+  it("skips a PATH entry that is not absolute, a rooted one without a drive included", async () => {
+    const resolved = await resolveCli({ ...input, worktreeRoot: null, searchPath: dirs("\\tools", "tools", abs("/opt/bin")) }, probe({ "\\tools\\hide.exe": 1, "\\tools/hide": 1 }));
+    expect(resolved.tried.slice(0, 1)).toEqual([built(abs("/opt/bin/hide"))]);
   });
 
   it("never asks a login shell when there is none to ask (unpackaged)", async () => {
     expect(await resolveCli({ ...input, worktreeRoot: null, searchPath: "" }, probe({}))).toEqual({
       found: null,
-      tried: ["/h/.local/bin/hide", "/opt/homebrew/bin/hide", "/usr/local/bin/hide"].map(built),
+      tried: [abs("/h/.local/bin/hide"), abs("/opt/homebrew/bin/hide"), abs("/usr/local/bin/hide")].map(built),
     });
   });
 });
@@ -169,11 +176,11 @@ describe("the remembered CLI", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-cli-"));
     const file = rememberedCliPath(dir);
     expect(parseRememberedCli(readJsonFile(file))).toBeNull();
-    writeJsonFile(file, rememberedCliValue("/h/.local/bin/hide"));
-    expect(parseRememberedCli(readJsonFile(file))).toBe("/h/.local/bin/hide");
+    writeJsonFile(file, rememberedCliValue(abs("/h/.local/bin/hide")));
+    expect(parseRememberedCli(readJsonFile(file))).toBe(abs("/h/.local/bin/hide"));
     fs.writeFileSync(file, "{");
     expect(parseRememberedCli(readJsonFile(file))).toEqual({ unreadable: "not JSON" });
-    for (const other of [{ schema: 2, path: "/a/hide" }, { schema: 1, path: "relative/hide" }, { schema: 1 }, "text"]) {
+    for (const other of [{ schema: 2, path: "/a/hide" }, { schema: 1, path: "relative/hide" }, { schema: 1, path: "\\h\\hide" }, { schema: 1 }, "text"]) {
       expect(parseRememberedCli(other), JSON.stringify(other)).toEqual({ unreadable: "unexpected shape" });
     }
     fs.rmSync(dir, { recursive: true, force: true });

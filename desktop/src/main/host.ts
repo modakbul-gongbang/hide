@@ -405,7 +405,10 @@ export class DesktopHost {
     // starts need the same install folders we search for `hide`.
     const inherited = this.env.path ? this.env.path.split(path.delimiter) : systemDirs(this.env).dirs;
     const searchPath = [...new Set([...inherited, ...wellKnownDirs(this.env).dirs].filter(Boolean))].join(path.delimiter);
-    return { ...this.env.inherited, PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
+    // Windows names variables without regard to case, so the inherited `Path`
+    // goes and this PATH is the child's only one.
+    const passed = Object.entries(this.env.inherited).filter(([key]) => process.platform !== "win32" || key.toUpperCase() !== "PATH");
+    return { ...Object.fromEntries(passed), PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
   }
 
   /**

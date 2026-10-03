@@ -6,6 +6,7 @@
 import path from "node:path";
 import type { DesktopEnv } from "./env";
 import { executableFile, type ChildResult } from "./spawn";
+import { isAbsolute } from "./wirePath";
 
 export type CliSource = "env" | "worktree" | "bundled" | "path" | "remembered" | "login" | "well-known";
 
@@ -60,8 +61,9 @@ export type Locations = Pick<DesktopEnv, "home" | "localAppData" | "appData" | "
  * each comes from that program's own installer, and a folder whose variable is
  * unset is left out and named rather than guessed:
  *
- * - `~\.local\bin`: Hide's kit links `hide.exe` there, and Claude Code's
- *   installer puts `claude.exe` there.
+ * - `~\.local\bin`: Claude Code's installer puts `claude.exe` there. Hide's
+ *   kit links `hide` there too, but without the `.exe` Windows needs, so the
+ *   search does not find it yet.
  * - `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin` and
  *   `%LOCALAPPDATA%\Programs\Herdr\bin`: the Codex and Herdr installers'
  *   default folders (`install.ps1`'s visible bin folder in each).
@@ -113,9 +115,10 @@ export const REMEMBERED_SOURCES: ReadonlySet<CliSource> = new Set(["path", "logi
 function inDirs(searchPath: string): string[] {
   return searchPath
     .split(path.delimiter)
-    // A rooted entry without a drive (`\tools`) is kept on Windows: Windows
-    // itself reads it against the current drive when it searches PATH.
-    .filter((dir) => dir && path.isAbsolute(dir))
+    // A rooted entry without a drive (`\tools`) names a folder on whatever
+    // drive is current, and would be remembered so; it is skipped, as
+    // `hide_platform::host::find_program` skips it.
+    .filter((dir) => dir && isAbsolute(dir))
     .map((dir) => path.join(dir, CLI_FILE));
 }
 
@@ -184,7 +187,7 @@ export function parseRememberedCli(stored: unknown): string | null | { unreadabl
   if (stored === null) return null;
   const value = typeof stored === "object" ? (stored as Record<string, unknown>) : null;
   if (value && typeof value.unreadable === "string") return { unreadable: value.unreadable };
-  if (value?.schema !== REMEMBERED_SCHEMA || typeof value.path !== "string" || !path.isAbsolute(value.path)) return { unreadable: "unexpected shape" };
+  if (value?.schema !== REMEMBERED_SCHEMA || typeof value.path !== "string" || !isAbsolute(value.path)) return { unreadable: "unexpected shape" };
   return value.path;
 }
 
