@@ -312,6 +312,11 @@ export async function main(argv: string[]): Promise<number> {
     const hq = readHq();
     if (hq !== "local") {
       const { operation, data } = args.words[0] === "daemon" ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
+      // A remote runs no daemon of its own, so its converged state is already reached; hide's kit asks every machine to converge.
+      if (operation === "daemon.ensure") {
+        print({ ok: true, value: { running: false, changed: false, hq, reason: `this machine reports to HQ ${hq}, whose daemon coordinates it` }, observedAt: new Date().toISOString() }, json);
+        return 0;
+      }
       if (!LETTER_OPERATIONS.has(operation)) throw new HcoordError("hq_only", `${operation} runs only at the coordinator HQ (${hq}); this machine keeps no conversation record`, { hq });
       const letter = writeLetter(operation, data);
       print({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason: `the coordinator at ${hq} applies it when it next collects this machine's letters; nothing else to do`, hq }, observedAt: new Date().toISOString() }, json);
