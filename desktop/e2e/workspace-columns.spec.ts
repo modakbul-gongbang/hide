@@ -355,6 +355,19 @@ test("Workspace columns preserve geometry, dock once on release and show native 
         await nativeCapture(app, page, `columns-${theme}-full-file-path-tooltip`);
         await rest(page);
         await bodyWidth(app, page, 1100);
+        await expect(workspace).toHaveAttribute("data-file-views", "shown");
+        await expect(workspace).toHaveAttribute("data-tools", "hidden");
+        await nativeCapture(app, page, `columns-${theme}-body-1100-views`);
+        await bodyWidth(app, page, 848);
+        await expect(workspace).toHaveAttribute("data-file-views", "shown");
+        await nativeCapture(app, page, `columns-${theme}-body-848-views`);
+        await bodyWidth(app, page, 847);
+        await expect(page.locator('[data-column="agents"]')).toBeVisible();
+        await page.locator('[data-column-toggle="views"]').click();
+        await expect(workspace).toHaveAttribute("data-file-views", "shown");
+        await expect(page.locator('[data-column="agents"]')).toBeHidden();
+        await nativeCapture(app, page, `columns-${theme}-body-847-called-views`);
+        await bodyWidth(app, page, 1100);
         await page.locator('[data-column-toggle="tools"]').click();
         await expect(workspace).toHaveAttribute("data-tools", "shown");
         await expect(page.locator('[data-column="tools"]')).toHaveJSProperty("clientWidth", 355);
@@ -391,6 +404,26 @@ test("Workspace columns preserve geometry, dock once on release and show native 
         await nativeCapture(app, page, `columns-${theme}-zero-views-tools`);
         await page.locator(`[data-explorer-row$="/${longName}"]`).click();
         await expect(workspace).toHaveAttribute("data-file-views", "shown");
+        // The saved geometry reference is a two-column body, with Tools
+        // off: Agents512 + divider8 + File Views596. Restore it in both
+        // themes rather than pairing a dark capture to a light board.
+        await page.locator('[data-column-toggle="tools"]').click();
+        await expect(workspace).toHaveAttribute("data-tools", "off");
+        const restored = page.locator('[data-column-divider="views"]');
+        await expect(restored).toHaveAttribute("aria-valuenow", "628");
+        await restored.press("ArrowRight");
+        await expect(restored).toHaveAttribute("aria-valuenow", "596");
+        await page.reload();
+        await expect(restored).toHaveAttribute("aria-valuenow", "596");
+        await expect(page.locator('[data-column="agents"]')).toHaveJSProperty("clientWidth", 512);
+        await nativeCapture(app, page, `columns-${theme}-restored-width`);
+        await page.locator('[data-column-toggle="tools"]').click();
+        await expect(workspace).toHaveAttribute("data-tools", "shown");
+        await bodyWidth(app, page, 1600);
+        await restored.press("ArrowLeft");
+        await restored.press("ArrowLeft");
+        await expect(restored).toHaveAttribute("aria-valuenow", "660");
+        await bodyWidth(app, page, 1116);
       }
     }
   } finally {
