@@ -204,7 +204,13 @@ try {
     if (JSON.parse(answer).running !== true) throw new Error(`installed command answered ${answer}`);
     const destination = process.platform === "win32" ? path.join(localBin, ".hide-kit") : command;
     const expected = process.platform === "win32" ? resources : bundled("hide");
-    if (fs.realpathSync(destination) !== fs.realpathSync(expected)) throw new Error("the command still points at the old package");
+    // A Windows junction can resolve to the long spelling while TEMP keeps
+    // its 8.3 spelling. Compare the objects, not equivalent path strings.
+    const actualId = fs.statSync(destination, { bigint: true });
+    const expectedId = fs.statSync(expected, { bigint: true });
+    if (actualId.dev !== expectedId.dev || actualId.ino !== expectedId.ino) {
+      throw new Error(`the command leads to ${fs.realpathSync(destination)}, expected ${fs.realpathSync(expected)} (file identities differ)`);
+    }
     for (const [folder, file] of [[".claude", "settings.json"], [".codex", "hooks.json"]]) {
       const config = JSON.parse(fs.readFileSync(path.join(home, folder, file), "utf8"));
       const hooks = Object.values(config.hooks).flat().flatMap((group) => group.hooks ?? []);
