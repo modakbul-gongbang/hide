@@ -156,6 +156,9 @@ struct PaneState {
     claimed_submit: Option<Submit>,
     /// The turn whose end already had its one retry after a timeout (D-33).
     end_retried: Option<u64>,
+    /// The skip reasons already logged, so a cap that holds on every read
+    /// (more subagent files than one read takes) is logged once.
+    skip_reasons_logged: std::collections::BTreeSet<String>,
 }
 
 pub(crate) struct LabelWorker {
@@ -321,6 +324,7 @@ impl LabelWorker {
                             input_observed_since_unix_ms: now_unix_ms,
                             claimed_submit: None,
                             end_retried: None,
+                            skip_reasons_logged: Default::default(),
                         },
                     );
                 }
@@ -724,7 +728,12 @@ impl LabelWorker {
             },
         );
         changed |= record.facts.judge_created(&self.pull_request_times);
-        if transcript.skipped_lines > 0 || !transcript.skipped_reasons.is_empty() {
+        let pane = self.panes.get_mut(pane_id).expect("checked above");
+        let new_reason = transcript
+            .skipped_reasons
+            .keys()
+            .any(|reason| !pane.skip_reasons_logged.contains(reason));
+        if transcript.skipped_lines > 0 || new_reason {
             crate::diagnostic!(json!({
                 "component": "labels",
                 "kind": "read.lines_skipped",
@@ -733,8 +742,9 @@ impl LabelWorker {
                 "lines": transcript.skipped_lines,
                 "reasons": transcript.skipped_reasons,
             }));
+            pane.skip_reasons_logged
+                .extend(transcript.skipped_reasons.keys().cloned());
         }
-        let pane = self.panes.get_mut(pane_id).expect("checked above");
         pane.last_failure = None;
         if from_start || transcript.rescanned.is_some() {
             pane.events.clear();

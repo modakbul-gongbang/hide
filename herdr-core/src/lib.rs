@@ -11,6 +11,7 @@ mod device_catalog;
 pub mod diagnostics;
 mod disk;
 mod disk_layers;
+mod display_text;
 pub mod domain;
 mod environment;
 #[cfg(all(test, unix))]

@@ -59,9 +59,10 @@ export type AgentRow = {
   request?: AgentRequest;
 };
 
-/** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
+/** How the label read a turn's end (`LabelEnd`). */
 export type LabelEnd = "working" | "question" | "done" | "waiting" | "unfinished";
 
+/** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
 export type RequestVerb = "answer" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
 
 /** Who sent the request a row shows (`RequestSender`). */
@@ -72,8 +73,6 @@ export type AgentRequest = {
   verb: RequestVerb;
   /** When the row took this verb; kept across a restart (D-40). */
   verb_since_unix_ms: number;
-  /** The agent's own name for its session (D-12). */
-  native_title?: string;
   /** The label's line for the turn (B18, B47); absent with summaries off or no analysis, when the reply stands in (D-12). */
   line?: string;
   /** How the label read the turn's end (`contracts/snapshot-wire-enums.json`: `label_end`). */

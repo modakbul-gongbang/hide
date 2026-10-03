@@ -174,7 +174,6 @@ fn a_row_without_a_label_shows_the_sessions_own_title_and_the_request() {
     let runtime = runtime_with_facts(operator_asked("요청 보기를 만들어줘"), "idle");
     let row = row(&runtime);
     assert_eq!(row["identity_label"], "요청 보기 만들기");
-    assert_eq!(row["request"]["native_title"], "요청 보기 만들기");
     assert_eq!(row["request"]["request"]["text"], "요청 보기를 만들어줘");
     assert_eq!(row["request"]["request"]["sender"]["kind"], "operator");
 }

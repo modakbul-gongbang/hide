@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
+use crate::display_text;
 use crate::issues::IssueReference;
 use crate::labels::analysis::LabelEnd;
 use crate::labels::facts::{Reply, Request, Requester};
@@ -116,9 +117,6 @@ pub struct AgentRequestSnapshot {
     pub verb: RequestVerb,
     /// When the row took this verb; kept across a restart (D-40).
     pub verb_since_unix_ms: u64,
-    /// The agent's own name for its session (D-12).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub native_title: Option<String>,
     /// The label's line for the turn (B18, B47); absent without one, when
     /// the row shows its reply instead (D-12).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,14 +228,13 @@ pub(crate) fn apply<'a>(
         row.request = Some(AgentRequestSnapshot {
             verb,
             verb_since_unix_ms: since,
-            native_title: facts
-                .native_title
+            line: facts
+                .line
                 .as_deref()
-                .and_then(|title| shown_name(title, MAX_TITLE_CHARS)),
-            line: facts.line.clone(),
+                .and_then(|line| display_text::one_line(line, MAX_LINE_CHARS)),
             end: facts.end,
             request: shown.map(|(request, sender)| RequestLineSnapshot {
-                text: request.text.clone(),
+                text: display_text::block(&request.text),
                 cut: request.cut,
                 images: request.images,
                 at_unix_ms: request.at_unix_ms,
@@ -245,7 +242,7 @@ pub(crate) fn apply<'a>(
             }),
             later_by,
             reply: facts.reply.as_ref().map(|reply| ReplySnapshot {
-                text: reply.text.clone(),
+                text: display_text::block(&reply.text),
                 cut: reply.cut,
                 at_unix_ms: reply.at_unix_ms,
             }),
@@ -302,43 +299,23 @@ fn sender(request: &Request, delegated: bool, parent: Option<&String>) -> Reques
 
 /// The longest sender name a row shows; hcoord names are short handles.
 const MAX_SENDER_CHARS: usize = 64;
-/// The longest agent-written session title a row carries.
-const MAX_TITLE_CHARS: usize = 200;
+/// The longest label line a row carries; the label keeps its own to 40.
+const MAX_LINE_CHARS: usize = 200;
 /// What the row writes for the operator and for an unnamed agent, so no
 /// sender can pass as either (an hcoord name is whatever its sender chose).
 const RESERVED_SENDERS: [&str; 3] = ["나", "에이전트", "operator"];
 
 fn named(name: &str) -> RequestSender {
-    match shown_name(name, MAX_SENDER_CHARS) {
+    match display_text::one_line(name, MAX_SENDER_CHARS) {
         Some(name)
-            if !RESERVED_SENDERS
-                .iter()
-                .any(|reserved| name.eq_ignore_ascii_case(reserved)) =>
+            if !RESERVED_SENDERS.iter().any(|reserved| {
+                display_text::skeleton(&name) == display_text::skeleton(reserved)
+            }) =>
         {
             RequestSender::Named(name)
         }
         _ => RequestSender::Agent,
     }
-}
-
-/// A name another program wrote, as one line the row can show: control and
-/// bidirectional formatting characters dropped, at most `max` characters,
-/// `None` when nothing is left.
-fn shown_name(text: &str, max: usize) -> Option<String> {
-    let bidi = |c: char| matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
-    let kept: String = text
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .filter(|&c| !bidi(c))
-        .collect();
-    let kept: String = kept
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(max)
-        .collect();
-    (!kept.is_empty()).then_some(kept)
 }
 
 struct Linked<'a> {

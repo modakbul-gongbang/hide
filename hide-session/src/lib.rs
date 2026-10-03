@@ -1237,6 +1237,8 @@ pub const INJECTED_PREFIXES: &[&str] = &[
     "# AGENTS.md instructions",
     "<environment_context>",
     "<user_instructions>",
+    // Claude Code's compaction summary, for a version that does not flag it.
+    "This session is being continued from a previous conversation",
 ];
 
 fn has_injected_prefix(text: &str) -> bool {

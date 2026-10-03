@@ -119,7 +119,11 @@ export const FULL_LINES = 20;
 /** Where Claude Code leaves an attached image in the prompt's text. */
 const IMAGE_MARK = /\[Image #\d+\]/gu;
 
-function shortened(name: string): string {
+/** Characters that draw nothing but can reorder or disguise a name (`%E2%80%AE` turns `fdp.exe` around). */
+const IGNORABLE = /[\p{Default_Ignorable_Code_Point}\p{Cc}]/gu;
+
+function shortened(raw: string): string {
+  const name = raw.replace(IGNORABLE, "");
   const chars = [...name];
   if (chars.length <= NAME_MAX) return name;
   const dot = name.lastIndexOf(".");

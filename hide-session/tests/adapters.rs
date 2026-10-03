@@ -292,3 +292,43 @@ fn a_long_opencode_session_is_read_a_budget_at_a_time_and_whole_in_the_end() {
         .collect();
     assert_eq!(big, ["0", "1", "2", "3", "4", "5", "6", "7"]);
 }
+
+#[test]
+fn an_opencode_row_that_holds_no_text_or_too_much_is_skipped_and_the_read_goes_on() {
+    let home = home(Agent::OpenCode);
+    let path = home.path().join(".local/share/opencode/opencode.db");
+    let writer = rusqlite::Connection::open(&path).unwrap();
+    writer
+        .execute(
+            "UPDATE session SET title = ?1 WHERE id = ?2",
+            rusqlite::params!["제".repeat(100_000), "ses_0a1b2c3d4e5f60718293a4b5c6"],
+        )
+        .unwrap();
+    add_opencode_request(home.path(), 0, 10);
+    writer
+        .execute(
+            "UPDATE part SET data = CAST(data AS BLOB) WHERE id = 'prt_big_000'",
+            [],
+        )
+        .unwrap();
+    add_opencode_request(home.path(), 1, 10);
+    writer
+        .execute(
+            "UPDATE message SET data = json_set(data, '$.padding', ?1) WHERE id = 'msg_big_001'",
+            rusqlite::params!["x".repeat(100 * 1024)],
+        )
+        .unwrap();
+    add_opencode_request(home.path(), 2, 10);
+
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert_eq!(first.title.as_ref().unwrap().chars().count(), 512);
+    assert_eq!(first.skipped_reasons.get("not_text"), Some(&1));
+    assert_eq!(first.skipped_reasons.get("message_capacity"), Some(&1));
+    assert!(
+        first
+            .events
+            .iter()
+            .any(|event| event.text.starts_with("2 x")),
+        "the request after them is read"
+    );
+}

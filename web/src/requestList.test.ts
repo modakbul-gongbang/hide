@@ -86,6 +86,11 @@ describe("the request line (D-42, B52)", () => {
     expect(requestLine("src/components/request-row-expanded-detail.tsx", 0)).toBe("request-row-….tsx");
   });
 
+  it("drops characters that would reverse or hide part of a chip's name", () => {
+    const labels = openCandidates("받은 파일 https://example.com/x/report%E2%80%AEfdp.exe 확인", [], false).map((candidate) => candidate.label);
+    expect(labels).toEqual(["reportfdp.exe"]);
+  });
+
   it("names an address whose last part is not valid percent-encoding as written", () => {
     expect(requestLine("세일 https://example.com/files/sale-50% 확인", 0)).toBe("세일 sale-50% 확인");
     expect(openCandidates("보고서 https://example.com/x/%zz 를 보세요", [], false).map((target) => target.label)).toEqual(["%zz"]);

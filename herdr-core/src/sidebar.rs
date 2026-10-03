@@ -1707,10 +1707,7 @@ fn projected_last_activity(agent: &SessionAgentPayload, pane_id: &str) -> Result
 /// One line of label text: whitespace collapsed, empty dropped, cut at
 /// `max_chars`.
 fn line_text(value: Option<&str>, max_chars: usize) -> Option<String> {
-    value
-        .map(|value| collapse_whitespace(value.trim().to_owned()))
-        .filter(|value| !value.is_empty())
-        .map(|value| value.chars().take(max_chars).collect())
+    value.and_then(|value| crate::display_text::one_line(value, max_chars))
 }
 
 /// What the agent's label last said (PRD overview-lenses-tiles-agents
@@ -1736,10 +1733,6 @@ fn agent_message(label: &AgentLabel) -> Option<String> {
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
-}
-
-fn collapse_whitespace(value: String) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The session every fixture row runs and every fixture declaration was

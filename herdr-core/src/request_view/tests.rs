@@ -379,13 +379,20 @@ fn a_sender_cannot_pass_as_the_operator_or_carry_hidden_text() {
                 ASKED,
                 false,
             )),
-            native_title: Some(format!("세션\u{202E}{}", "제".repeat(300))),
             ..RowFacts::default()
         });
         run(&mut rows, &[], &GithubSnapshot::default());
         rows[0].request.clone().unwrap()
     };
-    for reserved in ["나", "에이전트", "Operator", " 나 "] {
+    for reserved in [
+        "나",
+        "에이전트",
+        "Operator",
+        " 나 ",
+        "나\u{200B}",
+        "ｏｐｅｒａｔｏｒ",
+        "\u{1102}\u{1161}",
+    ] {
         assert_eq!(
             named_as(reserved).request.unwrap().sender,
             RequestSender::Agent,
@@ -398,9 +405,6 @@ fn a_sender_cannot_pass_as_the_operator_or_carry_hidden_text() {
     };
     assert!(name.starts_with("ci-lead x"), "{name}");
     assert_eq!(name.chars().count(), 64);
-    let title = shown.native_title.unwrap();
-    assert!(!title.contains('\u{202E}'));
-    assert_eq!(title.chars().count(), 200);
 }
 
 #[test]
