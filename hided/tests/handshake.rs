@@ -1,8 +1,5 @@
 //! The daemon end to end: its state file, the WebSocket handshake, the
 //! registration and Explorer lines, against a running hided.
-// A daemon starts only where it can listen for panes locally, which Windows
-// cannot yet (#315).
-#![cfg(unix)]
 
 use std::time::Duration;
 
@@ -428,6 +425,9 @@ async fn send_event(
     }
 }
 
+// The escapes are Unix symbolic links. A Windows folder link is a junction,
+// which the boundary's final-path check judges; that is not proved here.
+#[cfg(unix)]
 #[tokio::test]
 async fn registration_refusals_are_answered_by_hided() {
     let (dir, running) = start().await;
@@ -724,6 +724,9 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
     running.stop();
 }
 
+// The escapes are Unix symbolic links. A Windows folder link is a junction,
+// which the boundary's final-path check judges; that is not proved here.
+#[cfg(unix)]
 #[tokio::test]
 async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
     let (dir, env) = test_env(true);
@@ -1324,17 +1327,26 @@ async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
 
 /// A Herdr server that answers every request on `socket`, refusing all but
 /// `ping`; the daemon's session sync gets nothing it can use and keeps
-/// retrying, which is all this needs.
-fn answering_herdr(socket: &std::path::Path) -> std::os::unix::net::UnixListener {
+/// retrying, which is all this needs. It answers until dropped.
+struct AnsweringHerdr {
+    closer: hide_platform::ipc::ListenerCloser,
+}
+
+impl Drop for AnsweringHerdr {
+    fn drop(&mut self) {
+        self.closer.close();
+    }
+}
+
+fn answering_herdr(socket: &std::path::Path) -> AnsweringHerdr {
     use std::io::{BufRead, Write};
-    let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
-    let serving = listener.try_clone().unwrap();
+    let listener = hide_platform::ipc::LocalListener::bind(socket).unwrap();
+    let closer = listener.closer();
     std::thread::spawn(move || {
-        for stream in serving.incoming() {
-            let Ok(mut stream) = stream else { return };
+        while let Ok(mut stream) = listener.accept() {
             std::thread::spawn(move || {
                 let mut line = String::new();
-                if std::io::BufReader::new(stream.try_clone().unwrap())
+                if std::io::BufReader::new(&mut stream)
                     .read_line(&mut line)
                     .is_err()
                 {
@@ -1352,7 +1364,7 @@ fn answering_herdr(socket: &std::path::Path) -> std::os::unix::net::UnixListener
             });
         }
     });
-    listener
+    AnsweringHerdr { closer }
 }
 
 #[tokio::test]
@@ -1360,11 +1372,15 @@ async fn the_daemon_outlives_the_idle_window_while_its_herdr_answers() {
     let (dir, mut env) = test_env(false);
     env.idle_secs = 1;
     // A Unix socket path has a hard length limit; a tempdir may be too deep.
-    let herdr_dir =
-        std::path::PathBuf::from("/tmp").join(format!("hided-idle-{}", std::process::id()));
+    let base = if cfg!(unix) {
+        std::path::PathBuf::from("/tmp")
+    } else {
+        std::env::temp_dir()
+    };
+    let herdr_dir = base.join(format!("hided-idle-{}", std::process::id()));
     std::fs::create_dir_all(&herdr_dir).unwrap();
     let socket = herdr_dir.join("herdr.sock");
-    let listener = answering_herdr(&socket);
+    let herdr = answering_herdr(&socket);
     env.herdr_socket_path = Some(socket.display().to_string());
     let running = std::sync::Arc::new(hided::start_daemon(env).await.expect("start daemon"));
     let announced = tokio::spawn({
@@ -1378,7 +1394,7 @@ async fn the_daemon_outlives_the_idle_window_while_its_herdr_answers() {
         "a daemon whose Herdr answers keeps making labels with no window open"
     );
     assert!(state_file::state_path(dir.path()).exists());
-    drop(listener);
+    drop(herdr);
     let _ = std::fs::remove_dir_all(&herdr_dir);
     announced.abort();
 }
