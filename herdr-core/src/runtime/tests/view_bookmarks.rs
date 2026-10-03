@@ -709,6 +709,8 @@ fn open_page(url: &str, reveal: bool) -> Action {
     Action::OpenBrowser {
         url: url.to_owned(),
         reveal,
+        area_id: None,
+        new_target: false,
     }
 }
 
