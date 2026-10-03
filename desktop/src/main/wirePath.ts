@@ -65,9 +65,13 @@ function shareRest(wire: string): string | null {
   return rest.join("/");
 }
 
+/** Rust's `char::is_whitespace` (Unicode White_Space), which `trim_end` strips; JavaScript's `trimEnd` adds U+FEFF and leaves out U+0085. */
+const TRAILING_WHITE_SPACE = /[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/u;
+
 /** Whether Win32 reads the name as a device (`CON`, `NUL`, `COM1`, ...), with or without an extension. */
 function reservedDevice(name: string): boolean {
-  const stem = (name.split(".")[0] ?? "").trimEnd().toUpperCase();
+  // ASCII letters only, as `to_ascii_uppercase`: `toUpperCase` would turn a dotless `ı` into `I`.
+  const stem = (name.split(".")[0] ?? "").replace(TRAILING_WHITE_SPACE, "").replace(/[a-z]/gu, (letter) => letter.toUpperCase());
   if (["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].includes(stem)) return true;
   return /^(?:COM|LPT)[1-9¹²³]$/u.test(stem);
 }
@@ -97,6 +101,9 @@ function shortVerbatim(native: string): string | null {
 }
 
 const win32: Spelling = {
+  // A little wider than Rust's `Path::is_absolute` (`\\?\` alone, `\\server\\share` with a doubled
+  // separator); `toWire` and `fromWire` narrow it to what has a spelling, so only a refusal's
+  // reason can differ from Rust's there.
   isAbsolute: (native) => /^[A-Za-z]:[\\/]/u.test(native) || /^[\\/]{2}[^\\/]+[\\/]+[^\\/]/u.test(native),
   toWire(native) {
     if (!win32.isAbsolute(native)) throw new WirePathError("not_absolute");

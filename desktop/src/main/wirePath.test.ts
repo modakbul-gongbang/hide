@@ -29,11 +29,14 @@ describe("the Windows spelling", () => {
     expect(windows.toWire("\\\\?\\C:\\repo\\a")).toBe("C:/repo/a");
     expect(windows.toWire("\\\\server\\share\\repo")).toBe("//server/share/repo");
     expect(windows.toWire("\\\\?\\UNC\\server\\share\\repo")).toBe("//server/share/repo");
+    // A device name is matched with ASCII case folding and Unicode white space trimmed, so these are names, not devices.
+    expect(windows.toWire("\\\\?\\C:\\a\\con\u0131n$")).toBe("C:/a/con\u0131n$");
+    expect(windows.toWire("\\\\?\\C:\\a\\lpt1\uFEFF")).toBe("C:/a/lpt1\uFEFF");
     expect(windows.toWire(`\\\\?\\C:\\${"a".repeat(300)}`)).toBe(`C:/${"a".repeat(300)}`);
   });
 
   it("refuses a path with no short spelling, and one that is not absolute", () => {
-    for (const native of ["\\\\?\\C:\\repo\\name.", "\\\\?\\C:\\repo\\NUL", "\\\\?\\Volume{1234}\\a", "\\\\.\\pipe\\x"]) {
+    for (const native of ["\\\\?\\C:\\repo\\name.", "\\\\?\\C:\\repo\\NUL", "\\\\?\\C:\\repo\\nul\u0085", "\\\\?\\Volume{1234}\\a", "\\\\.\\pipe\\x"]) {
       expect(refusal(() => windows.toWire(native)), native).toBe("unrepresentable");
     }
     for (const native of ["repo\\a", "C:repo", "\\repo", "/repo"]) {
