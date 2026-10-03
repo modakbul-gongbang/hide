@@ -132,25 +132,19 @@ async fn traversal_of_the_ui_dir_is_404() {
     ))
     .await;
     assert_eq!(code, 404);
-    let escaped = tokio::process::Command::new("/usr/bin/curl")
-        .args([
-            "-s",
-            "--path-as-is",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            &format!(
-                "http://127.0.0.1:{}/assets/../../{}/hided.json",
-                running.port,
-                dir.path().join("hided.json").display()
-            ),
-        ])
-        .output()
-        .await
-        .unwrap();
-    let body_code = String::from_utf8(escaped.stdout).unwrap();
-    assert_eq!(body_code, "404");
+    // The state folder's own path after the climb; a URI spells it with `/`.
+    let escaped = reqwest_status(&format!(
+        "http://127.0.0.1:{}/assets/../../{}",
+        running.port,
+        dir.path()
+            .join("hided.json")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+    ))
+    .await;
+    assert_eq!(escaped, 404);
     running.stop();
 }
 
@@ -346,46 +340,37 @@ async fn wait_close(
     .flatten()
 }
 
-async fn reqwest_get(url: &str) -> String {
-    let output = tokio::process::Command::new("/usr/bin/curl")
-        .args(["-fsS", url])
-        .output()
-        .await
+/// One request's status and body. The path is sent as written, `..`
+/// included, as `curl --path-as-is` would, and no test needs a `curl` on the
+/// runner.
+async fn request(method: &str, url: &str) -> (u16, String) {
+    use http_body_util::{BodyExt, Empty};
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+    let client = Client::builder(TokioExecutor::new()).build_http::<Empty<hyper::body::Bytes>>();
+    let request = hyper::Request::builder()
+        .method(method)
+        .uri(url)
+        .body(Empty::new())
         .unwrap();
-    String::from_utf8(output.stdout).unwrap()
+    let response = client.request(request).await.unwrap();
+    let status = response.status().as_u16();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(body.to_vec()).unwrap())
+}
+
+async fn reqwest_get(url: &str) -> String {
+    let (status, body) = request("GET", url).await;
+    assert_eq!(status, 200, "{url}: {body}");
+    body
 }
 
 async fn reqwest_post(url: &str) -> u16 {
-    let output = tokio::process::Command::new("/usr/bin/curl")
-        .args([
-            "-s",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "-X",
-            "POST",
-            url,
-        ])
-        .output()
-        .await
-        .unwrap();
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .parse()
-        .unwrap_or(0)
+    request("POST", url).await.0
 }
 
 async fn reqwest_status(url: &str) -> u16 {
-    let output = tokio::process::Command::new("/usr/bin/curl")
-        .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", url])
-        .output()
-        .await
-        .unwrap();
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .parse()
-        .unwrap_or(0)
+    request("GET", url).await.0
 }
 
 // --- $HOME boundary over the socket (PRD S2 B10) -------------------------
