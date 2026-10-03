@@ -74,6 +74,7 @@ The native guard cancels file main-frame and child-frame navigation, redirects, 
 Manual local-file displays retain the file policy below and are never CDP targets.
 An explicit manual navigation to a validated local file replaces the restricted WebContents with the existing separate file partition instead of relaxing an in-flight generation.
 Downloads and filesystem writes are disabled once a generation has held a debugger lease, including after disconnect.
+Each native generation logs its first file request, navigation and popup refusal separately, and its first controlled-download refusal once; repeated attempts remain canceled without more diagnostic output.
 Close and select bind the authenticated area into the core action and recheck the display's area and browser kind under the commit lock after retry lookup.
 A page moved after the query is refused without changing its selection or closing it; shell renderers and terminal displays cannot be selected or closed by this route.
 The app has one retry identity per launch registration, so retransmitting a completed close returns its receipt after the page is gone.
@@ -301,6 +302,10 @@ It opens a page with `hide browser open`, checks the native view sits on its slo
 The test window never activates the app or takes the keyboard, because the e2e fixture launches every app with `--hide-show-inactive` and `--disable-backgrounding-occluded-windows` (see [BUILD.md](BUILD.md#the-desktop-app)); it is shown behind the operator's windows, keeps painting there, and captures of it are taken by window id.
 The zoom test needs the key window: it is tagged `@needs-focus` and brings its window to the front itself.
 Keep screenshots and logs under local-only `agents/runs/`.
+`desktop/e2e/browser-cdp.spec.ts` exercises the scoped native gateway against its own candidate, including pre-attachment native file-request cancellation and persistent download cancellation after client disconnect.
+Its iframe proof correlates exact scoped parent and child target/session IDs with the candidate's native frame tree and distinct renderer processes, then retires the child and requires stale commands to fail while the parent remains usable.
+A same-renderer cross-site frame fails that OOPIF proof instead of substituting an in-process interaction or forcing launch flags.
+Its download witness confines the candidate app and owned page session to a private sink before every attempt, observes production cancellation on every native callback, and requires one refusal diagnostic and an empty sink.
 `desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server, whose sessions get the private HOME `desktop/e2e/device-home.ts` proves because connecting installs Hide's kit there, and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, route cleanup on close and forced candidate exit, and a return route that comes back after the device's helper connection ends and reconnects, with every remote command run through the `hide` Hide installed and linked on the device.
 
 ## Running Workspace servers
