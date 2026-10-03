@@ -1155,11 +1155,11 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let mut runtime = shared.lock().unwrap();
     let emptied = tree(&mut runtime);
     assert_eq!(emptied.display_count, 0);
-    // B10: the last area stays, empty; with the tool column hidden, as a
-    // new Workspace's is, the panel closes with its last view (issue 170).
+    // B10: the last area stays, empty; File Views turns off with its last
+    // view (PRD three-column-panel D-10).
     assert!(matches!(emptied.root, ViewNodeSnapshot::Area(_)));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(view.panel, crate::workspace_views::PanelState::Closed);
+    assert!(!view.views);
 }
 
 /// B5: a draft in one display keeps every display of that document open.
@@ -1419,7 +1419,7 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
     layout(
         &mut runtime,
-        serde_json::json!({"panel": "expanded", "tool": "changes"}),
+        serde_json::json!({"views": true, "tool": "changes"}),
     );
     let before = tree(&mut runtime);
     drop(runtime);
@@ -1471,12 +1471,8 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
     let view = restarted.snapshot.workspace_view.clone().unwrap();
     assert_eq!(
-        (view.panel, view.tool, view.tools),
-        (
-            crate::workspace_views::PanelState::Expanded,
-            crate::workspace_views::Tool::Changes,
-            true
-        )
+        (view.views, view.tool, view.tools),
+        (true, crate::workspace_views::Tool::Changes, true)
     );
     assert_eq!(active_label(&restarted).as_deref(), Some("a.md"));
 
@@ -1646,7 +1642,10 @@ fn a_schema_1_views_file_migrates_into_one_area() {
             .iter()
             .map(|(kind, _)| *kind)
             .collect::<Vec<_>>(),
-        vec!["workspace_views.migrated"]
+        vec![
+            "workspace_views.columns_migrated",
+            "workspace_views.migrated"
+        ]
     );
 
     let mut runtime = with_views(runtime, &state);
@@ -1775,7 +1774,7 @@ fn the_changes_read_takes_every_diff_on_screen() {
             .collect::<Vec<_>>()
     );
 
-    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    layout(&mut runtime, serde_json::json!({"views": false}));
     assert!(diffs(&mut runtime).is_empty());
 }
 
@@ -1905,10 +1904,7 @@ impl HistoryPump {
 fn a_late_history_answer_does_not_bring_back_the_row_the_operator_left() {
     let (mut runtime, checkout_id, directory) = views_runtime("view-history-late");
     // History reads while the side panel shows the tool column.
-    layout(
-        &mut runtime,
-        serde_json::json!({"panel": "open", "tools": true}),
-    );
+    layout(&mut runtime, serde_json::json!({"tools": true}));
     files(&directory, &["a.ts", "e.rs", "f.go"]);
     for arguments in [
         &["add", "."][..],
@@ -2037,7 +2033,7 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
 #[test]
 fn a_pages_new_tab_opens_beside_it_and_keeps_it_in_view() {
     let (mut runtime, _, _directory) = views_runtime("browser-beside");
-    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    layout(&mut runtime, serde_json::json!({"views": false}));
     assert!(browser_open(
         &mut runtime,
         serde_json::json!({"url": "https://a.test/pr"})
@@ -2121,7 +2117,7 @@ fn a_pages_new_tab_opens_beside_it_and_keeps_it_in_view() {
 #[test]
 fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
     let (mut runtime, _, directory) = views_runtime("browser-open");
-    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    layout(&mut runtime, serde_json::json!({"views": false}));
     let pane = with_pane(&mut runtime, &directory);
     assert!(browser_open(
         &mut runtime,
@@ -2163,7 +2159,7 @@ fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
     );
     assert!(page.load > 0);
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(view.panel, crate::workspace_views::PanelState::Open);
+    assert!(view.views);
 
     // The front Workspace, named by nothing, shows the page again.
     assert!(browser_open(
@@ -2386,7 +2382,7 @@ fn a_checkout_focus_naming_a_display_brings_it_forward_on_that_display() {
         false,
     );
     let a = display(&mut runtime, 0, "a.md");
-    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    layout(&mut runtime, serde_json::json!({"views": false}));
     runtime.dispatch_json(&explorer_event(
         "focus_checkout",
         serde_json::json!({"workspace_id": "workspace:other", "checkout_id": other_checkout}),
@@ -2428,11 +2424,7 @@ fn a_checkout_focus_naming_a_display_brings_it_forward_on_that_display() {
         .clone()
         .expect("a front Workspace");
     assert_eq!(view.path, directory.to_string_lossy());
-    assert_eq!(
-        view.panel,
-        crate::workspace_views::PanelState::Open,
-        "the side panel opens again"
-    );
+    assert!(view.views, "File Views turns on again");
     let (_, active, _) = areas(&view.layout).remove(0);
     assert_eq!(active.as_deref(), Some(a.as_str()));
     drop(other);

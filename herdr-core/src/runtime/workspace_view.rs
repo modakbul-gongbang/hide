@@ -1,7 +1,8 @@
 //! The runtime side of per-Workspace presentation (PRD S6 D-04, D-05, D-08,
-//! D-10; S7; issue 170): how the front Workspace's side panel shows, its
-//! tools, its View area tree, when that tree's documents are read back, and the file that
-//! keeps it all. What the areas hold and how an open lands in them is
+//! D-10; S7; PRD three-column-panel D-05, D-08, D-10): whether the front
+//! Workspace's File Views and Tools columns are on, their tool and widths,
+//! its View area tree, when that tree's documents are read back, and the
+//! file that keeps it all. What the areas hold and how an open lands in them is
 //! `view_areas.rs`.
 //!
 //! Everything here is inert unless the shell passed
@@ -16,7 +17,7 @@ use super::view_areas::Reconciled;
 use super::*;
 use crate::model::{BrowserViewInventoryRow, WorkspaceViewSnapshot};
 use crate::view_layout::DisplayKind;
-use crate::workspace_views::{self, PanelState, Tool, WorkspaceView, WorkspaceViews};
+use crate::workspace_views::{self, Tool, WorkspaceView, WorkspaceViews};
 
 /// A Workspace's identity: the device and the checkout path.
 pub(super) type WorkspaceKey = (String, String);
@@ -43,11 +44,6 @@ pub(super) struct WorkspaceViewStore {
     pub(super) agent_placements: BTreeMap<String, (WorkspaceKey, String, Option<usize>)>,
     /// The Workspace the last sync saw in front.
     pub(super) front: Option<WorkspaceKey>,
-    /// The front Workspace whose side panel the shell reports drawing over
-    /// the whole body, because its window is too narrow for the agents beside
-    /// it (`panel_covers`, issue 170). A viewport fact, not the operator's
-    /// choice: runtime only, never saved, and dropped when the front moves.
-    pub(super) covered: Option<WorkspaceKey>,
     /// Counts the layout changes made outside the reconcile, so an unchanged
     /// state costs the reconcile one comparison.
     pub(super) generation: u64,
@@ -82,17 +78,15 @@ pub(super) struct WorkspaceViewStore {
     save_worker: Option<thread::JoinHandle<()>>,
 }
 
-/// What an event asks of the front Workspace's side panel once it has moved
-/// the screen (D-08, issue 170): a document opened while the panel is closed
-/// opens it, and an agent chosen from elsewhere uncovers the agents, closing
-/// a panel that floats over them and bringing an expanded pinned one back to
-/// its width, while one chosen where it shows beside the panel (`in_place`)
-/// changes nothing. Nothing else moves the panel on its own.
+/// What an event asks of the front Workspace's columns once it has moved
+/// the screen (D-03, D-08): a document, diff or page opened or focused turns
+/// File Views on, and a reveal also turns Tools on with the Explorer.
+/// Choosing an agent or a tab changes no column (D-17); nothing else moves
+/// a column on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AreaIntent {
     Views,
-    Agents,
-    /// A reveal also shows the tool column on the Explorer.
+    /// A reveal also turns the Tools column on, on the Explorer.
     RevealInViews,
 }
 
@@ -103,51 +97,37 @@ impl AreaIntent {
             // A deselect opens nothing.
             Event::ChangesSelect(payload) if payload.path.is_some() => Some(Self::Views),
             Event::RevealPath(_) => Some(Self::RevealInViews),
-            Event::FocusPane(payload) if !payload.in_place => Some(Self::Agents),
-            Event::FocusTab(payload) if !payload.in_place => Some(Self::Agents),
-            // A device focus lands where the device's Herdr moves, so
-            // `request_remote_control` applies it to that Workspace.
             _ => None,
         }
     }
 }
 
-/// The payload of `panel_covers`: the Workspace the shell draws, as its
-/// `workspace_view` named it, and whether its side panel covers the whole
-/// body. The shell sends it only when that changes, never per resize.
-#[derive(Debug, Deserialize)]
-pub(super) struct PanelCoversPayload {
-    pub(super) workspace: super::view_areas::ViewWorkspace,
-    pub(super) covers: bool,
-}
-
 /// The payload of `workspace_view`: any subset of the front Workspace's
-/// presentation. Absent fields keep their value.
+/// presentation, each field the value it should end at, so the same event
+/// sent twice lands where it did once (D-05, B13). Absent fields keep their
+/// value.
 #[derive(Debug, Deserialize)]
 pub(super) struct WorkspaceViewPayload {
-    /// `closed`, `open` or `expanded`.
+    /// Whether the File Views column is on. On with no view open, it opens
+    /// one New tab page in the same event (D-10).
     #[serde(default)]
-    pub(super) panel: Option<String>,
-    #[serde(default)]
-    pub(super) pinned: Option<bool>,
-    /// `explorer` or `changes` (History): the tool column's one tool. Choosing
-    /// one shows the column unless `tools` says otherwise, and a closed panel
-    /// opens on it unless the payload names the panel too.
-    #[serde(default)]
-    pub(super) tool: Option<String>,
-    /// Whether the tool column shows. Showing it opens a closed panel the
-    /// same way.
+    pub(super) views: Option<bool>,
+    /// Whether the Tools column is on.
     #[serde(default)]
     pub(super) tools: Option<bool>,
-    /// The open panel's width, as a share of the Workspace body's.
+    /// `explorer` or `changes` (History): the Tools column's one tool.
+    /// Choosing one turns the column on unless `tools` says otherwise.
     #[serde(default)]
-    pub(super) views_over_share: Option<f32>,
-    /// A panel holding only the tools: its width, as a share of the body's.
+    pub(super) tool: Option<String>,
+    /// The File Views column's width, in CSS pixels.
     #[serde(default)]
-    pub(super) tools_share: Option<f32>,
-    /// A file of the front Workspace to reveal: the column shows the
-    /// Explorer with the file's folders unfolded, in the same event, and
-    /// nothing is opened. Like any tool shown, it opens a closed panel.
+    pub(super) views_width: Option<u32>,
+    /// The Tools column's width, in CSS pixels.
+    #[serde(default)]
+    pub(super) tools_width: Option<u32>,
+    /// A file of the front Workspace to reveal: Tools turns on with the
+    /// Explorer and the file's folders unfolded, in the same event, and
+    /// nothing is opened; File Views stays as it is (B5).
     #[serde(default)]
     pub(super) reveal: Option<String>,
 }
@@ -168,7 +148,16 @@ impl WorkspaceViewStore {
             workspace_views::LoadOutcome::Loaded {
                 migrated_from,
                 repairs,
+                upgraded,
             } => {
+                if upgraded > 0 {
+                    diagnostics.push((
+                        "workspace_views.columns_migrated",
+                        format!(
+                            "{upgraded} Workspaces were stored with the side panel or an older layout; each restarts with File Views on where its views showed, Tools and its tool as they were, and both column widths at their defaults"
+                        ),
+                    ));
+                }
                 if let Some(version) = migrated_from {
                     diagnostics.push((
                         "workspace_views.migrated",
@@ -230,7 +219,6 @@ impl WorkspaceViewStore {
                 agent_admissions: BTreeMap::new(),
                 agent_placements: BTreeMap::new(),
                 front: None,
-                covered: None,
                 generation: 0,
                 reconciled: None,
                 derived_active: None,
@@ -343,62 +331,16 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };
-        // A pinned panel the shell draws over the whole body covers the
-        // agents like one that floats.
-        let covered = store.covered.as_ref() == Some(key);
         let entry = store.views.entry(&key.0, &key.1);
-        let before = (entry.panel, entry.tool, entry.tools);
-        match intent {
-            AreaIntent::Views | AreaIntent::RevealInViews => {
-                if entry.panel == PanelState::Closed {
-                    entry.panel = PanelState::Open;
-                }
-                if intent == AreaIntent::RevealInViews {
-                    entry.tool = Tool::Explorer;
-                    entry.tools = true;
-                }
-            }
-            // A pinned panel sits beside the agents, so only its expansion
-            // covers them, unless the window is too narrow for both.
-            AreaIntent::Agents => {
-                entry.panel = match (entry.panel, entry.pinned && !covered) {
-                    (PanelState::Expanded, true) => PanelState::Open,
-                    (_, true) => entry.panel,
-                    (_, false) => PanelState::Closed,
-                };
-            }
+        let before = (entry.views, entry.tool, entry.tools);
+        entry.views = true;
+        if intent == AreaIntent::RevealInViews {
+            entry.tool = Tool::Explorer;
+            entry.tools = true;
         }
-        if before != (entry.panel, entry.tool, entry.tools) {
+        if before != (entry.views, entry.tool, entry.tools) {
             self.persist_workspace_views();
         }
-    }
-
-    /// `panel_covers`: whether the shell draws the named Workspace's side
-    /// panel over the whole body. It is taken only for the Workspace in
-    /// front, the one the shell draws, so a report that crossed a move of the
-    /// front changes nothing, and it never touches another Workspace.
-    pub(super) fn apply_panel_covers(&mut self, payload: PanelCoversPayload) -> bool {
-        if !self.separate_view_areas() {
-            self.set_error(
-                "workspace_view.unsupported",
-                "This shell does not draw separate Agent and View areas",
-                false,
-            );
-            return true;
-        }
-        let key = (payload.workspace.device_id, payload.workspace.path);
-        if self.front_workspace_key().as_ref() != Some(&key) {
-            return false;
-        }
-        let Some(store) = self.workspace_views.as_mut() else {
-            return false;
-        };
-        let covered = payload.covers.then_some(key);
-        if store.covered == covered {
-            return false;
-        }
-        store.covered = covered;
-        true
     }
 
     pub(super) fn apply_workspace_view(&mut self, payload: WorkspaceViewPayload) -> bool {
@@ -410,22 +352,6 @@ impl Runtime {
             );
             return true;
         }
-        let panel = match payload.panel.as_deref() {
-            None => None,
-            Some(value) => match PanelState::parse(value) {
-                Some(panel) => Some(panel),
-                None => {
-                    self.set_error(
-                        "workspace_view.unknown_panel",
-                        format!(
-                            "{value} is not a side panel state; expected closed, open or expanded"
-                        ),
-                        false,
-                    );
-                    return true;
-                }
-            },
-        };
         let tool = match payload.tool.as_deref() {
             None => None,
             Some(value) => match Tool::parse(value) {
@@ -462,35 +388,45 @@ impl Runtime {
         let store = self.workspace_views.as_mut().expect("checked above");
         let entry = store.views.entry(&key.0, &key.1);
         let before = entry.clone();
-        // A reveal is the Explorer's; a tool chosen shows the column.
+        // A reveal is the Explorer's; a tool chosen turns its column on.
         let tool = if payload.reveal.is_some() {
             Some(Tool::Explorer)
         } else {
             tool
         };
         let tools = payload.tools.or(tool.is_some().then_some(true));
-        match panel {
-            Some(panel) => entry.panel = panel,
-            None if tools == Some(true) && entry.panel == PanelState::Closed => {
-                entry.panel = PanelState::Open;
-            }
-            None => {}
-        }
-        if let Some(pinned) = payload.pinned {
-            entry.pinned = pinned;
-        }
         if let Some(tool) = tool {
             entry.tool = tool;
         }
         if let Some(tools) = tools {
             entry.tools = tools;
         }
-        entry.close_empty_panel();
-        if let Some(share) = payload.views_over_share {
-            entry.views_over_share = workspace_views::clamp_views_over_share(share);
+        if let Some(width) = payload.views_width {
+            entry.views_width = Some(workspace_views::clamp_column_width(width));
         }
-        if let Some(share) = payload.tools_share {
-            entry.tools_share = Some(workspace_views::clamp_views_over_share(share));
+        if let Some(width) = payload.tools_width {
+            entry.tools_width = Some(workspace_views::clamp_column_width(width));
+        }
+        // File Views is never an empty column: turned on with no view, it
+        // opens the New tab page in the same event (D-10, B16).
+        let empty = entry.layout.displays().next().is_none();
+        match payload.views {
+            Some(true) if empty => {
+                let load = self.next_browser_load();
+                if let Err(error) = self.change_view_layout(&key, |layout, stamp| {
+                    let display = layout.new_browser_display("", load);
+                    let area = layout.active_area().id.clone();
+                    layout.insert(&area, display, stamp)?;
+                    Ok(((), true))
+                }) {
+                    self.set_error(error.kind(), error.message(), false);
+                    return true;
+                }
+                let store = self.workspace_views.as_mut().expect("checked above");
+                store.views.entry(&key.0, &key.1).views = true;
+            }
+            Some(views) => entry.views = views,
+            None => {}
         }
         let revealed = payload
             .reveal
@@ -552,11 +488,6 @@ impl Runtime {
         if front != store.front {
             let store = self.workspace_views.as_mut().expect("checked above");
             store.front = front.clone();
-            // The report described the Workspace that was drawn; the next
-            // one is reported when the shell draws it.
-            if store.covered.is_some() && store.covered != front {
-                store.covered = None;
-            }
         }
         if let Some(key) = front.as_ref()
             && self
@@ -665,13 +596,11 @@ impl Runtime {
         let published = front.zip(view).map(|(key, view)| WorkspaceViewSnapshot {
             device_id: view.device_id.clone(),
             path: view.path.clone(),
-            panel: view.panel,
-            pinned: view.pinned,
-            tool: view.tool,
+            views: view.views,
             tools: view.tools,
-            views_over_share: view.views_over_share,
-            tools_share: view.tools_share,
-            covered: Some(key) == store.covered.as_ref(),
+            tool: view.tool,
+            views_width: view.views_width,
+            tools_width: view.tools_width,
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
             agent_layout: self.agent_layout_snapshot(&view.agent_layout),
@@ -679,10 +608,10 @@ impl Runtime {
         self.snapshot.workspace_view = published;
         // The one global panel every existing reader gates on (the Changes
         // reader, the device Explorer watch) follows the front Workspace's
-        // tool while its side panel shows the column, so those readers keep
-        // one owner (A5) and read nothing for a closed panel.
+        // Tools column and its tool, so those readers keep one owner (A5)
+        // and read nothing while Tools is off.
         if let Some(view) = self.snapshot.workspace_view.as_ref() {
-            self.snapshot.ui_state.right_panel_visible = view.panel.is_shown() && view.tools;
+            self.snapshot.ui_state.right_panel_visible = view.tools;
             self.snapshot.ui_state.right_panel_section = match view.tool {
                 Tool::Explorer => RightPanelSection::Explorer,
                 Tool::Changes => RightPanelSection::Changes,

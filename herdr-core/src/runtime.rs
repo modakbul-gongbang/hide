@@ -46,7 +46,7 @@ use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
 use events::*;
 use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
-use workspace_view::{AreaIntent, PanelCoversPayload, WorkspaceViewPayload, WorkspaceViewStore};
+use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
 use crate::checkout_owner::{OwnerOpen, TabHost};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
