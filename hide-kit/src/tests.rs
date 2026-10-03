@@ -425,7 +425,10 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
     std::fs::remove_file(&link).unwrap();
     std::os::unix::fs::symlink("/another-program/resources/hide", &link).unwrap();
     assert_eq!(
-        state(&apply(&fixture.target, &Scope::automatic()), ComponentId::Cli),
+        state(
+            &apply(&fixture.target, &Scope::automatic()),
+            ComponentId::Cli
+        ),
         ComponentState::Failed
     );
     assert_eq!(
@@ -1116,7 +1119,10 @@ fn a_recorded_command_is_upgraded_after_its_old_package_is_deleted() {
     );
     std::fs::remove_dir_all(old_resources.parent().unwrap()).unwrap();
     assert_eq!(
-        state(&apply(&fixture.target, &Scope::automatic()), ComponentId::Cli),
+        state(
+            &apply(&fixture.target, &Scope::automatic()),
+            ComponentId::Cli
+        ),
         ComponentState::Installed
     );
     assert_eq!(
