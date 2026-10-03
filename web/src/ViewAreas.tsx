@@ -7,13 +7,13 @@ import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay } from "./browserViews";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { hostKind, revealHost } from "./host";
+import { revealHost } from "./host";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
 import { editorTabFor, frontCheckout, type ViewDisplaySnapshot, type ViewLayoutSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
-import { displayCommand } from "./shortcuts";
+import { commandLabel } from "./shortcutLabels";
 import { noteDrawnViews, useKeyboardOwner } from "./viewFocus";
 import { displayIdentity, displayMenu, focusRequestArrived, placeKey, shownDisplays, workspaceKey, showsSameDocument, VIEW_WORDS, type ViewMenuId, type ViewWorkspace } from "./viewLayout";
 import { locateDisplay } from "./areaLayout";
@@ -106,7 +106,7 @@ function ViewTree({ layout, deviceId, path, trailing, actions }: { layout: ViewL
     resize: actions.resizeViewSplit,
     newTab: (areaId) => actions.openBrowser("", workspace, areaId),
     newTabLabel: "New tab",
-    newTabShortcut: displayCommand("new_tab", hostKind()),
+    newTabShortcut: commandLabel("new_tab"),
     tabListLabel: "View tabs",
     actionsLabel: "View actions",
     onDraw: (frame) => noteDrawnViews(frame ? { ...frame, workspace } : null),
@@ -198,7 +198,7 @@ export function DisplayTab({ display, interaction, actions }: { display: ViewDis
           <XIcon />
         </Button>
       </Hint>
-      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
+      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-foreground" /> : null}
     </div>
     </Hint>
   );

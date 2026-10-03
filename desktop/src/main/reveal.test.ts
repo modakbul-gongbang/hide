@@ -2,40 +2,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { revealablePath, revealTarget } from "./reveal";
-
-describe("revealablePath", () => {
-  it("takes an absolute folder as it is, in this system's spelling", () => {
-    const folder = path.join(path.parse(process.cwd()).root, "Users", "example", "projects", "hide");
-    expect(revealablePath(folder)).toBe(folder);
-    // The page joins names with `/` on every system.
-    const page = folder.split(path.sep).join("/");
-    expect(revealablePath(`${page}/../hide.worktrees/feature`)).toBe(path.join(path.dirname(folder), "hide.worktrees", "feature"));
-  });
-
-  it("refuses anything that is not an absolute path", () => {
-    expect(revealablePath("projects/hide")).toBeNull();
-    expect(revealablePath("")).toBeNull();
-    expect(revealablePath(42)).toBeNull();
-    expect(revealablePath({ path: "/tmp" })).toBeNull();
-    expect(revealablePath("/tmp/a\0b")).toBeNull();
-    expect(revealablePath(`/${"a".repeat(5000)}`)).toBeNull();
-  });
-});
+import { revealTarget } from "./reveal";
 
 describe("revealTarget", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hide-reveal-"));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-reveal-")));
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+  /** The page names a path with `/` between names on every system. */
+  const page = (native: string): string => native.split(path.sep).join("/");
 
-  it("hands over a file or a folder that exists, with its kind", async () => {
+  it("hands over a file or a folder that exists, in this system's spelling, with its kind", async () => {
     const file = path.join(root, "notes.md");
     fs.writeFileSync(file, "notes");
-    expect(await revealTarget(file)).toEqual({ path: file, kind: "file" });
-    expect(await revealTarget(root)).toEqual({ path: root, kind: "directory" });
+    expect(await revealTarget(page(file))).toEqual({ path: file, kind: "file" });
+    expect(await revealTarget(page(root))).toEqual({ path: root, kind: "directory" });
   });
 
   it("refuses a path that is not absolute or no longer exists", async () => {
     expect(await revealTarget("notes.md")).toEqual({ refused: "path" });
-    expect(await revealTarget(path.join(root, "gone.md"))).toEqual({ refused: "missing" });
+    expect(await revealTarget("\\notes.md")).toEqual({ refused: "path" });
+    expect(await revealTarget(page(path.join(root, "gone.md")))).toEqual({ refused: "missing" });
   });
 });

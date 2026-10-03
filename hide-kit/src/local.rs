@@ -15,8 +15,15 @@ use std::sync::atomic::AtomicBool;
 
 use crate::{HcoordRuntime, KitTarget};
 
-/// Why this Mac's row installs nothing under a daemon outside the app.
-pub const STANDALONE_REASON: &str = "This Hide daemon is not running from the installed app, so it installs nothing on this Mac; open the Hide app to install";
+/// Why this machine's row installs nothing: on a Mac, a daemon outside the
+/// app; elsewhere every daemon, because only a macOS app bundle has the
+/// folder [`bundled_kit_dir`] recognizes, so a Windows or Linux package
+/// installs nothing either.
+pub const STANDALONE_REASON: &str = if cfg!(target_os = "macos") {
+    "This Hide daemon is not running from the installed app, so it installs nothing on this Mac; open the Hide app to install"
+} else {
+    "Hide installs its kit only from its macOS app, so it installs nothing on this machine"
+};
 
 /// The `Contents/Resources` folder of the app bundle `executable` runs
 /// from, or `None` when it does not run from one.

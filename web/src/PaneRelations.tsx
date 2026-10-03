@@ -10,7 +10,7 @@ import { DeviceChip } from "./components/device-chip";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
 import type { PaneRow, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { pasteText, selectAllText, terminalSelectionText } from "./terminals";
+import { copySelection, pasteClipboard, selectAllText } from "./terminals";
 import { useUiStore } from "./ui";
 
 // The delegation tree where the operator works (PRD S6 D-07, B14-B16): a
@@ -206,8 +206,8 @@ export type TerminalMenuContext = {
   zoomed: boolean;
   /** Panes in the tab, the zoomed one's hidden siblings included. */
   paneCount: number;
-  /** The chords the registry binds here; "" draws none. */
-  chords: { find: string; splitRight: string; splitDown: string; zoom: string };
+  /** The chords the registry and the terminal bind here; "" draws none. */
+  chords: { copy: string; paste: string; find: string; splitRight: string; splitDown: string; zoom: string };
 };
 
 /**
@@ -217,9 +217,9 @@ export type TerminalMenuContext = {
 export function terminalMenuItems(pane: PaneRow, title: string, context: TerminalMenuContext): MenuEntry<PaneMenuId>[] {
   const { chords } = context;
   const items: MenuEntry<PaneMenuId>[] = [];
-  if (context.selection) items.push({ id: "copy", label: "Copy", unavailable: null, shortcut: "⌘C" });
+  if (context.selection) items.push({ id: "copy", label: "Copy", unavailable: null, shortcut: chords.copy });
   items.push(
-    { id: "paste", label: "Paste", unavailable: null, shortcut: "⌘V" },
+    { id: "paste", label: "Paste", unavailable: null, shortcut: chords.paste },
     { id: "select_all", label: "Select all", unavailable: null },
     { id: "find", label: "Find", unavailable: null, shortcut: chords.find },
     { id: "split_right", label: "Split right", unavailable: null, separated: true, shortcut: chords.splitRight },
@@ -237,7 +237,6 @@ export function terminalMenuItems(pane: PaneRow, title: string, context: Termina
 
 type MenuOpen = { x: number; y: number; items: MenuEntry<PaneMenuId>[] };
 
-const noteDiagnostic = (message: string) => useShellStore.getState().noteDiagnostic(message);
 
 export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
   const [open, setOpen] = useState<MenuOpen | null>(null);
@@ -250,21 +249,11 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
         return actions.closePane(pane.id);
       case "sleep_agent":
         return actions.sleepAgent(pane.id);
-      case "copy": {
-        const text = terminalSelectionText(pane.id);
-        if (text === null) return;
-        if (!navigator.clipboard) return noteDiagnostic("pane menu copy: no clipboard in this host");
-        void navigator.clipboard.writeText(text).catch(() => noteDiagnostic("pane menu copy: clipboard write refused"));
+      case "copy":
+        void copySelection(pane.id, "pane menu");
         return;
-      }
       case "paste":
-        if (!navigator.clipboard) return noteDiagnostic("pane menu paste: no clipboard in this host");
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) pasteText(pane.id, text);
-          })
-          .catch(() => noteDiagnostic("pane menu paste: clipboard read refused"));
+        void pasteClipboard(pane.id, "pane menu");
         return;
       case "select_all":
         return selectAllText(pane.id);

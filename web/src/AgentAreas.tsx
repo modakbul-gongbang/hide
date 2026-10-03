@@ -8,8 +8,7 @@ import { Button } from "./components/ui/button";
 import { FindBar } from "./Overlays";
 import { PaneCanvas } from "./PaneGrid";
 import { RelationStatus } from "./PaneRelations";
-import { hostKind } from "./host";
-import { displayCommand } from "./shortcuts";
+import { commandLabel } from "./shortcutLabels";
 import type { Checkout } from "./snapshot";
 import { useShellStore } from "./store";
 import { numberOf, numberedTabs } from "./numbering";
@@ -83,7 +82,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
     newTab: (areaId) => actions.createTab(areaId),
     newTabLabel: `New tab ${checkout.next_tab_label}`,
     tabListLabel: "Agent tabs", actionsLabel: "Agent tab actions",
-    newTabShortcut: displayCommand("new_tab", hostKind()),
+    newTabShortcut: commandLabel("new_tab"),
     onDraw: (frame) => noteAreaFrame("agent", frame ? { ...frame, layout, workspace } : null),
   };
   return <SharedAgentTree key={`${deviceId}\0${checkout.path}`} layout={layout} adapter={adapter} />;

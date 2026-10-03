@@ -63,7 +63,7 @@ The web shell renders that state and sends typed user events back, so the UI doe
 
 ## Install
 
-hide currently ships for Apple Silicon Macs running macOS 14 or later.
+hide currently ships for Apple Silicon Macs running macOS 14 or later, with unsigned Windows x64 and Linux x64 packages beside it ([Windows and Linux](docs/INSTALL.md#windows-and-linux)).
 If the [Releases](https://github.com/modakbul-gongbang/hide/releases) page has no public build yet, install from source:
 
 ```sh

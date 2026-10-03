@@ -11,6 +11,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -141,7 +142,7 @@ test("a ~/hide that is not Hide's is left alone, and the reason shows under the 
     await expect(refusal).toHaveCount(0);
 
     // B21: a start aimed at Home says the same inside the panel and keeps the text.
-    await page.keyboard.press("Meta+KeyK");
+    await page.keyboard.press(chord("search"));
     await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();
     await page.keyboard.type("에이전트");
     await page.locator('[data-palette-row="command:start-agent"]').click();

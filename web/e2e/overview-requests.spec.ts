@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { claudeProjects, declareParent, elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { chord, field } from "./chords";
 import { countSent, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 240_000 });
@@ -242,14 +243,14 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await page.keyboard.press("End");
     await expect(focusables.last()).toBeFocused();
     await overview.locator(`[data-request-toggle="${askingPane}"]`).focus();
-    await page.keyboard.press("Meta+Enter");
+    await page.keyboard.press(field("Enter"));
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(page.locator(`[data-pane-view="${askingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect.poll(() => last.get("request_view")?.observing).toBe(false);
 
     // ⌘⇧H comes back to the request view; Home opens All projects on its 요청 tab (B1).
     await page.locator("body").click({ position: { x: 1, y: 1 } });
-    await page.keyboard.press("Meta+Shift+KeyH");
+    await page.keyboard.press(chord("project_home"));
     await expect(overview).toHaveAttribute("data-overview-view", "requests");
     await page.locator("[data-home-destination]").click();
     const main = page.locator("[data-main-screen]");

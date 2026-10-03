@@ -12,6 +12,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { chord } from "./chords";
 
 const SOURCE = "export const answer = 41;\n";
 
@@ -216,7 +217,7 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     await screenshot(page, "s3-preview-tab");
 
     // ⌘⇧K promotes the preview display to an ordinary one (B3; S7 B2).
-    await page.keyboard.press("Meta+Shift+KeyK");
+    await page.keyboard.press(chord("keep_open"));
     await expect.poll(() => sent.get("view_layout.keep_open")).toBe(1);
     await expect(fileTab).toHaveAttribute("data-preview", "false");
 
@@ -256,7 +257,7 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
 
     // ⌘S still saves at once.
     const savesBeforeChord = sent.get("file_save") ?? 0;
-    await page.keyboard.press("Meta+KeyS");
+    await page.keyboard.press(chord("save_file"));
     await expect.poll(() => sent.get("file_save")).toBe(savesBeforeChord + 1);
 
     // A change on disk after the open makes the next save a conflict, and the
@@ -267,7 +268,7 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     await content.click();
     await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 43;\n");
-    await page.keyboard.press("Meta+KeyS");
+    await page.keyboard.press(chord("save_file"));
     await expect(page.locator("[data-editor-conflict]")).toBeVisible();
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
     await screenshot(page, "s3-editor-conflict");
@@ -352,7 +353,7 @@ test("a draft that cannot be stored stays editable and holds other documents rea
     fs.chmodSync(file, 0o644);
     await page.locator('[data-tab-kind="file"][data-tab-only="true"]').click();
     await expect(page.locator('[data-editor-draft-hold="unstored"]')).toBeVisible();
-    await page.keyboard.press("Meta+KeyS");
+    await page.keyboard.press(chord("save_file"));
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 44;\n");
     await expect(page.locator("[data-editor-draft-hold]")).toHaveCount(0);
     await page.locator('[data-tab-kind="file"]', { hasText: "README.md" }).click();
@@ -432,7 +433,7 @@ test("an undone edit is what the next save writes", async ({ page }) => {
     await page.keyboard.press("ControlOrMeta+KeyZ");
     await expect(content).not.toContainText("X");
     const savesBefore = sent.get("file_save") ?? 0;
-    await page.keyboard.press("Meta+KeyS");
+    await page.keyboard.press(chord("save_file"));
     await expect.poll(() => sent.get("file_save")).toBeGreaterThan(savesBefore);
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe(SOURCE);
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
@@ -446,7 +447,7 @@ test("a find request does not follow into the next document", async ({ page }) =
   const { repo } = fixture;
   try {
     await page.locator('[data-editor-body] .cm-content').click();
-    await page.keyboard.press("Meta+KeyF");
+    await page.keyboard.press(chord("find_in_pane"));
     await expect(page.locator(".cm-search")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator(".cm-search")).toHaveCount(0);
@@ -504,7 +505,7 @@ test("a closed tab's draft is not written back when the file is reopened", async
     await page.locator(`[data-explorer-row="${repo}/src/main.ts"]`).click();
     await expect(content).toContainText("answer = 0");
     const savesBefore = sent.get("file_save") ?? 0;
-    await page.keyboard.press("Meta+KeyS");
+    await page.keyboard.press(chord("save_file"));
     await expect.poll(() => sent.get("file_save")).toBeGreaterThan(savesBefore);
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
   } finally {
@@ -526,7 +527,7 @@ test("a conflicted background tab is not closed away with its draft", async ({ p
     fs.writeFileSync(file, "export const answer = 0;\n");
     const ahead = new Date(Date.now() + 5_000);
     fs.utimesSync(file, ahead, ahead);
-    await page.keyboard.press("Meta+KeyS");
+    await page.keyboard.press(chord("save_file"));
     await expect(page.locator("[data-editor-conflict]")).toBeVisible();
 
     await page.locator(`[data-explorer-row="${repo}/README.md"]`).click();
@@ -558,7 +559,7 @@ test("the close chord closes the file tab that is showing", async ({ page }) => 
   const { sent } = fixture;
   try {
     await page.locator('[data-editor-body] .cm-content').click();
-    await page.keyboard.press("Alt+KeyW");
+    await page.keyboard.press(chord("close_tab"));
     await expect.poll(() => sent.get("view_layout.close")).toBe(1);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     // The terminal tab the file tab was covering is still there.
@@ -927,13 +928,13 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     // row again through the core's expanded set (B3).
     await page.locator(`[data-explorer-row="${repo}/src"]`).click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
-    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.keyboard.press(chord("toggle_right_panel"));
     await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
     // preview tab (B12). The open brings the side panel back with the
     // Explorer the Workspace keeps, its row revealed (S6 B10, issue 170).
-    await page.keyboard.press("Meta+KeyP");
+    await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
     await input.fill("main");
@@ -950,7 +951,7 @@ test("⌘P opens a file by name and ⌘K switches checkout", { tag: "@platform" 
     // ⌘K: the snapshot's projects and checkouts are searched here, and picking
     // a checkout focuses its Workspace (B13; a Project opens its Overview, S6 B1).
     const focusBefore = sent.get("focus_checkout") ?? 0;
-    await page.keyboard.press("Meta+KeyK");
+    await page.keyboard.press(chord("search"));
     const search = page.locator('[data-palette="Search"] [data-palette-input]');
     await expect(search).toBeVisible();
     await search.fill("fixture");
@@ -1408,7 +1409,7 @@ test("a save refused at the daemon's boundary keeps the draft unsaved, across a 
     await content.click();
     await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 55;\n");
-    await page.keyboard.press("Meta+KeyS");
+    await page.keyboard.press(chord("save_file"));
     await expect.poll(() => refused, { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
     // Never shown as saved: the tab stays unsaved, the file is untouched,
     // and the draft is in the store.
@@ -1424,7 +1425,7 @@ test("a save refused at the daemon's boundary keeps the draft unsaved, across a 
 
     refusing = false;
     await content.click();
-    await page.keyboard.press("Meta+KeyS");
+    await page.keyboard.press(chord("save_file"));
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 55;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
   } finally {

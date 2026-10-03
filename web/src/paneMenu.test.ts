@@ -3,7 +3,7 @@ import { terminalMenuItems, type TerminalMenuContext } from "./PaneRelations";
 import type { PaneRow } from "./snapshot";
 
 const pane = { id: "w1:p1", children: null, lineage_path: [] } as unknown as PaneRow;
-const chords = { find: "⌘F", splitRight: "⌘D", splitDown: "⌘⇧D", zoom: "⌥⌘↩" };
+const chords = { copy: "⌘C", paste: "⌘V", find: "⌘F", splitRight: "⌘D", splitDown: "⌘⇧D", zoom: "⌥⌘↩" };
 const context = (over: Partial<TerminalMenuContext>): TerminalMenuContext => ({ selection: false, zoomed: false, paneCount: 2, chords, ...over });
 
 describe("a right-click in a terminal", () => {

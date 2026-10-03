@@ -21,8 +21,8 @@ import { useShellStore } from "./store";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import { NO_REQUEST_LENS, toggledFold, useUiStore, type MainView, type RequestLens } from "./ui";
-import { hostBridge, hostKind } from "./host";
-import { displayCommand } from "./shortcuts";
+import { hostBridge } from "./host";
+import { commandLabel } from "./shortcutLabels";
 
 // The Overview of one device's projects (PRD S6 D-02, B1-B4, B21; `screen.kind
 // === "main"`, opened by the sidebar's Home row, PRD home-device-rail D-13): the
@@ -133,7 +133,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           {hostBridge() ? (
             <Button variant="ghost" onClick={() => actions.openAddProject()} data-main-add-project="true">
               <PlusIcon aria-hidden="true" />
-              Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
+              Add project <span className="text-muted-foreground">{commandLabel("new_workspace")}</span>
             </Button>
           ) : null}
           {issueProject ? (

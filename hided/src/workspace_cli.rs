@@ -404,12 +404,11 @@ mod tests {
     #[test]
     fn a_remote_bridge_answers_this_device_and_ends_with_its_channel() {
         // A Unix socket path is limited to about a hundred bytes, and the
-        // bridge's sits three folders below this one; a suite's own TMPDIR
-        // can be long enough to leave no room for it.
+        // bridge binds two folders below this one, so a long TMPDIR overflows it.
         let directory = if cfg!(unix) {
-            tempfile::Builder::new().prefix("wb").tempdir_in("/tmp")
+            tempfile::Builder::new().prefix("hb").tempdir_in("/tmp")
         } else {
-            tempfile::Builder::new().prefix("wb").tempdir()
+            tempfile::Builder::new().prefix("hb").tempdir()
         }
         .unwrap();
         let bridges = directory.path().join("bridges");

@@ -12,6 +12,8 @@ import { useUiStore } from "./ui";
 import { drawnViews } from "./viewFocus";
 import { besideUnavailable } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
+import { holdsCommandKey } from "./host";
+import { fieldLabel } from "./shortcutLabels";
 
 // The file and diff palettes (PRD B12, B13) on the System command palette: a
 // query field, a list cmdk's own arrow keys and Enter walk, and Escape closes
@@ -129,8 +131,8 @@ function FilePalette({ actions }: { actions: Actions }) {
       value={current?.path ?? ""}
       onValue={setHighlighted}
       onKeyDown={(event) => {
-        // ⌘↵ opens the highlighted file beside the active View area (S7 B4).
-        if (event.key !== "Enter" || !event.metaKey || event.nativeEvent.isComposing || !current) return;
+        // ⌘↵ (Ctrl+Enter off macOS) opens the highlighted file beside the active View area (S7 B4).
+        if (event.key !== "Enter" || !holdsCommandKey(event) || event.nativeEvent.isComposing || !current) return;
         event.preventDefault();
         event.stopPropagation();
         const reason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());
@@ -139,7 +141,7 @@ function FilePalette({ actions }: { actions: Actions }) {
       }}
       footer={
         <span className="flex items-center gap-md">
-          <span data-palette-hint="beside">{besideReason ?? "⌘↵ 옆에 열기"}</span>
+          <span data-palette-hint="beside">{besideReason ?? `${fieldLabel("Enter")} 옆에 열기`}</span>
           {fileIndex?.truncated ? <span>The index is truncated at 50,000 files</span> : null}
         </span>
       }

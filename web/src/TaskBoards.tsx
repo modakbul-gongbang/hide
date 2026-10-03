@@ -64,6 +64,7 @@ import {
 import { laneCheckoutCard, relativeActivity } from "./projects";
 import type { AgentRow, IssueDetail, IssueLabel, Task, Workspace } from "./snapshot";
 import type { TasksMode } from "./ui";
+import { holdsCommandKey } from "./host";
 
 // The Issues views (PRD task-agents-views, reworked issue-first on
 // 2026-09-28 and issues-only by PRD overview-lenses-issues), drawn the same
@@ -122,9 +123,9 @@ export const EDIT_HINT = "Local 이슈만. 제목 · 본문을 그 자리에서 
 /** The board's page state its cards read: the open panel's issue, and the agent in front. */
 export type BoardPage = { panel: string | null; focusedPaneId: string | null };
 
-/** ⌘-click means GitHub wherever it lands (D-09). */
+/** ⌘-click (Ctrl-click off macOS) means GitHub wherever it lands (D-09). */
 function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: BoardHandlers): boolean {
-  if (!event.metaKey || !url) return false;
+  if (!holdsCommandKey(event) || !url) return false;
   event.preventDefault();
   event.stopPropagation();
   handlers.openGitHub(url, deviceId);

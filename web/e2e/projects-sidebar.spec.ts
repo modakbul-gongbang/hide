@@ -15,6 +15,7 @@ import path from "node:path";
 import { declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -83,7 +84,7 @@ async function sidebarTextSizes(page: Page): Promise<string[]> {
 }
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await page.locator('[data-settings-tab="appearance"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
@@ -452,7 +453,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await rest(page);
     const agentsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(agentRow, nextRow, agentParts) };
     await page.locator('[data-sidebar-mode="projects"]').click();
-    await page.keyboard.press("Alt+Comma");
+    await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="appearance"]').click();
     const fontSize = page.locator('[data-font-size="true"] [role="slider"]');
     await fontSize.focus();

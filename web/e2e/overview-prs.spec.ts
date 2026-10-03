@@ -20,6 +20,7 @@ import path from "node:path";
 import { labelAgent, agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
+import { chord } from "./chords";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -177,7 +178,7 @@ function body(state: string, number: number): string {
 }
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await page.locator('[data-settings-tab="appearance"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
@@ -398,7 +399,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     const chip = overview.locator('[data-overview-card][data-task-key="github:acme/repo#5"] [data-lens-pr-chip="21"]');
     await expect(chip).toBeVisible({ timeout: 30_000 });
     const github = page.waitForEvent("popup");
-    await chip.click({ modifiers: ["Meta"] });
+    await chip.click({ modifiers: ["ControlOrMeta"] });
     expect((await github).url()).toBe("https://github.com/acme/repo/pull/21");
     await (await github).close();
     await chip.click();

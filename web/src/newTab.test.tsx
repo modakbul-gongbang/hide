@@ -8,12 +8,12 @@ import type { ChangesSnapshot, ViewLayoutSnapshot, ViewDisplaySnapshot } from ".
 
 describe("new-tab choices", () => {
   it("offers only File and, when changes exist, Diff", () => {
-    const clean = renderToStaticMarkup(<NewTabBody hasChanges={false} onFile={() => undefined} onDiff={() => undefined} />);
+    const clean = renderToStaticMarkup(<NewTabBody hasChanges={false} fileChord="⌘P" onFile={() => undefined} onDiff={() => undefined} />);
     expect(clean).toContain("Open");
     expect(clean).toContain("File");
     expect(clean).toContain("⌘P");
     expect(clean).not.toContain("Diff");
-    const dirty = renderToStaticMarkup(<NewTabBody hasChanges onFile={() => undefined} onDiff={() => undefined} />);
+    const dirty = renderToStaticMarkup(<NewTabBody hasChanges fileChord="⌘P" onFile={() => undefined} onDiff={() => undefined} />);
     expect(dirty).toContain("Diff");
     for (const label of ["Explorer", "Changes", "Terminal", "Recent"]) expect(dirty).not.toContain(label);
   });

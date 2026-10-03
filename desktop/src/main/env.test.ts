@@ -18,7 +18,7 @@ describe("the environment registry", () => {
     const readers = sources(SRC).filter((file) => fs.readFileSync(file, "utf8").includes("process.env"));
     expect(readers.map((file) => path.relative(SRC, file).split(path.sep).join("/"))).toEqual(["main/index.ts"]);
     const envSource = fs.readFileSync(path.join(SRC, "main/env.ts"), "utf8");
-    const read = [...envSource.matchAll(/(?:absolute\(|source\.)"?([A-Z_]+)"?/g)].map((match) => match[1]);
+    const read = [...envSource.matchAll(/(?:absolute|windows)\("([A-Za-z_]+)"|source\.([A-Za-z_]+)/g)].map((match) => match[1] ?? match[2]);
     const registered = ENV_REGISTRY.map((entry) => entry.key);
     for (const key of read) expect(registered, key).toContain(key);
   });
@@ -27,10 +27,58 @@ describe("the environment registry", () => {
     expect(() => loadEnv({ HIDE_CLI_PATH: "relative/hide", HIDE_DESKTOP_USER_DATA_DIR: "also-relative" })).toThrow(
       "desktop environment is not usable: HIDE_CLI_PATH: not an absolute path; HIDE_DESKTOP_USER_DATA_DIR: not an absolute path",
     );
-    const source = { PATH: "/bin", HOME: "/h", HIDE_STATE_DIR: "/s" };
-    expect(loadEnv(source)).toEqual({ cliPath: null, userDataDir: null, herdrBinPath: null, herdrPaneId: null, shell: "/bin/zsh", home: "/h", path: "/bin", inherited: source });
+    // A rooted path without a drive names a different file per current drive on Windows, and is relative elsewhere.
+    expect(() => loadEnv({ HERDR_BIN_PATH: "\\herdr" })).toThrow("HERDR_BIN_PATH: not an absolute path");
+  });
+
+  it.runIf(process.platform !== "win32")("reads the macOS and Linux keys", () => {
+    const source = { PATH: "/bin", HOME: "/h", SHELL: "/bin/sh", HIDE_STATE_DIR: "/s", LOCALAPPDATA: "/l" };
+    expect(loadEnv(source)).toEqual({
+      cliPath: null,
+      userDataDir: null,
+      herdrBinPath: null,
+      herdrPaneId: null,
+      shell: "/bin/sh",
+      home: "/h",
+      localAppData: null,
+      appData: null,
+      programFiles: null,
+      systemRoot: null,
+      path: "/bin",
+      inherited: source,
+    });
     expect(loadEnv({ ...source, HERDR_BIN_PATH: "/opt/herdr" }).herdrBinPath).toBe("/opt/herdr");
     expect(loadEnv({ ...source, HERDR_PANE_ID: "w1:p1" }).herdrPaneId).toBe("w1:p1");
     expect(() => loadEnv({ ...source, HERDR_BIN_PATH: "herdr" })).toThrow("HERDR_BIN_PATH: not an absolute path");
+  });
+
+  it.runIf(process.platform === "win32")("reads the Windows keys, and no login shell", () => {
+    const source = {
+      PATH: "C:\\Windows",
+      USERPROFILE: "C:\\Users\\example",
+      HOME: "/c/Users/example",
+      SHELL: "/usr/bin/bash",
+      LOCALAPPDATA: "C:\\Users\\example\\AppData\\Local",
+      APPDATA: "C:\\Users\\example\\AppData\\Roaming",
+      ProgramFiles: "C:\\Program Files",
+      SystemRoot: "C:\\Windows",
+    };
+    expect(loadEnv(source)).toEqual({
+      cliPath: null,
+      userDataDir: null,
+      herdrBinPath: null,
+      herdrPaneId: null,
+      shell: null,
+      home: "C:\\Users\\example",
+      localAppData: "C:\\Users\\example\\AppData\\Local",
+      appData: "C:\\Users\\example\\AppData\\Roaming",
+      programFiles: "C:\\Program Files",
+      systemRoot: "C:\\Windows",
+      path: "C:\\Windows",
+      inherited: source,
+    });
+    expect(() => loadEnv({ ...source, USERPROFILE: "\\Users\\example", ProgramFiles: "Program Files" })).toThrow(
+      "desktop environment is not usable: USERPROFILE: not an absolute path; ProgramFiles: not an absolute path",
+    );
   });
 });

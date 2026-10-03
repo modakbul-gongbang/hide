@@ -11,11 +11,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { screenshot } from "./wire";
+import { chord, commandLabel } from "./chords";
 
 test.describe.configure({ timeout: 120_000 });
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await page.locator('[data-settings-tab="appearance"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
@@ -82,7 +83,7 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     const search = page.locator("[data-sidebar-search]");
     await expect(search).toHaveAccessibleName("Search");
     await search.hover();
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Search⌘K");
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(`Search${commandLabel("search")}`);
     await screenshot(page, "sidebar-shell-search-hint-light");
     await search.click();
     await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();

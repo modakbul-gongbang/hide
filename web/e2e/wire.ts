@@ -4,6 +4,7 @@
 
 import { expect, type Locator, type Page, type WebSocket } from "@playwright/test";
 import path from "node:path";
+import { chord } from "./chords";
 
 /**
  * Counts client events by kind as the page sends them; one action must be
@@ -127,12 +128,12 @@ export async function choosePanel(page: Page, state: "closed" | "open" | "expand
  * (the area commands and the global Recent Panels pair have no other way to run
  * in a browser tab), then closes Settings.
  */
-export async function bindChordlessCommand(page: Page, id: string, chord: string): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+export async function bindChordlessCommand(page: Page, id: string, keys: string): Promise<void> {
+  await page.keyboard.press(chord("settings"));
   await page.locator('[data-settings-tab="shortcuts"]').click();
   await expect(page.locator(`[data-shortcut-effective="${id}"]`)).toHaveText("-");
   await page.locator(`[data-shortcut-record="${id}"]`).click();
-  await page.keyboard.press(chord);
+  await page.keyboard.press(keys);
   await expect(page.locator(`[data-shortcut-problem="${id}"]`)).toHaveCount(0);
   await page.locator(`[data-shortcut-apply="${id}"]`).click();
   await expect(page.locator(`[data-shortcut-effective="${id}"]`)).not.toHaveText("-");

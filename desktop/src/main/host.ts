@@ -27,6 +27,7 @@ import {
   rememberedCliPath,
   rememberedCliValue,
   resolveCli,
+  systemDirs,
   wellKnownDirs,
   type Attached,
   type CliSource,
@@ -39,7 +40,8 @@ import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { openRoute, probe, probeRequest } from "./localPath";
-import { revealablePath, revealTarget } from "./reveal";
+import { revealTarget } from "./reveal";
+import { fromPage, toPage, WirePathError } from "./wirePath";
 
 declare const __HIDE_BACKGROUND__: string;
 
@@ -119,6 +121,10 @@ export class DesktopHost {
   // --- lifecycle ------------------------------------------------------------
 
   start(): void {
+    // A folder whose variable is unset is left out of the search and of every
+    // child's PATH (`cli.ts`); the keys are named once here.
+    const missing = [...new Set([...wellKnownDirs(this.env).missing, ...(this.env.path ? [] : systemDirs(this.env).missing)])];
+    if (missing.length > 0) this.log.event("env.locations_missing", { keys: missing.join(",") });
     this.guardSession();
     this.browsers = new BrowserViews(
       this.log,
@@ -198,11 +204,12 @@ export class DesktopHost {
   }
 
   /**
-   * Add a project's Browse folder: macOS's own folder picker, a sheet on this
-   * window, which can also make a new folder. Only this window's page on the
-   * daemon origin is answered; a refused sender and a cancelled pick both
-   * answer null, and hided judges the chosen path like any other. The log
-   * records the outcome, never the path.
+   * Add a project's Browse folder: the system's own folder picker, a sheet on
+   * this window on macOS, which can also make a new folder. Only this window's
+   * page on the daemon origin is answered; a refused sender and a cancelled
+   * pick both answer null, the chosen folder is answered in the wire spelling
+   * (`wirePath.ts`) or refused with the reason when it has none, and hided
+   * judges it like any other path. The log records the outcome, never the path.
    */
   private listenPickFolder(): void {
     ipcMain.handle(PICK_FOLDER_CHANNEL, async (event: IpcMainInvokeEvent) => {
@@ -212,18 +219,31 @@ export class DesktopHost {
       }
       const picked = await dialog.showOpenDialog(this.window, { properties: ["openDirectory", "createDirectory"] });
       const folder = picked.canceled ? null : (picked.filePaths[0] ?? null);
-      this.log.event("pick_folder.answered", { picked: folder !== null });
-      return folder;
+      if (folder === null) {
+        this.log.event("pick_folder.answered", { picked: false });
+        return null;
+      }
+      try {
+        const wire = toPage(folder);
+        this.log.event("pick_folder.answered", { picked: true });
+        return wire;
+      } catch (error) {
+        if (!(error instanceof WirePathError)) throw error;
+        // The page's diagnostic says the picker failed, with the reason and not the path.
+        this.log.event("pick_folder.refused", { reason: error.reason });
+        throw error;
+      }
     });
   }
 
   /**
-   * Terminal links on this Mac: a probe answers which of the named paths
-   * exist and what they are, and an open hands one to macOS, in its default
-   * application or as a Finder window, or revealed in Finder when opening
-   * would run it (`localPath.ts`). Only this window's page on the daemon
-   * origin is heard; a probe is not logged, since it runs on hover, and an
-   * open logs its route and never the path.
+   * Terminal links on this computer: a probe answers which of the named paths
+   * exist and what they are, and an open hands one to the system, in its
+   * default application or as a folder window, or revealed in the file manager
+   * when opening would run it (`localPath.ts`). The page names and is
+   * answered paths in the wire spelling (`wirePath.ts`). Only this window's
+   * page on the daemon origin is heard; a probe is not logged, since it runs
+   * on hover, and an open logs its route and never the path.
    */
   private listenLocalPaths(): void {
     ipcMain.handle(PROBE_PATHS_CHANNEL, async (event: IpcMainInvokeEvent, reported: unknown) => {
@@ -243,7 +263,7 @@ export class DesktopHost {
         this.log.event("open_path.refused", { reason: "sender" });
         return;
       }
-      const target = revealablePath(reported);
+      const target = fromPage(reported);
       if (target === null) {
         this.log.event("open_path.refused", { reason: "path" });
         return;
@@ -324,7 +344,7 @@ export class DesktopHost {
         remembered: typeof stored === "string" ? stored : null,
         // A packaged app opened from Finder has launchd's PATH, not the operator's.
         loginPath: app.isPackaged && HAS_LOGIN_SHELL ? () => this.readLoginPath(attempt) : null,
-        home: this.env.home,
+        wellKnown: wellKnownDirs(this.env).dirs,
       },
       { isExecutable, mtimeMs },
     );
@@ -340,6 +360,10 @@ export class DesktopHost {
 
   private async readLoginPath(attempt: number): Promise<string | null> {
     if (this.loginPath) return this.loginPath;
+    if (this.env.shell === null) {
+      this.log.event("cli.login_path", { attempt, ok: false, reason: "no_shell" });
+      return null;
+    }
     const started = Date.now();
     const command = loginPathCommand(this.env.shell);
     const result = await this.runCli(command.file, command.args, LOGIN_PATH_TIMEOUT_MS);
@@ -378,10 +402,13 @@ export class DesktopHost {
   private childEnvironment(): Record<string, string | undefined> {
     const herdr = this.herdr().path;
     // Finder supplies only launchd's system PATH. The CLI and any daemon it
-    // starts need the same standard user install dirs we search for `hide`.
-    const inheritedPath = this.env.path || ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(path.delimiter);
-    const searchPath = [...new Set([...inheritedPath.split(path.delimiter), ...wellKnownDirs(this.env.home)].filter(Boolean))].join(path.delimiter);
-    return { ...this.env.inherited, PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
+    // starts need the same install folders we search for `hide`.
+    const inherited = this.env.path ? this.env.path.split(path.delimiter) : systemDirs(this.env).dirs;
+    const searchPath = [...new Set([...inherited, ...wellKnownDirs(this.env).dirs].filter(Boolean))].join(path.delimiter);
+    // Windows names variables without regard to case, so the inherited `Path`
+    // goes and this PATH is the child's only one.
+    const passed = Object.entries(this.env.inherited).filter(([key]) => process.platform !== "win32" || key.toUpperCase() !== "PATH");
+    return { ...Object.fromEntries(passed), PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
   }
 
   /**

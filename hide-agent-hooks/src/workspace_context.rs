@@ -36,7 +36,10 @@ pub fn live_context() -> Option<String> {
 }
 
 fn cli_program() -> Option<OsString> {
-    let sibling = std::env::current_exe().ok()?.parent()?.join("hide");
+    let sibling = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .join(format!("hide{}", std::env::consts::EXE_SUFFIX));
     if sibling.is_file() {
         Some(sibling.into_os_string())
     } else {

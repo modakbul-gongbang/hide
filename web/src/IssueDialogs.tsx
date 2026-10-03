@@ -24,6 +24,7 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { branchProblem, taskFor } from "./workspaceManage";
 import { useErrorSince } from "./WorkspaceDialogs";
+import { fieldLabel } from "./shortcutLabels";
 
 export const DEFAULT_SETTINGS: IssueSettings = { ai_worktree_name: true, closes_instruction: true };
 
@@ -52,7 +53,7 @@ export function Field({ label, aside, children }: { label: string; aside?: React
   );
 }
 
-/** ⌘↵ sends the form from any field, the way the footer's keycap says. */
+/** ⌘↵ (Ctrl+Enter off macOS) sends the form from any field, the way the footer's keycap says. */
 export function submitOnCommandEnter(event: React.KeyboardEvent<HTMLFormElement>) {
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
@@ -147,7 +148,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
             <Button variant="secondary" onClick={onClose}>{working ? "숨기기" : "취소"}</Button>
             <Button type="submit" disabled={working || !project || !title.trim()} data-new-issue-create="true">
               {thenStart ? "만들고 시작…" : "이슈 만들기"}
-              <Kbd>⌘↵</Kbd>
+              <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>
           </DialogFooter>
         </form>
@@ -376,7 +377,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
             <Button variant="secondary" onClick={onClose}>{working ? "숨기기" : "취소"}</Button>
             <Button type="submit" disabled={working || (git && !existing && (taken || problem !== null))} data-start-submit={existing ? "open" : "start"}>
               {existing ? "기존 워크트리 열기" : working ? "시작하는 중…" : "시작"}
-              <Kbd>⌘↵</Kbd>
+              <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>
           </DialogFooter>
         </form>

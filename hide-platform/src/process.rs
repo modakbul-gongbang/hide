@@ -272,10 +272,18 @@ fn drain_capped(mut stream: impl io::Read + Send + 'static) -> std::thread::Join
 }
 
 /// Makes `command` start a child that no signal sent to this process's group,
-/// terminal or console reaches: a daemon whose lifetime is its own. Nothing
-/// owns the child afterwards.
-pub fn detach(command: &mut Command) {
-    sys::detach(command);
+/// terminal or console reaches, and that holds none of this process's
+/// standard handles: a daemon whose lifetime is its own, and whose start
+/// leaves a caller reading this process's output to see that output end when
+/// this process does. Nothing owns the child afterwards.
+///
+/// Windows hands a child every inheritable handle of its parent, and this
+/// process's standard handles are inheritable whenever its own parent passed
+/// them in (the pipe a caller reads), so there they are made uninheritable
+/// first. A child started later with [`std::process::Stdio::inherit`] still
+/// gets them: the standard library hands it an inheritable copy.
+pub fn detach(command: &mut Command) -> io::Result<()> {
+    sys::detach(command)
 }
 
 /// What the process cap is made of: how many processes run under one pid and
@@ -420,8 +428,11 @@ mod sys {
         command.spawn().map(|child| (child, Tie))
     }
 
-    pub(super) fn detach(command: &mut Command) {
+    pub(super) fn detach(command: &mut Command) -> io::Result<()> {
+        // A child's standard streams are the ones its Command names, and the
+        // standard library opens every other descriptor close-on-exec.
         command.process_group(0);
+        Ok(())
     }
 
     /// Signals `target` (a pid, or a negative group id), where the process
@@ -773,9 +784,12 @@ mod sys {
     use std::os::windows::process::CommandExt;
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE,
+        CloseHandle, FILETIME, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, STILL_ACTIVE,
+        SetHandleInformation,
     };
-    use windows_sys::Win32::System::Console::GetConsoleCP;
+    use windows_sys::Win32::System::Console::{
+        GetConsoleCP, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
@@ -930,8 +944,20 @@ mod sys {
         Err(io::Error::other("the new process has no thread to start"))
     }
 
-    pub(super) fn detach(command: &mut Command) {
+    pub(super) fn detach(command: &mut Command) -> io::Result<()> {
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // SAFETY: a plain call; null or INVALID_HANDLE_VALUE means none.
+            let handle = unsafe { GetStdHandle(which) };
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                continue;
+            }
+            // SAFETY: the handle is this process's own standard handle.
+            if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn release(tie: &Tie) {

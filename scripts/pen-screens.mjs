@@ -1961,7 +1961,7 @@ function buildWorkspace(tokens) {
       ]),
       screenPaneHeader(`ws-panehdr-${key}`, {label: 'w2:p1', status: 'Working', width: 'fill_container'}),
       // The xterm viewport takes --background in either theme (commit 7052afa).
-      frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', stroke: active ? '$--primary' : '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
+      frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
         TERMINAL.map(([line, fill], index) => text(`ws-term${index}-${key}`, line, {fill, mono: true, size: '$--text-caption'}))),
     ]);
   }
@@ -1983,7 +1983,7 @@ function buildWorkspace(tokens) {
   // top-left corner and a --border hairline, no shadow.
   function sidePanel(key) {
     const tab = (id, title, glyph, fill, active) => themedXref(id, 'view-tab', title, {
-      fill: '$--card', ...(active ? {stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {}),
+      fill: '$--card', ...(active ? {stroke: '$--foreground', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {}),
     }, {'view-tab-mark': {icon: glyph, fill}, 'view-tab-title': {content: title, fill: active ? '$--foreground' : '$--subtle-foreground'}, 'view-tab-close': {enabled: active}});
     // Row 1, at the toolbar row's height: the area's tabs and its New tab, then
     // the tool-column toggle, Expand, Pin and the panel toggle.
@@ -2015,7 +2015,7 @@ function buildWorkspace(tokens) {
       text(`ws-line${index}n-${key}`, String(index), {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
       text(`ws-line${index}t-${key}`, code, {mono: true, size: '$--text-caption'}),
     ]);
-    const views = frame(`ws-sp-views-${key}`, 'View areas', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, stroke: '$--primary', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+    const views = frame(`ws-sp-views-${key}`, 'View areas', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0}, [
       docHeader,
       frame(`ws-editor-${key}`, 'Editor body', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', clip: true},
         ['# 한글 노트', '', '작업 공간의 사이드 패널은 에이전트 위에 뜹니다.', 'Pin 하면 에이전트 옆에 고정됩니다.'].map((code, index) => line(index + 1, code))),
@@ -2083,7 +2083,7 @@ function buildWorkspace(tokens) {
     ]);
     return frame(`ws-newtab-${key}`, changed ? 'New tab, checkout has changes' : 'New tab, clean checkout', {width: 480, height: 360, layout: 'vertical', gap: 0, fill: '$--card', clip: true}, [
       frame(`ws-newtab-tabs-${key}`, 'View tabs', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', ...rule}, [
-        themedXref(`ws-newtab-tab-${key}`, 'view-tab', 'New tab', {fill: '$--card', stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'}, {'view-tab-mark': {icon: 'globe', fill: '$--subtle-foreground'}, 'view-tab-title': {content: 'New tab', fill: '$--foreground'}, 'view-tab-close': {enabled: true}}),
+        themedXref(`ws-newtab-tab-${key}`, 'view-tab', 'New tab', {fill: '$--card', stroke: '$--foreground', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'}, {'view-tab-mark': {icon: 'globe', fill: '$--subtle-foreground'}, 'view-tab-title': {content: 'New tab', fill: '$--foreground'}, 'view-tab-close': {enabled: true}}),
         sidePanelButton(`ws-newtab-plus-${key}`, 'plus'),
       ]),
       frame(`ws-newtab-address-row-${key}`, 'Address row', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xs', padding: [0, '$--spacing-sm'], alignItems: 'center', ...rule}, [
@@ -2101,10 +2101,10 @@ function buildWorkspace(tokens) {
       const key = `focus-${suffix}-${at}`;
       return frame(`ws-${key}`, active ? 'Keyboard owner' : 'Other area, retained selection', {width: 'fill_container', height: 'fill_container', layout: 'vertical'}, [
         frame(`ws-${key}-bar`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', fill: active ? '$--background' : '$--card'}, [
-          themedXref(`ws-${key}-tab1`, 'view-tab', 'Selected Korean tab', {fill: active ? '$--background' : '$--secondary', ...(active ? {stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {})}, {'view-tab-title': {content: '한글 노트.md', fill: '$--foreground'}, 'view-tab-close': {enabled: true}}),
+          themedXref(`ws-${key}-tab1`, 'view-tab', 'Selected Korean tab', {fill: active ? '$--background' : '$--secondary', ...(active ? {stroke: '$--foreground', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {})}, {'view-tab-title': {content: '한글 노트.md', fill: '$--foreground'}, 'view-tab-close': {enabled: true}}),
           screenViewTab(`ws-${key}-tab2`, {title: '검증 결과.md', active: false}),
         ]),
-        frame(`ws-${key}-body`, 'Readable Korean content', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: '$--spacing-sm', fill: '$--background', ...(active ? {stroke: '$--primary', strokeWidth: HAIR, strokeAlignment: 'inner'} : {})}, [
+        frame(`ws-${key}-body`, 'Readable Korean content', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: '$--spacing-sm', fill: '$--background'}, [
           text(`ws-${key}-text`, '# 한글 노트\n\n현재 입력을 받는 영역만 강조합니다.\n다른 영역의 원래 선택과 내용은 읽을 수 있습니다.\n\nfixture % echo 한글 확인\n한글 확인', {mono: true, size: '$--text-caption', width: 'fill_container'}),
         ]),
       ]);

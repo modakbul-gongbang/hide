@@ -15,7 +15,7 @@ export const SETTINGS_TABS: readonly { id: SettingsTab; title: string; subtitle:
   { id: "devices", title: "Devices", subtitle: "SSH targets. Authentication stays in the daemon machine's SSH environment." },
   { id: "mobile", title: "Mobile", subtitle: "이 맥의 hide를 폰에서 열고, 기다리는 에이전트에 답하고, 알림을 받습니다." },
   { id: "performance", title: "Performance", subtitle: "What this machine ends while you are away, and resumes when you come back." },
-  { id: "shortcuts", title: "Shortcuts", subtitle: "The pane chords this host runs. Every other chord is on the ⌘/ sheet." },
+  { id: "shortcuts", title: "Shortcuts", subtitle: "The pane chords this host runs. Every other chord is on the Keyboard shortcuts sheet." },
 ];
 
 /**

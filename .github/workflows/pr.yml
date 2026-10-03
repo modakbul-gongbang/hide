@@ -119,8 +119,11 @@ jobs:
 
   # What differs on Windows (issue #293), as a required lane: the whole
   # workspace compiles for Windows, hided's pane bootstrap and end-to-end
-  # tests pass there, hided drives the pinned Herdr for Windows (a pane opened
-  # through `/ws` and a typed line echoed back), and the web and desktop unit
+  # tests pass there, `hide connect` starts and `hide stop` ends the hided
+  # beside it (what the desktop app does first), the agent hook entries run
+  # through PowerShell as Claude Code and Codex run them, hided drives the
+  # pinned Herdr for Windows (a pane opened through `/ws` and a typed line
+  # echoed back), and the web and desktop unit
   # suites pass with the same assertions as on macOS and Linux. The job took
   # 4-8 minutes on 2026-10-03 with a warm cache; a cold one compiles the
   # workspace from nothing, so the timeout leaves room for that.
@@ -143,13 +146,21 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Compile the workspace for Windows
         run: cargo check --locked --workspace --all-targets --keep-going --message-format short
-      - name: hided's pane bootstrap, file opener, the device's workspace bridge and end-to-end tests
+      - name: hided's pane bootstrap, file opener, the device's workspace bridge, the CLI's daemon start and end-to-end tests
         timeout-minutes: 25
         run: |
           cargo test --locked -p hided --lib -- pane_auth opener open_command workspace_cli
           cargo test --locked -p hided --test opener_lifecycle
           cargo test --locked -p hide-host --lib workspace_bridge
+          cargo test --locked -p hided --test connect_stop
           cargo test --locked -p hided --test handshake
+      - name: Agent hooks, their Windows entries run through PowerShell
+        # The hook file writer, the entries Claude Code and Codex run on
+        # Windows, and the helper's stdin deadline. It stands on its own, so
+        # it runs whatever the step above answered.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: cargo test --locked -p hide-agent-hooks
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The proof below stands on its own, so it runs whatever the step

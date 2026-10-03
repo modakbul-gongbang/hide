@@ -7,6 +7,7 @@
 // never reaches the host any other way (desktop PRD B11).
 
 import { revealLabel, type RevealHost } from "./revealExternal";
+import { holdsFieldModifier, keySystemOf, type KeySystem } from "./shortcuts";
 
 export type HostKind = "browser" | "electron";
 
@@ -71,7 +72,7 @@ export type BrowserBridge = {
   onEvent(listener: (event: BrowserHostEvent) => void): () => void;
 };
 
-/** A path on this Mac as the host found it: its physical spelling and whether it is a folder; null when it does not exist. */
+/** A path on this computer as the host found it: its physical path in the wire spelling (`/` between names, `C:/...` on Windows) and whether it is a folder; null when it does not exist. */
 export type ProbedPath = { real: string; kind: "file" | "directory" } | null;
 
 export type HostBridge = {
@@ -82,13 +83,13 @@ export type HostBridge = {
   onCommand(listener: (id: string) => void): () => void;
   /** Hands the host the stored macOS pane chords (`ui_state.shortcut_bindings`) it builds the menu from. */
   reportBindings(bindings: Record<string, string>): void;
-  /** Shows a file or folder of this computer in the OS file manager, selected in its parent folder; nothing is opened. */
+  /** Shows a file or folder of this computer, named in the wire spelling, in the OS file manager, selected in its parent folder; nothing is opened. */
   revealPath(path: string): void;
-  /** The native folder picker, modal to the window; the chosen folder, or null when the operator cancelled. */
+  /** The native folder picker, modal to the window; the chosen folder in the wire spelling, or null when the operator cancelled. */
   pickFolder(): Promise<string | null>;
-  /** What each absolute or `~/` path names on this Mac, in order; at most `MAX_PROBE_PATHS` (64) per call. */
+  /** What each absolute (in the wire spelling) or `~/` path names on this computer, in order; at most `MAX_PROBE_PATHS` (64) per call. */
   probePaths(paths: string[]): Promise<ProbedPath[]>;
-  /** Hands an absolute path to macOS: its default application, a Finder window for a folder, or a Finder reveal when opening would run it. */
+  /** Hands an absolute path, in the wire spelling, to the system: its default application, a folder window, or a file manager reveal when opening would run it. */
   openPath(path: string): void;
   browser: BrowserBridge;
 };
@@ -104,13 +105,26 @@ export function hostBridge(): HostBridge | null {
 }
 
 /**
- * Whether a click asks for the operating system rather than the shell: ⌘ on
- * macOS, Ctrl elsewhere, where ⌘ does not exist and Ctrl-click is not the
- * context menu.
+ * The keyboard convention of the machine the operator types on: the desktop
+ * app's OS, or the browser's. The shell's chords, their glyphs and its
+ * field chords all follow it (`shortcuts.ts`).
  */
-export function opensExternally(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
-  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/u.test(navigator.platform || navigator.userAgent);
-  return mac ? event.metaKey : event.ctrlKey;
+export function keySystem(): KeySystem {
+  const bridge = hostBridge();
+  if (bridge) return keySystemOf(bridge.platform);
+  if (typeof navigator === "undefined") return "pc";
+  const agent = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return keySystemOf(agent.userAgentData?.platform || navigator.platform || navigator.userAgent);
+}
+
+/**
+ * Whether a press or a click holds the system's own command key: ⌘ on macOS,
+ * Ctrl elsewhere (`fieldChord`), as ⌘↵ in a palette does and as a click that
+ * asks for the operating system rather than the shell does (Ctrl-click is
+ * not the context menu off macOS).
+ */
+export function holdsCommandKey(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
+  return holdsFieldModifier(event, keySystem());
 }
 
 /** The OS file manager item's host: its label on this OS, or null in a plain browser tab, which has none. */

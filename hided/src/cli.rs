@@ -929,16 +929,17 @@ fn dev(mut env: Env) -> Result<(), String> {
     serve(env, true)
 }
 
-/// The `hided` beside this CLI's real file. A CLI reached through a symlink
-/// (a desktop host's `HIDE_CLI_PATH`, a PATH entry) resolves to the build it
-/// names; there is no other daemon to run, and running this CLI in its place
-/// would start one more CLI per attempt, each starting the next.
+/// The `hided` beside this CLI's real file (`hided.exe` on Windows). A CLI
+/// reached through a symlink (a desktop host's `HIDE_CLI_PATH`, a PATH entry)
+/// resolves to the build it names; there is no other daemon to run, and
+/// running this CLI in its place would start one more CLI per attempt, each
+/// starting the next.
 fn daemon_binary() -> Result<std::path::PathBuf, String> {
     let exe = std::env::current_exe()
         .and_then(|path| path.canonicalize())
         .map_err(|error| error.to_string())?;
     exe.parent()
-        .map(|dir| dir.join("hided"))
+        .map(|dir| dir.join(format!("hided{}", std::env::consts::EXE_SUFFIX)))
         .filter(|path| path.is_file())
         .ok_or_else(|| format!("no hided beside {}", exe.display()))
 }
@@ -1003,16 +1004,24 @@ fn healthy_daemon_in(state_dir: &Path) -> Option<(DaemonState, serde_json::Value
     Some((state, health))
 }
 
+/// The daemon's `/health`, asked in process: a forked `curl` exists only
+/// where the system ships one at `/usr/bin/curl`, and Windows has none. The
+/// request goes to this machine's loopback, so no proxy from the
+/// environment may carry it, and a status other than 2xx is a failure.
 fn health_json(port: u16) -> Result<serde_json::Value, String> {
-    let url = format!("http://127.0.0.1:{port}/health");
-    let output = Command::new("/usr/bin/curl")
-        .args(["-fsS", "--max-time", "1", &url])
-        .output()
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(1)))
+        .proxy(None)
+        .build()
+        .into();
+    let body = agent
+        .get(&format!("http://127.0.0.1:{port}/health"))
+        .call()
+        .map_err(|error| error.to_string())?
+        .body_mut()
+        .read_to_string()
         .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err("health check failed".into());
-    }
-    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+    serde_json::from_str(&body).map_err(|error| error.to_string())
 }
 
 fn open_browser(state: &DaemonState) -> Result<(), String> {

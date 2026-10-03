@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use hide_platform::process::{
-    OwnedChild, RUN_OUTPUT_CAP, RunFailure, cwd_of, descends_from, is_alive, kill_tree,
+    OwnedChild, RUN_OUTPUT_CAP, RunFailure, cwd_of, descends_from, detach, is_alive, kill_tree,
     measure_tree, parent_of, run_to_end, start_time, terminate, terminate_group,
 };
 
@@ -96,6 +96,23 @@ fn child_role() {
                 println!("{line}");
             }
         }
+        // A short-lived parent that starts a detached `sleep` and exits, as
+        // `hide connect` starts its daemon.
+        "detacher" => {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .env(ROLE, "sleep")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            detach(&mut command).unwrap();
+            // Never waited for: the detacher exits at once and leaves its
+            // daemon to the system, as `hide connect` does.
+            #[allow(clippy::zombie_processes)]
+            let daemon = command.spawn().unwrap();
+            println!("READY {}", daemon.id());
+        }
         other => panic!("unknown role {other}"),
     }
 }
@@ -135,6 +152,37 @@ fn gone_within(pid: u32, bound: Duration) -> bool {
         thread::sleep(Duration::from_millis(20));
     }
     true
+}
+
+/// A detached child holds none of its parent's standard handles: whoever reads
+/// the parent's output sees it end when the parent exits, not when the daemon
+/// it started does. Windows hands a child every inheritable handle, and the
+/// parent's output pipe is one.
+#[test]
+fn a_detached_child_leaves_its_parents_output_to_end_with_the_parent() {
+    let _serial = serial();
+    let mut parent = role_command("detacher").spawn().unwrap();
+    let stdout = parent.stdout.take().unwrap();
+    let (named, heard_name) = mpsc::channel();
+    let (ended, heard_end) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some((_, number)) = line.split_once("READY ") {
+                let _ = named.send(number.trim().parse::<u32>().unwrap());
+            }
+        }
+        let _ = ended.send(());
+    });
+    let daemon = heard_name
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the detacher named its child");
+    assert!(parent.wait().unwrap().success(), "the detacher ended");
+    let closed = heard_end.recv_timeout(Duration::from_secs(15));
+    let _ = kill_tree(daemon);
+    assert!(
+        closed.is_ok(),
+        "the parent's output stayed open after it exited: its detached child holds it"
+    );
 }
 
 /// An owned `tree` child and the pid of its grandchild.

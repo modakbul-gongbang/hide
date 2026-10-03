@@ -8,7 +8,8 @@ import { StatusMark } from "./components/status-mark";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { hostBridge, opensExternally } from "./host";
+import { holdsCommandKey, hostBridge } from "./host";
+import { fieldLabel } from "./shortcutLabels";
 import { cn } from "./lib/utils";
 import { IssueChip, gitHubClick, type LensHandlers } from "./OverviewLenses";
 import { ageWords } from "./overviewLens";
@@ -202,7 +203,7 @@ function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, ac
           onClick={onToggle}
           onDoubleClick={openPane}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            if (event.key === "Enter" && holdsCommandKey(event)) {
               event.preventDefault();
               openPane();
             }
@@ -388,7 +389,7 @@ function OpenChip({ target, actions }: { target: ResolvedTarget; actions: Action
 type ResolvedTarget = OpenCandidate & { found: FoundPath | null };
 
 function openTarget(target: ResolvedTarget, event: MouseEvent, actions: Actions) {
-  const external = opensExternally(event);
+  const external = holdsCommandKey(event);
   if (target.target.kind === "url") actions.openLink(target.target.url, external);
   else if (target.found) actions.openTerminalPath(target.found, target.target.line, target.target.column, external);
 }
@@ -527,7 +528,7 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
           <SquareArrowOutUpRightIcon aria-hidden="true" />
           패널 열기
         </Button>
-        <span className="text-muted-foreground">⌘↵</span>
+        <span className="text-muted-foreground">{fieldLabel("Enter")}</span>
       </span>
     </div>
   );

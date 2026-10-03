@@ -215,7 +215,7 @@
     "judgment": [
       "Does exactly one area read as the keyboard owner while the other selected tab remains recognizable?",
       "Are Korean text and the native page content readable in the app, including narrow and expanded panels?",
-      "Compare the readable treatment with the local weak blur experiment and its measured cost."
+      "Does the foreground underline identify the keyboard area without a colored perimeter?"
     ]
   }
 }
