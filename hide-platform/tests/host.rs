@@ -139,75 +139,262 @@ fn the_machine_names_itself_the_same_way_twice() {
     assert_eq!(host::machine_id().unwrap(), id);
 }
 
-/// The account's home from the password database: macOS trashes into that
-/// home's `.Trash` whatever `HOME` says, and a test runner may set its own.
-#[cfg(target_os = "macos")]
-fn account_home() -> PathBuf {
-    use std::ffi::CStr;
-    use std::os::unix::ffi::OsStrExt;
-    // SAFETY: `passwd` is plain C data, for which all zero bytes are valid.
-    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
-    let mut found: *mut libc::passwd = std::ptr::null_mut();
-    // SAFETY: every pointer names a live local that outlives the call, and
-    // the buffer length is the buffer's own.
-    let status = unsafe {
-        libc::getpwuid_r(
-            libc::getuid(),
-            &mut entry,
-            buffer.as_mut_ptr(),
-            buffer.len(),
-            &mut found,
-        )
-    };
-    assert!(
-        status == 0 && !found.is_null(),
-        "no password entry for this account"
-    );
-    // SAFETY: a found entry's `pw_dir` is a NUL-terminated string in `buffer`.
-    let home = unsafe { CStr::from_ptr(entry.pw_dir) };
-    PathBuf::from(std::ffi::OsStr::from_bytes(home.to_bytes()))
-}
-
 /// Where the system keeps an item it trashed, found and removed again so the
 /// test leaves the account's Trash as it found it.
+#[cfg(not(target_os = "macos"))]
 fn take_back_from_the_trash(name: &str) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let kept = account_home().join(".Trash").join(name);
-        let found = kept.symlink_metadata().is_ok();
-        if found {
-            fs::remove_file(&kept).unwrap();
-        }
-        found
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let items: Vec<_> = trash::os_limited::list()
-            .unwrap()
-            .into_iter()
-            .filter(|item| item.name == std::ffi::OsStr::new(name))
-            .collect();
-        let found = !items.is_empty();
-        trash::os_limited::purge_all(items).unwrap();
-        found
-    }
+    let items: Vec<_> = trash::os_limited::list()
+        .unwrap()
+        .into_iter()
+        .filter(|item| item.name == std::ffi::OsStr::new(name))
+        .collect();
+    let found = !items.is_empty();
+    trash::os_limited::purge_all(items).unwrap();
+    found
 }
 
 #[test]
 fn a_trashed_file_leaves_its_folder_for_the_trash() {
-    let folder = tempfile::tempdir().unwrap();
+    let folder = tempfile::Builder::new()
+        .prefix("hide-platform-trash-")
+        .tempdir()
+        .unwrap();
     // No extension: the Recycle Bin lists an item by its shell display name,
     // which drops an extension Explorer knows (`.txt`) under its default view.
-    let name = format!("hide-platform-trash-{}", std::process::id());
+    let name = format!(
+        "{}-{}",
+        folder.path().file_name().unwrap().to_str().unwrap(),
+        std::process::id()
+    );
     let file: PathBuf = folder.path().join(&name);
-    fs::write(&file, b"to be trashed").unwrap();
+    let contents = format!("to be trashed: {name}");
+    fs::write(&file, &contents).unwrap();
+    // NSFileManager uses the OS account's Trash, even under an isolated
+    // HOME. Register cleanup before the move so a failed assertion cannot
+    // leave our item behind. Product home resolution stays HOME-aware.
+    #[cfg(target_os = "macos")]
+    let cleanup = macos_trash::OwnedTrash::new(
+        &file,
+        macos_trash::os_account_trash_dir().unwrap(),
+        contents.as_bytes(),
+    )
+    .unwrap();
     host::trash(&file).unwrap();
     assert!(file.symlink_metadata().is_err(), "the file is still there");
-    assert!(
-        take_back_from_the_trash(&name),
-        "{name} is not in the system's Trash"
-    );
+    #[cfg(target_os = "macos")]
+    let found = cleanup.take_back().unwrap();
+    #[cfg(not(target_os = "macos"))]
+    let found = take_back_from_the_trash(&name);
+    assert!(found, "{name} is not in the system's Trash");
+}
+
+#[cfg(target_os = "macos")]
+mod macos_trash {
+    use std::ffi::{CStr, OsStr};
+    use std::fs::{self, File, OpenOptions};
+    use std::io::{self, Read};
+    use std::mem::MaybeUninit;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::path::{Path, PathBuf};
+
+    use hide_platform::fs::identity;
+
+    pub(super) fn os_account_trash_dir() -> io::Result<PathBuf> {
+        // One bounded account lookup, independent of the fixture's HOME.
+        // An unusually large directory-service entry fails before trashing.
+        const MAX_ACCOUNT_BYTES: usize = 64 * 1024;
+        let mut buffer = vec![0u8; MAX_ACCOUNT_BYTES];
+        let mut account = MaybeUninit::<libc::passwd>::zeroed();
+        let mut found = std::ptr::null_mut();
+        // SAFETY: both output buffers are writable and outlive the call.
+        // getuid takes no arguments and reads only the calling process's uid.
+        let status = unsafe {
+            libc::getpwuid_r(
+                libc::getuid(),
+                account.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut found,
+            )
+        };
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status));
+        }
+        if found.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the OS account has no user-database entry",
+            ));
+        }
+        // SAFETY: a successful lookup with a non-null result filled account.
+        let account = unsafe { account.assume_init() };
+        if account.pw_dir.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the OS account has no home folder",
+            ));
+        }
+        // SAFETY: getpwuid_r placed this NUL-terminated string in buffer,
+        // which remains alive until the path has been copied.
+        let bytes = unsafe { CStr::from_ptr(account.pw_dir) }.to_bytes();
+        let home = PathBuf::from(OsStr::from_bytes(bytes));
+        if !home.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the OS account's home is not an absolute path",
+            ));
+        }
+        Ok(home.join(".Trash"))
+    }
+
+    pub(super) struct OwnedTrash {
+        kept: PathBuf,
+        // Keep the original open so its file identity cannot be reused while
+        // this guard is responsible for the item, including on unwinding.
+        original: File,
+        contents: Vec<u8>,
+    }
+
+    impl OwnedTrash {
+        pub(super) fn new(file: &Path, trash: PathBuf, contents: &[u8]) -> io::Result<Self> {
+            let name = file.file_name().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "the fixture has no file name")
+            })?;
+            let kept = trash.join(name);
+            match kept.symlink_metadata() {
+                Ok(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "the fixture's exact Trash name is already occupied",
+                    ));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            let original = File::open(file)?;
+            // This contract observes a rename, whose identity survives. Do
+            // not move a fixture across volumes and then lose its identity.
+            // The account home exists even before its first Trash item.
+            let parent = trash.parent().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "the Trash has no parent")
+            })?;
+            if identity::file_id_of(&original)?.volume() != identity::file_id(parent)?.volume() {
+                return Err(io::Error::other(
+                    "place the fixture temp folder on the OS account's volume before trashing",
+                ));
+            }
+            Ok(Self {
+                kept,
+                original,
+                contents: contents.to_vec(),
+            })
+        }
+
+        pub(super) fn take_back(&self) -> io::Result<bool> {
+            let metadata = match self.kept.symlink_metadata() {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(error),
+            };
+            let refused = || {
+                io::Error::other(format!(
+                    "retained {}: ownership mismatch; inspect the fixture identity before recovery",
+                    self.kept.display()
+                ))
+            };
+            if !metadata.is_file() || metadata.len() != self.contents.len() as u64 {
+                return Err(refused());
+            }
+            let kept = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                .open(&self.kept)?;
+            let expected = identity::file_id_of(&self.original)?;
+            if identity::file_id_of(&kept)? != expected {
+                return Err(refused());
+            }
+            let mut contents = Vec::new();
+            kept.take(self.contents.len() as u64 + 1)
+                .read_to_end(&mut contents)?;
+            if contents != self.contents || identity::file_id_nofollow(&self.kept)? != expected {
+                return Err(refused());
+            }
+            fs::remove_file(&self.kept)?;
+            Ok(true)
+        }
+    }
+
+    impl Drop for OwnedTrash {
+        fn drop(&mut self) {
+            if let Err(error) = self.take_back() {
+                let recovery = format!(
+                    "fixture_trash.cleanup_failed path={} error={error}; inspect the retained item before recovery",
+                    self.kept.display()
+                );
+                if std::thread::panicking() {
+                    // The test is already failing; report recovery without a
+                    // second panic aborting the remaining fixture destructors.
+                    eprintln!("{recovery}");
+                } else {
+                    panic!("{recovery}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_trash_is_cleaned_when_an_assertion_unwinds() {
+        let folder = tempfile::tempdir().unwrap();
+        let trash = folder.path().join("trash");
+        fs::create_dir(&trash).unwrap();
+        let file = folder.path().join("owned");
+        let kept = trash.join("owned");
+        let unrelated = trash.join("unrelated");
+        fs::write(&file, b"owned content").unwrap();
+        fs::write(&unrelated, b"leave alone").unwrap();
+        let failure = std::panic::catch_unwind(|| {
+            let _cleanup = OwnedTrash::new(&file, trash, b"owned content").unwrap();
+            fs::rename(&file, &kept).unwrap();
+            panic!("a failure after the move");
+        });
+        assert!(failure.is_err());
+        assert!(!kept.exists(), "our trashed item survived the assertion");
+        assert_eq!(fs::read(unrelated).unwrap(), b"leave alone");
+    }
+
+    #[test]
+    fn owned_trash_refuses_a_different_file_with_the_same_name_and_content() {
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("owned");
+        let trash = folder.path().join("trash");
+        fs::create_dir(&trash).unwrap();
+        fs::write(&file, b"owned content").unwrap();
+        let cleanup = OwnedTrash::new(&file, trash.clone(), b"owned content").unwrap();
+        let replacement = trash.join("owned");
+        fs::write(&replacement, b"owned content").unwrap();
+        assert!(cleanup.take_back().is_err());
+        assert_eq!(fs::read(&replacement).unwrap(), b"owned content");
+        // This replacement is also ours, inside the private test folder.
+        fs::remove_file(replacement).unwrap();
+    }
+
+    #[test]
+    fn owned_trash_refuses_changed_content_on_the_original_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("owned");
+        let trash = folder.path().join("trash");
+        fs::create_dir(&trash).unwrap();
+        fs::write(&file, b"owned content").unwrap();
+        let cleanup = OwnedTrash::new(&file, trash.clone(), b"owned content").unwrap();
+        let kept = trash.join("owned");
+        fs::rename(&file, &kept).unwrap();
+        fs::write(&kept, b"other content").unwrap();
+        assert!(cleanup.take_back().is_err());
+        assert_eq!(fs::read(&kept).unwrap(), b"other content");
+        fs::write(&kept, b"owned content").unwrap();
+        assert!(cleanup.take_back().unwrap());
+    }
 }
 
 #[test]
