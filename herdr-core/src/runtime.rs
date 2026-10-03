@@ -380,6 +380,8 @@ struct PendingViewFocus {
     /// core owns the outcome; the shell supplies this opaque correlation id
     /// only so it can consume the answer to the action it initiated.
     request_id: Option<String>,
+    /// Local pane controls settle by operation identity, never by target alone.
+    pane_control_serial: Option<u64>,
     requested_at_unix_ms: u64,
 }
 
@@ -389,6 +391,7 @@ impl PendingViewFocus {
             scope_id: scope_id.into(),
             target_id: target_id.into(),
             request_id: None,
+            pane_control_serial: None,
             requested_at_unix_ms: unix_milliseconds(),
         }
     }
@@ -398,6 +401,7 @@ impl PendingViewFocus {
             scope_id: String::new(),
             target_id: target_id.into(),
             request_id: Some(request_id),
+            pane_control_serial: None,
             requested_at_unix_ms: unix_milliseconds(),
         }
     }
@@ -405,6 +409,15 @@ impl PendingViewFocus {
     fn expired_at(&self, now_unix_ms: u64) -> bool {
         now_unix_ms.saturating_sub(self.requested_at_unix_ms) >= VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS
     }
+}
+
+/// One socket operation in the pane-focus chain. The latest intent lives in
+/// `pending_pane_focus`; replacing it cannot start a second socket operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingPaneFocusControl {
+    pub(crate) serial: u64,
+    pub(crate) target_id: String,
+    pub(crate) live_generation: u64,
 }
 
 /// How many diagnostics the snapshot keeps. Newest are kept; the oldest go.
@@ -1212,6 +1225,8 @@ pub struct Runtime {
     /// The pane focus Hide has told Herdr about and is still waiting to see
     /// confirmed.
     pending_pane_focus: Option<PendingViewFocus>,
+    pane_focus_in_flight: Option<PendingPaneFocusControl>,
+    next_pane_focus_serial: u64,
     /// The tabs Herdr most recently reported active in their own workspaces.
     /// A pane layout remembers a focused pane even while its tab is hidden,
     /// so the layout alone cannot confirm a pane-focus request.
@@ -1634,6 +1649,8 @@ impl Runtime {
             herdr_focused_tab_seen: None,
             herdr_tab_focus_seen: None,
             pending_pane_focus: None,
+            pane_focus_in_flight: None,
+            next_pane_focus_serial: 0,
             herdr_active_tab_ids: BTreeSet::new(),
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,

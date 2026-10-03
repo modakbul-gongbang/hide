@@ -6,6 +6,103 @@ use super::*;
 const OBSERVER_RESIZE_QUIET_MS: u64 = 150;
 
 impl Runtime {
+    pub(crate) fn ingest_pane_focus_completion(
+        &mut self,
+        control: PendingPaneFocusControl,
+        result: Result<PaneLayoutSnapshot, String>,
+        elapsed_ms: u128,
+    ) -> (bool, Option<(LiveContext, PendingPaneFocusControl)>) {
+        if self.pane_focus_in_flight.as_ref() != Some(&control) {
+            return (false, None);
+        }
+        self.pane_focus_in_flight = None;
+        let current_connection = control.live_generation == self.live_generation;
+        let latest = current_connection
+            && self
+                .pending_pane_focus
+                .as_ref()
+                .is_some_and(|pending| pending.pane_control_serial == Some(control.serial));
+        let phase = if !current_connection {
+            "stale_connection"
+        } else if !latest {
+            "superseded"
+        } else if result.is_ok() {
+            "confirmed"
+        } else {
+            "failed"
+        };
+        crate::diagnostic!(serde_json::json!({
+            "component": "pane_focus",
+            "kind": "pane.focus.completed",
+            "pane_id": control.target_id,
+            "serial": control.serial,
+            "connection_generation": control.live_generation,
+            "phase": phase,
+            "duration_ms": elapsed_ms,
+            "message": result.as_ref().err(),
+        }));
+        if latest {
+            let pending = self.pending_pane_focus.take().expect("latest focus intent");
+            match result {
+                Ok(layout) => {
+                    // Update the focus memory from the authoritative reads;
+                    // geometry still belongs to the sequenced session stream.
+                    for stored in &mut self.snapshot.pane_layouts {
+                        if stored.workspace_id == layout.workspace_id {
+                            self.herdr_active_tab_ids.remove(&stored.tab_id);
+                        }
+                        if stored.tab_id == layout.tab_id {
+                            stored.focused_pane_id = layout.focused_pane_id.clone();
+                        }
+                    }
+                    self.herdr_active_tab_ids.insert(layout.tab_id);
+                    self.finish_pane_focus_request(
+                        pending.request_id.as_deref(),
+                        &pending.target_id,
+                        "succeeded",
+                        None,
+                        false,
+                    );
+                    self.push_diagnostic(
+                        "pane.focus",
+                        format!(
+                            "Pane {} focus confirmed in {elapsed_ms} ms",
+                            pending.target_id
+                        ),
+                    );
+                }
+                Err(message) => {
+                    self.finish_pane_focus_request(
+                        pending.request_id.as_deref(),
+                        &pending.target_id,
+                        "failed",
+                        Some(message.clone()),
+                        true,
+                    );
+                    self.push_diagnostic(
+                        "pane.focus.refused",
+                        format!(
+                            "Herdr did not confirm pane focus {}: {message}; Hide keeps it",
+                            pending.target_id
+                        ),
+                    );
+                    self.set_error("pane.focus_failed", message, true);
+                }
+            }
+        } else {
+            // A superseded refusal is diagnostic detail, never the newer
+            // caller's failure. An old connection cannot confirm its successor.
+            self.push_diagnostic(
+                "pane.focus.superseded",
+                format!(
+                    "Pane {} focus result {phase} in {elapsed_ms} ms",
+                    control.target_id
+                ),
+            );
+        }
+        (true, self.begin_pane_focus_control())
+    }
+
     pub(super) fn reconcile_remote_terminal_panes(
         &mut self,
         target_id: &str,

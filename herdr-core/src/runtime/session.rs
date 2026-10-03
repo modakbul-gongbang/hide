@@ -1446,6 +1446,12 @@ impl Runtime {
     pub(super) fn expire_pending_view_focus(&mut self, now_unix_ms: u64) -> bool {
         let mut expired = Vec::new();
         for slot in ViewFocusSlot::ALL {
+            // A socket control already has its own bounded transport wait.
+            // Expiring its latest intent would misread its eventual response
+            // as external focus and could release an older request's successor.
+            if slot == ViewFocusSlot::Pane && self.pane_focus_in_flight.is_some() {
+                continue;
+            }
             let pending = self.pending_view_focus(slot);
             if let Some(pending) = pending.as_ref()
                 && pending.expired_at(now_unix_ms)
@@ -2438,7 +2444,7 @@ impl Runtime {
         if context_changed {
             self.persist_current_ui_state();
         }
-        let Some(context) = self.live.as_ref().cloned() else {
+        if self.live.is_none() {
             let message = "Pane focus requires a live Herdr connection".to_owned();
             self.finish_pane_focus_request(
                 request_id.as_deref(),
@@ -2449,7 +2455,7 @@ impl Runtime {
             );
             self.set_error("pane.control_unavailable", message, true);
             return;
-        };
+        }
         // Rule 11: focusing the pane that already has the keyboard, with
         // nothing in flight, converges without a second notification. The
         // look itself still counts, so only the notification is skipped.
@@ -2461,8 +2467,21 @@ impl Runtime {
         });
         let notify = !already_focused
             || !herdr_agrees
-            || !self.view_focus_settled_on(ViewFocusSlot::Pane, &pane_id);
-        if notify {
+            || !self.view_focus_settled_on(ViewFocusSlot::Pane, &pane_id)
+            || self.pane_focus_in_flight.is_some();
+        let same_pending = self
+            .pending_pane_focus
+            .as_ref()
+            .is_some_and(|pending| pending.target_id == pane_id);
+        if same_pending {
+            // Reaching for the same pending target shares its external effect.
+            // A new correlated caller still receives that operation's outcome.
+            if request_id.is_some()
+                && let Some(pending) = self.pending_pane_focus.as_mut()
+            {
+                pending.request_id = request_id;
+            }
+        } else if notify {
             if let Some(pending) = self.pending_pane_focus.take() {
                 self.finish_pane_focus_request(
                     pending.request_id.as_deref(),
@@ -2473,12 +2492,8 @@ impl Runtime {
                 );
             }
             self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
-            if let Err(message) = live::spawn_pane_control(
-                context,
-                PaneControlAction::Focus {
-                    pane_id: pane_id.clone(),
-                },
-            ) {
+            let Some(serial) = self.next_pane_focus_serial.checked_add(1) else {
+                let message = "Pane focus request serial exhausted.".to_owned();
                 self.finish_pane_focus_request(
                     request_id.as_deref(),
                     &pane_id,
@@ -2486,16 +2501,22 @@ impl Runtime {
                     Some(message.clone()),
                     true,
                 );
-                self.set_error("pane.focus_worker_failed", message, true);
+                self.set_error("pane.focus_unavailable", message, false);
                 return;
-            }
-            // Latest request wins, so a second click while the first is
-            // unconfirmed cannot be pulled back by Herdr's answer to the
-            // first.
-            self.pending_pane_focus = Some(match request_id {
+            };
+            self.next_pane_focus_serial = serial;
+            let mut pending = match request_id {
                 Some(request_id) => PendingViewFocus::pane_request(pane_id.clone(), request_id),
                 None => PendingViewFocus::new(String::new(), pane_id.clone()),
-            });
+            };
+            pending.pane_control_serial = Some(serial);
+            self.pending_pane_focus = Some(pending);
+            if let Some((context, control)) = self.begin_pane_focus_control()
+                && let Err(message) = live::spawn_pane_focus(context, control.clone())
+            {
+                self.ingest_pane_focus_completion(control, Err(message), 0);
+                return;
+            }
         } else {
             self.finish_pane_focus_request(
                 request_id.as_deref(),
@@ -2510,6 +2531,26 @@ impl Runtime {
         }
         self.operator_focused_pane_id = Some(pane_id);
         self.refresh_pane_read_state();
+    }
+
+    /// Reserves only the latest intent. The running worker calls this after
+    /// completing its previous operation, so no focus burst grows a queue.
+    pub(super) fn begin_pane_focus_control(
+        &mut self,
+    ) -> Option<(LiveContext, PendingPaneFocusControl)> {
+        if self.pane_focus_in_flight.is_some() {
+            return None;
+        }
+        let pending = self.pending_pane_focus.as_ref()?;
+        let serial = pending.pane_control_serial?;
+        let context = self.live.as_ref()?.clone();
+        let control = PendingPaneFocusControl {
+            serial,
+            target_id: pending.target_id.clone(),
+            live_generation: self.live_generation,
+        };
+        self.pane_focus_in_flight = Some(control.clone());
+        Some((context, control))
     }
     pub(super) fn pane_exists_for_focus(&self, pane_id: &str) -> bool {
         self.snapshot
@@ -2692,6 +2733,7 @@ impl Runtime {
             .as_ref()
             .is_some_and(|pending| pending.target_id == arriving_tab_id);
         let adopt_focus = match pending_pane.as_ref() {
+            _ if self.pane_focus_in_flight.is_some() => false,
             Some(pending)
                 if pending.target_id == layout.focused_pane_id && session_confirms_pending_pane =>
             {

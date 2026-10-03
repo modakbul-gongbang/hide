@@ -31,7 +31,7 @@ use crate::recent_closed::{
     PanePlacement, resume_arguments,
 };
 use crate::remote::RusshRemoteClient;
-use crate::runtime::Runtime;
+use crate::runtime::{PendingPaneFocusControl, Runtime};
 use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
 };
@@ -2060,6 +2060,66 @@ fn fetch_pane_layout(
     let result = control_request(connector, "pane.layout", wire::pane_layout_params(pane_id)?)?;
     let layout = wire::pane_layout(result)?;
     project_layout(&layout)
+}
+
+fn execute_pane_focus(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+) -> Result<PaneLayoutSnapshot, String> {
+    mutation_request(connector, "pane.focus", wire::pane_target_params(pane_id)?)
+        .map_err(|error| error.message().to_owned())?;
+    let layout = fetch_pane_layout(connector, pane_id)?;
+    let workspace = control_request(
+        connector,
+        "workspace.get",
+        wire::workspace_target_params(&layout.workspace_id)?,
+    )?;
+    let active_tab_id = wire::workspace_active_tab(workspace)?;
+    if layout.focused_pane_id != pane_id || active_tab_id != layout.tab_id {
+        return Err(format!(
+            "Herdr did not confirm pane {pane_id}: pane {} is focused in tab {}, and workspace {} shows tab {active_tab_id}",
+            layout.focused_pane_id, layout.tab_id, layout.workspace_id
+        ));
+    }
+    Ok(layout)
+}
+
+/// One worker owns the complete focus burst, including its coalesced successor.
+/// Every socket read is outside the runtime lock, and only the latest intent
+/// can be settled by the result carrying its serial and connection generation.
+pub(crate) fn spawn_pane_focus(
+    mut context: LiveContext,
+    mut control: PendingPaneFocusControl,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-pane-focus".to_owned())
+        .spawn(move || {
+            loop {
+                let started = Instant::now();
+                let result = execute_pane_focus(context.api_connector.as_ref(), &control.target_id);
+                let elapsed_ms = started.elapsed().as_millis();
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let (changed, next) = match runtime.lock() {
+                    Ok(mut guard) => {
+                        guard.ingest_pane_focus_completion(control, result, elapsed_ms)
+                    }
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+                let Some((next_context, next_control)) = next else {
+                    return;
+                };
+                context = next_context;
+                control = next_control;
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("pane focus worker could not be started: {error}"))
 }
 
 pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Result<(), String> {
@@ -5341,44 +5401,62 @@ mod tests {
     }
 
     #[test]
-    fn focus_uses_the_direct_socket_contract_before_reading_authoritative_layout() {
-        let herdr = FakeHerdr::start("focus-contract", |method, params| {
-            assert_eq!(params["pane_id"], "fixture:p2");
-            match method {
-                "pane.focus" => {
-                    json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "terminal_id": "fixture-terminal", "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
+    fn focus_requires_authoritative_pane_and_owning_tab_confirmation() {
+        for (focused_pane, active_tab, confirmed) in [
+            ("fixture:p2", "fixture:t1", true),
+            ("fixture:p1", "fixture:t1", false),
+            ("fixture:p2", "fixture:t2", false),
+        ] {
+            let herdr = FakeHerdr::start("focus-contract", move |method, params| {
+                if method == "workspace.get" {
+                    assert_eq!(params["workspace_id"], "fixture");
+                } else {
+                    assert_eq!(params["pane_id"], "fixture:p2");
                 }
-                "pane.layout" => json!({
-                    "type": "pane_layout",
-                    "layout": {
-                        "workspace_id": "fixture",
-                        "tab_id": "fixture:t1",
-                        "zoomed": false,
-                        "area": {"x": 0, "y": 0, "width": 120, "height": 60},
-                        "focused_pane_id": "fixture:p2",
-                        "panes": [
-                            {"pane_id": "fixture:p1", "focused": false, "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
-                            {"pane_id": "fixture:p2", "focused": true, "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
-                        ],
-                        "splits": [
-                            {"id": "fixture:split1", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
-                        ]
+                match method {
+                    "pane.focus" => {
+                        json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "terminal_id": "fixture-terminal", "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
                     }
-                }),
-                other => panic!("unexpected {other}"),
-            }
-        });
+                    "pane.layout" => json!({
+                        "type": "pane_layout",
+                        "layout": {
+                            "workspace_id": "fixture",
+                            "tab_id": "fixture:t1",
+                            "zoomed": false,
+                            "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                            "focused_pane_id": focused_pane,
+                            "panes": [
+                                {"pane_id": "fixture:p1", "focused": focused_pane == "fixture:p1", "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
+                                {"pane_id": "fixture:p2", "focused": focused_pane == "fixture:p2", "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
+                            ],
+                            "splits": [
+                                {"id": "fixture:split1", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
+                            ]
+                        }
+                    }),
+                    "workspace.get" => json!({
+                        "type": "workspace_info",
+                        "workspace": {"workspace_id": "fixture", "number": 1, "label": "fixture", "focused": false, "pane_count": 2, "tab_count": 2, "active_tab_id": active_tab, "agent_status": "idle"}
+                    }),
+                    other => panic!("unexpected {other}"),
+                }
+            });
 
-        request(
-            herdr.socket_path(),
-            "pane.focus",
-            json!({"pane_id": "fixture:p2"}),
-        )
-        .expect("focus request");
-        let layout = fetch_pane_layout(&herdr.connector(), "fixture:p2").expect("focused layout");
-        assert_eq!(layout.focused_pane_id, "fixture:p2");
-        assert_eq!(layout.pane_ids(), ["fixture:p1", "fixture:p2"]);
-        assert_eq!(herdr.methods(), ["pane.focus", "pane.layout"]);
+            let result = execute_pane_focus(&herdr.connector(), "fixture:p2");
+            assert_eq!(
+                result.is_ok(),
+                confirmed,
+                "pane={focused_pane}, active tab={active_tab}"
+            );
+            if let Ok(layout) = result {
+                assert_eq!(layout.focused_pane_id, "fixture:p2");
+                assert_eq!(layout.pane_ids(), ["fixture:p1", "fixture:p2"]);
+            }
+            assert_eq!(
+                herdr.methods(),
+                ["pane.focus", "pane.layout", "workspace.get"]
+            );
+        }
     }
 
     #[test]
