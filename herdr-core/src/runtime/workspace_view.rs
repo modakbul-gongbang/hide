@@ -360,7 +360,17 @@ impl Runtime {
                 entry.tools = true;
             }
         }
-        if before != (entry.views, entry.tool, entry.tools) {
+        let changed = before != (entry.views, entry.tool, entry.tools);
+        // A new Workspace can evict the store's least recently used entry.
+        // Call history has the same bound; prune only when crossing it, not
+        // on repeated calls or any terminal input/output path.
+        if store.views_called.len() > workspace_views::MAX_WORKSPACES {
+            let views = &store.views;
+            store
+                .views_called
+                .retain(|(device, path), _| views.get(device, path).is_some());
+        }
+        if changed {
             self.persist_workspace_views();
         }
     }
@@ -777,6 +787,9 @@ impl Runtime {
             .workspaces
             .retain(|view| view.device_id != device_id);
         store.live.retain(|(device, _)| device != device_id);
+        store
+            .views_called
+            .retain(|(device, _), _| device != device_id);
         store
             .bookmark_seen
             .retain(|(device, _), _| device != device_id);

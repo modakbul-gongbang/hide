@@ -820,6 +820,10 @@ fn removing_a_device_forgets_its_workspace_views() {
     let store = runtime.workspace_views.as_mut().unwrap();
     store.views.entry("studio", "/srv/app").views = true;
     store.views.entry("local", &directory.to_string_lossy());
+    runtime.apply_area_intent_to(
+        &("studio".to_owned(), "/srv/app".to_owned()),
+        AreaIntent::Views,
+    );
 
     assert!(runtime.dispatch_json(&explorer_event(
         "remove_device",
@@ -829,6 +833,39 @@ fn removing_a_device_forgets_its_workspace_views() {
     let views = &runtime.workspace_views.as_ref().unwrap().views;
     assert!(views.get("studio", "/srv/app").is_none());
     assert!(views.get("local", &directory.to_string_lossy()).is_some());
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .views_called
+            .keys()
+            .all(|(device, _)| device != "studio")
+    );
+}
+
+/// Column-call history follows the existing bounded Workspace retention.
+#[test]
+fn workspace_column_calls_forget_evicted_workspaces() {
+    let (runtime, _, _) = strip_checkout("column-calls-cap");
+    let mut runtime = with_views(runtime, &views_path("column-calls-cap"));
+    for index in 0..=crate::workspace_views::MAX_WORKSPACES {
+        let key = ("studio".to_owned(), format!("/srv/workspace-{index}"));
+        runtime.apply_area_intent_to(&key, AreaIntent::Views);
+    }
+    let store = runtime.workspace_views.as_ref().unwrap();
+    assert!(store.views_called.len() <= crate::workspace_views::MAX_WORKSPACES);
+    assert!(
+        store
+            .views_called
+            .keys()
+            .all(|(device, path)| store.views.get(device, path).is_some())
+    );
+    let last = (
+        "studio".to_owned(),
+        format!("/srv/workspace-{}", crate::workspace_views::MAX_WORKSPACES),
+    );
+    assert_eq!(store.views_called.get(&last), Some(&store.views_calls));
 }
 
 /// PRD three-column-panel D-10, B17: closing the last view turns File Views
