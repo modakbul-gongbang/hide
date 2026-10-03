@@ -103,7 +103,7 @@ if (fs.existsSync(path.join(hostDir, "stderr-flood"))) {
   for (let written = 0; written < 17 * 1024 * 1024; written += block.length) fs.writeSync(2, block);
   process.exit(19);
 }
-const env = { PATH: path.dirname(process.execPath) + ":" + path.join(root, "bin") + ":/usr/bin:/bin", HOME: path.join(hostDir, "home"), FAKE_REMOTE_ROOT: root, FAKE_REMOTE_HOST: machine.label };
+const env = { PATH: path.dirname(process.execPath) + ":" + path.join(root, "bin") + ":/usr/bin:/bin", HOME: path.join(hostDir, "home"), SHELL: path.join(root, "bin", "login-shell"), FAKE_REMOTE_ROOT: root, FAKE_REMOTE_HOST: machine.label };
 const result = spawnSync("/bin/sh", ["-c", command], { env, encoding: "utf8", input: "" });
 process.stdout.write(result.stdout); process.stderr.write(result.stderr); process.exit(result.status ?? 255);
 `;
@@ -116,6 +116,22 @@ export function createFakeRemote(cliPath) {
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, "herdr"), HERDR, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, "ssh"), SSH, { mode: 0o755 });
+  // A deterministic target login environment for the capability probe.
+  // This fixture proves routing and process bounds, not a real remote CLI.
+  fs.writeFileSync(path.join(bin, "login-shell"), '#!/bin/sh\nexec /bin/sh -c "$2"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, "codex"), `#!${process.execPath}
+const fs = require("node:fs"), path = require("node:path");
+const host = process.env.FAKE_REMOTE_HOST ?? "local";
+const dir = path.join(process.env.FAKE_REMOTE_ROOT, "h", host);
+fs.appendFileSync(path.join(dir, "codex-calls.jsonl"), JSON.stringify(process.argv.slice(2)) + "\\n");
+if (fs.existsSync(path.join(dir, "codex-fails"))) process.exit(7);
+if (fs.existsSync(path.join(dir, "codex-hangs"))) setTimeout(() => {}, 30000);
+else if (fs.existsSync(path.join(dir, "codex-floods"))) process.stdout.write("x".repeat(128 * 1024));
+else {
+  const file = path.join(dir, "codex-features");
+  process.stdout.write(fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "apps stable true\\n");
+}
+`, { mode: 0o755 });
   fs.writeFileSync(path.join(root, "machines.json"), "[]");
   const hostDir = (host) => { const dir = path.join(root, "h", host); fs.mkdirSync(dir, { recursive: true }); return dir; };
   const read = (host, name, fallback) => { const file = path.join(hostDir(host), name); return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : fallback; };

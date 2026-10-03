@@ -1,8 +1,7 @@
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { CODEX_INITIALIZATION_PROMPT, getAgent, herdrErrorCode, initializedCodex, prepareCodexFirstTurn, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
 import { codexArgs, HcoordError, sameExecution, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent, type Watch } from "./model";
-import { herdrRoute, isLocalMachine, requireRemoteHerdr } from "./remote";
+import { codexHasDaemon, herdrRoute, isLocalMachine, requireRemoteHerdr } from "./remote";
 
 /** Herdr routing for a record that names its machine and socket scope. */
 const at = (record: { machine: string; hostScope: string }) => herdrRoute(record.machine, record.hostScope);
@@ -214,20 +213,15 @@ function codexLaunchArgs(nativeArgs: string[]): { startArgs: string[]; prompt: s
 /**
  * A Codex attached to its shared app-server daemon runs its hooks in the
  * daemon's environment, so Herdr never learns that pane's session (openai/codex#48500).
- * A Codex hcoord starts on this machine therefore runs without the daemon when
- * this machine's Codex has one (hide PRD overview-request-view D-20); an older
- * Codex refuses the flag and has no daemon to leave. Another machine's Codex
- * is not asked, so its spawn starts as before. Goes away with #48500 (D-26).
+ * A Codex hcoord starts therefore runs without the daemon when the target
+ * machine's Codex has one (hide PRD overview-request-view D-20); an older
+ * Codex refuses the flag and has no daemon to leave. A failed target probe
+ * refuses the start instead of silently treating it as an old Codex.
+ * Goes away with #48500 (D-26).
  */
 function withoutCodexDaemon(record: SpawnIntent, startArgs: string[]): string[] {
-  if (!isLocalMachine(record.machine) || startArgs.includes("--no-daemon") || !localCodexHasDaemon()) return startArgs;
+  if (startArgs.includes("--no-daemon") || !codexHasDaemon(record.machine)) return startArgs;
   return ["--no-daemon", ...startArgs];
-}
-
-/** `codex features list` names `daemon_auto_start` exactly when this Codex has the shared daemon. */
-function localCodexHasDaemon(): boolean {
-  const listed = spawnSync("codex", ["features", "list"], { encoding: "utf8", shell: false, timeout: 5000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
-  return listed.error === undefined && listed.status === 0 && /^daemon_auto_start\s/m.test(listed.stdout ?? "");
 }
 
 const remotePrefix = (record: SpawnIntent): string => isLocalMachine(record.machine) ? "" : `--machine ${record.machine} `;
