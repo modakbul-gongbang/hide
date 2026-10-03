@@ -233,7 +233,7 @@ function herdr(env: NodeJS.ProcessEnv, bin: string, args: string[]): unknown {
 function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   const env = inheritedFixtureEnv();
   const config = path.join(root, "herdr-config.toml");
-  // v0.9.1 defaults to PowerShell on Windows and ignores SHELL there.
+  // The pinned Herdr defaults to PowerShell on Windows and ignores SHELL there.
   // cmd.exe honors PROMPT, preserving the same prompt contract as zsh.
   const shell = process.platform === "win32" ? env.COMSPEC : "/bin/zsh";
   if (!shell || !path.isAbsolute(shell) || !fs.existsSync(shell)) throw new Error("fixture shell is unavailable: Windows needs ComSpec; Unix needs /bin/zsh");
