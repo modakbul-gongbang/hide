@@ -1,12 +1,18 @@
 name: hide release
 
+# A `v*` tag builds every package from a tree both suites passed, and one job
+# drafts one release with all of them: the ad-hoc signed macOS app, and the
+# unsigned Windows and Linux packages `package.yml` builds and starts on their
+# own runners. Each upload is a workflow artifact first, so a failed package
+# drafts nothing and no two jobs race to create the same draft.
+
 on:
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -56,11 +62,43 @@ jobs:
           test -s desktop/out/*.zip
           test -s desktop/out/*.zip.sha256
           (cd desktop/out && shasum -a 256 -c ./*.zip.sha256)
+      - name: Keep the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-package-macos
+          path: |
+            desktop/out/*.zip
+            desktop/out/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-linux:
+    needs: test
+    uses: ./.github/workflows/package.yml
+    with:
+      version: ${{ github.ref_name }}
+
+  draft:
+    needs: [macos-arm64, windows-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: hide-package-*
+          path: packages
+          merge-multiple: true
+      - name: Verify every archive against its checksum
+        run: |
+          cd packages
+          ls -l
+          test "$(ls ./*.sha256 | wc -l)" -eq 3
+          sha256sum -c ./*.sha256
       - name: Create draft release
         uses: softprops/action-gh-release@v3
         with:
           draft: true
           prerelease: false
-          files: |
-            desktop/out/*.zip
-            desktop/out/*.zip.sha256
+          files: packages/*
