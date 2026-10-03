@@ -207,12 +207,17 @@ pub fn project_memory_output_until(
 }
 
 fn canonical_path_context(project: &hide_project::ProjectIdentity, cwd: &Path) -> PathBuf {
-    let canonical =
-        hide_platform::fs::identity::canonical(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-    canonical
-        .strip_prefix(&project.checkout_root)
+    let canonical = |path: &Path| {
+        hide_platform::fs::identity::canonical(path).unwrap_or_else(|_| path.to_path_buf())
+    };
+    let cwd = canonical(cwd);
+    // The checkout root goes through the same spelling as the cwd: the
+    // project's roots keep the `\\?\` prefix Windows adds, which
+    // `canonical` drops, and a prefix test between the two spellings never
+    // matches.
+    cwd.strip_prefix(canonical(&project.checkout_root))
         .map(|relative| project.root.join(relative))
-        .unwrap_or(canonical)
+        .unwrap_or(cwd)
 }
 
 fn render(

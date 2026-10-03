@@ -18,9 +18,6 @@ fn main() -> ExitCode {
                 }
             }
         }
-        // The pane bootstrap stands on a Unix socket (see
-        // `hide_host::workspace_bridge`).
-        #[cfg(unix)]
         (Some("workspace-bridge"), None) => {
             let input = BufReader::new(io::stdin());
             match hide_host::workspace_bridge::serve(input, io::stdout()) {

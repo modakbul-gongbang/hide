@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 /// which under a full workspace test run pushed the hook past the deadline
 /// below. That one-time cost is not the hook's, so it is paid here.
 fn warm_first_exec(hook: &Path) {
-    let sibling = hook.parent().map(|dir| dir.join("hide"));
+    let sibling = hook
+        .parent()
+        .map(|dir| dir.join(format!("hide{}", std::env::consts::EXE_SUFFIX)));
     for program in std::iter::once(hook.to_path_buf()).chain(sibling.filter(|path| path.exists())) {
         let _ = Command::new(program)
             .arg("--help")
@@ -31,8 +33,10 @@ fn blocked_stdin_cannot_hold_the_agent_hook_past_its_hard_deadline() {
             "claude-code",
             "--event",
             "SessionStart",
+            // As the installed entry runs it: this is the flag that reads stdin.
+            "--memory-injection",
         ])
-        .env("HOME", home.path())
+        .env(hide_platform::host::HOME_VARIABLE, home.path())
         .env_remove("HERDR_PANE_ID")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -463,6 +463,12 @@ fn run_route(
             }
             continue;
         }
+        if frame["type"] == "failed" {
+            return Err(format!(
+                "remote bridge stopped serving: {}",
+                frame["reason"].as_str().unwrap_or("no reason")
+            ));
+        }
         if frame["type"] != "attest" {
             return Err("unexpected remote bridge frame".to_owned());
         }

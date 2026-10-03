@@ -26,7 +26,10 @@
 //!   Windows.
 //! - [`ListenerCloser::close`] called from another thread ends an `accept`
 //!   that is waiting, with `ConnectionAborted`, and every later one.
-//! - Only the account that bound the listener can connect to it.
+//! - Only the account that bound the listener can connect to it, and a
+//!   client reaches only its own account's listener: a Windows pipe name is
+//!   global, so a connect to a pipe another account holds at that name is
+//!   refused with `PermissionDenied`.
 //!
 //! Where the system cannot answer, the call says `ErrorKind::Unsupported`:
 //! a Windows pipe has no write timeout.
@@ -338,11 +341,10 @@ fn clear_leftover(path: &Path) -> io::Result<()> {
     }
 }
 
-/// The pid of the process at the other end of a connected Unix socket that
-/// this crate does not own (the device's workspace bridge still accepts on a
-/// std listener). `Unsupported` where the system does not report it.
+/// The pid of the process at the other end of a connected Unix socket.
+/// `Unsupported` where the system does not report it.
 #[cfg(target_os = "macos")]
-pub fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
+fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
     use std::os::fd::AsRawFd;
     let mut pid: libc::pid_t = 0;
     let mut size = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
@@ -367,7 +369,7 @@ pub fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
+fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
     use std::os::fd::AsRawFd;
     // SAFETY: an all-zero `ucred` is a valid value.
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
@@ -688,6 +690,17 @@ mod sys {
         })?;
         let handle = OwnedHandle::try_from(pipe)
             .map_err(|_| io::Error::other("a fresh pipe stream is not split"))?;
+        // A pipe name is not inside the folder its path names, so the folder's
+        // access list does not keep another account from creating it first.
+        if !crate::fs::private::handle_owned_by_current_user(&handle)? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "the listener at {} belongs to another account",
+                    path.display()
+                ),
+            ));
+        }
         Ok(Pipe::new(handle, false))
     }
 
