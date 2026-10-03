@@ -274,7 +274,30 @@ fn failure_snapshot(herdr: &PrivateHerdr) -> String {
         json!({}),
         Duration::from_secs(5),
     ) {
-        Ok(snapshot) => snapshot.to_string(),
+        Ok(response) => {
+            let snapshot = &response["snapshot"];
+            let panes = snapshot["panes"].as_array().map(|panes| {
+                panes
+                    .iter()
+                    .map(|pane| {
+                        json!({
+                            "pane_id": pane["pane_id"],
+                            "workspace_id": pane["workspace_id"],
+                            "tab_id": pane["tab_id"],
+                            "cwd": pane["cwd"],
+                            "foreground_cwd": pane["foreground_cwd"],
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            json!({
+                "focused_pane_id": snapshot["focused_pane_id"],
+                "focused_workspace_id": snapshot["focused_workspace_id"],
+                "panes": panes,
+                "layouts": snapshot["layouts"],
+            })
+            .to_string()
+        }
         Err(error) => format!("session.snapshot failed: {error}"),
     }
 }
