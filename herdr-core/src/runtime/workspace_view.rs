@@ -88,9 +88,11 @@ pub(super) struct WorkspaceViewStore {
     save_worker: Option<thread::JoinHandle<()>>,
 }
 
-/// What an event asks of the front Workspace's columns once it has moved
-/// the screen (D-03, D-08): a document, diff or page opened or focused turns
-/// File Views on, and a reveal also turns Tools on with the Explorer.
+/// What an event asks of a Workspace's columns once it has moved the screen
+/// (D-03, D-08): a document, diff or page opened or focused turns the front
+/// Workspace's File Views on, and a reveal of a path, applied to its own
+/// checkout's Workspace when it settles (`settle_reveal_path`), also turns
+/// Tools on with the Explorer.
 /// Choosing an agent or a tab changes no column (D-17); nothing else moves
 /// a column on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
