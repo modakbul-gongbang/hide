@@ -1145,7 +1145,7 @@ fn fake_codex(fixture: &mut Fixture, daemon: &str) -> PathBuf {
             "case \"$1 $2\" in\n",
             "  'features list')\n",
             "    echo 'apps                 stable  true'\n",
-            "    [ -e \"$HOME/codex-old\" ] || echo \"daemon_auto_start    stable  $(cat \"$CODEX_HOME/daemon\")\" ;;\n",
+            "    [ -e \"$HOME/codex-old\" ] || echo \"daemon_auto_start    stable  $(cat \"$CODEX_HOME/daemon\" 2>/dev/null || echo true)\" ;;\n",
             "  'features disable') echo false > \"$CODEX_HOME/daemon\" ;;\n",
             "  'features enable') echo true > \"$CODEX_HOME/daemon\" ;;\n",
             "  'app-server daemon')\n",
@@ -1303,7 +1303,7 @@ fn a_machine_without_a_codex_that_has_the_daemon_is_not_applicable() {
         ComponentState::Absent
     );
 
-    // A codex never set up here: nothing is run, and no folder is made.
+    // A Codex never set up here: capability is read, no configuration is made.
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
     std::fs::remove_dir_all(fixture.home().join(".codex")).unwrap();
@@ -1313,7 +1313,14 @@ fn a_machine_without_a_codex_that_has_the_daemon_is_not_applicable() {
         ComponentState::Absent
     );
     assert!(!fixture.home().join(".codex").exists());
-    assert!(!fixture.home().join("codex.log").exists());
+    assert_eq!(
+        report
+            .component(ComponentId::CodexPerPane)
+            .unwrap()
+            .codex_daemon,
+        Some(true)
+    );
+    assert!(fixture.codex_writes().is_empty());
 
     // An older Codex that has no such setting.
     let mut fixture = Fixture::new();
@@ -1326,6 +1333,13 @@ fn a_machine_without_a_codex_that_has_the_daemon_is_not_applicable() {
         "{report:?}"
     );
     assert!(fixture.codex_writes().is_empty());
+    assert_eq!(
+        report
+            .component(ComponentId::CodexPerPane)
+            .unwrap()
+            .codex_daemon,
+        Some(false)
+    );
 }
 
 #[test]

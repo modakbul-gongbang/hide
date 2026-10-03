@@ -60,16 +60,22 @@ pub fn find_codex(home: &Path) -> Option<PathBuf> {
 
 /// Reads the setting and whether a daemon is running, changing nothing.
 pub fn read(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<DaemonState, String> {
-    let listed = run(codex, home, &["features", "list"], stop)?;
-    if !listed.succeeded() {
-        return Err(failed(codex, "features list", &listed));
-    }
-    let setting = parse_feature_list(&listed.stdout)?;
+    let setting = read_setting(codex, home, stop)?;
     let running = match setting {
         DaemonSetting::Unsupported => false,
         DaemonSetting::On | DaemonSetting::Off => daemon_running(codex, home, stop)?,
     };
     Ok(DaemonState { setting, running })
+}
+
+/// Reads the actual binary's feature capability without querying or starting
+/// a daemon and without changing the account's setting.
+pub fn read_setting(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<DaemonSetting, String> {
+    let listed = run(codex, home, &["features", "list"], stop)?;
+    if !listed.succeeded() {
+        return Err(failed(codex, "features list", &listed));
+    }
+    parse_feature_list(&listed.stdout)
 }
 
 /// Turns the shared daemon off for every Codex started from now on.

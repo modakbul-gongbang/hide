@@ -151,6 +151,10 @@ pub struct ComponentReport {
     /// The file, link or folder the part lives at on that machine.
     #[serde(default)]
     pub location: Option<String>,
+    /// The actual Codex binary supports the shared daemon setting. Unknown
+    /// on a missing or failed probe; independent of this part's switch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_daemon: Option<bool>,
 }
 
 /// Every part's state on one machine, in [`ComponentId::ALL`] order.
@@ -184,6 +188,7 @@ impl KitReport {
                     state: ComponentState::Failed,
                     reason: Some(reason.to_owned()),
                     location: None,
+                    codex_daemon: None,
                 })
                 .collect(),
             labels_retirement: Retirement::default(),
@@ -297,6 +302,10 @@ pub(crate) enum Observed {
     Blocked(String),
     /// Nothing on the machine for the part to attach to.
     Absent(String),
+    /// A Codex was read and has no shared daemon setting.
+    Unsupported(String),
+    /// A supported Codex was read, but its account is not set up yet.
+    SupportedAbsent(String),
 }
 
 fn observe(id: ComponentId, target: &KitTarget) -> Observed {
@@ -358,6 +367,13 @@ fn report(
     recorded: bool,
     failure: Option<String>,
 ) -> ComponentReport {
+    let codex_daemon = (id == ComponentId::CodexPerPane)
+        .then(|| match &observed {
+            Observed::Current | Observed::Missing | Observed::SupportedAbsent(_) => Some(true),
+            Observed::Unsupported(_) => Some(false),
+            _ => None,
+        })
+        .flatten();
     let (state, reason) = match (failure, observed) {
         (Some(failure), _) => (ComponentState::Failed, Some(failure)),
         (None, Observed::Current) if id == ComponentId::Hcoord => {
@@ -377,13 +393,19 @@ fn report(
         ),
         (None, Observed::Missing) => (ComponentState::NotInstalled, None),
         (None, Observed::Blocked(reason)) => (ComponentState::Failed, Some(reason)),
-        (None, Observed::Absent(reason)) => (ComponentState::Absent, Some(reason)),
+        (
+            None,
+            Observed::Absent(reason)
+            | Observed::Unsupported(reason)
+            | Observed::SupportedAbsent(reason),
+        ) => (ComponentState::Absent, Some(reason)),
     };
     ComponentReport {
         id,
         state,
         reason,
         location: Some(location(id, target)),
+        codex_daemon,
     }
 }
 
@@ -475,7 +497,11 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
             && match &observed {
                 Observed::Stale(_) => true,
                 Observed::Missing => scope.restores(id) || (!recorded && record_failure.is_none()),
-                Observed::Current | Observed::Blocked(_) | Observed::Absent(_) => false,
+                Observed::Current
+                | Observed::Blocked(_)
+                | Observed::Absent(_)
+                | Observed::Unsupported(_)
+                | Observed::SupportedAbsent(_) => false,
             };
         let undo_now = turning_off && matches!(observed, Observed::Current | Observed::Stale(_));
         let mut failure = None;

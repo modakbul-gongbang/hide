@@ -1724,6 +1724,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
         state,
         reason: None,
         location: None,
+        codex_daemon: None,
     };
     runtime.ingest_kit_report(
         "local",
@@ -2288,6 +2289,7 @@ fn the_codex_part_switch_queues_its_choice_and_starts_follow_the_kit() {
             state,
             reason: None,
             location: None,
+            codex_daemon: None,
         }],
         labels_retirement: Default::default(),
         legacy_retirement: Default::default(),
@@ -2295,7 +2297,7 @@ fn the_codex_part_switch_queues_its_choice_and_starts_follow_the_kit() {
     assert_eq!(
         runtime.codex_daemon("local"),
         crate::codex_launch::CodexDaemon::Unknown,
-        "a machine whose kit has not answered starts Codex as before"
+        "a machine whose kit has not answered cannot start Codex yet"
     );
     runtime.ingest_kit_report("local", &report(hide_kit::ComponentState::Installed));
     assert_eq!(

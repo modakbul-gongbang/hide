@@ -158,7 +158,7 @@ pub(crate) fn start_agent(connector: &dyn ApiConnector, request: &WakeRequest) -
         Ok(params) => params,
         Err(detail) => {
             return WakeOutcome::Failed {
-                reason: refused_reason(request.mode).to_owned(),
+                reason: detail.clone(),
                 detail,
             };
         }
@@ -329,6 +329,30 @@ mod tests {
         let error = end_agent(&herdr.connector(), "w1:p1", "claude").expect_err("working");
         assert!(error.contains("working"), "{error}");
         assert_eq!(herdr.methods(), ["agent.get"]);
+    }
+
+    #[test]
+    fn an_unknown_codex_wake_keeps_the_next_action_and_sends_no_start() {
+        let herdr = FakeHerdr::start("codex-wake-capability", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let outcome = start_agent(
+            &herdr.connector(),
+            &WakeRequest {
+                codex_daemon: crate::codex_launch::CodexDaemon::Unknown,
+                pane_id: "w1:p1".into(),
+                kind: "codex".into(),
+                name: "one".into(),
+                mode: WakeMode::Resume,
+                args: vec!["resume".into(), "abc".into()],
+                cwd: None,
+            },
+        );
+        let WakeOutcome::Failed { reason, .. } = outcome else {
+            panic!("wake started")
+        };
+        assert!(reason.contains("Settings"), "{reason}");
+        assert!(herdr.methods().is_empty());
     }
 
     #[test]

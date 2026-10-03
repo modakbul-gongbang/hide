@@ -431,6 +431,7 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
                 state: hide_kit::ComponentState::NotInstalled,
                 reason: None,
                 location: None,
+                codex_daemon: None,
             }],
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),

@@ -622,6 +622,7 @@ pub struct KitComponentSnapshot {
     pub state: hide_kit::ComponentState,
     pub reason: Option<String>,
     pub location: Option<String>,
+    pub codex_daemon: Option<bool>,
 }
 
 impl KitSnapshot {
@@ -635,6 +636,7 @@ impl KitSnapshot {
                 state: part.state,
                 reason: part.reason.clone(),
                 location: part.location.clone(),
+                codex_daemon: part.codex_daemon,
             })
             .collect::<Vec<_>>();
         Self {

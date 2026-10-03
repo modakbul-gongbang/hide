@@ -924,6 +924,8 @@ export type KitComponent = {
   state: KitComponentState;
   reason: string | null;
   location: string | null;
+  /** Actual target capability, independent of the part's switch; absent in older reports. */
+  codex_daemon?: boolean | null;
 };
 
 /**

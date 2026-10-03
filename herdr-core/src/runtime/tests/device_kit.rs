@@ -96,6 +96,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
                 state: *state,
                 reason: None,
                 location: Some(format!("/home/me/{}", id.code())),
+                codex_daemon: None,
             })
             .collect(),
         labels_retirement: Default::default(),

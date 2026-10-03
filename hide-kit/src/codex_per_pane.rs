@@ -30,17 +30,17 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
     let Some(codex) = target.codex.as_deref() else {
         return Observed::Absent("Codex is not on this machine".to_owned());
     };
-    // The same test the Codex hook makes: a Codex never run here has no
-    // folder, and turning a setting on for it would create one.
-    if !codex_dir(target).is_dir() {
-        return Observed::Absent("Codex is not set up on this machine".to_owned());
-    }
-    match codex_daemon::read(codex, &target.home, &target.stop) {
-        Ok(state) => match state.setting {
-            DaemonSetting::Unsupported => Observed::Absent(format!(
+    match codex_daemon::read_setting(codex, &target.home, &target.stop) {
+        Ok(setting) => match setting {
+            DaemonSetting::Unsupported => Observed::Unsupported(format!(
                 "this Codex has no {} setting, so it starts no shared daemon",
                 codex_daemon::DAEMON_FEATURE
             )),
+            // Capability and configuration are independent: a supported CLI
+            // can be launched per pane even before this account sets it up.
+            DaemonSetting::Off | DaemonSetting::On if !codex_dir(target).is_dir() => {
+                Observed::SupportedAbsent("Codex is not set up on this machine".to_owned())
+            }
             DaemonSetting::Off => Observed::Current,
             DaemonSetting::On => Observed::Missing,
         },

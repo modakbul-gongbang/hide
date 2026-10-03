@@ -2879,6 +2879,28 @@ mod tests {
     /// PRD overview-request-view D-20: a Codex that has the shared daemon is
     /// started without it, ahead of its first prompt.
     #[test]
+    fn an_unknown_codex_first_start_refuses_before_contacting_herdr() {
+        let server = server(vec![]);
+        let outcome = launch_with_prompt(
+            &server,
+            false,
+            7,
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "codex".into(),
+                prompt: Some("fix the tests".into()),
+                args: Vec::new(),
+                codex_daemon: crate::codex_launch::CodexDaemon::Unknown,
+            },
+        );
+        let TaskAgentOutcome::Failed(reason) = outcome else {
+            panic!("start succeeded")
+        };
+        assert!(reason.contains("Settings"), "{reason}");
+        assert!(requests_of(&server).is_empty());
+    }
+
+    #[test]
     fn a_codex_with_the_shared_daemon_starts_without_it() {
         let server = server(vec![
             shell_ready(),

@@ -1112,7 +1112,7 @@ pub(crate) fn agent_start_params(
     codex_daemon: crate::codex_launch::CodexDaemon,
 ) -> Result<Value, String> {
     params(req::AgentStartParams {
-        args: crate::codex_launch::start_arguments(kind, codex_daemon, args),
+        args: crate::codex_launch::start_arguments(kind, codex_daemon, args)?,
         kind: kind.into(),
         name: name.into(),
         pane_id: pane_id.into(),

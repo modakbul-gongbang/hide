@@ -3935,7 +3935,7 @@ mod tests {
             other => panic!("unexpected {other}"),
         });
         let request = ForkRequest {
-            codex_daemon: Default::default(),
+            codex_daemon: crate::codex_launch::CodexDaemon::Present,
             parent_pane_id: "parent-pane".to_owned(),
             agent: crate::fork::ForkableAgent::Codex,
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),

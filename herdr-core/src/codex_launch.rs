@@ -11,7 +11,7 @@
 //!
 //! An older Codex has no daemon and refuses the flag, so the flag goes only
 //! where the machine's kit read a Codex that has the daemon setting; a
-//! machine whose kit has not answered yet starts Codex as it always did.
+//! machine whose kit has not answered yet refuses a start with a next action.
 //!
 //! A transition path: it goes away with the kit part once openai/codex#48500
 //! runs a daemon's hooks in each window's environment (D-26).
@@ -25,9 +25,11 @@ pub(crate) const NO_DAEMON: &str = "--no-daemon";
 /// What a machine's kit last read about its Codex's shared daemon.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum CodexDaemon {
-    /// No Codex there, one without the daemon, or no answer yet.
+    /// No answer, no Codex there, or a failed capability read.
     #[default]
     Unknown,
+    /// The actual binary was read and has no shared daemon setting.
+    Unsupported,
     /// That Codex has the shared daemon and the `--no-daemon` flag.
     Present,
 }
@@ -35,34 +37,48 @@ pub(crate) enum CodexDaemon {
 impl CodexDaemon {
     /// The machine's answer from its kit's last report.
     pub(crate) fn from_kit(kit: &KitSnapshot) -> Self {
-        let state = kit
+        if kit.unavailable.is_some() {
+            return Self::Unknown;
+        }
+        let Some(part) = kit
             .components
             .iter()
             .find(|part| part.id == ComponentId::CodexPerPane)
-            .map(|part| part.state);
-        match state {
-            // Each of these read a `daemon_auto_start` setting, on or off.
-            Some(
-                ComponentState::Installed
-                | ComponentState::Off
-                | ComponentState::NotInstalled
-                | ComponentState::Removed,
-            ) => Self::Present,
-            // Nothing to attach to, or the setting could not be read.
-            Some(ComponentState::Absent | ComponentState::Failed | ComponentState::Outdated)
-            | None => Self::Unknown,
+        else {
+            return Self::Unknown;
+        };
+        match part.state {
+            // These states come only from an actual daemon setting read.
+            ComponentState::Installed
+            | ComponentState::Off
+            | ComponentState::NotInstalled
+            | ComponentState::Removed => Self::Present,
+            ComponentState::Absent => match part.codex_daemon {
+                Some(true) => Self::Present,
+                Some(false) => Self::Unsupported,
+                None => Self::Unknown,
+            },
+            ComponentState::Failed | ComponentState::Outdated => Self::Unknown,
         }
     }
 }
 
 /// `args` for a start of `kind`, with `--no-daemon` first for a Codex that
 /// has the daemon, once (the caller may already carry it).
-pub(crate) fn start_arguments(kind: &str, daemon: CodexDaemon, args: Vec<String>) -> Vec<String> {
-    let codex = kind.eq_ignore_ascii_case("codex");
-    if !codex || daemon != CodexDaemon::Present || args.iter().any(|arg| arg == NO_DAEMON) {
-        return args;
+pub(crate) fn start_arguments(
+    kind: &str,
+    daemon: CodexDaemon,
+    args: Vec<String>,
+) -> Result<Vec<String>, String> {
+    if !kind.eq_ignore_ascii_case("codex") {
+        return Ok(args);
     }
-    std::iter::once(NO_DAEMON.to_owned()).chain(args).collect()
+    match daemon {
+        CodexDaemon::Unknown => Err("Codex 지원 여부를 확인하지 못했습니다. Settings에서 대상 머신의 키트를 다시 확인한 뒤 실행하세요.".to_owned()),
+        CodexDaemon::Unsupported => Ok(args),
+        CodexDaemon::Present if args.iter().take_while(|arg| arg.as_str() != "--").any(|arg| arg == NO_DAEMON) => Ok(args),
+        CodexDaemon::Present => Ok(std::iter::once(NO_DAEMON.to_owned()).chain(args).collect()),
+    }
 }
 
 #[cfg(test)]
@@ -78,6 +94,7 @@ mod tests {
                 state,
                 reason: None,
                 location: None,
+                codex_daemon: None,
             }],
             ..KitSnapshot::default()
         }
@@ -92,44 +109,82 @@ mod tests {
         let present = CodexDaemon::from_kit(&kit(ComponentState::Installed));
         assert_eq!(
             start_arguments("codex", present, strings(&["resume", "abc"])),
-            strings(&["--no-daemon", "resume", "abc"])
+            Ok(strings(&["--no-daemon", "resume", "abc"]))
         );
         assert_eq!(
             start_arguments("codex", present, strings(&["--", "fix the bug"])),
-            strings(&["--no-daemon", "--", "fix the bug"])
+            Ok(strings(&["--no-daemon", "--", "fix the bug"]))
         );
         // The operator's switch is about a Codex started by hand.
         let off = CodexDaemon::from_kit(&kit(ComponentState::Off));
         assert_eq!(
             start_arguments("codex", off, Vec::new()),
-            strings(&["--no-daemon"])
+            Ok(strings(&["--no-daemon"]))
         );
         // Never twice.
         assert_eq!(
             start_arguments("codex", present, strings(&["--no-daemon"])),
-            strings(&["--no-daemon"])
+            Ok(strings(&["--no-daemon"]))
         );
     }
 
     #[test]
-    fn an_older_codex_or_an_unread_machine_or_another_agent_gets_no_flag() {
+    fn only_a_confirmed_older_codex_gets_no_flag() {
+        let mut older = kit(ComponentState::Absent);
+        older.components[0].codex_daemon = Some(false);
+        assert_eq!(
+            start_arguments(
+                "codex",
+                CodexDaemon::from_kit(&older),
+                strings(&["resume", "a"])
+            ),
+            Ok(strings(&["resume", "a"]))
+        );
+        older.components[0].codex_daemon = Some(true);
+        assert_eq!(
+            start_arguments("codex", CodexDaemon::from_kit(&older), vec![]),
+            Ok(strings(&["--no-daemon"]))
+        );
+        assert_eq!(
+            start_arguments("claude", CodexDaemon::Unknown, strings(&["--resume", "a"])),
+            Ok(strings(&["--resume", "a"]))
+        );
+    }
+
+    #[test]
+    fn unread_failed_missing_and_outdated_capability_refuse_the_common_start_boundary() {
         for kit in [
             kit(ComponentState::Absent),
             kit(ComponentState::Failed),
+            kit(ComponentState::Outdated),
             KitSnapshot::default(),
         ] {
-            assert_eq!(
-                start_arguments(
+            for args in [vec![], strings(&["resume", "a"]), strings(&["--no-daemon"])] {
+                let error = crate::wire::agent_start_params(
+                    "pane",
+                    "agent",
                     "codex",
+                    args,
                     CodexDaemon::from_kit(&kit),
-                    strings(&["resume", "a"])
-                ),
-                strings(&["resume", "a"])
-            );
+                )
+                .unwrap_err();
+                assert!(
+                    error.contains("Settings") && error.contains("대상 머신"),
+                    "{error}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn a_prompt_that_mentions_the_flag_is_not_a_process_flag() {
         assert_eq!(
-            start_arguments("claude", CodexDaemon::Present, strings(&["--resume", "a"])),
-            strings(&["--resume", "a"])
+            start_arguments(
+                "codex",
+                CodexDaemon::Present,
+                strings(&["--", "--no-daemon"])
+            ),
+            Ok(strings(&["--no-daemon", "--", "--no-daemon"]))
         );
     }
 }
