@@ -611,27 +611,37 @@ test("a Workspace switch cancels its column drag without changing another Worksp
     await row("beta").click();
     await expect(row("beta")).toHaveAttribute("aria-current", "true");
     await openNotes();
-    await row("fixture").click();
-    await expect(row("fixture")).toHaveAttribute("aria-current", "true");
-    await openNotes();
-    const divider = page.locator('[data-column-divider="views"]');
-    const box = (await divider.boundingBox())!;
-    await page.mouse.move(box.x + box.width / 2, box.y + 100);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 - 64, box.y + 100);
-    await expect(page.locator("[data-column-guide=true]")).toBeVisible();
-    await expect(page.locator("html")).toHaveAttribute("data-view-drag", "col-resize");
-    const before = sent.get("workspace_view") ?? 0;
-    // Invoke the candidate's Workspace control while capture is held, as a
-    // keyboard Workspace switch can do without releasing the divider.
-    await row("beta").evaluate((element: HTMLElement) => element.click());
-    await expect(row("beta")).toHaveAttribute("aria-current", "true");
-    await expect(page.locator("[data-column-guide=true]")).toHaveCount(0);
-    await expect(page.locator("html")).not.toHaveAttribute("data-view-drag");
-    await page.mouse.up();
-    await paint(page);
-    expect(sent.get("workspace_view") ?? 0).toBe(before);
-    await nativeCapture(app, page, "columns-drag-switch-cancelled");
+    for (const theme of ["dark", "light"] as const) {
+      await row("fixture").click();
+      await expect(row("fixture")).toHaveAttribute("aria-current", "true");
+      await openNotes();
+      await page.locator("[data-open-settings]").click();
+      await page.locator('[data-settings-tab="appearance"]').click();
+      await page.locator(`[data-theme-option="${theme}"]`).click();
+      await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
+      await page.keyboard.press("Escape");
+      await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+      const divider = page.locator('[data-column-divider="views"]');
+      const box = (await divider.boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + 100);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 - 64, box.y + 100);
+      await expect(page.locator("[data-column-guide=true]")).toBeVisible();
+      await expect(page.locator("html")).toHaveAttribute("data-view-drag", "col-resize");
+      const before = sent.get("workspace_view") ?? 0;
+      // Invoke the candidate's Workspace control while capture is held, as a
+      // keyboard Workspace switch can do without releasing the divider.
+      await row("beta").evaluate((element: HTMLElement) => element.click());
+      await expect(row("beta")).toHaveAttribute("aria-current", "true");
+      await expect(page.locator("[data-column-guide=true]")).toHaveCount(0);
+      await expect(page.locator("html")).not.toHaveAttribute("data-view-drag");
+      await page.mouse.up();
+      await paint(page);
+      expect(sent.get("workspace_view") ?? 0).toBe(before);
+      await expect(page.locator('[data-column="views"]')).toHaveJSProperty("clientWidth", 640);
+      await expect(page.locator('[data-column="tools"]')).toHaveJSProperty("clientWidth", 355);
+      await nativeCapture(app, page, `columns-${theme}-drag-switch-cancelled`);
+    }
   } finally {
     await app?.close().catch(() => undefined);
     run.cleanup();
