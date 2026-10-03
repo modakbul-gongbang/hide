@@ -1,10 +1,12 @@
 // Which host runs the shell: a browser tab, or the desktop app
 // (`desktop/`), whose preload exposes `window.hideHost` and nothing else.
 // The bridge carries the app menu's commands in, the operator's macOS pane
-// chords out, so the menu shows and answers the chords the page runs, a
-// folder to show in Finder, the paths a terminal link names and handing one
+// chords out, so the menu shows and answers the chords the page runs, the
+// host's OS, a file or folder to show in the OS file manager, the paths a terminal link names and handing one
 // to macOS, and places the pages of browser displays (issue 155); the shell
 // never reaches the host any other way (desktop PRD B11).
+
+import { revealLabel, type RevealHost } from "./revealExternal";
 
 export type HostKind = "browser" | "electron";
 
@@ -74,11 +76,13 @@ export type ProbedPath = { real: string; kind: "file" | "directory" } | null;
 
 export type HostBridge = {
   kind: "electron";
+  /** The host's OS as Node names it (`process.platform`): what the OS file manager is called. */
+  platform: string;
   /** Delivers each app-menu command id; returns the unsubscribe. */
   onCommand(listener: (id: string) => void): () => void;
   /** Hands the host the stored macOS pane chords (`ui_state.shortcut_bindings`) it builds the menu from. */
   reportBindings(bindings: Record<string, string>): void;
-  /** Shows a folder of this Mac in Finder; Finder selects it and opens nothing. */
+  /** Shows a file or folder of this computer in the OS file manager, selected in its parent folder; nothing is opened. */
   revealPath(path: string): void;
   /** The native folder picker, modal to the window; the chosen folder, or null when the operator cancelled. */
   pickFolder(): Promise<string | null>;
@@ -107,6 +111,12 @@ export function hostBridge(): HostBridge | null {
 export function opensExternally(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/u.test(navigator.platform || navigator.userAgent);
   return mac ? event.metaKey : event.ctrlKey;
+}
+
+/** The OS file manager item's host: its label on this OS, or null in a plain browser tab, which has none. */
+export function revealHost(): RevealHost {
+  const bridge = hostBridge();
+  return bridge ? { label: revealLabel(bridge.platform) } : null;
 }
 
 export function hostKind(): HostKind {

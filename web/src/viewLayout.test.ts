@@ -5,6 +5,7 @@ import {
   besideUnavailable,
   displayIdentity,
   displayMenu,
+  type ExternalReveal,
   dropTarget,
   focusRequestArrived,
   neighbourArea,
@@ -177,19 +178,39 @@ describe("split eligibility", () => {
 describe("a display's menu", () => {
   const tree = split("s1", "row", 0.5, area("a1", [display("d1", { preview: true }), "d2"]), area("a2", ["d3"]));
   const g = viewGeometry(tree, body(2000), SIZES);
-  const ids = (displayId: string) => displayMenu(layout(tree), g, SIZES, displayId).map((entry) => entry.id);
+  const desktop: ExternalReveal = { host: { label: "Reveal in Finder" }, device: "local" };
+  const browser: ExternalReveal = { host: null, device: "local" };
+  const ids = (displayId: string, external = desktop) => displayMenu(layout(tree), g, SIZES, displayId, external).map((entry) => entry.id);
 
   it("offers Keep open only for a preview, moves only toward an area, and nothing else", () => {
-    expect(ids("d1")).toEqual(["keep_open", "split_right", "split_left", "split_up", "split_down", "move_right", "copy_path", "reveal", "close_view"]);
-    expect(ids("d2")).toEqual(["split_right", "split_left", "split_up", "split_down", "move_right", "copy_path", "reveal", "close_view"]);
-    expect(ids("d3")).toEqual(["split_right", "split_left", "split_up", "split_down", "move_left", "copy_path", "reveal", "close_view"]);
+    expect(ids("d1")).toEqual(["keep_open", "split_right", "split_left", "split_up", "split_down", "move_right", "copy_path", "select_in_tree", "reveal_external", "close_view"]);
+    expect(ids("d2")).toEqual(["split_right", "split_left", "split_up", "split_down", "move_right", "copy_path", "select_in_tree", "reveal_external", "close_view"]);
+    expect(ids("d3")).toEqual(["split_right", "split_left", "split_up", "split_down", "move_left", "copy_path", "select_in_tree", "reveal_external", "close_view"]);
+  });
+
+  it("names the in-app select and the OS file manager apart, the second only where the host has one (issue 324)", () => {
+    const tail = (external: ExternalReveal) => displayMenu(layout(tree), g, SIZES, "d3", external).slice(-4).map((entry) => [entry.label, entry.unavailable, entry.separated ?? false]);
+    expect(tail(desktop)).toEqual([
+      ["Copy path", null, true],
+      ["Select in File Tree", null, false],
+      ["Reveal in Finder", null, false],
+      ["Close view", null, true],
+    ]);
+    expect(ids("d3", browser).slice(-3)).toEqual(["copy_path", "select_in_tree", "close_view"]);
+    const remote = displayMenu(layout(tree), g, SIZES, "d3", { host: { label: "Reveal in File Explorer" }, device: "studio" }).find((entry) => entry.id === "reveal_external");
+    expect(remote).toMatchObject({ label: "Reveal in File Explorer", unavailable: "Only for files and folders on this computer." });
+    const page = split("s1", "row", 0.5, area("a1", [display("d1", { kind: "browser", path: "", url: "https://example.invalid/" }), "d2"]), area("a2", ["d3"]));
+    expect(displayMenu(layout(page), g, SIZES, "d1", desktop).map((entry) => entry.id)).not.toContain("reveal_external");
+    expect(displayMenu(layout(page), g, SIZES, "d1", desktop).map((entry) => entry.id)).not.toContain("select_in_tree");
   });
 
   it("disables what cannot land with its reason", () => {
-    const menu = displayMenu(layout(tree), g, SIZES, "d3");
+    const menu = displayMenu(layout(tree), g, SIZES, "d3", desktop);
     expect(menu.find((entry) => entry.id === "split_right")?.unavailable).toBe("This is the only view in its area.");
     const gone = split("s1", "row", 0.5, area("a1", [display("d1", { state: "unavailable", reason: "No such file" }), "d2"]), area("a2", ["d3"]));
-    expect(displayMenu(layout(gone), g, SIZES, "d1").find((entry) => entry.id === "reveal")?.unavailable).toBe("The file is unavailable");
+    const goneMenu = displayMenu(layout(gone), g, SIZES, "d1", desktop);
+    expect(goneMenu.find((entry) => entry.id === "select_in_tree")?.unavailable).toBe("The file is unavailable");
+    expect(goneMenu.find((entry) => entry.id === "reveal_external")?.unavailable).toBe("The file is unavailable");
   });
 });
 

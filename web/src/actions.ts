@@ -724,6 +724,13 @@ export function createActions(dispatch: DispatchFn) {
     viewLayout(frame, { action: "keep_open", display_id: located.display.id });
   };
 
+  /** Selects a file in the OS file manager through the desktop host; refusals are the host's to log. */
+  const revealExternal = (path: string) => {
+    const bridge = hostBridge();
+    if (!bridge) return diagnostic("reveal externally: this host has no file manager");
+    bridge.revealPath(path);
+  };
+
   /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
   const revealInExplorer = (path: string) => {
     const view = workspaceViewOf(rest());
@@ -743,7 +750,8 @@ export function createActions(dispatch: DispatchFn) {
       const text = located.display.kind === "browser" ? (located.display.url ?? "") : located.display.path;
       return void navigator.clipboard?.writeText(text).catch(() => undefined);
     }
-    if (id === "reveal") return revealInExplorer(located.display.path);
+    if (id === "select_in_tree") return revealInExplorer(located.display.path);
+    if (id === "reveal_external") return revealExternal(located.display.path);
     if (id === "close_view") return closeView(displayId);
     if (!edge) return;
     if (id.startsWith("split_")) return splitView(displayId, located.area.id, edge);
@@ -1323,12 +1331,12 @@ export function createActions(dispatch: DispatchFn) {
       }
     },
 
-    /** Shows a folder in Finder through the desktop app; a browser tab has no such item (D-07). */
-    revealInFinder(path: string) {
-      const bridge = hostBridge();
-      if (!bridge) return diagnostic("reveal in Finder: this host has no Finder");
-      bridge.revealPath(path);
-    },
+    /**
+     * `reveal_external` (issue 324): the desktop app selects a file or folder
+     * of this computer in its parent folder in the OS file manager; a browser
+     * tab has no such item.
+     */
+    revealExternal,
 
     /** A new worktree; `taskKey` links it to that issue, and `prompt` is its agent's first prompt. */
     createWorktree(request: {

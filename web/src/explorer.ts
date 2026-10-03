@@ -7,6 +7,8 @@
 import { fileIcon, type FileIcon } from "./fileIcons";
 import type { ChangedFileStatus, ChangesSnapshot, DeviceHost } from "./snapshot";
 import type { DirectoryList } from "./store";
+import type { MenuEntry } from "./components/entry-menu";
+import { revealExternalEntry, type RevealHost } from "./revealExternal";
 
 /** The one Git slot a row carries: a letter for a file, a dot for a folder. */
 export type ExplorerDecoration = {
@@ -283,4 +285,39 @@ export function selectionAfterRemoval(rows: ExplorerRow[], path: string, rootPat
     if (candidate.depth === depth) return candidate.path;
   }
   return parentSelection(rows, path) ?? rootPath;
+}
+
+export type ExplorerMenuId = "new-file" | "new-folder" | "open-beside" | "open-browser" | "reveal_external" | "rename" | "trash";
+
+/**
+ * The tree's context menu (docs/UI_BEHAVIOR.md, Explorer file management): a
+ * folder row's two creations, or a file row's opens, then the OS file
+ * manager's reveal where the host has one, then Rename and Move to Trash.
+ * The empty area below the rows (`row` null) stands for the root and offers
+ * only the two creations.
+ */
+export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal, device }: {
+  isDirectory: boolean;
+  row: Pick<ExplorerRow, "path"> | null;
+  /** The file is HTML, which a browser display can show (issue 155). */
+  html: boolean;
+  /** Why a second display cannot open beside the only View area, or null. */
+  besideReason: string | null;
+  reveal: RevealHost;
+  device: string;
+}): MenuEntry<ExplorerMenuId>[] {
+  const items: MenuEntry<ExplorerMenuId>[] = [];
+  if (isDirectory) {
+    items.push({ id: "new-file", label: "New File", unavailable: null });
+    items.push({ id: "new-folder", label: "New Folder", unavailable: null });
+  } else if (row) {
+    items.push({ id: "open-beside", label: "Open to the side", unavailable: besideReason });
+    if (html) items.push({ id: "open-browser", label: "Open in Browser", unavailable: null });
+  }
+  if (!row) return items;
+  const external = revealExternalEntry(reveal, device, null, true);
+  items.push(...external);
+  items.push({ id: "rename", label: "Rename", unavailable: null, ...(external.length ? { separated: true } : {}) });
+  items.push({ id: "trash", label: "Move to Trash", unavailable: null, separated: true, destructive: true });
+  return items;
 }

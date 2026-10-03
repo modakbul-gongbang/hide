@@ -1,6 +1,6 @@
 // The renderer's whole view of the host (B11): which host this is, the app
 // menu's commands in, the stored macOS pane chords out for the menu to show,
-// a folder to show in Finder, a folder the operator picks to add as a project,
+// the host's OS, a file or folder to show in the OS file manager, a folder the operator picks to add as a project,
 // the paths a terminal link names and handing one to macOS, and the pages of
 // browser displays (issue 155).
 // No Node API, no other channel. Browser pages load in their own session with no preload, so none
@@ -13,6 +13,7 @@ import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BRO
 
 contextBridge.exposeInMainWorld("hideHost", {
   kind: "electron",
+  platform: process.platform,
   onCommand(listener: (id: string) => void): () => void {
     const handler = (_event: IpcRendererEvent, id: unknown) => {
       if (typeof id === "string") listener(id);

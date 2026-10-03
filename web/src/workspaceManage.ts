@@ -6,6 +6,7 @@
 
 import { shownPullRequest } from "./projects";
 import { supportsRemotePurpose } from "./remote";
+import { revealExternalEntry, type RevealHost } from "./revealExternal";
 import type { AgentRow, Checkout, RemoteStatus, TaskOperation, Workspace, WorktreeRemoval } from "./snapshot";
 
 /** The native purpose field's limits (`PurposeInputPresentation`). */
@@ -62,7 +63,7 @@ export type MenuItem = {
     | "open_overview"
     | "new_worktree"
     | "new_tab_primary"
-    | "reveal_finder"
+    | "reveal_external"
     | "copy_path"
     | "pin"
     | "unpin"
@@ -87,8 +88,8 @@ export type MenuItem = {
 
 /** What a row's menu reads from where the shell runs, so the rules stay pure. */
 export type MenuHost = {
-  /** The desktop app can show a folder in Finder; a browser tab cannot, so it offers no such item. */
-  finder: boolean;
+  /** The desktop app can show a folder in the OS file manager, under this label; a browser tab cannot, so it offers no such item. */
+  reveal: RevealHost;
   /** The new-tab chord on this host, or "" where it has none. */
   newTabChord: string;
 };
@@ -99,7 +100,6 @@ function receiptDevice(deviceId: string | null | undefined): string {
 }
 
 const ON_ANOTHER_DEVICE = "Not available for a checkout on another device.";
-const FINDER_HERE_ONLY = "Only for folders on this Mac.";
 
 function onDevice(workspace: Workspace): boolean {
   return workspace.device_id !== "local";
@@ -114,8 +114,7 @@ export function primaryCheckout(workspace: Workspace): Checkout | null {
 }
 
 function revealItem(workspace: Workspace, host: MenuHost, separated: boolean): MenuItem[] {
-  if (!host.finder) return [];
-  return [{ id: "reveal_finder", label: "Reveal in Finder", unavailable: onDevice(workspace) ? FINDER_HERE_ONLY : null, ...(separated ? { separated } : {}) }];
+  return revealExternalEntry(host.reveal, workspace.device_id, null, separated);
 }
 
 /**
@@ -168,7 +167,7 @@ export const FOLDER_CHECKOUT_ITEMS: ReadonlySet<MenuItem["id"]> = new Set<MenuIt
 /**
  * A plain folder's one row (`folderCheckout`): the project's items, then its
  * checkout's that the project's do not already cover. The folder is the
- * checkout, so its new tab, path and Finder items are the project's, and it
+ * checkout, so its new tab, path and reveal items are the project's, and it
  * has no other checkout to make the default.
  */
 export function folderMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, purposeProblem: string | null = null): MenuItem[] {
@@ -206,8 +205,8 @@ function primaryProblem(workspace: Workspace, checkout: Checkout): string | null
  * The checkout row's menu (PRD sidebar-context-menus D-03, D-07, D-09): open
  * it or a tab in it, its pull request while GitHub knows one (PRD
  * checkout-pr-glyph-card D-07), then what describes it, then deleting a
- * linked worktree. Choices stored on this machine and Finder are this Mac's
- * only, so a device's checkout lists them disabled.
+ * linked worktree. Choices stored on this machine and the OS file manager
+ * are this computer's only, so a device's checkout lists them disabled.
  */
 export function checkoutMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, purposeProblem: string | null = null): MenuItem[] {
   const pr = shownPullRequest(checkout);
