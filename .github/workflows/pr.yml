@@ -178,12 +178,16 @@ jobs:
           cargo test --locked -p hided --test handshake
       - name: Fetch the pinned Herdr runtime
         id: herdr
+        # The proof below stands on its own, so it runs whatever the step
+        # above answered.
+        if: ${{ !cancelled() }}
         # Assigned first, so a failed fetch fails this step rather than
         # handing the next one an empty path.
         run: |
           bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: hided against the pinned Herdr
+        if: ${{ !cancelled() && steps.herdr.outcome == 'success' }}
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}

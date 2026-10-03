@@ -576,16 +576,28 @@ async fn send_event_expecting(
         ))
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    // What the core last said about the editor and its status, for the
+    // report when no answer comes.
+    let mut editor = Value::Null;
+    let mut status = Value::Null;
+    let answer = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let frame = first_frame(socket).await;
             if frame["type"] == "path_refused" || answered(&frame) {
                 return frame;
             }
+            if !frame["payload"]["editor"].is_null() {
+                editor = frame["payload"]["editor"].clone();
+            }
+            if !frame["payload"]["rest"]["status"].is_null() {
+                status = frame["payload"]["rest"]["status"].clone();
+            }
         }
     })
-    .await
-    .unwrap_or_else(|_| panic!("an answer to the {kind} event"))
+    .await;
+    answer.unwrap_or_else(|_| {
+        panic!("an answer to the {kind} event; the core's last editor: {editor}; its last status: {status}")
+    })
 }
 
 /// The reaction predicate of a step whose only expected answer is the refusal
