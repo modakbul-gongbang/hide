@@ -58,6 +58,17 @@ The Cargo `test` mode forwards trailing test arguments, so an explicitly configu
 The no-argument `test` mode remains the full locked workspace gate.
 Each compiler or test process's failure reaches the caller.
 
+CI uses scoped Cargo modes `test-scoped`, `check`, `build` and `clippy` with trailing Cargo arguments, for example `bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client`.
+Each adds `--locked`, reuses the installed toolchain, clears `HERDR_*`, and fixes output to this worktree's `target/`.
+Scoped modes accept at most 128 arguments and refuse `--target-dir`, `--manifest-path` and `--config`; an unknown mode exits 2.
+The sealed `test`, `lint`, `release` and `cli` invocations keep their existing behavior.
+`verify-web.sh install [--ignore-scripts]` locks dependency installation; `verify-web.sh <web|desktop|hcoord> <typecheck|lint|test|build>` runs one package step.
+`web e2e` runs Playwright against the web output already built; `desktop e2e` rebuilds the desktop host before Playwright.
+Both forward the test arguments and their exit status, so a missing test filter fails the caller.
+`playwright-install` installs Chromium for web or desktop, `desktop package` packages this runner's app, and `hcoord test:e2e` runs its isolated coordination suite.
+An invalid package/action pair or more than 128 trailing arguments exits 2; the no-argument full web gate stays unchanged.
+`test_ci_verification_entrypoints.py` checks this external command boundary without building or installing; it complements the real build tests below.
+
 The build regression tests in `test_verification_builds.py` use a tiny real Cargo workspace, not compiler mocks.
 They check that a caller's `CARGO_TARGET_DIR` cannot move the release binaries, that output stays in the checkout, warm build reuse, a core value change, a changed failing test, and compiler and prerequisite failure propagation.
 They require macOS with Cargo.

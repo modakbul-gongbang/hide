@@ -1,3 +1,6 @@
+# Full web and desktop suites and package checks on all three OSes nightly.
+# Tracked flaky tests block this run; PR quarantine policy stays in pr.yml.
+# Runner windows and Linux Xvfb exercise automation, not physical IME/device QA.
 # The whole web end-to-end on macOS, once a night. A pull request runs the suite
 # on Linux and only the `@platform` tests on macOS (see pr.yml), so this run is
 # what keeps the rest of the suite proving itself on the platform hide ships on.
@@ -25,43 +28,163 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  web-e2e-macos:
-    name: web e2e
+  web-e2e-linux:
+    name: web e2e (Linux full)
     uses: ./.github/workflows/web-e2e.yml
     with:
-      lane: nightly
+      lane: nightly-linux
+      runner: ubuntu-latest
+      herdr-platform: linux-x86_64
+      shards: 6
+      full-suite: true
+
+  web-e2e-macos:
+    name: web e2e (macOS full)
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: nightly-macos
       runner: macos-15
       herdr-platform: macos-aarch64
       shards: 4
-      quarantine: true
+      full-suite: true
+
+  web-e2e-windows:
+    name: web e2e (Windows full)
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: nightly-windows
+      runner: windows-latest
+      herdr-platform: windows-x86_64
+      shards: 4
+      full-suite: true
+
+  os-contract:
+    name: os contract
+    uses: ./.github/workflows/os-contract.yml
+
+  desktop-e2e:
+    name: desktop e2e (${{ matrix.system }} full)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: linux
+            runner: ubuntu-latest
+            herdr-platform: linux-x86_64
+          - system: macos
+            runner: macos-15
+            herdr-platform: macos-aarch64
+          - system: windows
+            runner: windows-latest
+            herdr-platform: windows-x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install zsh and the virtual display on Linux
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: sudo apt-get install -y --no-install-recommends zsh xvfb
+      - name: Build the desktop app's daemon and kit binaries
+        timeout-minutes: 20
+        run: bash scripts/verify-cargo.sh cli
+      - name: Install dependencies
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh install
+      - name: Build the web shell and hcoord
+        timeout-minutes: 5
+        run: |
+          bash scripts/verify-web.sh web build
+          bash scripts/verify-web.sh hcoord build
+      - name: Install Playwright Chromium
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh desktop playwright-install
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        timeout-minutes: 5
+        env:
+          HERDR_PLATFORM: ${{ matrix.herdr-platform }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          else
+            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
+          fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Compare the binary schema and version with the pin
+        run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
+      - name: OS contract on macOS
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: |
+          bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
+          bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
+      - name: Whole desktop suite, including tracked flaky tests
+        timeout-minutes: 20
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a bash scripts/verify-web.sh desktop e2e
+          else
+            bash scripts/verify-web.sh desktop e2e
+          fi
+      - name: Keep the failed desktop run
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-nightly-desktop-${{ matrix.system }}
+          path: |
+            ${{ runner.temp }}/hide-e2e
+            desktop/test-results
+          if-no-files-found: ignore
+
+  package:
+    name: package
+    uses: ./.github/workflows/package.yml
+    with:
+      version: 0.0.0-nightly.${{ github.run_number }}
+      include-macos: true
 
   report:
     name: report a failure
-    needs: web-e2e-macos
-    if: ${{ always() && needs.web-e2e-macos.result == 'failure' && github.ref == 'refs/heads/main' }}
+    needs: [web-e2e-linux, web-e2e-macos, web-e2e-windows, desktop-e2e, os-contract, package]
+    if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read
       contents: read
       issues: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      RESULT: ${{ needs.web-e2e-macos.result }}
     steps:
-      - name: Open the issue, or comment on the one already open
-        run: |
-          set -euo pipefail
-          title="Nightly web e2e on macOS is failing"
-          failed=$(gh run view "${{ github.run_id }}" --json jobs \
-            --jq '[.jobs[] | select(.conclusion == "failure") | "- " + .name] | join("\n")')
-          body="The nightly web end-to-end on macOS ended ${RESULT}: ${RUN_URL}"$'\n\n'"Failed jobs:"$'\n'"${failed:-none reported}"$'\n\n'"Each failed job's logs are in the run's artifacts, hide-web-e2e-logs-nightly-<shard>."
-          open=$(gh issue list --state open --label bug --limit 100 --json number,title \
-            --jq "[.[] | select(.title == \"$title\")][0].number // empty")
-          if [ -n "$open" ]; then
-            gh issue comment "$open" --body "$body"
-          else
-            gh issue create --title "$title" --label bug --body "$body"
-          fi
+      - uses: actions/checkout@v7
+      - name: Report each failed attempt once in the nightly issue
+        uses: actions/github-script@v8
+        env:
+          NIGHTLY_RESULTS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const report = require('./scripts/nightly-report.cjs');
+            const outcome = await report({ github, context, results: JSON.parse(process.env.NIGHTLY_RESULTS) });
+            core.info(JSON.stringify(outcome));
