@@ -82,6 +82,9 @@ try {
   const app = path.join(unpacked, fs.readdirSync(unpacked)[0]);
   let resources = path.join(app, "resources");
   const bundled = (name) => path.join(resources, `${name}${exe}`);
+  // Cleanup always uses the known complete first package, even if preparing
+  // or connecting the upgrade fails before its CLI can run.
+  const controlCli = bundled("hide");
   const helper = `hide-host-helper-${label}-x86_64`;
 
   const electron = path.join(app, `hide${exe}`);
@@ -145,6 +148,18 @@ try {
     const answer = JSON.parse(output(electron, [hcoordCli, "version", "--json"], { ...isolated, ELECTRON_RUN_AS_NODE: "1" }));
     if (answer?.ok !== true || typeof answer?.value?.hcoordVersion !== "string") throw new Error(`answered ${JSON.stringify(answer)}`);
     return answer.value.hcoordVersion;
+  });
+
+  // Prepare the complete second package before either daemon holds an
+  // executable open. PE and ELF permit an overlay after the image; this
+  // changes the production build hash without a second release build.
+  const upgraded = path.join(scratch, "new 한글 package");
+  check("prepare a second complete package", () => {
+    fs.cpSync(app, upgraded, { recursive: true });
+    for (const file of ["app.asar", ...["hide", "hided", "hide-agent-hooks", "herdr"].map((name) => `${name}${exe}`)]) {
+      if (!fs.statSync(path.join(upgraded, "resources", file), { throwIfNoEntry: false })?.isFile()) throw new Error(`second package is missing resources/${file}`);
+    }
+    fs.appendFileSync(path.join(upgraded, "resources", `hided${exe}`), "\nHide package smoke next-build fixture\n");
   });
 
   /**
@@ -254,13 +269,7 @@ try {
       if (asset.status !== 200) throw new Error(`${script} answered ${asset.status}`);
       return script;
     });
-    // A second complete package fixture, with a different daemon build hash.
-    // PE and ELF permit an overlay after the executable's image; no second
-    // release build is needed to exercise the production hash/replacement path.
-    const upgraded = path.join(scratch, "new 한글 package");
-    fs.cpSync(app, upgraded, { recursive: true });
     resources = path.join(upgraded, "resources");
-    fs.appendFileSync(bundled("hided"), "\nHide package smoke next-build fixture\n");
     const beforeUpgrade = fs.statSync(log).size;
     const previous = connected;
     connected = hide(["connect"]);
@@ -294,10 +303,10 @@ try {
     // this run's too, and stopping none is not an error. A failure here is
     // reported, after the scratch folder is gone, beside any failure above.
     try {
-      execFileSync(bundled("hide"), ["stop"], { env: isolated, stdio: "inherit", timeout: 30_000 });
+      execFileSync(controlCli, ["stop"], { env: isolated, stdio: "inherit", timeout: 30_000 });
       if (connected?.ok === true) {
         check("hide stop ends it", () => {
-          const status = hide(["status", "--json"]);
+          const status = JSON.parse(output(controlCli, ["status", "--json"], isolated));
           if (status.running !== false) throw new Error(JSON.stringify(status));
         });
       }
@@ -306,6 +315,14 @@ try {
       process.exitCode = 1;
     }
   }
+} catch (error) {
+  console.error(error);
+  process.exitCode = 1;
 } finally {
-  fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  try {
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.error(`scratch cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
 }
