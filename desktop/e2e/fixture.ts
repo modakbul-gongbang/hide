@@ -55,7 +55,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       HERDR_BIN_PATH: herdr.bin,
       PATH: fixtureToolPath(path.join(herdr.root ?? root, "bin")),
       // `open_external` must not launch a GUI application during a test.
-      HIDE_OPEN_COMMAND: fixtureOpenCommand(herdr.root, root),
+      HIDE_OPEN_COMMAND: fixtureOpenCommand(undefined, root),
     };
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true });
