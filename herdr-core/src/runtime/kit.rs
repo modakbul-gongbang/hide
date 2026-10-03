@@ -189,6 +189,18 @@ impl Runtime {
                 "failures": retirement.failures,
             }));
         }
+        // What an older layout left (the standalone hcoord plugin, folders
+        // `~/.hide` replaced) is no part either (PRD hide-home-layout D-13).
+        let legacy = &report.legacy_retirement;
+        if !legacy.is_empty() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "kit",
+                "kind": if legacy.failures.is_empty() { "legacy.retired" } else { "legacy.retire_incomplete" },
+                "device_id": device_id,
+                "removed": legacy.removed,
+                "failures": legacy.failures,
+            }));
+        }
         let mut snapshot = KitSnapshot::from_report(report);
         snapshot.busy = self.kit_install_queued(device_id);
         self.set_kit_state(device_id, snapshot)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addressShown, addressUrl, browserDisplays, fileUrl, hostKey, isHtmlFile, parseWorkspaceKey, placements, withoutClosed } from "./browserViews";
+import { addressShown, addressUrl, browserDisplays, fileUrl, hostKey, isHtmlFile, parseWorkspaceKey, placements, stillFits, stillWanted, withoutClosed } from "./browserViews";
 import type { ViewLayoutSnapshot } from "./snapshot";
 import { workspaceKey } from "./viewLayout";
 
@@ -76,4 +76,24 @@ describe("placing pages", () => {
 it("offers Open in Browser only for an HTML file", () => {
   expect(["a.html", "b.HTM", "c.xhtml"].every(isHtmlFile)).toBe(true);
   expect(["a.md", "html", "a.html.txt"].some(isHtmlFile)).toBe(false);
+});
+
+describe("the idle still", () => {
+  const rect = { x: 10, y: 20, width: 400.4, height: 300.6 };
+  const cached = { url: "https://a.test/", width: 400, height: 301, still: "data:image/png;base64,AA" };
+
+  it("draws a still only of the same address in a slot of the same size", () => {
+    expect(stillFits(cached, "https://a.test/", rect)).toBe(true);
+    expect(stillFits(cached, "https://a.test/b", rect)).toBe(false);
+    expect(stillFits(cached, "https://a.test/", { ...rect, width: 420 })).toBe(false);
+    expect(stillFits(undefined, "https://a.test/", rect)).toBe(false);
+  });
+
+  it("is taken again only when the page has none that fits, or its load finished, or it came into view", () => {
+    expect(stillWanted(cached, "https://a.test/", rect, false)).toBe(false);
+    expect(stillWanted(cached, "https://a.test/", rect, true)).toBe(true);
+    expect(stillWanted(cached, "https://a.test/b", rect, false)).toBe(true);
+    expect(stillWanted(cached, "https://a.test/", { ...rect, height: 200 }, false)).toBe(true);
+    expect(stillWanted(undefined, "https://a.test/", rect, false)).toBe(true);
+  });
 });

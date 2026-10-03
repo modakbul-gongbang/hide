@@ -129,7 +129,7 @@ export function createFakeRemote(cliPath) {
   delete baseEnv.HERDR_SOCKET_PATH; delete baseEnv.HERDR_BIN_PATH; delete baseEnv.HCOORD_HOME; delete baseEnv.HCOORD_REMOTE_HOME; delete baseEnv.HERDR_PANE_ID;
   return {
     root, bin,
-    env: (host = "local", extra = {}) => ({ ...baseEnv, HOME: home(host), HCOORD_HOME: path.join(home(host), ".hcoord"), ...extra }),
+    env: (host = "local", extra = {}) => ({ ...baseEnv, HOME: home(host), HCOORD_HOME: path.join(home(host), ".hide", "hcoord"), ...extra }),
     home,
     addMachine(label, target = label) {
       const list = JSON.parse(fs.readFileSync(path.join(root, "machines.json"), "utf8"));
@@ -137,9 +137,9 @@ export function createFakeRemote(cliPath) {
       fs.writeFileSync(path.join(root, "machines.json"), JSON.stringify(list));
       hostDir(label);
     },
-    /** Installs the built hcoord as the remote shim the installer writes. */
+    /** Installs the built hcoord as the remote shim hide's kit writes. */
     installHcoord(host) {
-      const dir = path.join(home(host), ".hcoord", "bin");
+      const dir = path.join(home(host), ".hide", "hcoord", "bin");
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, "hcoord"), `#!/bin/sh\nexec "${process.execPath}" "${cliPath}" "$@"\n`, { mode: 0o755 });
     },

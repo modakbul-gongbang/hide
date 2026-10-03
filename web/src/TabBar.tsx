@@ -11,6 +11,7 @@ import { Hint, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/t
 import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 import { tabFit, type AreaTabInteraction } from "./AreaTree";
+import type { TabFit } from "./areaLayout";
 
 // The sole Agent tab rendering unit, reused by every local and device area.
 const NONE: AsyncOperation[] = [];
@@ -27,7 +28,7 @@ export function AgentTab({ number, entry, checkout, interaction, actions, renami
   const operations = useShellStore((s) => s.rest?.status?.async_operations) ?? NONE;
   const agent = checkout.tabs.find((row) => row.id === entry.source_id)?.agent;
   const identity = `${agent ? `${agent.agent_kind} agent` : "Terminal"} tab ${entry.label}${agent ? ` · ${agent.status_label}` : ""}`;
-  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={`Close tab ${entry.label}`} icon={interaction.icon} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
+  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={`Close tab ${entry.label}`} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
 }
 
 const RENAME_FAILURE = "이름을 저장하지 못했습니다 · 다시 시도";
@@ -98,7 +99,7 @@ const TabButton = memo(function TabButton({
   number,
   closing,
   closeLabel,
-  icon,
+  fit: slotFit,
   dragging,
   areaActive,
   onSelect,
@@ -114,15 +115,15 @@ const TabButton = memo(function TabButton({
   number: number | null;
   closing: boolean;
   closeLabel: string;
-  /** The bar draws its tabs as marks (`AreaTabInteraction.icon`). */
-  icon: boolean;
+  /** How the tab draws its contents in its slot (`AreaTabInteraction.fit`). */
+  fit: TabFit;
   dragging: boolean;
   areaActive: boolean;
   onSelect: () => void;
   onClose: () => void;
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
 }) {
-  const fit = tabFit(active, icon);
+  const fit = tabFit(active, slotFit);
   return (
     <Hint label={identity} reveals>
     <div

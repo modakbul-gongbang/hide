@@ -52,13 +52,13 @@ pub const REGISTRY: &[EnvKey] = &[
         key: XDG_STATE_HOME,
         required: false,
         format: "absolute directory path",
-        absent_behavior: "State lives under $HOME/.local/state",
+        absent_behavior: "State lives under $HOME/.hide/state; a set value keeps $XDG_STATE_HOME/hide and moves nothing",
     },
     EnvKey {
         key: HIDE_STATE_DIR,
         required: false,
         format: "absolute directory path",
-        absent_behavior: "State lives under $XDG_STATE_HOME/hide",
+        absent_behavior: "State lives under $XDG_STATE_HOME/hide when that is set, otherwise $HOME/.hide/state, where `hide connect` moves a legacy $HOME/.local/state/hide once",
     },
     EnvKey {
         key: HIDE_KEEP_ALIVE,
@@ -94,7 +94,7 @@ pub const REGISTRY: &[EnvKey] = &[
         key: HIDE_HOST_HELPER_ROOT,
         required: false,
         format: "absolute path, or a path under the device's home spelled `~/...`, with no `.` or `..` segment",
-        absent_behavior: "The device helper installs under ~/.local/share/hide/host-helper on each consented device; a different value is a different consent scope, so every device asks again (isolated verification sets it to a temporary folder)",
+        absent_behavior: "The device helper installs under ~/.hide/host-helper on each consented device (a consent for the legacy ~/.local/share/hide/host-helper is carried there without asking); a different value is a different consent scope, so every device asks again (isolated verification sets it to a temporary folder)",
     },
     EnvKey {
         key: HIDE_HOST_CLI_DIR,
@@ -118,7 +118,7 @@ pub const REGISTRY: &[EnvKey] = &[
         key: HIDE_WORKSPACE_BRIDGE_DIR,
         required: false,
         format: "absolute owner-only directory path on the SSH device",
-        absent_behavior: "The remote helper and the hide command installed beside it use $HOME/.local/state/hide/workspace-bridges; isolated verification may set a separate directory on both ends",
+        absent_behavior: "The remote helper and the hide command installed beside it use workspace-bridges in the device's state folder (HIDE_STATE_DIR, $XDG_STATE_HOME/hide, else $HOME/.hide/state); isolated verification may set a separate directory on both ends",
     },
     EnvKey {
         key: HIDE_TAILSCALE_BIN,
@@ -144,6 +144,11 @@ pub struct Env {
     /// core refuses every pane attach without one.
     pub herdr_bin_path: Option<PathBuf>,
     pub state_dir: PathBuf,
+    /// The folder builds before `~/.hide` kept state in, when `state_dir` is
+    /// the default one: `hide connect` moves it there once (PRD
+    /// hide-home-layout D-05). `None` when HIDE_STATE_DIR or XDG_STATE_HOME
+    /// chose another folder, which is never moved.
+    pub legacy_state_dir: Option<PathBuf>,
     pub keep_alive: bool,
     pub vite_origin: Option<String>,
     pub bind: SocketAddr,
@@ -225,22 +230,22 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         Some(value) => Some(PathBuf::from(value)),
         None => read(PATH).and_then(|path| first_on_path(&path, "herdr")),
     };
-    let state_dir = if let Some(dir) = read(HIDE_STATE_DIR) {
-        if dir.is_empty() {
-            errors.push(EnvError {
-                key: HIDE_STATE_DIR,
-                kind: "empty",
-            });
-            PathBuf::new()
-        } else {
-            PathBuf::from(dir)
-        }
-    } else {
-        let xdg = read(XDG_STATE_HOME).filter(|value| !value.is_empty());
-        xdg.map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".local/state"))
-            .join("hide")
-    };
+    let hide_state_dir = read(HIDE_STATE_DIR);
+    if hide_state_dir.as_deref() == Some("") {
+        errors.push(EnvError {
+            key: HIDE_STATE_DIR,
+            kind: "empty",
+        });
+    }
+    let state_dir = hide_kit::layout::state_dir(
+        &home,
+        hide_state_dir.as_deref(),
+        read(XDG_STATE_HOME).as_deref(),
+    );
+    // Judged by the folder, not by which variable named it: `hide connect`
+    // hands the daemon it starts the default folder through HIDE_STATE_DIR.
+    let legacy_state_dir = (state_dir == hide_kit::layout::default_state_dir(&home))
+        .then(|| hide_kit::layout::legacy_state_dir(&home));
     let keep_alive = match read(HIDE_KEEP_ALIVE).as_deref() {
         None => false,
         Some("1" | "true" | "TRUE") => true,
@@ -374,6 +379,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         herdr_socket_path,
         herdr_bin_path,
         state_dir,
+        legacy_state_dir,
         keep_alive,
         vite_origin,
         bind: SocketAddr::from(([127, 0, 0, 1], port)),
@@ -471,9 +477,23 @@ mod tests {
     #[test]
     fn defaults_state_dir_under_home() {
         let env = from_map(&[("HOME", "/Users/example")]).unwrap();
+        assert_eq!(env.state_dir, PathBuf::from("/Users/example/.hide/state"));
         assert_eq!(
-            env.state_dir,
-            PathBuf::from("/Users/example/.local/state/hide")
+            env.legacy_state_dir.as_deref(),
+            Some(Path::new("/Users/example/.local/state/hide"))
+        );
+        for relocated in [
+            ("HIDE_STATE_DIR", "/isolated/state"),
+            ("XDG_STATE_HOME", "/xdg"),
+        ] {
+            let env = from_map(&[("HOME", "/Users/example"), relocated]).unwrap();
+            assert_eq!(env.legacy_state_dir, None, "{relocated:?}");
+        }
+        assert_eq!(
+            from_map(&[("HOME", "/Users/example"), ("XDG_STATE_HOME", "/xdg")])
+                .unwrap()
+                .state_dir,
+            PathBuf::from("/xdg/hide")
         );
         assert_eq!(env.idle_secs, 600);
         assert!(!env.keep_alive);

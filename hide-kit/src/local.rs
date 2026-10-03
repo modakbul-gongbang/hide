@@ -38,13 +38,17 @@ pub fn local_target(
     stop: Arc<AtomicBool>,
 ) -> KitTarget {
     let herdr = kit_dir.join("herdr");
+    let relocated = crate::layout::hcoord_home_override();
     KitTarget {
         home: home.to_path_buf(),
         kit_dir: kit_dir.to_path_buf(),
         cli_dir: home.join(".local").join("bin"),
         // A `hide` linked into a device helper root is Hide's too: this Mac
-        // may once have been another Mac's device.
-        owned_roots: vec![home.join(".local/share/hide/host-helper")],
+        // may once have been another Mac's device, under either layout.
+        owned_roots: vec![
+            crate::layout::helper_root(home),
+            crate::layout::legacy_helper_root(home),
+        ],
         herdr_socket: herdr_socket.to_path_buf(),
         herdr_bin: herdr.is_file().then(|| herdr.clone()),
         hcoord: app_executable(kit_dir).map(|program| HcoordRuntime {
@@ -54,9 +58,11 @@ pub fn local_target(
                 ("HERDR_BIN_PATH".to_owned(), herdr.display().to_string()),
             ]
             .into_iter()
-            .chain(crate::hcoord::home_override())
+            .chain(crate::hcoord::relocation_env(relocated.as_deref()))
             .collect(),
         }),
+        hcoord_home: relocated,
+        legacy: crate::legacy::local(home),
         stop,
     }
 }

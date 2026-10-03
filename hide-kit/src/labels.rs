@@ -25,6 +25,11 @@ use crate::{KitTarget, process};
 
 pub const LABELS_PLUGIN_ID: &str = "hide.agent-context-labels";
 
+/// The standalone hcoord Herdr plugin from before hcoord became part of the
+/// kit (PRD hide-home-layout D-07, D-14). A startup hook it left registered
+/// would converge the same daemon label on another build.
+pub const HCOORD_PLUGIN_ID: &str = "hide.hcoord";
+
 const HERDR_DEADLINE: Duration = Duration::from_secs(5);
 const UNINSTALL_DEADLINE: Duration = Duration::from_secs(20);
 const LSOF_DEADLINE: Duration = Duration::from_secs(5);
@@ -33,7 +38,7 @@ const WATCHER_EXIT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// What retiring the plugin did on one machine.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct LabelsRetirement {
+pub struct Retirement {
     /// Each part found and taken out, in a few words.
     #[serde(default)]
     pub removed: Vec<String>,
@@ -42,7 +47,7 @@ pub struct LabelsRetirement {
     pub failures: Vec<String>,
 }
 
-impl LabelsRetirement {
+impl Retirement {
     pub fn is_empty(&self) -> bool {
         self.removed.is_empty() && self.failures.is_empty()
     }
@@ -61,15 +66,15 @@ pub fn plugin_state_dir(home: &Path) -> PathBuf {
     home.join(".local/state/hide.agent-context-labels")
 }
 
-pub(crate) fn retire(target: &KitTarget) -> LabelsRetirement {
-    let mut outcome = LabelsRetirement::default();
+pub(crate) fn retire(target: &KitTarget) -> Retirement {
+    let mut outcome = Retirement::default();
     let copy = labels_home(&target.home);
     let state = plugin_state_dir(&target.home);
     // Nothing of the plugin is left: no Herdr call on an ordinary launch.
     if !copy.exists() && !state.exists() {
         return outcome;
     }
-    let unlinked = match unlink(target) {
+    let unlinked = match unlink(target, LABELS_PLUGIN_ID) {
         Ok(Some(source)) => {
             outcome
                 .removed
@@ -128,14 +133,25 @@ fn request(target: &KitTarget, method: &str, params: Value) -> Result<Value, Str
         })
 }
 
-/// Takes the plugin out of Herdr however it was installed. Returns where it
+/// Takes the standalone hcoord plugin out of Herdr on every pass: nothing on
+/// disk says whether it was ever linked, and a Herdr that does not answer
+/// leaves it for the next pass.
+pub(crate) fn retire_hcoord_plugin(target: &KitTarget) -> Retirement {
+    let mut outcome = Retirement::default();
+    match unlink(target, HCOORD_PLUGIN_ID) {
+        Ok(Some(source)) => outcome
+            .removed
+            .push(format!("hcoord Herdr plugin link ({source})")),
+        Ok(None) => {}
+        Err(reason) => outcome.failures.push(reason),
+    }
+    outcome
+}
+
+/// Takes a plugin out of Herdr however it was installed. Returns where it
 /// came from, or `None` when Herdr has no such plugin.
-fn unlink(target: &KitTarget) -> Result<Option<&'static str>, String> {
-    let result = request(
-        target,
-        "plugin.list",
-        json!({ "plugin_id": LABELS_PLUGIN_ID }),
-    )?;
+fn unlink(target: &KitTarget, plugin_id: &str) -> Result<Option<&'static str>, String> {
+    let result = request(target, "plugin.list", json!({ "plugin_id": plugin_id }))?;
     let plugins = result
         .get("plugins")
         .cloned()
@@ -144,21 +160,17 @@ fn unlink(target: &KitTarget) -> Result<Option<&'static str>, String> {
         .map_err(|error| format!("Herdr's plugin list could not be read: {error}"))?;
     let Some(plugin) = plugins
         .into_iter()
-        .find(|plugin| plugin.plugin_id == LABELS_PLUGIN_ID)
+        .find(|plugin| plugin.plugin_id == plugin_id)
     else {
         return Ok(None);
     };
     match plugin.source.kind {
         PluginSourceKind::Github => {
-            uninstall_managed(target)?;
+            uninstall_managed(target, plugin_id)?;
             Ok(Some("GitHub"))
         }
         PluginSourceKind::Local => {
-            request(
-                target,
-                "plugin.unlink",
-                json!({ "plugin_id": LABELS_PLUGIN_ID }),
-            )?;
+            request(target, "plugin.unlink", json!({ "plugin_id": plugin_id }))?;
             Ok(Some("linked folder"))
         }
     }
@@ -166,10 +178,9 @@ fn unlink(target: &KitTarget) -> Result<Option<&'static str>, String> {
 
 /// A GitHub install is Herdr's managed checkout, which only the `herdr` CLI
 /// takes out; unlinking it through the socket would leave the checkout.
-fn uninstall_managed(target: &KitTarget) -> Result<(), String> {
+fn uninstall_managed(target: &KitTarget, plugin_id: &str) -> Result<(), String> {
     let herdr = target.herdr_bin.as_deref().ok_or_else(|| {
-        "the labels plugin is installed from GitHub and no herdr command was found to remove it"
-            .to_owned()
+        format!("{plugin_id} is installed from GitHub and no herdr command was found to remove it")
     })?;
     let mut env = vec![(
         "HERDR_SOCKET_PATH".to_owned(),
@@ -183,7 +194,7 @@ fn uninstall_managed(target: &KitTarget) -> Result<(), String> {
     }
     let finished = process::run(
         herdr,
-        &["plugin", "uninstall", LABELS_PLUGIN_ID],
+        &["plugin", "uninstall", plugin_id],
         &env,
         &target.home,
         UNINSTALL_DEADLINE,
@@ -195,7 +206,7 @@ fn uninstall_managed(target: &KitTarget) -> Result<(), String> {
         // Its stderr can name the operator's folders (B20): the exit code
         // is the reason that reaches the log.
         Err(format!(
-            "herdr could not remove the GitHub copy of the labels plugin: exit {:?}",
+            "herdr could not remove the GitHub copy of {plugin_id}: exit {:?}",
             finished.code
         ))
     }

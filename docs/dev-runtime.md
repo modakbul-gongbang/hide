@@ -40,6 +40,7 @@ pnpm --dir desktop package   # prints the new hide.app path and archive under de
 
 Reinstall that bundle (or point the operator at the new `desktop/out/hide-v<version>-macos-<arch>.zip`), relaunch, and confirm with a real screenshot.
 For a faster loop that does not need reinstalling anything, `pnpm --dir desktop dev` picks up a rebuilt `desktop/dist/` and this worktree's own `target/{debug,release}/hide` on its next launch; state explicitly which build (dev or packaged, and its `host.start` version) the user is looking at when reporting a fix.
+The operator's own state is `~/.hide/state` and their hcoord is `~/.hide/hcoord`; a dev daemon started under the operator's HOME without `HIDE_STATE_DIR` attaches to that state, and on its first connect moves a legacy `~/.local/state/hide` there.
 
 ## Bundled artwork ownership
 

@@ -99,6 +99,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
             })
             .collect(),
         labels_retirement: Default::default(),
+        legacy_retirement: Default::default(),
     }
 }
 
@@ -377,6 +378,73 @@ fn a_contract_2_consent_is_carried_to_the_kit_on_its_next_connection() {
             .map(|consent| consent.contract),
         Some(2)
     );
+}
+
+/// PRD hide-home-layout D-12, B20: a device allowed for the old default
+/// helper root is not asked again; the connection installs at the new
+/// default root and keeps the bound identity. A consent for another root,
+/// or a daemon told another root, carries nothing.
+#[test]
+fn a_consent_for_the_old_default_root_moves_to_the_new_one_without_asking() {
+    use hide_kit::layout::{HELPER_ROOT, LEGACY_HELPER_ROOT};
+    let probe = device_runtime(None, None);
+    let identity = crate::model::HostIdentity {
+        user: "me".to_owned(),
+        hostname: "studio.local".to_owned(),
+        port: 22,
+        host_key_sha256: "key".to_owned(),
+    };
+    let mut consent = granted(&probe);
+    assert_eq!(consent.helper_root, HELPER_ROOT);
+    consent.helper_root = LEGACY_HELPER_ROOT.to_owned();
+    consent.identity = Some(identity.clone());
+    let shared = device_runtime(Some(consent.clone()), None);
+    {
+        let runtime = shared.lock().unwrap();
+        let snapshot = runtime.host_snapshot(DEVICE);
+        assert_eq!(snapshot.consent, "granted");
+        assert_eq!(snapshot.helper_root.as_deref(), Some(HELPER_ROOT));
+    }
+    let connecting = shared
+        .lock()
+        .unwrap()
+        .carried_consent(DEVICE, consent.clone());
+    assert_eq!(
+        connecting.helper_root, HELPER_ROOT,
+        "this connection installs at the new root"
+    );
+    assert_eq!(connecting.identity, Some(identity));
+    let saved = shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .ui_state
+        .device_registrations
+        .iter()
+        .find(|registration| registration.id == DEVICE)
+        .and_then(|registration| registration.host_consent.clone())
+        .unwrap();
+    assert_eq!(saved.helper_root, HELPER_ROOT);
+
+    let mut elsewhere = consent.clone();
+    elsewhere.helper_root = "~/elsewhere".to_owned();
+    let shared = device_runtime(Some(elsewhere.clone()), None);
+    let kept = shared.lock().unwrap().carried_consent(DEVICE, elsewhere);
+    assert_eq!(kept.helper_root, "~/elsewhere");
+    assert_eq!(
+        shared.lock().unwrap().host_snapshot(DEVICE).consent,
+        "outdated"
+    );
+
+    // An isolated daemon told its own root asks again for the old default.
+    let shared = device_runtime(Some(consent.clone()), None);
+    shared.lock().unwrap().host_helper_root = "~/.cache/hide-test/helper".to_owned();
+    assert_eq!(
+        shared.lock().unwrap().host_snapshot(DEVICE).consent,
+        "outdated"
+    );
+    let kept = shared.lock().unwrap().carried_consent(DEVICE, consent);
+    assert_eq!(kept.helper_root, LEGACY_HELPER_ROOT);
 }
 
 /// A kit call that fails on a device never read says why on its row, and

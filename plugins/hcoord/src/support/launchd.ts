@@ -93,6 +93,18 @@ function bootoutSettled(agent: LaunchAgentTarget, environment: LaunchdEnvironmen
   }
 }
 
+/** Boots a loaded label out and waits until launchd lets go of it. */
+export function bootoutLabel(agent: LaunchAgentTarget, environment: LaunchdEnvironment = {}): { ok: boolean; detail: string; launchctl: string[] } {
+  const asked: string[] = [];
+  const out = bootoutSettled(agent, environment, recordingCall(environment, asked));
+  return { ...out, launchctl: asked };
+}
+
+/** Loads a label from the plist file it already has on disk. */
+export function bootstrapLabel(agent: LaunchAgentTarget, environment: LaunchdEnvironment = {}): { ok: boolean; detail: string } {
+  return recordingCall(environment, [])(["bootstrap", domain(environment), agent.plistPath]);
+}
+
 export interface InstallResult {
   plistPath: string;
   /** written when the plist bytes changed, unchanged otherwise. */

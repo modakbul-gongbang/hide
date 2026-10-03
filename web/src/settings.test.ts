@@ -155,8 +155,8 @@ describe("settings rules", () => {
         schema_version: 2,
         pid: 42,
         started_at_unix: "1",
-        state_dir: "/Users/example/.local/state/hide",
-        core_state_path: "/Users/example/.local/state/hide/core-state.json",
+        state_dir: "/Users/example/.hide/state",
+        core_state_path: "/Users/example/.hide/state/core-state.json",
         herdr_bin_path: null,
         herdr_socket_path: null,
         keep_alive: false,
@@ -179,7 +179,7 @@ describe("settings rules", () => {
   it("says whether a device's helper may run and never reads a refusal as ready", () => {
     const host = (patch: Partial<DeviceHost>): DeviceHost => ({
       consent: "granted",
-      helper_root: "~/.local/share/hide/host-helper",
+      helper_root: "~/.hide/host-helper",
       cli_dir: "~/.local/bin",
       contract: 2,
       bound_identity: null,
@@ -201,7 +201,7 @@ describe("settings rules", () => {
   it("names every kit part and where it goes in the one consent, and refuses a relative device socket", () => {
     const lines = kitConsentTerms("/opt/hide", "/opt/bin");
     const terms = lines.join(" ");
-    for (const named of ["/opt/hide", "/opt/bin", "hook helper", "hcoord", "~/.claude/settings.json", "~/.codex/hooks.json", "~/.hcoord/bin/hcoord"]) {
+    for (const named of ["/opt/hide", "/opt/bin", "hook helper", "hcoord", "~/.claude/settings.json", "~/.codex/hooks.json", "~/.hide/hcoord/bin/hcoord"]) {
       expect(terms).toContain(named);
     }
     expect(lines).toHaveLength(5);
@@ -250,8 +250,8 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
   });
 
   it("says in one line what removing a device takes off it and what stays (B22, B24)", () => {
-    const connected = device({ host: { state: "ready" } as DeviceHost });
-    expect(kitRemovalLine(connected)).toMatch(/removes its hook entries, its hide link and its helper folder; hcoord stays/);
+    const connected = device({ host: { state: "ready", helper_root: "~/.hide/host-helper" } as DeviceHost });
+    expect(kitRemovalLine(connected)).toMatch(/removes its hook entries, its hide link and its helper folder \(~\/\.hide\/host-helper\); hcoord and the records in ~\/\.hide stay/);
     const offline = device({ host: { state: "unavailable" } as DeviceHost });
     expect(kitRemovalLine(offline)).toMatch(/not connected .* its kit stays there/);
     const shared = device({ host: { state: "ready" } as DeviceHost, kit: { ...kit([]), shares_account_with: "Studio, second Herdr" } });

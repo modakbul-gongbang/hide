@@ -23,6 +23,16 @@ pub struct DaemonState {
     pub pid_started: Option<u64>,
 }
 
+/// The state folder, and any parent made with it such as `~/.hide`, is made
+/// 0700: it holds the daemon's token. An existing folder keeps its mode.
+fn create_private_dir(dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
 pub fn state_path(dir: &Path) -> PathBuf {
     dir.join("hided.json")
 }
@@ -32,7 +42,7 @@ pub fn lock_path(dir: &Path) -> PathBuf {
 }
 
 pub fn write_state(dir: &Path, state: &DaemonState) -> io::Result<PathBuf> {
-    fs::create_dir_all(dir)?;
+    create_private_dir(dir)?;
     let path = state_path(dir);
     let mut file = OpenOptions::new()
         .create(true)
@@ -76,7 +86,7 @@ pub fn forget_daemon(dir: &Path, pid: u32) {
 /// the lock is released with the returned handle.
 pub fn lock_connect(dir: &Path) -> io::Result<File> {
     use std::os::fd::AsRawFd;
-    fs::create_dir_all(dir)?;
+    create_private_dir(dir)?;
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -104,7 +114,7 @@ pub fn new_token() -> String {
 /// restart, a new port or a new token is still the same host. Written to a
 /// temporary file and renamed, so an interrupted first start leaves no torn id.
 pub fn host_id(dir: &Path) -> io::Result<String> {
-    fs::create_dir_all(dir)?;
+    create_private_dir(dir)?;
     let path = dir.join("host-id");
     match fs::read_to_string(&path) {
         Ok(text) if is_host_id(text.trim()) => return Ok(text.trim().to_owned()),
@@ -153,7 +163,7 @@ fn is_host_id(text: &str) -> bool {
 }
 
 pub fn acquire_lock(dir: &Path) -> io::Result<File> {
-    fs::create_dir_all(dir)?;
+    create_private_dir(dir)?;
     let file = OpenOptions::new()
         .create(true)
         .read(true)

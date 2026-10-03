@@ -1747,6 +1747,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
                 ),
             ],
             labels_retirement: Default::default(),
+            legacy_retirement: Default::default(),
         },
     );
     let local = |runtime: &Runtime| {
@@ -1785,6 +1786,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
                 hide_kit::ComponentState::Installed,
             )],
             labels_retirement: Default::default(),
+            legacy_retirement: Default::default(),
         },
     );
     assert!(!local(&runtime).busy);
