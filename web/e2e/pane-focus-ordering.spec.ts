@@ -99,9 +99,44 @@ function observeDiagnostics(page: Page): () => Diagnostic[] {
   return () => diagnostics;
 }
 
+/** Passive evidence only: retain the last 64 outgoing focus messages without
+ * changing the page's send, focus actions, or the test's behavior assertions. */
+function observeFocusFrames(page: Page): () => Promise<void> {
+  const limit = 64;
+  const records: { occurred_at: number; kind: string; pane_id: string }[] = [];
+  let evicted = 0;
+  page.on("websocket", (socket) => socket.on("framesent", ({ payload }) => {
+    if (typeof payload !== "string") return;
+    let frame: { kind?: string; payload?: { pane_id?: string; action?: string } };
+    try {
+      const parsed: unknown = JSON.parse(payload);
+      if (!parsed || typeof parsed !== "object") return;
+      frame = parsed as typeof frame;
+    } catch {
+      // Unstructured traffic supplies no focus evidence.
+      return;
+    }
+    const kind = frame.kind;
+    const paneId = frame.payload?.pane_id;
+    if (kind !== "focus_pane" && kind !== "remote_control") return;
+    if (kind === "remote_control" && frame.payload?.action !== "focus_pane") return;
+    if (typeof paneId !== "string") return;
+    if (records.length === limit) {
+      records.shift();
+      evicted += 1;
+    }
+    records.push({ occurred_at: Date.now(), kind, pane_id: paneId });
+  }));
+  return () => test.info().attach("pane-focus-sent", {
+    contentType: "application/json",
+    body: Buffer.from(JSON.stringify({ record_limit: limit, evicted, records })),
+  });
+}
+
 // Both cases exercise real terminal input/focus through the platform's Herdr.
 test("rapid pane clicks coalesce behind one request and leave keys on the last pane", { tag: "@platform" }, async ({ page }) => {
   const herdr = await startHerdr();
+  const saveFocusFrames = observeFocusFrames(page);
   let gate: Awaited<ReturnType<typeof focusGate>> | undefined;
   let daemon: Daemon | undefined;
   try {
@@ -165,11 +200,13 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     daemon?.stop();
     await gate?.stop();
     herdr.stop();
+    await saveFocusFrames();
   }
 });
 
 test("an unknown focus result ends the burst before a delayed mutation is released", { tag: "@platform" }, async ({ page }) => {
   const herdr = await startHerdr();
+  const saveFocusFrames = observeFocusFrames(page);
   let gate: Awaited<ReturnType<typeof focusGate>> | undefined;
   let daemon: Daemon | undefined;
   try {
@@ -224,5 +261,6 @@ test("an unknown focus result ends the burst before a delayed mutation is releas
     daemon?.stop();
     await gate?.stop();
     herdr.stop();
+    await saveFocusFrames();
   }
 });
