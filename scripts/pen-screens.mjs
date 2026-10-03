@@ -526,14 +526,16 @@ function newIssueButton(tokens, id) {
 // The view tabs under a scope's header: the Agents trigger carries, in
 // warning, how many agents wait on the operator - the only place outside the
 // cards that says so (MainScreen.tsx; a project has tiles instead).
-function viewTabs(id, items, activeIndex, waiting) {
+function viewTabs(id, items, activeIndex, waiting, answering = 0) {
   return frame(id, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'}, items.map((label, index) => {
     const active = index === activeIndex;
     const content = {'tab-t': {content: label, fill: active ? '$--foreground' : '$--subtle-foreground'}};
-    if (label !== 'Agents' || waiting === 0) return themedXref(`${id}-${index}`, 'tab-m', label, active ? {fill: '$--secondary'} : {}, content);
+    // 요청 carries the rows to answer (PRD overview-request-view B1), Agents the agents waiting.
+    const count = label === 'Agents' ? waiting : label === '요청' ? answering : 0;
+    if (count === 0) return themedXref(`${id}-${index}`, 'tab-m', label, active ? {fill: '$--secondary'} : {}, content);
     return frame(`${id}-${index}w`, label, {layout: 'horizontal', alignItems: 'center', height: 24, padding: [0, '$--spacing-sm', 0, 0], cornerRadius: '$--radius-xs', ...(active ? {fill: '$--secondary'} : {})}, [
       themedXref(`${id}-${index}`, 'tab-m', label, {padding: [0, '$--spacing-xs', 0, '$--spacing-sm']}, content),
-      text(`${id}-${index}-n`, String(waiting), {size: '$--text-caption', fill: '$--warning'}),
+      text(`${id}-${index}-n`, String(count), {size: '$--text-caption', fill: '$--warning'}),
     ]);
   }));
 }
@@ -581,10 +583,12 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, 
   ]);
 }
 
-// The tiles (OverviewLenses.tsx LensTiles, B1-B5): one width each, the chosen
+// The tiles (OverviewLenses.tsx LensTiles, B1-B5; 요청 first, PRD
+// overview-request-view B2): one width each, the chosen
 // one outlined; the name, the yellow badge of the operator's turn, the large
 // number and its unit, and one bar whose parts carry the bar's tones.
 const HERDR_TILES = [
+  {id: 'requests', label: '요청', value: '5', badge: '2', bar: [['$--warning', 2], ['$--destructive', 1], ['$--success', 1], ['$--primary', 1]]},
   {id: 'agents', label: 'Agents', value: '11', badge: '2', bar: [['$--warning', 2], ['$--success', 2], ['$--agent-working', 2], ['$--muted-foreground', 5]]},
   {id: 'issues', label: 'Issues', value: '22', unit: '열림', bar: [['$--muted-foreground', 18], ['$--warning', 2], ['$--success', 2]]},
   {id: 'prs', label: 'PRs', value: '9', unit: '열림', badge: '4', bar: [['$--warning', 4], ['$--agent-working', 1], ['$--destructive', 4]]},
@@ -1268,20 +1272,22 @@ const LOCAL_5 = {task: local(5), project: 'creator', title: '소프트웨어 팩
   {mark: 'done', title: '경험담 초안 윤문', line: 'AI 티 윤문 완료, 빠진 문장 3곳 확인 대기', tone: 'news', age: '3m'},
 ]};
 
-const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its Tasks · Agents · Projects tabs the count of agents waiting on the operator on Agents, whose view is the Project Overview’s graph over every project with the project’s name above each project’s band. Every project’s issues share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card an issue with its project beside its id (a Local issue as L-N): 시작 on a backlog card under the pointer, the operator’s-turn cards in the warning border, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
+const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, RequestView.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its 요청 · Tasks · Agents · Projects tabs the count of rows to answer on 요청 and of agents waiting on the operator on Agents. 요청, which every way in opens, is the Project Overview’s request view over every project, each row with its project’s name; Agents’ view is the Project Overview’s graph over every project with the project’s name above each project’s band. Every project’s issues share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card an issue with its project beside its id (a Local issue as L-N): 시작 on a backlog card under the pointer, the operator’s-turn cards in the warning border, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
 
-const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, agentGraph.ts, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents, PRD agents-graph-view). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리 with the view’s control at its right end, then the tiles Agents · Issues · PRs · Sessions where the tab row was: the name, the yellow badge of the operator’s turn, the large number and its unit, one bar; the chosen tile outlined. Every entry opens Agents, one graph (PRD agents-graph-view): a checkout is a box with its head (the glyph in its PR’s colour and the branch, the purpose, then the issue chip, the PR chip with its CI mark and 변경 요청, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title and age; a step in with a corner arrow for a delegation inside the checkout; a tucked badge such as ✓2 for folded children; only an asking row has a second line, its question in warning). The front checkout’s box carries the selection outline, main’s box is first, and boxes stand in columns by how deep their delegation runs. A delegation into another checkout is a rounded orthogonal line from the parent row’s right port to the child row’s left port, coloured by the child: blue with dashes while it works, orange when it asks, pale blue while it waits on children, grey otherwise. The worktrees with no agent, the ones to clean up and the resting ones fold into one line each. The facts line’s right end carries the filter: the status chips 내 차례 · 일하는 중 · 쉬는 중, a search field and, only with two devices in view, the device choice. Below the graph the box states (primary, a worktree with its chips, a merged box, an asking row, a row with a tucked badge, the selected box) and the filter that matches nothing, one line with 필터 해제. The Issues tile opens a board of issues only (PRD overview-lenses-issues): a card is the glyph, id and at most two labels, the title, the lock line, the checkout chip and the PR chip with its CI and review word, and at most two agents; its buttons fill the id line’s slot under the pointer (시작 S, Workspace O, the PR icon, a Local issue’s edit, ⋯); only the operator’s turn is outlined in warning. The worktrees and pull requests with no issue are one line each under 진행 중 and 리뷰, and 완료 is folded to one line per issue with the pull request that closed it. The facts line’s right end carries the filter and Board · List · Dependencies. A card opens the issue panel beside the board: the head (glyph, id, source, Open, ×), the title, the action line, the properties, 이 이슈로 한 일, the Markdown body and a GitHub issue’s latest comments; a Local issue edits in place, and a failed read is one line with 재시도. The PRs tile opens the project’s pull requests grouped 내 차례, 에이전트가 고치는 중, CI 실패 · 맡은 에이전트 없음 and 최근 머지 (folded) (PRD overview-lenses-prs): a row is ▸, the state glyph, the number, the title, the issue cell (a dotted circle when empty, the 이슈 잇기 icon under the pointer), 확인, the agents’ marks, the branch, CI, the review word and the time, whose fixed slot holds GitHub and ⋯, ▷ 맡기기 or 정리 under the pointer; an unfolded row shows the branch’s agents and GitHub, Workspace and 이슈 잇기. 이슈 잇기 on a GitHub issue asks once, 그만두기 first, before it writes Closes #N into the body.';
+const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, agentGraph.ts, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents, PRD agents-graph-view). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리 with the view’s control at its right end, then the tiles 요청 · Agents · Issues · PRs · Sessions where the tab row was: the name, the yellow badge of the operator’s turn, the large number and its unit, one bar; the chosen tile outlined. Every entry opens 요청 (PRD overview-request-view, RequestView.tsx, requestList.ts): one row per agent grouped 답할 것, 고칠 것, 리뷰·머지, 멈춤, 결과 볼 것, 일하는 중, 기다리는 중 and 쉬는 중 (folded); a row is the status mark, the kind mark and the title, then on the right the descendants (자식 N · 일하는 중 M, 질문 K in warning), the PR chip with CI and +N, the issue chip, the checkout and the time; under it 나 › and the request on one line, its front cut and its end kept, then the result line (warning on a row to answer) with its open chips; an expanded row adds the request as written, the agent’s last words, its pull requests (예전 PR #N 머지됨 for one settled before), its descendants with 열기, and 패널 열기 ⌘↵. With no agent the view is one line and New agent; with nothing to do it is 할 일 없음 above the folded 쉬는 중. The Agents tile opens one graph (PRD agents-graph-view): a checkout is a box with its head (the glyph in its PR’s colour and the branch, the purpose, then the issue chip, the PR chip with its CI mark and 변경 요청, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title and age; a step in with a corner arrow for a delegation inside the checkout; a tucked badge such as ✓2 for folded children; only an asking row has a second line, its question in warning). The front checkout’s box carries the selection outline, main’s box is first, and boxes stand in columns by how deep their delegation runs. A delegation into another checkout is a rounded orthogonal line from the parent row’s right port to the child row’s left port, coloured by the child: blue with dashes while it works, orange when it asks, pale blue while it waits on children, grey otherwise. The worktrees with no agent, the ones to clean up and the resting ones fold into one line each. The facts line’s right end carries the filter: the status chips 내 차례 · 일하는 중 · 쉬는 중, a search field and, only with two devices in view, the device choice. Below the graph the box states (primary, a worktree with its chips, a merged box, an asking row, a row with a tucked badge, the selected box) and the filter that matches nothing, one line with 필터 해제. The Issues tile opens a board of issues only (PRD overview-lenses-issues): a card is the glyph, id and at most two labels, the title, the lock line, the checkout chip and the PR chip with its CI and review word, and at most two agents; its buttons fill the id line’s slot under the pointer (시작 S, Workspace O, the PR icon, a Local issue’s edit, ⋯); only the operator’s turn is outlined in warning. The worktrees and pull requests with no issue are one line each under 진행 중 and 리뷰, and 완료 is folded to one line per issue with the pull request that closed it. The facts line’s right end carries the filter and Board · List · Dependencies. A card opens the issue panel beside the board: the head (glyph, id, source, Open, ×), the title, the action line, the properties, 이 이슈로 한 일, the Markdown body and a GitHub issue’s latest comments; a Local issue edits in place, and a failed read is one line with 재시도. The PRs tile opens the project’s pull requests grouped 내 차례, 에이전트가 고치는 중, CI 실패 · 맡은 에이전트 없음 and 최근 머지 (folded) (PRD overview-lenses-prs): a row is ▸, the state glyph, the number, the title, the issue cell (a dotted circle when empty, the 이슈 잇기 icon under the pointer), 확인, the agents’ marks, the branch, CI, the review word and the time, whose fixed slot holds GitHub and ⋯, ▷ 맡기기 or 정리 under the pointer; an unfolded row shows the branch’s agents and GitHub, Workspace and 이슈 잇기. 이슈 잇기 on a GitHub issue asks once, 그만두기 first, before it writes Closes #N into the body.';
 
 // -- Screen / Main ------------------------------------------------------------
 
 // The Overview of every project (MainScreen.tsx, PRD task-agents-views D-10,
 // titled Overview by PRD sidebar-shell D-02, reworked issue first): the
 // sidebar's Overview row marked, the title with Add project and 새 이슈, the
-// facts line, the Tasks · Agents · Projects tabs, every project's issues and
+// facts line, the 요청 · Tasks · Agents · Projects tabs, the request view every
+// way in opens (PRD overview-request-view), every project's issues and
 // worktrees on one board with the project beside each id, Done folded per
 // project, and the Dependencies mode with an arrow that crosses projects.
 function buildMain(tokens) {
   const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain} = issueBoardParts(tokens);
+  const {requestGroup, requestRow} = requestParts(tokens);
   const width = 4 * column + 3 * num(tokens, '--spacing-md');
   // `key` tells the Board's header from the Dependencies one, in each theme.
   function header(key, mode) {
@@ -1299,7 +1305,7 @@ function buildMain(tokens) {
         {glyph: 'git-merge', label: '19 merged', fill: '$--pr-merged'},
       ]),
       frame(`main-rule-${key}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
-      viewRow(`main-row-${key}`, viewTabs(`main-tabs-${key}`, ['Tasks', 'Agents', 'Projects'], 0, 3), mode, width),
+      viewRow(`main-row-${key}`, viewTabs(`main-tabs-${key}`, ['요청', 'Tasks', 'Agents', 'Projects'], mode ? 1 : 0, 3, 2), mode, width),
     ]);
   }
   function build(suffix) {
@@ -1348,9 +1354,138 @@ function buildMain(tokens) {
         card('d4', {...ISSUE_186, project: 'herdr-ide', word: '리뷰'}),
       ]),
     ]);
-    return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [screenLineageDetails(tokens, suffix), board, dependencies])];
+    // 요청 as every way into Home opens it (PRD overview-request-view B1, B3):
+    // each row carries its project's name.
+    const rows = requestRowsOf('herdr-ide');
+    const r = (key, spec) => requestRow(`main-rq-${key}-${suffix}`, spec, width);
+    const requests = frame(`main-requests-${suffix}`, 'Overview · 요청', {width, layout: 'vertical', gap: '$--spacing-md'}, [
+      header(`r${suffix}`, null),
+      requestGroup(`main-rqg1-${suffix}`, '답할 것', 2, [...r('answer', rows.answer), ...r('sasu', {mark: 'ask', title: 'judge 백엔드 전환', project: 'sasu', request: 'judge를 codex로도 돌리게', result: 'claude를 기본으로 둘까요?', place: '14-judge-backend', age: '4m', issue: gh(14)})]),
+      requestGroup(`main-rqg2-${suffix}`, '결과 볼 것', 1, r('result', rows.result)),
+      requestGroup(`main-rqg3-${suffix}`, '일하는 중', 1, r('working', rows.working)),
+      requestGroup(`main-rqg4-${suffix}`, '쉬는 중', 7, [], {folded: true}),
+    ]);
+    return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [screenLineageDetails(tokens, suffix), requests, board, dependencies])];
   }
   return screenSheet('screen-main', 'Screen / Main', MAIN_SPEC, build, build);
+}
+
+// -- the request view (RequestView.tsx over requestList.ts) ----------------------
+
+// A group head and its rows (PRD overview-request-view B3-B6, B13), authored
+// on local tokens like the PR row, since no library master draws a request
+// row. A row is the status mark, the agent's kind mark and its title (with its
+// project on Home), then on the right the descendants, the PR chip with `+N`,
+// the issue chip, the checkout and the time; under it `나 ›` and the request
+// on one line, its front cut and its end kept, then the result line with its
+// open chips. An expanded row adds the request as written, the agent's last
+// words, its pull requests, its descendants and 패널 열기.
+function requestParts(tokens) {
+  const {taskId, prChip, caption, spacer} = issueBoardParts(tokens);
+  const small = num(tokens, '--size-control-sm');
+  const mark = num(tokens, '--size-agent-mark');
+  const chipMax = num(tokens, '--size-pane-child-chip-max');
+
+  function requestGroup(id, label, count, rows, {folded = false} = {}) {
+    return frame(id, label, {layout: 'vertical', gap: 0, width: 'fill_container'}, [
+      frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', height: num(tokens, '--size-control')}, [
+        text(`${id}-label`, `${label} ${count}${folded ? ' · 펼치기' : ''}`, {size: '$--text-caption', weight: '500', fill: '$--subtle-foreground'}),
+        ...(label === '쉬는 중' ? [icon(`${id}-fold`, folded ? 'chevron-right' : 'chevron-down', {size: num(tokens, '--size-icon-sm'), fill: '$--subtle-foreground'})] : []),
+      ]),
+      ...rows,
+    ]);
+  }
+
+  function openChip(id, label) {
+    return frame(id, label, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs'], cornerRadius: '$--radius-xs', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+      icon(`${id}-g`, 'link', {size: num(tokens, '--size-icon-sm'), fill: '$--subtle-foreground'}),
+      caption(`${id}-t`, label, '$--subtle-foreground', true),
+    ]);
+  }
+
+  // `width` is the row's; the request line is cut to it the way the web cuts it:
+  // the end keeps up to 40% from a word boundary, the front is cut with an ellipsis.
+  function requestRow(id, row, width) {
+    const [symbol, color] = AGENT_MARK[row.mark];
+    const lineWidth = width - 2 * num(tokens, '--spacing-sm') - 24;
+    const words = row.request.split(' ');
+    let tail = '';
+    for (let index = words.length - 1; index > 0; index -= 1) {
+      const candidate = words.slice(index).join(' ');
+      if (textWidth(candidate, 11) > lineWidth * 0.4) break;
+      tail = candidate;
+    }
+    const whole = textWidth(row.request, 11) <= lineWidth;
+    const head = whole || !tail ? row.request : row.request.slice(0, row.request.length - tail.length).trimEnd();
+    const right = [
+      ...(row.children ? [caption(`${id}-kids`, row.children, '$--muted-foreground', true), ...(row.asking ? [caption(`${id}-ask`, `· 질문 ${row.asking}`, '$--warning', true)] : [])] : []),
+      ...(row.pr ? [prChip(`${id}-pr`, row.pr), ...(row.more ? [caption(`${id}-more`, `+${row.more}`, '$--muted-foreground', true)] : [])] : []),
+      ...(row.issue ? [taskId(`${id}-issue`, row.issue)] : []),
+      caption(`${id}-place`, fitText(row.place, chipMax, 11, true), '$--muted-foreground', true),
+      caption(`${id}-age`, row.age, '$--muted-foreground', true),
+    ];
+    const lines = frame(id, row.title, {layout: 'vertical', gap: '$--spacing-xxs', width, padding: ['$--spacing-xs', '$--spacing-sm'], cornerRadius: '$--radius-xs', ...(row.hover ? {fill: '$--accent'} : {})}, [
+      frame(`${id}-top`, 'Title line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container'}, [
+        screenStatusMark(tokens, `${id}-mark`, symbol, color),
+        frame(`${id}-p`, 'Provider artwork', {width: mark, height: mark, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${row.provider ?? 'claude'}.png`, mode: 'fit'}}, []),
+        text(`${id}-t`, row.title, {size: '$--text-body'}),
+        ...(row.project ? [caption(`${id}-proj`, `· ${row.project}`)] : []),
+        spacer(`${id}-sp`),
+        ...right,
+      ]),
+      frame(`${id}-req`, 'Request line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container'}, [
+        caption(`${id}-who`, `${row.sender ?? '나'} ›`, '$--subtle-foreground'),
+        text(`${id}-rh`, whole ? head : fitText(head, lineWidth - textWidth(tail, 11) - 6, 11), {size: '$--text-caption'}),
+        ...(whole || !tail ? [] : [text(`${id}-rt`, tail, {size: '$--text-caption'})]),
+        ...(row.later ? [screenBadge(`${id}-later`, `이후 ${row.later}`)] : []),
+      ]),
+      ...(row.result || row.opens ? [frame(`${id}-res`, 'Result line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container'}, [
+        text(`${id}-rs`, fitText(row.result ?? '', lineWidth - 90 * (row.opens?.length ?? 0), 11), {size: '$--text-caption', fill: row.mark === 'ask' ? '$--warning' : row.fix ? '$--destructive' : '$--muted-foreground'}),
+        spacer(`${id}-rsp`),
+        ...(row.opens ?? []).map((label, index) => openChip(`${id}-o${index}`, label)),
+      ])] : []),
+    ]);
+    if (!row.expanded) return [lines];
+    const detail = row.expanded;
+    return [lines, frame(`${id}-x`, 'Expanded', {layout: 'vertical', gap: '$--spacing-sm', width, padding: [0, '$--spacing-sm', '$--spacing-sm', num(tokens, '--spacing-sm') + 2 * mark]}, [
+      caption(`${id}-xwho`, `${row.sender ?? '나'} ›`, '$--subtle-foreground'),
+      ...detail.request.map((line, index) => text(`${id}-xr${index}`, line || ' ', {size: '$--text-caption'})),
+      ...detail.reply.map((line, index) => caption(`${id}-xa${index}`, line)),
+      ...(detail.pulls ?? []).map((pull, index) => frame(`${id}-xp${index}`, `PR #${pull.number}`, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+        pull.live ? prChip(`${id}-xpc${index}`, pull) : caption(`${id}-xpo${index}`, `예전 PR #${pull.number} 머지됨`),
+        text(`${id}-xpt${index}`, pull.title, {size: '$--text-caption'}),
+      ])),
+      ...(detail.children ?? []).map((child, index) => frame(`${id}-xc${index}`, child.title, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container'}, [
+        screenStatusMark(tokens, `${id}-xcm${index}`, AGENT_MARK[child.mark][0], AGENT_MARK[child.mark][1]),
+        text(`${id}-xct${index}`, child.title, {size: '$--text-caption'}),
+        caption(`${id}-xcv${index}`, child.verb, '$--subtle-foreground'),
+        caption(`${id}-xcl${index}`, child.line),
+        spacer(`${id}-xcsp${index}`),
+        caption(`${id}-xco${index}`, '열기', '$--foreground'),
+      ])),
+      frame(`${id}-xopen`, 'Open', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
+        screenButton(`${id}-xob`, '패널 열기', {variant: 'secondary', height: small, icon: 'square-arrow-out-up-right'}),
+        caption(`${id}-xok`, '⌘↵'),
+      ]),
+    ])];
+  }
+
+  return {requestGroup, requestRow};
+}
+
+// The rows both request views draw: a question, a failed PR, a PR to review,
+// a finished turn, a working agent, a parent waiting on its child, and the
+// folded resting group.
+const LONG_REQUEST = 'Overview 요청 보기에서 긴 요청을 한 줄로 보여 주세요 · request-row-….md 를 참고하고 · #336 리뷰도 함께 · 끝쪽 단어는 남겨 둘 것 · 이미지 1';
+function requestRowsOf(project = null) {
+  return {
+    answer: {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', project, request: '#192 hided가 SIGTERM에서 AI 자식부터 정리하게 해 줘', result: '기존 stdin 종료 경로도 남길까요?', place: '192-hided-sigterm-handler', age: '12m', issue: gh(192)},
+    fix: {mark: 'seen', title: '탭 그룹 회귀 수정', project, request: 'CI 실패한 거 고쳐 줘', result: 'e2e 두 개를 고쳤습니다', fix: true, place: 'prd/agent-tab-groups', age: '8m', pr: {number: 217, tone: 'open', checks: 'failed'}, more: 1},
+    review: {mark: 'seen', title: 'Herdr 서버 시작 구현', project, request: '#191 데스크톱 호스트가 Herdr 서버를 띄우게', result: 'PR 올림 · CI 통과', place: '191-desktop-starts-herdr', age: '20m', pr: {number: 222, tone: 'open', checks: 'passing'}, issue: gh(191)},
+    result: {mark: 'done', title: '설치 키트 항목 추가', project, request: 'Codex를 pane마다 실행하는 키트 항목 추가해 줘', result: '키트 항목을 추가했고 테스트가 통과했습니다', place: 'prd/codex-per-pane', age: '3m', opens: ['report', 'kit.rs']},
+    working: {mark: 'work', title: '요청 보기 웹 화면 구현', project, request: LONG_REQUEST, result: '요청 보기 행을 그리는 중', place: 'prd/overview-request-view', age: '1m', later: 'ci-lead'},
+    waiting: {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', project, request: '#192 SIGTERM 정리 맡겨서 끝까지 봐 줘', sender: '나', result: '리뷰어 결과를 기다리는 중', place: 'main', age: '25m', children: '자식 2 · 일하는 중 1', asking: 1},
+  };
 }
 
 // -- the PRs view (PullRequestsView.tsx over projectBoard.ts) --------------------
@@ -1428,7 +1563,8 @@ function prParts(tokens) {
 // -- Screen / Project Overview -------------------------------------------------
 
 // The Overview (ProjectOverview.tsx, PRD agents-graph-view): the header with
-// the tiles and the graph filter, Agents as every entry opens it (one graph, a
+// the tiles and the graph filter, 요청 as every entry opens it (PRD
+// overview-request-view), its empty and nothing-to-do states, Agents (one graph, a
 // box per checkout and a line per delegation), the box states and the filter
 // that matches nothing, then the Issues tile's board and Dependencies mode,
 // #218's Tasks board under its new name.
@@ -1440,6 +1576,7 @@ const CODEX_REST = {mark: 'seen', title: '체크아웃 기능 구현 및 정리'
 function buildProjectOverview(tokens) {
   const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain, preview, issuePanel} = issueBoardParts(tokens);
   const {prGroup, prRow} = prParts(tokens);
+  const {requestGroup, requestRow} = requestParts(tokens);
   const graph = graphParts(tokens);
   const {g} = graph;
   const columns = 3;
@@ -1676,7 +1813,42 @@ function buildProjectOverview(tokens) {
         actions: [screenButton(`ov-prcd-no-${suffix}`, '그만두기', {variant: 'secondary'}), screenButton(`ov-prcd-yes-${suffix}`, '본문에 쓰기')],
       }),
     ]);
+    // The request view as every entry opens it (PRD overview-request-view
+    // B1-B8, B13, B52): the groups in their order with 쉬는 중 folded, a
+    // working row's long request cut front and end, a finished row expanded,
+    // then the empty view and the view with nothing to do.
+    const rows = requestRowsOf();
+    const r = (key, spec) => requestRow(`ov-rq-${key}-${suffix}`, spec, boardWidth);
+    const requests = frame(`ov-requests-${suffix}`, 'Project Overview · 요청', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
+      overviewHeader(tokens, 'ov-rqhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'requests', width: boardWidth}),
+      requestGroup(`ov-rqg1-${suffix}`, '답할 것', 1, r('answer', rows.answer)),
+      requestGroup(`ov-rqg2-${suffix}`, '고칠 것', 1, r('fix', rows.fix)),
+      requestGroup(`ov-rqg3-${suffix}`, '리뷰·머지', 1, r('review', rows.review)),
+      requestGroup(`ov-rqg4-${suffix}`, '결과 볼 것', 1, r('result', {...rows.result, hover: true, expanded: {
+        request: ['Codex를 pane마다 실행하는 키트 항목 추가해 줘', '', 'Settings › Devices 줄에서 끄고 켤 수 있게'],
+        reply: ['키트 항목을 추가했고 테스트가 통과했습니다.', '보고서는 https://example.com/report 에 있습니다.'],
+      }})),
+      requestGroup(`ov-rqg5-${suffix}`, '일하는 중', 1, r('working', rows.working)),
+      requestGroup(`ov-rqg6-${suffix}`, '기다리는 중', 1, r('waiting', {...rows.waiting, expanded: {
+        request: ['#192 SIGTERM 정리 맡겨서 끝까지 봐 줘'],
+        reply: ['리뷰어 결과를 기다리는 중'],
+        pulls: [{number: 221, tone: 'draft', checks: 'pending', title: 'hided: stop AI children on SIGTERM before exit', live: true}, {number: 208, title: 'hided: graceful stop scaffolding', live: false}],
+        children: [{mark: 'ask', title: 'SIGTERM 처리와 자식 정리', verb: '답할 것', line: '기존 stdin 종료 경로도 남길까요?'}, {mark: 'work', title: '리뷰: 종료 경로 회귀', verb: '일하는 중', line: '테스트를 돌리는 중'}],
+      }})),
+      requestGroup(`ov-rqg7-${suffix}`, '쉬는 중', 4, [], {folded: true}),
+    ]);
+    const requestStates = frame(`ov-rqstates-${suffix}`, 'Project Overview · 요청 › 빈 상태', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
+      frame(`ov-rqempty-${suffix}`, '에이전트 없음', {layout: 'vertical', gap: '$--spacing-sm', alignItems: 'center', width: boardWidth, padding: '$--spacing-xl'}, [
+        text(`ov-rqempty-t-${suffix}`, '실행 중인 에이전트가 없습니다', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        screenButton(`ov-rqempty-b-${suffix}`, 'New agent', {variant: 'secondary', height: num(tokens, '--size-control'), icon: 'square-terminal'}),
+      ]),
+      frame(`ov-rqnone-${suffix}`, '할 일 없음', {layout: 'vertical', gap: '$--spacing-xs', width: boardWidth}, [
+        text(`ov-rqnone-t-${suffix}`, '할 일 없음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        requestGroup(`ov-rqnone-g-${suffix}`, '쉬는 중', 6, [], {folded: true}),
+      ]),
+    ]);
     return [
+      frame(`ov-requestside-${suffix}`, '요청', {layout: 'vertical', gap: '$--spacing-xl'}, [requests, requestStates]),
       frame(`ov-agentside-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-xl'}, [agents, boxStates, filterFrame]),
       frame(`ov-issueside-${suffix}`, 'Issues', {layout: 'vertical', gap: '$--spacing-xl'}, [issues, states, dependencies]),
       frame(`ov-panelside-${suffix}`, 'Issue panel', {layout: 'vertical', gap: '$--spacing-xl'}, [github, localPanel, editing, failed]),
