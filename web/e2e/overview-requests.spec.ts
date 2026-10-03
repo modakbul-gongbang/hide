@@ -79,7 +79,7 @@ function longSession(herdr: HerdrFixture, pane: string): void {
 }
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press("Alt+Comma");
+  await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await page.locator('[data-settings-tab="appearance"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
@@ -264,7 +264,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     // Turning agent summaries off (B21): no row stops, every title is the
     // session's own or the provider's, and the request stays as written.
     const summary = async (on: boolean) => {
-      await page.keyboard.press("Alt+Comma");
+      await page.keyboard.press(chord("settings"));
       await page.locator('[data-settings-tab="agents"]').click();
       const toggle = page.locator("[data-ai-agent-summary]");
       await expect(toggle).toHaveAttribute("data-ai-agent-summary", String(!on));
