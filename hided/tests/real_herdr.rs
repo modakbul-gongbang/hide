@@ -57,7 +57,7 @@ struct PrivateHerdr {
     socket: PathBuf,
     config: PathBuf,
     log: PathBuf,
-    server: Child,
+    server: Option<Child>,
 }
 
 impl PrivateHerdr {
@@ -100,7 +100,7 @@ impl PrivateHerdr {
             socket,
             config,
             log,
-            server,
+            server: Some(server),
         };
         let deadline = Instant::now() + Duration::from_secs(60);
         while hide_herdr_client::request_with_timeout(
@@ -120,15 +120,25 @@ impl PrivateHerdr {
         }
         herdr
     }
+
+    fn stop(&mut self) -> std::io::Result<()> {
+        if self.server.is_none() {
+            return Ok(());
+        }
+        let _ = herdr_command(&self.bin, &self.home, &self.socket, &self.config)
+            .args(["server", "stop"])
+            .output();
+        let server = self.server.as_mut().expect("the private server is owned");
+        let _ = server.kill();
+        server.wait()?;
+        self.server = None;
+        Ok(())
+    }
 }
 
 impl Drop for PrivateHerdr {
     fn drop(&mut self) {
-        let _ = herdr_command(&self.bin, &self.home, &self.socket, &self.config)
-            .args(["server", "stop"])
-            .output();
-        let _ = self.server.kill();
-        let _ = self.server.wait();
+        let _ = self.stop();
     }
 }
 
@@ -355,9 +365,7 @@ fn plain(screen: &str) -> String {
     text
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
-async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
+async fn assert_private_pane_input() {
     let bin = PathBuf::from(
         std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
     );
@@ -368,7 +376,7 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
         tempfile::Builder::new().prefix("hh").tempdir()
     }
     .unwrap();
-    let herdr = PrivateHerdr::start(bin, root.path());
+    let mut herdr = PrivateHerdr::start(bin, root.path());
     let running = hided::start_daemon(daemon_env(root.path(), &herdr))
         .await
         .expect("hided starts");
@@ -445,6 +453,7 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
             break true;
         }
     };
+    eprintln!("pane lifecycle states: {states:?}");
     assert!(
         found,
         "the typed line never came back on the terminal stream (typed: {typed}); the screen read: {:?}; states: {states:?}; snapshot: {}; {}; herdr: {}",
@@ -453,5 +462,19 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
         control_attempt(&herdr, &pane),
         std::fs::read_to_string(&herdr.log).unwrap_or_default()
     );
+    drop(socket);
     running.stop();
+    drop(running);
+    herdr.stop().expect("the private Herdr server exits");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
+async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
+    // Independent servers exercise startup ordering. An assertion failure
+    // stops the test immediately; a later instance cannot erase its result.
+    for instance in 1..=3 {
+        eprintln!("private pane/input instance {instance}/3");
+        assert_private_pane_input().await;
+    }
 }
