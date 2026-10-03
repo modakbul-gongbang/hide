@@ -1,7 +1,7 @@
 ---
 topic: "프로젝트별 Overview를 없애고 프로젝트 행은 마지막으로 포커스한 체크아웃으로 이동한다"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-10-03 verbatim: mini 소컷 수정지시 어디서 되고잇어? 아직 안햇나? 349 350은 승인안됏으면 해버려
 review_profile: "standard"
 review_rationale: "사이드바 프로젝트 행의 클릭 의미와 여러 진입점을 바꾸는 사용자 대면 UI 변경이며, 저장 데이터·권한·외부 효과는 바뀌지 않고 core는 열기 이벤트의 페이로드만 넓힌다."
 source_intake: "current conversation"

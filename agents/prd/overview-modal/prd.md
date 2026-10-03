@@ -1,7 +1,7 @@
 ---
 topic: "Overview를 프로젝트 소속이 아닌 하나의 모달/페이지로 열고 사이드바 행과 단축키로 들어가기"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-10-03 verbatim: mini 소컷 수정지시 어디서 되고잇어? 아직 안햇나? 349 350은 승인안됏으면 해버려
 review_profile: "standard"
 review_rationale: "웹 셸의 화면 전환, 사이드바, 툴바, 단축키 레지스트리와 ⌃Tab 순환 명세를 바꾸는 사용자 가시 UI 변경이며, core 상태, wire, Herdr 계약, 저장 데이터는 바꾸지 않는다."
 source_intake: "agents/interview/overview-modal/qa-log.md"
