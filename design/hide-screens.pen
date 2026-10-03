@@ -57625,9 +57625,6 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
-                              "stroke": "$--border",
-                              "strokeWidth": "$--size-hairline",
-                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -57684,7 +57681,7 @@
                                       "ref": "hideui:view-tab",
                                       "name": "한글 노트.md",
                                       "fill": "$--card",
-                                      "stroke": "$--primary",
+                                      "stroke": "$--foreground",
                                       "strokeWidth": {
                                         "bottom": "$--size-tab-indicator"
                                       },
@@ -58079,10 +58076,7 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "layout": "vertical",
-                                  "gap": 0,
-                                  "stroke": "$--primary",
-                                  "strokeWidth": "$--size-hairline",
-                                  "strokeAlignment": "inner"
+                                  "gap": 0
                                 },
                                 {
                                   "type": "frame",
@@ -59269,9 +59263,6 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
-                              "stroke": "$--primary",
-                              "strokeWidth": "$--size-hairline",
-                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -60231,9 +60222,6 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "fill": "$--background",
-                                  "stroke": "$--primary",
-                                  "strokeWidth": "$--size-hairline",
-                                  "strokeAlignment": "inner",
                                   "padding": "$--spacing-sm",
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs"
@@ -60494,9 +60482,6 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "fill": "$--background",
-                                  "stroke": "$--border",
-                                  "strokeWidth": "$--size-hairline",
-                                  "strokeAlignment": "inner",
                                   "padding": "$--spacing-sm",
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs"
@@ -60999,9 +60984,6 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
-                              "stroke": "$--primary",
-                              "strokeWidth": "$--size-hairline",
-                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -61051,7 +61033,7 @@
                       "ref": "hideui:view-tab",
                       "name": "New tab",
                       "fill": "$--card",
-                      "stroke": "$--primary",
+                      "stroke": "$--foreground",
                       "strokeWidth": {
                         "bottom": "$--size-tab-indicator"
                       },
@@ -61322,7 +61304,7 @@
                       "ref": "hideui:view-tab",
                       "name": "New tab",
                       "fill": "$--card",
-                      "stroke": "$--primary",
+                      "stroke": "$--foreground",
                       "strokeWidth": {
                         "bottom": "$--size-tab-indicator"
                       },
@@ -61557,7 +61539,7 @@
                           "ref": "hideui:view-tab",
                           "name": "Selected Korean tab",
                           "fill": "$--background",
-                          "stroke": "$--primary",
+                          "stroke": "$--foreground",
                           "strokeWidth": {
                             "bottom": "$--size-tab-indicator"
                           },
@@ -61631,10 +61613,7 @@
                       "height": "fill_container",
                       "layout": "vertical",
                       "padding": "$--spacing-sm",
-                      "fill": "$--background",
-                      "stroke": "$--primary",
-                      "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner"
+                      "fill": "$--background"
                     }
                   ],
                   "width": "fill_container",
@@ -62511,9 +62490,6 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
-                              "stroke": "$--border",
-                              "strokeWidth": "$--size-hairline",
-                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -62570,7 +62546,7 @@
                                       "ref": "hideui:view-tab",
                                       "name": "한글 노트.md",
                                       "fill": "$--card",
-                                      "stroke": "$--primary",
+                                      "stroke": "$--foreground",
                                       "strokeWidth": {
                                         "bottom": "$--size-tab-indicator"
                                       },
@@ -62965,10 +62941,7 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "layout": "vertical",
-                                  "gap": 0,
-                                  "stroke": "$--primary",
-                                  "strokeWidth": "$--size-hairline",
-                                  "strokeAlignment": "inner"
+                                  "gap": 0
                                 },
                                 {
                                   "type": "frame",
@@ -64155,9 +64128,6 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
-                              "stroke": "$--primary",
-                              "strokeWidth": "$--size-hairline",
-                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -65117,9 +65087,6 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "fill": "$--background",
-                                  "stroke": "$--primary",
-                                  "strokeWidth": "$--size-hairline",
-                                  "strokeAlignment": "inner",
                                   "padding": "$--spacing-sm",
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs"
@@ -65380,9 +65347,6 @@
                                   "width": "fill_container",
                                   "height": "fill_container",
                                   "fill": "$--background",
-                                  "stroke": "$--border",
-                                  "strokeWidth": "$--size-hairline",
-                                  "strokeAlignment": "inner",
                                   "padding": "$--spacing-sm",
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs"
@@ -65885,9 +65849,6 @@
                               "width": "fill_container",
                               "height": "fill_container",
                               "fill": "$--background",
-                              "stroke": "$--primary",
-                              "strokeWidth": "$--size-hairline",
-                              "strokeAlignment": "inner",
                               "padding": "$--spacing-sm",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs"
@@ -65937,7 +65898,7 @@
                       "ref": "hideui:view-tab",
                       "name": "New tab",
                       "fill": "$--card",
-                      "stroke": "$--primary",
+                      "stroke": "$--foreground",
                       "strokeWidth": {
                         "bottom": "$--size-tab-indicator"
                       },
@@ -66208,7 +66169,7 @@
                       "ref": "hideui:view-tab",
                       "name": "New tab",
                       "fill": "$--card",
-                      "stroke": "$--primary",
+                      "stroke": "$--foreground",
                       "strokeWidth": {
                         "bottom": "$--size-tab-indicator"
                       },
@@ -66443,7 +66404,7 @@
                           "ref": "hideui:view-tab",
                           "name": "Selected Korean tab",
                           "fill": "$--background",
-                          "stroke": "$--primary",
+                          "stroke": "$--foreground",
                           "strokeWidth": {
                             "bottom": "$--size-tab-indicator"
                           },
@@ -66517,10 +66478,7 @@
                       "height": "fill_container",
                       "layout": "vertical",
                       "padding": "$--spacing-sm",
-                      "fill": "$--background",
-                      "stroke": "$--primary",
-                      "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner"
+                      "fill": "$--background"
                     }
                   ],
                   "width": "fill_container",

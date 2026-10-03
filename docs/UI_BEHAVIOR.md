@@ -99,7 +99,7 @@ This boundary is an Observer-approved, user-vetoable implementation assumption f
 
 The Agent column has its own area tree, separate from the side panel's View tree.
 Each area has a tab bar, a New tab button and the active tab's live pane canvas; dividers separate areas.
-Only the area holding the keyboard carries the strong selected-tab accent and content boundary, across both Agent and View columns.
+Only the area holding the keyboard carries the foreground-colored selected-tab underline, across both Agent and View columns.
 Clicking a tab or pane activates its area and sends the keyboard to that pane.
 All shown tabs stay attached and awake, while only the active area's tab receives read and sleep-visit updates.
 Pane headers, child chips, relationship controls and pane splits remain inside each canvas; find belongs to the focused pane.
@@ -147,8 +147,9 @@ Retry close reuses that intent's shell, while Dismiss ends the failed intent; de
 The side panel holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
 A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
 Each layout keeps its own active area for opening and layout actions.
-The recorded keyboard owner alone gives one Agent or View area the strong tab accent and content boundary.
-Every other area's tab bar uses the card background, and its selected tab keeps a foreground title and secondary background without the strong accent.
+The recorded keyboard owner alone gives one Agent or View area the foreground-colored selected-tab underline.
+Every other area's tab bar uses the card background, and its selected tab keeps a foreground title and secondary background without the underline.
+Areas have no visible focus perimeter; their transparent content border reserves the same space as before.
 The content stays readable and unfiltered; focus adds no content blur, opacity reduction, capture loop or geometry change.
 The same rule applies to floating, pinned and expanded View panels, narrow single-area presentation and both themes.
 An area's tabs each ask for the preferred width and shrink alike down to the title minimum; a file's type mark does not tell files apart, so a View tab keeps its title and never turns to marks the way an Agent tab does.
@@ -280,7 +281,7 @@ Several View areas leave the Agent side as it was already drawn: the side panel 
 
 A pane header reads, left to right: the Return mark of a child pane, the agent's status mark and provider mark under the sidebar row's rules (a plain shell has the neutral `>_` mark and no status mark), the title, the zoom control, the status caption, then the overflow control and ×.
 While the tab is zoomed, the zoomed pane's header carries a zoom control that names how many panes it hides (`+1`) and unzooms the tab when pressed; an unzoomed header has none.
-When a tab shows more than one pane, a primary-colored outline surrounds the pane whose terminal holds the keyboard, and stays while that pane's menu is open; a lone or zoomed pane has no outline, and moving the keyboard to a View area, the sidebar, or another app removes it while the header wash stays on the focused pane.
+When a tab shows more than one pane, a thin subtle-foreground outline surrounds the pane whose terminal holds the keyboard, and stays while that pane's menu is open; a lone or zoomed pane has no outline, and moving the keyboard to a View area, the sidebar, or another app removes it while the header wash stays on the focused pane.
 The focused pane's header reads in the foreground color and every other pane's header in the muted one, so the wash is not the only difference.
 Web owner: `web/src/PaneView.tsx`, `web/src/PaneGrid.tsx`.
 
@@ -971,23 +972,26 @@ A Home agent reads and edits the projects through their links, the change shows 
 
 Web owner: `web/src/recent.ts`, `web/src/areaCycle.ts`, `web/src/viewFocus.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
 
-Focused-area cycling (⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser) follows where the keyboard is.
+Recent Agent pane or View tab cycling (⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser) follows where the keyboard is.
 In a View area it walks the tabs of that exact area, in recent-use order.
 The View scope includes device, checkout and area ID, so an Agent area with the same ID or another checkout cannot widen it.
 A document, diff, View tab bar or visible native browser page names its View area.
-In the Agent area it walks the agent panes the keyboard has been in this session, one row per pane, across every device, project and checkout, in recent-use order (issue #301).
+Everywhere outside a View area it walks the agent panes the keyboard has been in this session, one row per pane, across every device, project and checkout, in recent-use order (issue #301).
 A terminal pane in a tab an Agent area of the Workspace in front draws (its normal tab or a delegated child's canvas), or that area's tab bar, puts the keyboard in the Agent area; from a tab bar the pane in use is the one the core focuses in that tab.
 A pane joins the order the first time the keyboard is in it, and a commit's passing frames on the way to its pane are not visits; a pane that closes leaves the order.
 A pane row is titled by the agent it runs, with the place as Recent Panels names it and `Terminal` beneath, and the agent's status mark; a pane running no agent, a View display, an Overview and a project are never rows.
-From a pane running no agent the first chord lands on the most recent agent pane.
-A hidden View, tool, search, Settings, dialog or Overview supplies no scope; a View area of zero or one tab, or an Agent area with no visited agent pane besides the one in use, is a no-op.
+From a pane running no agent, or from the sidebar, tools, search, Settings, a dialog, Main or Overview, the first chord lands on the most recent agent pane.
+Outside the Agent area, opening the cycle neither invents a pane origin nor records the underlying pane as visited.
+Main and Overview still open the Agent cycle when a shortcut left the previous Workspace's View owner recorded, because that View is no longer drawn.
+A focused View area keeps its own scope even when it has zero or one tab or its target retired; it never falls through to Agent panes.
+With no visited agent pane, or no other visited agent besides the pane in use, the Agent cycle is a no-op.
 Holding the chord's actual modifier freezes the order and scope and previews in Recent Agent panes or Recent View tabs without moving the committed tab, layout or keyboard owner.
 Repeated forward and backward chords walk that frozen order; Escape or losing the window cancels without a selection event.
 Releasing the modifier on a View tab commits one in-place selection; on a pane it brings the pane's device, project, tab and pane forward with one event, as choosing it in the Agents list does, and the pane receives the keyboard.
 Closed or moved View tabs leave the frozen candidates; removal of the origin area or checkout cancels, and no other area replaces it.
 Closed panes and panes whose agent ended leave the frozen Agent candidates; a highlight that left moves to the next surviving pane, and with none left the cycle ends.
 
-Global Recent Panels is a separate, named command, unbound by default and assignable in Settings alongside the focused-area commands.
+Global Recent Panels is a separate, named command, unbound by default and assignable in Settings alongside the Agent pane and View tab commands.
 It walks every unified surface in recent-use order across projects, checkouts and connected devices: terminal tabs, View files, diffs and browser displays, plus every visited Home and Project Overview.
 An Overview revisit moves its one row to the front; its saved tile, modes, selected lane and folds remain page-local, and it leaves the order with its Project or device.
 A Global Recent Panels commit shows an Overview at once or brings one Workspace surface forward with one event; a View target also receives the keyboard.
@@ -1160,7 +1164,7 @@ Ownership is drawn as emphasis, not as a new color or container: the operator's 
 A child's question or completion reaches the operator through its ancestors: the ancestor row turns unread and its descendant badge changes, and the ancestor's own group does not move.
 An uninstrumented mark (agent detected but its subagents not visible to Hide) is drawn only where an agent was detected, is a mark plus an accessible name and never a color alone, and its subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
-The header wash marks the pane Hide is showing, while the outer primary indicator marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
+The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit

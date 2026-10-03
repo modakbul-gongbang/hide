@@ -118,8 +118,9 @@ osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); ObjC.deepUnwrap(ObjC.ca
 
 ### Focused-area navigation
 
-`web/src/areaCycle.test.ts` checks full device/checkout/area identity for View areas, the Agent pane order across devices and checkouts, commit events, and no-op ownership boundaries.
-`web/e2e/recent.spec.ts` commits an Agent pane in another project on a real isolated Herdr, and `desktop/e2e/keys.spec.ts` walks ⌃Tab over Agent panes in the desktop host.
+`web/src/areaCycle.test.ts` checks full device/checkout/area identity for View areas, the Agent pane order across devices and checkouts, commit events, Agent cycling outside a View without inventing visits, and single-tab or retired View no-op boundaries.
+`web/e2e/recent.spec.ts` commits an Agent pane in another project on a real isolated Herdr, opens the list from the sidebar, Explorer and Overview, and keeps focused files in their own View scope.
+`desktop/e2e/keys.spec.ts` walks ⌃Tab over Agent panes in the desktop host, including from sidebar focus.
 The `area-focus` design-review target measures the production area renderer with Korean document fixtures in both themes and two widths, including unchanged geometry when keyboard ownership moves.
 These checks do not prove native browser input or terminal readability.
 The `area cycle native` case in `desktop/e2e/browser.spec.ts` is tagged `@needs-focus`: it uses real macOS modifier input into the isolated candidate's page, counts core selection events, checks page key consumption and captures that exact native window.

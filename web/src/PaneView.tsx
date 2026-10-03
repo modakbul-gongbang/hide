@@ -361,7 +361,7 @@ export const PaneView = memo(function PaneView({
       {focused && paneCount > 1 && !zoomed ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 z-10 hidden border border-primary group-focus-within/pane:block group-data-[menu-open=true]/pane:block"
+          className="pointer-events-none absolute inset-0 z-10 hidden border border-subtle-foreground group-focus-within/pane:block group-data-[menu-open=true]/pane:block"
           data-pane-focus-outline="true"
         />
       ) : null}
