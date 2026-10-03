@@ -95,12 +95,12 @@ function fakeGh(dir: string): string {
       { name: "enhancement", color: "a2eeef" },
       { name: "ui", color: "not-hex" },
     ],
-    author: { login: "hoyeon" },
-    assignees: [{ login: "hoyeon" }],
+    author: { login: "example-user" },
+    assignees: [{ login: "example-user" }],
     createdAt: "2026-09-20T00:00:00Z",
     comments: [comment("a", 21, "첫 댓글"), comment("b", 22, "둘째 댓글"), comment("c", 23, "셋째 댓글"), comment("d", 24, "마지막 댓글")],
   });
-  const plain = (body: string) => JSON.stringify({ body, labels: [], author: { login: "hoyeon" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] });
+  const plain = (body: string) => JSON.stringify({ body, labels: [], author: { login: "example-user" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] });
   // Issue 3 waits on issue 2, the relation GitHub's blockedBy records (task-agents-views B8).
   const dependencies = JSON.stringify({
     data: {
@@ -673,8 +673,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(panel.locator("[data-issue-panel-start], [data-issue-panel-edit]")).toHaveCount(0);
     await expect(panel.locator('[data-issue-property="stage"]')).toHaveText("진행 중");
     await expect(panel.locator('[data-issue-property="labels"] [data-issue-label]')).toHaveCount(2, { timeout: 20_000 });
-    await expect(panel.locator('[data-issue-property="author"]')).toHaveText("hoyeon · 9월 20일");
-    await expect(panel.locator('[data-issue-property="assignees"]')).toHaveText("hoyeon");
+    await expect(panel.locator('[data-issue-property="author"]')).toHaveText("example-user · 9월 20일");
+    await expect(panel.locator('[data-issue-property="assignees"]')).toHaveText("example-user");
     await expect(panel.locator('[data-issue-property="created"]')).toHaveCount(0);
     await expect(panel.locator("[data-issue-work-checkout]")).toContainText("2-task-source");
     await expect(panel.locator("[data-issue-body=ready] [data-markdown-text]")).toContainText("출처를 어댑터로 나눈다.");
@@ -758,7 +758,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const preview = page.locator('[data-issue-preview="github:acme/repo#2"]');
     await expect(preview).toBeVisible();
     await expect(preview.locator("[data-issue-preview-body]")).toHaveText(/^배경\s+출처를 어댑터로 나눈다\.\s+GitHub/);
-    await expect(preview).toContainText("hoyeon · 9월 20일 · 댓글 4");
+    await expect(preview).toContainText("example-user · 9월 20일 · 댓글 4");
     await expect(preview).toContainText("Open");
     await screenshot(page, "overview-issue-preview-light");
     await leaveHoverCard(page, preview);

@@ -88,7 +88,7 @@ describe("notificationRow", () => {
 
 describe("header", () => {
   it("names the Mac from its ts.net address and counts the other phones", () => {
-    expect(macNameOf("https://hoyeon-mbp.tailnet.ts.net")).toBe("hoyeon-mbp");
+    expect(macNameOf("https://example-mbp.tailnet.ts.net")).toBe("example-mbp");
     expect(headerLine("mac", 1)).toBe("mac · 폰 1대 더 연결됨");
     expect(headerLine("mac", 0)).toBe("mac");
   });
