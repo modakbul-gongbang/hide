@@ -31,6 +31,9 @@ pub enum CommandKind {
         wait: bool,
         request_id: Option<String>,
     },
+    BrowserConnect {
+        display_id: Option<String>,
+    },
     WorkspaceBootstrap,
     WorkspaceInfo,
     ViewList,
@@ -43,8 +46,7 @@ pub enum CommandKind {
     },
 }
 
-const BROWSER_USAGE: &str =
-    "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]";
+const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>]";
 
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
@@ -203,7 +205,18 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
 }
 
 fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
-    if iter.next().map(String::as_str) != Some("open") {
+    let verb = iter.next().map(String::as_str);
+    if verb == Some("connect") {
+        let display_id = match (iter.next().map(String::as_str), iter.next(), iter.next()) {
+            (None, None, None) => None,
+            (Some("--display"), Some(id), None) if !id.is_empty() && !id.starts_with('-') => {
+                Some(id.clone())
+            }
+            _ => return Err(BROWSER_USAGE.to_owned()),
+        };
+        return Ok(CommandKind::BrowserConnect { display_id });
+    }
+    if verb != Some("open") {
         return Err(BROWSER_USAGE.to_owned());
     }
     let (mut target, mut reveal, mut wait, mut request_id) = (None, false, false, None);
@@ -235,7 +248,7 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
 pub fn run(kind: CommandKind) -> Result<(), String> {
     if kind == CommandKind::Help {
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
         );
         return Ok(());
     }
@@ -249,6 +262,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::ViewList
                     | CommandKind::ViewStatus { .. }
                     | CommandKind::BrowserOpen { .. }
+                    | CommandKind::BrowserConnect { .. }
                     | CommandKind::WorkspaceAction { .. }
             ) =>
         {
@@ -280,6 +294,11 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             wait,
             request_id,
         } => browser_open(&env, &target, reveal, wait, request_id.as_deref()),
+        CommandKind::BrowserConnect { display_id } => {
+            let answer = browser_connect_value(&env, display_id.as_deref(), true)?;
+            println!("{answer}");
+            Ok(())
+        }
         CommandKind::WorkspaceBootstrap => {
             let reference = crate::workspace_cli::bootstrap(&env, false)?;
             println!("{}", serde_json::json!({"ok":true,"reference":reference}));
@@ -472,6 +491,23 @@ fn workspace_query_value(
     query: &str,
     report: bool,
 ) -> Result<serde_json::Value, String> {
+    workspace_query_options(env, query, None, report)
+}
+
+fn browser_connect_value(
+    env: &Env,
+    display_id: Option<&str>,
+    report: bool,
+) -> Result<serde_json::Value, String> {
+    workspace_query_options(env, "browser_connect", display_id, report)
+}
+
+fn workspace_query_options(
+    env: &Env,
+    query: &str,
+    display_id: Option<&str>,
+    report: bool,
+) -> Result<serde_json::Value, String> {
     let (reference, ephemeral) = match workspace_reference(env) {
         Ok(reference) => reference,
         Err(reason) => {
@@ -480,7 +516,12 @@ fn workspace_query_value(
     };
     let _reference_owner =
         ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let answer = match crate::workspace_cli::request(&reference, query) {
+    let requested = if query == "browser_connect" {
+        crate::workspace_cli::browser_connect(&reference, display_id)
+    } else {
+        crate::workspace_cli::request(&reference, query)
+    };
+    let answer = match requested {
         Ok(answer) => answer,
         Err(reason) => {
             return query_refusal(
@@ -562,7 +603,35 @@ fn browser_open(
             );
         }
     };
-    let answer = workspace_action_value(env, Action::OpenBrowser { url, reveal }, request_id)?;
+    let mut answer = workspace_action_value(
+        env,
+        Action::OpenBrowser {
+            url,
+            reveal,
+            area_id: None,
+            new_target: false,
+        },
+        request_id,
+    )?;
+    let display_id = answer["result"]["view_id"]
+        .as_str()
+        .ok_or("invalid_response")?
+        .to_owned();
+    match browser_connect_value(env, Some(&display_id), false) {
+        Ok(connection) => {
+            for key in ["cdp_http_url", "browser_ws_url"] {
+                answer["result"][key] = connection["result"][key].clone();
+            }
+        }
+        Err(reason) => {
+            // Opening already applied. Endpoint discovery cannot recast it as
+            // a failed action and tempt a caller to create the page again.
+            answer["result"]["browser_control"] = serde_json::json!({
+                "state":"unavailable","reason":reason,
+                "next_action":format!("Run hide browser connect --display {display_id} after the desktop window reconnects")
+            });
+        }
+    }
     if !wait {
         println!("{answer}");
         return Ok(());
@@ -1109,6 +1178,37 @@ mod tests {
             parse(&["hide", "status"]),
             CommandKind::Status { json: false }
         );
+    }
+
+    #[test]
+    fn browser_connect_has_no_workspace_override() {
+        let parse = |args: &[&str]| {
+            parse_args(&args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&["hide", "browser", "connect"]).unwrap(),
+            CommandKind::BrowserConnect { display_id: None }
+        );
+        assert_eq!(
+            parse(&["hide", "browser", "connect", "--display", "browser-a"]).unwrap(),
+            CommandKind::BrowserConnect {
+                display_id: Some("browser-a".into())
+            }
+        );
+        for args in [
+            vec!["hide", "browser", "connect", "--display"],
+            vec!["hide", "browser", "connect", "--workspace", "other"],
+            vec![
+                "hide",
+                "browser",
+                "connect",
+                "--display",
+                "browser-a",
+                "--reveal",
+            ],
+        ] {
+            assert!(parse(&args).is_err());
+        }
     }
 
     #[test]

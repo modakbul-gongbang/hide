@@ -74,6 +74,7 @@ pub struct AppState {
     pub token: Arc<String>,
     pub pane_capabilities: Arc<Registry>,
     pub browser_routes: Arc<crate::browser_routes::BrowserRoutes>,
+    pub browser_control: Arc<crate::browser_control::BrowserControl>,
     pub herdr_socket: Option<PathBuf>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -154,6 +155,12 @@ pub fn router(state: AppState) -> Router {
             "/browser-route",
             post(resolve_browser_route).delete(release_browser_route),
         )
+        .route(
+            "/browser-control",
+            post(register_browser_control).delete(release_browser_control),
+        )
+        .route("/browser-control/action", post(browser_control_action))
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
         .route("/m", get(mobile_asset))
@@ -282,6 +289,123 @@ async fn release_browser_route(
         )
         .await;
     StatusCode::NO_CONTENT.into_response()
+}
+
+fn browser_control_failure((reason, next_action): crate::browser_control::Failure) -> Response {
+    eprintln!(
+        "{}",
+        json!({"component":"browser_control","kind":"request.refused","reason":reason})
+    );
+    (
+        StatusCode::CONFLICT,
+        axum::Json(json!({"ok":false,"reason":reason,"next_action":next_action})),
+    )
+        .into_response()
+}
+
+async fn register_browser_control(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<crate::browser_control::Registration>,
+) -> Response {
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match state.browser_control.register(request) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(failure) => browser_control_failure(failure),
+    }
+}
+
+async fn release_browser_control(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<crate::browser_control::Registration>,
+) -> Response {
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match state.browser_control.release(&request) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(failure) => browser_control_failure(failure),
+    }
+}
+
+/// A desktop gateway never writes View state itself. Its authenticated,
+/// scoped page action uses the same prepare/read/commit boundary as hide CLI.
+async fn browser_control_action(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<crate::browser_control::BrowserAction>,
+) -> Response {
+    use herdr_core::workspace_control::{ActionPreparation, Query};
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !request.valid() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let slot = match state.browser_control.acquire() {
+        Ok(slot) => slot,
+        Err(failure) => return browser_control_failure(failure),
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        if state.desktop_renderers.load(Ordering::SeqCst) == 0 {
+            return Err(("browser_unsupported", "Open the Hide desktop app and retry"));
+        }
+        let caller = state
+            .browser_control
+            .caller(request.owner_pid, &request.checkout_path)?;
+        let source = state
+            .core
+            .workspace_query(&request.device_id, &caller, Query::ViewList)
+            .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+        let action = request.command(&source)?;
+        let preparation = state
+            .core
+            .workspace_prepare_action(
+                &request.device_id,
+                &caller,
+                &source.context,
+                &request.request_id,
+                &action,
+            )
+            .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+        let material = match preparation {
+            ActionPreparation::Cached(result) => {
+                return result.map_err(|refusal| (refusal.reason, refusal.next_action));
+            }
+            ActionPreparation::Ready => {
+                request.validate_scope(&source)?;
+                Ok(None)
+            }
+            ActionPreparation::Read(read) => {
+                request.validate_scope(&source)?;
+                read.read().map(Some)
+            }
+        };
+        state
+            .core
+            .workspace_action(
+                &request.device_id,
+                &caller,
+                &source.context,
+                &request.request_id,
+                action,
+                material,
+            )
+            .map_err(|refusal| (refusal.reason, refusal.next_action))
+    })
+    .await;
+    match result {
+        Ok(Ok(result)) => axum::Json(json!({"ok":true,"result":result})).into_response(),
+        Ok(Err(failure)) => browser_control_failure(failure),
+        Err(_) => browser_control_failure((
+            "browser_control_unavailable",
+            "Reconnect the desktop app and retry",
+        )),
+    }
 }
 
 fn idle_remaining_secs(state: &AppState) -> Option<u64> {
@@ -751,6 +875,7 @@ async fn scoped_client_loop(
     enum ScopedRequest {
         Query(herdr_core::workspace_control::Query),
         Action(herdr_core::workspace_control::Action),
+        BrowserConnect(Option<String>),
     }
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
@@ -772,6 +897,15 @@ async fn scoped_client_loop(
                             Some("view_list") => Some(ScopedRequest::Query(
                                 herdr_core::workspace_control::Query::ViewList,
                             )),
+                            Some("browser_connect") => match value.get("display_id") {
+                                None | Some(Value::Null) => {
+                                    Some(ScopedRequest::BrowserConnect(None))
+                                }
+                                Some(Value::String(id)) if !id.is_empty() && id.len() <= 256 => {
+                                    Some(ScopedRequest::BrowserConnect(Some(id.clone())))
+                                }
+                                _ => None,
+                            },
                             _ => None,
                         },
                         Some("workspace_action") => {
@@ -800,6 +934,7 @@ async fn scoped_client_loop(
                         let registry = Arc::clone(&state.pane_capabilities);
                         let renderers = Arc::clone(&state.renderers);
                         let desktop_renderers = Arc::clone(&state.desktop_renderers);
+                        let browser_control = Arc::clone(&state.browser_control);
                         let herdr_socket = state.herdr_socket.clone();
                         let query_token = token.clone();
                         let command_request_id = request_id.clone();
@@ -814,6 +949,18 @@ async fn scoped_client_loop(
                                 ));
                             }
                             let result = match command {
+                                ScopedRequest::BrowserConnect(display_id) => {
+                                    if desktop_renderers.load(Ordering::SeqCst) == 0 {
+                                        return Err(("browser_unsupported", "Open the Hide desktop app and retry"));
+                                    }
+                                    let result = core.workspace_query(&cap.context.device_id, &cap.pane_id,
+                                        herdr_core::workspace_control::Query::ViewList)
+                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                    if result.context != cap.context {
+                                        return Err(cap.changed_refusal());
+                                    }
+                                    browser_control.connect(&result, display_id.as_deref())?
+                                }
                                 ScopedRequest::Query(query) => {
                                     let mut result = core
                                         .workspace_query(
@@ -995,7 +1142,7 @@ fn start_device_read(
 
 /// Constant in the token's length, so a byte-by-byte mismatch does not leak
 /// how much of the token a caller guessed.
-fn token_matches(offered: &str, expected: &str) -> bool {
+pub(crate) fn token_matches(offered: &str, expected: &str) -> bool {
     use subtle::ConstantTimeEq;
     offered.len() == expected.len() && offered.as_bytes().ct_eq(expected.as_bytes()).into()
 }

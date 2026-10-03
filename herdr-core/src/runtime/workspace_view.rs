@@ -584,14 +584,17 @@ impl Runtime {
                 .workspaces
                 .iter()
                 .flat_map(|view| {
-                    view.layout
-                        .displays()
-                        .filter(|display| display.kind == DisplayKind::Browser)
-                        .map(|display| BrowserViewInventoryRow {
-                            device_id: view.device_id.clone(),
-                            path: view.path.clone(),
-                            view_id: display.id.clone(),
-                        })
+                    view.layout.areas().into_iter().flat_map(|area| {
+                        area.displays
+                            .iter()
+                            .filter(|display| display.kind == DisplayKind::Browser)
+                            .map(move |display| BrowserViewInventoryRow {
+                                device_id: view.device_id.clone(),
+                                path: view.path.clone(),
+                                area_id: area.id.clone(),
+                                view_id: display.id.clone(),
+                            })
+                    })
                 })
                 .collect();
             self.snapshot.browser_views_revision = Some(store.generation);

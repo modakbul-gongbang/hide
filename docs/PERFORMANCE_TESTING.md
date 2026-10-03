@@ -240,6 +240,15 @@ A Chrome window opens on the desktop for the run; the loop throttles in an occlu
 
 ## Projects and Overview cost contract
 
+### Scoped browser gateway discovery
+
+Browser inventory area identity is projected in the existing changed-layout generation pass, one visit per area and display, with no additional notification or timer.
+The daemon's gateway registration retains at most four app process identities; each discovery or action checks those bounded identities outside the Runtime mutex.
+Discovery and browser actions share eight admission permits; exceeding the cap reports `browser_control_busy` rather than queuing more work.
+Discovery does loopback HTTP outside the core owner thread, with no proxy or redirect, an eight-second deadline and a 16 KiB answer cap.
+Browser creation reuses Workspace prepare/read/commit and its existing retry-record cap; checkout file reads remain outside the Runtime mutex.
+Idle pages add no discovery work, and ordinary terminal input, snapshots and tab selection do not start gateway requests.
+
 The shared input surface and empty-state renderer add no timers, tasks, I/O or core state.
 Row hover/focus remains local to visible controls.
 Search migration retains its existing filtering and result-ID reconciliation cost; it does not add another search index or per-keystroke subprocess.

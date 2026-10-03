@@ -10,7 +10,7 @@ There is no Herdr browser pane and no chromux profile behind it, and nothing is 
 | Owner | Holds | Code |
 | --- | --- | --- |
 | The core | Browser View layout, requested address and load stamp, and the native page's reported loading state | `herdr-core/src/view_layout.rs`, `herdr-core/src/runtime/view_areas.rs`, `herdr-core/src/runtime/workspace_control.rs` |
-| hided | The local `file:` event boundary, the checkout-scoped Browser CLI transport, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_routes.rs`, `hided/src/browser_assets.rs` |
+| hided | The local `file:` event boundary, checkout-scoped Browser commands and gateway discovery, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_control.rs`, `hided/src/browser_routes.rs`, `hided/src/browser_assets.rs` |
 | The web shell | Where each page sits, since only it has the geometry, the toolbar, the overlay freeze, and the notice in a plain browser tab | `web/src/BrowserDisplay.tsx`, `web/src/browserViews.ts`, `web/src/host.ts` |
 | The desktop app | The pages: one `WebContentsView` per display it was asked to show, their navigation, route requests, and their lifetime | `desktop/src/main/browser.ts`, `desktop/src/main/browserSync.ts`, `desktop/src/main/host.ts`, `desktop/src/preload/index.ts` |
 
@@ -18,6 +18,7 @@ The core never loads a page and the desktop app never decides which displays exi
 The core's Browser View inventory is sent as an empty array when the last page closes, so the native host removes that page even when no other Browser View remains.
 A display's `load` stamp is how the core asks for a load: the host loads the display's address again whenever the stamp is newer than the one it last applied, so opening an address the Workspace already shows focuses that display and loads it again rather than adding a second one.
 The stamp is not saved; a relaunched page loads its address once when it is first shown.
+The retained inventory also carries the authoritative `area_id`, so native control never guesses a page's area from the front Workspace.
 
 ## Opening a page
 
@@ -31,6 +32,8 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
   The action receipt and page status carry the load stamp, so a concurrent reopen that supersedes the requested load returns `page_superseded` instead of the newer load's result.
   `--reveal` explicitly brings the caller's checkout and selected Browser View forward, including a connected SSH device.
   The CLI returns one JSON line, exits nonzero on refusal, and never starts Hide.
+  Its successful result includes `cdp_http_url` and `browser_ws_url` when the native gateway can issue a capability for that display.
+  If discovery fails after placement, the result retains its applied View receipt and carries `browser_control.state: unavailable` with a retry command; discovery does not undo or repeat the open.
 - Open in Browser in the Explorer's menu on an HTML file of a local or connected device checkout.
   The device host must have file access consent for a remote page to load.
 - A page that opens a tab, a `target=_blank` link (an image a page wraps in one), a shift-click or `window.open` without window features, gets another browser display in the same Workspace, beside that page so the page that asked stays in view.
@@ -47,6 +50,25 @@ Closing an untouched empty display adds nothing to Recent Closed or draft recove
 
 A nonempty display holds only an `http`, `https` or `file` address with something after the `//`, or `about:blank`, within 8 KiB; anything else is refused with its reason and nothing changes.
 A remote `file:` address is loaded through a checkout-scoped route, never as a file on this Mac.
+
+## Scoped browser control
+
+`hide browser connect [--display <id>]` uses the caller's existing Workspace credential and prints a JSON result with `cdp_http_url` and `browser_ws_url`.
+It accepts no Workspace override and requires a connected desktop renderer.
+An explicit display must be a browser in that credential's checkout; an omitted display uses that checkout's active View area for new targets.
+Discovery does not reveal the Workspace, activate the app, or start a daemon.
+
+The desktop registers one private numeric-loopback gateway address and random control token with hided through daemon-authenticated `/browser-control`.
+The registration is tied to the app PID and process birth, has a four-host cap, and is removed on release or discarded when a later request finds the app gone.
+An ambiguous multi-window registration refuses discovery instead of choosing another window.
+At most eight discovery and browser action requests are in flight, and discovery has an eight-second deadline with a 16 KiB response cap, no proxy and no redirects.
+The CLI receives only the public capability URLs; it never receives the desktop registration token or the shell's daemon token.
+
+CDP target creation uses authenticated `/browser-control/action` and the existing Workspace prepare/read/commit contract.
+The core inserts a distinct browser display into the capability's named area even when another area is active or the same address is already open.
+An unknown area refuses before placement, and checkout HTML still passes the existing off-lock file read boundary.
+Close and select resolve a current browser display in that area; shell renderers and terminal displays cannot be selected or closed by this route.
+The app has one retry identity per launch registration, so retransmitting a completed close returns its receipt after the page is gone.
 
 ## The file boundary
 

@@ -234,6 +234,7 @@ pub struct WorkspaceViewSnapshot {
 pub struct BrowserViewInventoryRow {
     pub device_id: String,
     pub path: String,
+    pub area_id: String,
     pub view_id: String,
 }
 
