@@ -400,8 +400,6 @@ test("Workspace columns preserve geometry, dock once on release and show native 
   }
 });
 
-// Changing Workspaces while the pointer is captured cancels the old guide;
-// releasing it must not land a width in the newly front Workspace.
 test("SSH Workspace columns keep chords, fallback and saved widths separate from the same local path", async () => {
   test.skip(!process.env.HIDE_E2E_SSH_PORT, "requires the proved private SSH HOME in device-home.ts");
   test.setTimeout(300_000);
@@ -438,6 +436,11 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
     }
     ({ app } = await launchShell(run.env));
     const page = await app.firstWindow();
+    const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (dir) {
+      const candidate = await app.evaluate(({ BrowserWindow }) => ({ pid: process.pid, window: BrowserWindow.getAllWindows()[0]!.getMediaSourceId(), executable: process.execPath }));
+      fs.writeFileSync(path.join(dir, "remote-columns-identity.json"), JSON.stringify({ ...candidate, daemonPid: run.daemonPid(), localSocket: local.socket, remoteSocket: remote.socket, home: run.env.HOME, deviceHome: remoteHome, provedHcoord, state: run.env.HIDE_STATE_DIR, profile: run.env.HIDE_DESKTOP_USER_DATA_DIR, operatorHcoord: operator, transport: "real loopback SSH to a separate private Herdr server" }, null, 2));
+    }
     await enterWorkspace(page, "fixture");
     const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { token: string };
     await sendEvent(page, { origin: new URL(page.url()).origin, token: state.token }, "register_device", {
@@ -479,11 +482,6 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
       workspaces: { device_id: string; path: string; views: boolean; tools: boolean; views_width?: number; tools_width?: number }[];
     };
     await expect.poll(() => saved().workspaces.find((entry) => entry.device_id === "columns-ssh" && entry.path === shared)).toMatchObject({ views: true, tools: true, views_width: 512, tools_width: 387 });
-    const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
-    if (dir) {
-      const candidate = await app.evaluate(({ BrowserWindow }) => ({ pid: process.pid, window: BrowserWindow.getAllWindows()[0]!.getMediaSourceId(), executable: process.execPath }));
-      fs.writeFileSync(path.join(dir, "remote-columns-identity.json"), JSON.stringify({ ...candidate, daemonPid: run.daemonPid(), localSocket: local.socket, remoteSocket: remote.socket, home: run.env.HOME, deviceHome: remoteHome, provedHcoord, state: run.env.HIDE_STATE_DIR, profile: run.env.HIDE_DESKTOP_USER_DATA_DIR, operatorHcoord: operator, transport: "real loopback SSH to a separate private Herdr server" }, null, 2));
-    }
     await nativeCapture(app, page, "remote-columns-wide-saved");
     await bodyWidth(app, page, 1116);
     await expect.poll(() => Promise.all(["agents", "views", "tools"].map((column) => page.locator(`[data-column="${column}"]`).evaluate((element) => element.clientWidth)))).toEqual([480, 360, 260]);
@@ -548,6 +546,8 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
   if (errors.length) throw new AggregateError(errors, "private SSH column fixture failed; inspect all test and cleanup errors before removing its declared homes");
 });
 
+// Changing Workspaces while the pointer is captured cancels the old guide;
+// releasing it must not land a width in the newly front Workspace.
 test("a Workspace switch cancels its column drag without changing another Workspace", async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "column-drag-switch");
