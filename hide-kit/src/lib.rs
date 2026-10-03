@@ -368,7 +368,7 @@ fn report(
     failure: Option<String>,
 ) -> ComponentReport {
     let codex_daemon = (id == ComponentId::CodexPerPane)
-        .then(|| match &observed {
+        .then_some(match &observed {
             Observed::Current | Observed::Missing | Observed::SupportedAbsent(_) => Some(true),
             Observed::Unsupported(_) => Some(false),
             _ => None,
