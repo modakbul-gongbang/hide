@@ -218,3 +218,77 @@ fn an_opencode_message_still_being_written_waits_for_the_next_read() {
     again.checkpoint = Some(first.checkpoint.clone());
     assert!(read(home.path(), &again).unwrap().events.is_empty());
 }
+
+/// Adds an operator message with one text part of `bytes` bytes.
+fn add_opencode_request(home: &Path, index: u64, bytes: usize) {
+    let path = home.join(".local/share/opencode/opencode.db");
+    let writer = rusqlite::Connection::open(path).unwrap();
+    let at = START + 300_000 + index;
+    let message = format!("msg_big_{index:03}");
+    writer
+        .execute(
+            "INSERT INTO message VALUES (?1, ?2, ?3, ?3, ?4)",
+            rusqlite::params![
+                message,
+                "ses_0a1b2c3d4e5f60718293a4b5c6",
+                at,
+                format!(r#"{{"role":"user","time":{{"created":{at}}}}}"#)
+            ],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO part VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+            rusqlite::params![
+                format!("prt_big_{index:03}"),
+                message,
+                "ses_0a1b2c3d4e5f60718293a4b5c6",
+                at,
+                format!(
+                    r#"{{"type":"text","text":"{index} {}"}}"#,
+                    "x".repeat(bytes)
+                )
+            ],
+        )
+        .unwrap();
+}
+
+#[test]
+fn an_opencode_part_over_the_row_limit_is_skipped_without_being_read() {
+    let home = home(Agent::OpenCode);
+    add_opencode_request(home.path(), 0, hide_session::SESSION_LINE_LIMIT_BYTES);
+    let transcript = read_whole(home.path(), Agent::OpenCode);
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert_eq!(first.skipped_reasons.get("part_capacity"), Some(&1));
+    assert!(
+        transcript
+            .events
+            .iter()
+            .all(|event| !event.text.starts_with("0 x")),
+        "the oversized request is no event"
+    );
+}
+
+#[test]
+fn a_long_opencode_session_is_read_a_budget_at_a_time_and_whole_in_the_end() {
+    let home = home(Agent::OpenCode);
+    for index in 0..8 {
+        add_opencode_request(home.path(), index, 200 * 1024);
+    }
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert!(
+        first.has_more,
+        "eight 200 KiB requests are more than one read"
+    );
+    let loaded: usize = first.events.iter().map(|event| event.text.len()).sum();
+    assert!(loaded <= 1024 * 1024 + 4096, "{loaded}");
+
+    let whole = read_whole(home.path(), Agent::OpenCode);
+    let big: Vec<_> = whole
+        .events
+        .iter()
+        .filter(|event| event.text.ends_with("xxxx"))
+        .map(|event| event.text.split(' ').next().unwrap().to_owned())
+        .collect();
+    assert_eq!(big, ["0", "1", "2", "3", "4", "5", "6", "7"]);
+}

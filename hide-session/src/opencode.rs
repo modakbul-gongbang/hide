@@ -11,6 +11,11 @@
 //! of messages already read, and an event's offset is its message's index.
 //! An assistant message OpenCode is still writing has no `time.completed`;
 //! the read stops before it and takes it whole on a later read.
+//!
+//! A message or a part larger than [`SESSION_LINE_LIMIT_BYTES`] is never
+//! loaded: SQLite answers its size from the record header, and the row is
+//! counted as skipped (`message_capacity`, `part_capacity`). One read loads
+//! at most [`READ_BUDGET_BYTES`] of part data and leaves the rest for the next.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -23,13 +28,18 @@ use crate::label_transcript::{
 };
 use crate::{
     ConfirmedLabelSession, ConversationCheckpoint, MAX_SIGHTINGS_PER_OUTPUT, PrSighting,
-    SESSION_LINE_LIMIT_BYTES, label_reference_token, pull_request_addresses,
+    SESSION_INCREMENT_READ_LIMIT_BYTES, SESSION_LINE_LIMIT_BYTES, label_reference_token,
+    pull_request_addresses,
 };
 
 /// How long a read waits for OpenCode's own write to finish.
 const BUSY_WAIT: Duration = Duration::from_millis(50);
 /// The most messages one read takes; a longer session is read over several.
 const MESSAGES_PER_READ: i64 = 200;
+/// The most part data one read loads, as much as one JSONL increment.
+const READ_BUDGET_BYTES: u64 = SESSION_INCREMENT_READ_LIMIT_BYTES;
+/// A message or part row over this is skipped without being loaded.
+const ROW_LIMIT_BYTES: i64 = SESSION_LINE_LIMIT_BYTES as i64;
 
 pub(crate) fn database_path(home: &Path) -> PathBuf {
     home.join(".local/share/opencode/opencode.db")
@@ -86,31 +96,47 @@ pub(crate) fn read(
     }
     let mut statement = connection
         .prepare(
-            "SELECT id, data FROM message WHERE session_id = ?1 \
+            "SELECT id, CASE WHEN octet_length(data) <= ?4 THEN data END \
+             FROM message WHERE session_id = ?1 \
              ORDER BY time_created, id LIMIT ?2 OFFSET ?3",
         )
         .map_err(|error| refusal(&error))?;
     let rows = statement
         .query_map(
-            params![session_id, MESSAGES_PER_READ, start as i64],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            params![session_id, MESSAGES_PER_READ, start as i64, ROW_LIMIT_BYTES],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
         )
         .map_err(|error| refusal(&error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| refusal(&error))?;
+    let mut part_bytes = connection
+        .prepare(
+            "SELECT coalesce(sum(min(octet_length(data), ?2)), 0) FROM part WHERE message_id = ?1",
+        )
+        .map_err(|error| refusal(&error))?;
     let mut parts = connection
-        .prepare("SELECT data FROM part WHERE message_id = ?1 ORDER BY time_created, id")
+        .prepare(
+            "SELECT CASE WHEN octet_length(data) <= ?2 THEN data END \
+             FROM part WHERE message_id = ?1 ORDER BY time_created, id",
+        )
         .map_err(|error| refusal(&error))?;
     let mut transcript = Read {
         events: Vec::new(),
         sightings: Vec::new(),
-        skipped: 0,
+        skipped: std::collections::BTreeMap::new(),
     };
     let mut next = start;
     let mut stopped_early = false;
+    let mut over_budget = false;
+    let mut spent = 0_u64;
     for (message_id, data) in &rows {
+        let Some(data) = data else {
+            transcript.skip("message_capacity");
+            next += 1;
+            continue;
+        };
         let Ok(message) = serde_json::from_str::<Value>(data) else {
-            transcript.skipped += 1;
+            transcript.skip("malformed_json");
             next += 1;
             continue;
         };
@@ -124,11 +150,31 @@ pub(crate) fn read(
             .pointer("/time/created")
             .and_then(Value::as_u64)
             .unwrap_or(0);
-        let part_rows = parts
-            .query_map(params![message_id], |row| row.get::<_, String>(0))
-            .map_err(|error| refusal(&error))?
-            .collect::<Result<Vec<_>, _>>()
+        let size: i64 = part_bytes
+            .query_row(params![message_id, ROW_LIMIT_BYTES], |row| row.get(0))
             .map_err(|error| refusal(&error))?;
+        let size = u64::try_from(size).unwrap_or(0);
+        // The first message of a read is always taken, so a read moves on
+        // however large it is; its parts past the budget are skipped.
+        if spent > 0 && spent + size > READ_BUDGET_BYTES {
+            over_budget = true;
+            break;
+        }
+        let mut part_rows = Vec::new();
+        for part in parts
+            .query_map(params![message_id, ROW_LIMIT_BYTES], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .map_err(|error| refusal(&error))?
+        {
+            match part.map_err(|error| refusal(&error))? {
+                Some(part) if spent + part.len() as u64 <= READ_BUDGET_BYTES => {
+                    spent += part.len() as u64;
+                    part_rows.push(part);
+                }
+                _ => transcript.skip("part_capacity"),
+            }
+        }
         transcript.message(role, at, next, &part_rows);
         next += 1;
     }
@@ -138,11 +184,13 @@ pub(crate) fn read(
         .rev()
         .find(|event| event.kind == LabelEventKind::Human)
         .map(|event| ConversationCheckpoint::at_offset(event.offset));
-    let has_more = !stopped_early && rows.len() as i64 == MESSAGES_PER_READ;
-    let mut skipped_reasons = std::collections::BTreeMap::new();
-    if transcript.skipped > 0 {
-        skipped_reasons.insert("malformed_json".to_owned(), transcript.skipped);
-    }
+    let has_more = over_budget || (!stopped_early && rows.len() as i64 == MESSAGES_PER_READ);
+    let skipped_lines = transcript.skipped.values().sum();
+    let skipped_reasons = transcript
+        .skipped
+        .into_iter()
+        .map(|(reason, count)| (reason.to_owned(), count))
+        .collect();
     Ok(LabelTranscript {
         confirmed: ConfirmedLabelSession {
             owner,
@@ -154,7 +202,7 @@ pub(crate) fn read(
         anchor,
         has_more,
         rescanned,
-        skipped_lines: transcript.skipped,
+        skipped_lines,
         skipped_reasons,
         title: Some(title).filter(|title| !title.trim().is_empty()),
         custom_title: None,
@@ -166,16 +214,20 @@ pub(crate) fn read(
 struct Read {
     events: Vec<LabelEvent>,
     sightings: Vec<PrSighting>,
-    skipped: usize,
+    skipped: std::collections::BTreeMap<&'static str, usize>,
 }
 
 impl Read {
+    fn skip(&mut self, reason: &'static str) {
+        *self.skipped.entry(reason).or_default() += 1;
+    }
+
     fn message(&mut self, role: Option<&str>, at: u64, offset: u64, parts: &[String]) {
         let mut text = Vec::new();
         let mut images = 0_u32;
         for part in parts {
             let Ok(part) = serde_json::from_str::<Value>(part) else {
-                self.skipped += 1;
+                self.skip("malformed_json");
                 continue;
             };
             match part.get("type").and_then(Value::as_str) {
@@ -186,10 +238,6 @@ impl Read {
                     // OpenCode's own text (a compaction's request) is no
                     // one's message.
                     if part.get("synthetic").and_then(Value::as_bool) == Some(true) {
-                        continue;
-                    }
-                    if body.len() > SESSION_LINE_LIMIT_BYTES {
-                        self.skipped += 1;
                         continue;
                     }
                     text.push(body.to_owned());
