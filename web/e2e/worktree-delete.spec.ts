@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot, sendEvent } from "./wire";
+import { countSent, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -103,7 +103,7 @@ test("Discard names each ignored nested repository and deletes them only after e
 });
 
 test("an open deletion dialog receives refreshed Git facts and retires Discard through an A-to-B-to-A return", { tag: "@platform" }, async ({ page }) => {
-  const herdr = await startHerdr();
+  const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
   try {
     const fixture = await deletionFixture(herdr);
@@ -114,11 +114,31 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
       git(nested, ["init", "-q"]);
     }
     const payloads = new Map<string, Record<string, unknown>>();
-    countSent(page, payloads);
+    const sent = countSent(page, payloads);
+    await page.addInitScript(() => {
+      const observed = window as Window & {
+        __preflightRendererSocket?: WebSocket;
+        __preflightRestoreSend?: () => void;
+      };
+      const nativeSend = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (data) {
+        if (typeof data === "string") {
+          try {
+            if (JSON.parse(data).client_kind === "web" && new URL(this.url).pathname === "/ws") observed.__preflightRendererSocket = this;
+          } catch { /* terminal bytes are not a handshake */ }
+        }
+        return nativeSend.call(this, data);
+      };
+      observed.__preflightRestoreSend = () => { WebSocket.prototype.send = nativeSend; };
+    });
     const loading: boolean[] = [];
     let rendererConnections = 0;
+    let owningConnections = 0;
+    let rendererClosed = false;
     page.on("websocket", (socket) => {
+      if (new URL(socket.url()).pathname === "/ws") owningConnections += 1;
       let renderer = false;
+      socket.on("close", () => { if (renderer) rendererClosed = true; });
       socket.on("framesent", (frame) => {
         try {
           const value = JSON.parse(String(frame.payload)) as { client_kind?: string };
@@ -135,16 +155,31 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
       });
     });
     daemon = await startHided(herdr, "worktree-refreshed-consent");
-    const dialog = await openDeletion(page, daemon);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
+    await expect(feature).toBeAttached({ timeout: 30_000 });
     const project = page.locator("[data-project]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
+    const inactive = project.locator('[data-inactive-checkouts][aria-expanded="false"]');
+    if (await inactive.isVisible()) await inactive.click();
+    await expect(feature).toBeVisible({ timeout: 30_000 });
+    await feature.locator("[data-checkout-menu]").click({ button: "right" });
+    await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
+    const dialog = page.locator("[data-delete-worktree]");
     const workspaceId = await project.getAttribute("data-project");
     expect(workspaceId).toBeTruthy();
-    const refresh = () => sendEvent(page, daemon!, "overview_refresh", { workspace_id: workspaceId });
+    const refresh = () => page.evaluate((workspace_id) => {
+      const socket = (window as Window & { __preflightRendererSocket?: WebSocket }).__preflightRendererSocket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("Existing renderer socket is unavailable");
+      socket.send(JSON.stringify({ schema_version: 2, kind: "overview_refresh", payload: { workspace_id } }));
+    }, workspaceId);
     const discard = dialog.locator("[data-delete-discard]");
     const confirm = dialog.locator("[data-delete-confirm]");
     for (const name of names) await expect(dialog).toContainText(name);
     await discard.click();
     await expect(confirm).toBeEnabled();
+    const beforeEvents = new Map(sent);
 
     const reason = "검토 끝날 때까지 보관 $(literal)";
     git(fixture.repo, ["worktree", "lock", "--reason", reason, fixture.worktree]);
@@ -178,6 +213,12 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
     await expect(dialog).not.toContainText("target/late", { timeout: 15_000 });
     await expect(discard).not.toBeChecked();
     await expect(confirm).toBeDisabled();
+    expect(rendererConnections).toBe(1);
+    expect(owningConnections).toBe(1);
+    expect(rendererClosed).toBe(false);
+    for (const [kind, count] of sent) {
+      if (kind !== "overview_refresh") expect(count, `Unexpected client event ${kind} during refresh`).toBe(beforeEvents.get(kind) ?? 0);
+    }
     const pane = herdr.run(["pane", "get", fixture.pane]) as { result: { pane: { pane_id: string } } };
     expect(pane.result.pane.pane_id).toBe(fixture.pane);
     expect(fs.existsSync(fixture.worktree)).toBe(true);
@@ -187,8 +228,17 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
     await expect(dialog.locator('[data-delete-result="finished"]')).toBeVisible({ timeout: 60_000 });
     expect(payloads.get("remove_worktree")?.discard_changes).toBe(true);
     expect(payloads.get("remove_worktree")?.expected_ignored_repositories).toEqual(names);
+    expect(rendererConnections).toBe(1);
+    expect(owningConnections).toBe(1);
+    expect(rendererClosed).toBe(false);
     expect(fs.existsSync(fixture.worktree)).toBe(false);
-  } finally { daemon?.stop(); herdr.stop(); }
+  } finally {
+    if (!page.isClosed()) await page.evaluate(() => {
+      (window as Window & { __preflightRestoreSend?: () => void }).__preflightRestoreSend?.();
+    }).catch(() => { /* the renderer may already have closed */ });
+    daemon?.stop();
+    herdr.stop();
+  }
 });
 
 function git(cwd: string, args: string[]): string {
