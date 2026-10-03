@@ -412,6 +412,7 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
   let remoteHome: string | null = null;
   let provedHcoord: string | null = null;
   const operator = launchdPid(OPERATOR_HCOORD_LABEL);
+  const errors: unknown[] = [];
   try {
     remote = await startHerdr({ agents: false });
     run = isolate(local, "remote-columns");
@@ -529,8 +530,9 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
     await expect(page.locator('[data-column-divider="tools"]')).toHaveAttribute("aria-valuenow", "387");
     await nativeCapture(app, page, "remote-columns-restored");
     if (dir) fs.writeFileSync(path.join(dir, "remote-columns-saved.json"), JSON.stringify(saved(), null, 2));
+  } catch (error) {
+    errors.push(error);
   } finally {
-    const errors: unknown[] = [];
     try { await app?.close(); } catch (error) { errors.push(error); }
     for (const cleanup of [
       () => run?.cleanup(),
@@ -542,8 +544,8 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
     ]) {
       try { cleanup(); } catch (error) { errors.push(error); }
     }
-    if (errors.length) throw new AggregateError(errors, "private SSH column fixture cleanup failed; preserve its declared homes");
   }
+  if (errors.length) throw new AggregateError(errors, "private SSH column fixture failed; inspect all test and cleanup errors before removing its declared homes");
 });
 
 test("a Workspace switch cancels its column drag without changing another Workspace", async () => {
