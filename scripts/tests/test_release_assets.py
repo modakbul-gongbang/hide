@@ -42,7 +42,12 @@ class ReleaseAssetsTest(unittest.TestCase):
 
     def test_three_checksums_cannot_hide_a_missing_target(self):
         name = self.names[1]
-        (self.directory / name).rename(self.directory / name.replace("windows", "other"))
+        other = name.replace("windows", "other")
+        (self.directory / name).rename(self.directory / other)
+        checksum = self.directory / f"{name}.sha256"
+        content = checksum.read_text().replace(name, other)
+        checksum.unlink()
+        (self.directory / f"{other}.sha256").write_text(content)
         self.assertNotEqual(self.check().returncode, 0)
 
     def test_mixed_version_and_extra_assets_fail(self):
