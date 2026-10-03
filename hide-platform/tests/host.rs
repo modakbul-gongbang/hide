@@ -139,12 +139,42 @@ fn the_machine_names_itself_the_same_way_twice() {
     assert_eq!(host::machine_id().unwrap(), id);
 }
 
+/// The account's home from the password database: macOS trashes into that
+/// home's `.Trash` whatever `HOME` says, and a test runner may set its own.
+#[cfg(target_os = "macos")]
+fn account_home() -> PathBuf {
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: `passwd` is plain C data, for which all zero bytes are valid.
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: every pointer names a live local that outlives the call, and
+    // the buffer length is the buffer's own.
+    let status = unsafe {
+        libc::getpwuid_r(
+            libc::getuid(),
+            &mut entry,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut found,
+        )
+    };
+    assert!(
+        status == 0 && !found.is_null(),
+        "no password entry for this account"
+    );
+    // SAFETY: a found entry's `pw_dir` is a NUL-terminated string in `buffer`.
+    let home = unsafe { CStr::from_ptr(entry.pw_dir) };
+    PathBuf::from(std::ffi::OsStr::from_bytes(home.to_bytes()))
+}
+
 /// Where the system keeps an item it trashed, found and removed again so the
 /// test leaves the account's Trash as it found it.
 fn take_back_from_the_trash(name: &str) -> bool {
     #[cfg(target_os = "macos")]
     {
-        let kept = host::home_dir().unwrap().join(".Trash").join(name);
+        let kept = account_home().join(".Trash").join(name);
         let found = kept.symlink_metadata().is_ok();
         if found {
             fs::remove_file(&kept).unwrap();

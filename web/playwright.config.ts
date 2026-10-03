@@ -20,6 +20,9 @@ export default defineConfig({
   use: {
     baseURL: process.env.HIDE_E2E_ORIGIN ?? "http://127.0.0.1:4173",
     headless: true,
+    // Wide enough for the Workspace body's three columns side by side (PRD
+    // three-column-panel D-07); a test about a narrower body sets its own.
+    viewport: { width: 1920, height: 1080 },
   },
   webServer: undefined,
 });

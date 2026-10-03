@@ -1,6 +1,6 @@
 // Agent pane scroll beside another client, Cmd+F in the focused pane, and
-// the side panel narrowing to its Explorer when its last view closes (PRD
-// web-pane-scroll-find-areas, issue 170),
+// File Views turning off when its last view closes (PRD
+// web-pane-scroll-find-areas, three-column-panel B17),
 // on an isolated pinned Herdr. The other client is a plain `herdr terminal
 // session control` started before hided, holding control the way another
 // client does on the operator's server; hided then falls back to observing.
@@ -73,12 +73,10 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
     await expect.poll(() => paneText(page, observed), { timeout: 10_000 }).toContain("row-160");
 
     // B4: with a document open beside the agents, Cmd+F in a focused pane
-    // opens that pane's find bar, not the document's. Beside them is a pinned
-    // side panel; an unpinned one is drawn over them (issue 170).
+    // opens that pane's find bar, not the document's. File Views is a docked
+    // column beside them (PRD three-column-panel D-01).
     await showExplorer(page);
-    await page.locator('[data-panel-pin="off"]').click();
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
     await page.locator(`[data-explorer-row$="/notes.txt"]`).dblclick();
     await expect(page.locator("[data-view-area]")).toBeVisible();
     // Both panes narrow and redraw at the new grid, the observed one by
@@ -122,18 +120,17 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
     await expect(bar).toHaveCount(0);
     await page.keyboard.press("Escape");
 
-    // B8: closing the last view takes the View areas away and the panel
-    // narrows to the Explorer column it still shows; it stays open and
-    // pinned, so the next file brings the View areas back beside it (B9).
-    await expect(workspace).toHaveAttribute("data-panel", "open");
+    // B8: closing the last view turns File Views off and leaves the Tools
+    // column showing the Explorer, so the next file brings the View areas
+    // back beside it (B9; PRD three-column-panel B17).
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
     const viewTab = page.locator('[data-view-tab-bar] [role="tab"][data-display]').first();
     await viewTab.hover();
     await viewTab.getByRole("button", { name: /Close view/ }).click();
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
-    await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "tools");
+    await expect(page.locator('[data-column="tools"] [data-tool="explorer"]')).toBeVisible();
     await expect(page.getByText("No file or diff is open in this Workspace.")).toHaveCount(0);
-    await expect(workspace).toHaveAttribute("data-panel", "open");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
     // Both panes widen into the space and redraw at the new grid, the
     // observed one by attaching again at it.
     for (const pane of herdr.panes) await expect.poll(() => paneText(page, pane), { timeout: 15_000 }).toMatch(DRAWN_AT_GRID);

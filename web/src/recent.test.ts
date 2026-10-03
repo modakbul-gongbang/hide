@@ -62,11 +62,11 @@ function session(checkoutId: string, tabId: string, displays: ViewDisplaySnapsho
     workspace_view: {
       device_id: "local",
       path: front.path,
-      panel: "open",
-      pinned: true,
-      tool: "explorer",
+      views: true,
       tools: false,
-      views_over_share: 0.5,
+      tool: "explorer",
+      views_width: null,
+      tools_width: null,
       layout: { root: { area: { id: "a1", active: displays[0]?.id ?? null, displays } }, active_area: "a1", limits: { areas: 4, depth: 3, displays: 64 }, display_count: displays.length },
     },
   } as unknown as SnapshotRest;

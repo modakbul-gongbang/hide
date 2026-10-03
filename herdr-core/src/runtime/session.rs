@@ -4247,6 +4247,7 @@ impl Runtime {
             }
         }
         self.snapshot.ui_state.selected_path = Some(payload.path.clone());
+        let error_before = self.snapshot.status.last_error.clone();
         if let Some(prepared) = prepared {
             // A revealed path was named on purpose: a terminal link or a
             // Markdown link opens an ordinary tab, not the preview (D-09).
@@ -4257,6 +4258,23 @@ impl Runtime {
                 &payload.path,
                 false,
             );
+        }
+        // The reveal calls the columns of its own checkout's Workspace, once
+        // it has settled there, not of whichever was in front when it was
+        // asked, and not when its file was refused as it landed (D-08). A
+        // file opens in File Views and leaves Tools as it was (B4); a folder
+        // shows only in the Explorer, so it turns Tools on and leaves File
+        // Views as it was.
+        if self.separate_view_areas()
+            && self.snapshot.status.last_error == error_before
+            && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+        {
+            let intent = if payload.is_directory {
+                super::workspace_view::AreaIntent::RevealFolder
+            } else {
+                super::workspace_view::AreaIntent::Views
+            };
+            self.apply_area_intent_to(&key, intent);
         }
         self.push_diagnostic(
             "path.revealed",

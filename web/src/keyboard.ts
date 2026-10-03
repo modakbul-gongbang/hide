@@ -195,7 +195,7 @@ export function installKeyboard(actions: Actions): () => void {
       const numbered = numberedCommand(id)!;
       const target = numberedTarget(numbered.family, numbered.number, useShellStore.getState());
       if (!target) return;
-      if (numbered.family === "tabs") actions.focusTab(target, true);
+      if (numbered.family === "tabs") actions.focusTab(target);
       else actions.openAgent(target);
       return;
     }
@@ -244,7 +244,7 @@ export function installKeyboard(actions: Actions): () => void {
       case "project_home":
         return actions.openProjectOverview();
       case "toggle_right_panel":
-        return actions.toggleRightPanel();
+        return actions.toggleFileViews();
       case "toggle_left_sidebar":
         return actions.toggleLeftSidebar();
       case "toggle_sidebar_view":
@@ -252,7 +252,7 @@ export function installKeyboard(actions: Actions): () => void {
       case "toggle_device_rail":
         return actions.toggleDeviceRail();
       case "toggle_explorer":
-        return actions.toggleExplorer();
+        return actions.toggleTools();
       case "find_in_pane": {
         // One chord, two surfaces, chosen by where the operator works: the
         // View area they are in finds in its document, anywhere else the

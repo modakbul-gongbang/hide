@@ -28,6 +28,12 @@ async function inWorkspace(label: string, body: (session: Session) => Promise<vo
     });
     const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
     await enterWorkspace(page);
+    // macOS keeps the window within the screen, which on a CI runner is
+    // about 1024 wide; zoomed out, the body still reaches the wide step, so
+    // File Views and Tools show side by side as these steps assume (PRD
+    // three-column-panel D-07).
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.6));
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-workspace-body", "wide");
     if (evidence) fs.writeFileSync(path.join(evidence, `${label}-identity.json`), JSON.stringify({ ...identity, daemonPid: run.daemonPid(), state: run.env.HIDE_STATE_DIR, socket: herdr.socket }, null, 2));
     const capture = (name: string) => {
       if (evidence && process.platform === "darwin") {
@@ -54,13 +60,15 @@ test("Command W closes the keyboard's display or pane, never its tab", async () 
     await page.keyboard.press("Meta+KeyW");
     await expect(editor).toHaveCount(0);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
-    await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "tools");
+    // The last view closed turns File Views off and leaves Tools showing.
+    await expect(page.locator('[data-column="views"]')).toHaveCount(0);
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     capture("native-close-view-tools");
     await page.locator('[data-tool-tab="explorer"]').focus();
     await page.keyboard.press("Meta+KeyW");
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
     await page.keyboard.press("Meta+KeyE");
-    await expect(page.locator("[data-side-panel]")).toHaveCount(0);
+    await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
     await page.locator(`[data-terminal-host="${herdr.panes[1]}"]`).click();
     await page.keyboard.press("Meta+KeyW");
     await expect(page.locator(`[data-pane-view="${herdr.panes[1]}"]`)).toHaveCount(0, { timeout: 15_000 });
@@ -108,7 +116,7 @@ test("Command W on an agent that spawned others asks once and closes the subtree
     const child = await spawnAgent(herdr, "child", target);
     const grandchild = await spawnAgent(herdr, "grandchild", child);
     await page.keyboard.press("Meta+KeyE");
-    await expect(page.locator("[data-side-panel]")).toHaveCount(0);
+    await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
     await page.locator('[data-sidebar-mode="agents"]').click();
     await page.locator(`[data-agent-tree-toggle="${target}"]`).click({ timeout: 30_000 });
     await expect(page.locator(`[data-agent-tree-toggle="${child}"]`)).toBeVisible({ timeout: 30_000 });
