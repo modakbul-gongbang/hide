@@ -51,25 +51,6 @@ const MESSAGE_LIMIT_BYTES: i64 = 64 * 1024;
 /// The most characters of a session title a read takes.
 const TITLE_LIMIT_CHARS: i64 = 512;
 
-/// A row's `data` column as one read takes it: the text, or why not.
-enum RowData {
-    Text(String),
-    TooLarge,
-    NotText,
-}
-
-/// Reads columns `is_text` and `data` of a row selected with
-/// `typeof(data) = 'text'` and `CASE WHEN ... fits THEN data END`.
-fn row_data(row: &rusqlite::Row<'_>, is_text: usize, data: usize) -> rusqlite::Result<RowData> {
-    if !row.get::<_, bool>(is_text)? {
-        return Ok(RowData::NotText);
-    }
-    Ok(match row.get::<_, Option<String>>(data)? {
-        Some(text) => RowData::Text(text),
-        None => RowData::TooLarge,
-    })
-}
-
 pub(crate) fn database_path(home: &Path) -> PathBuf {
     home.join(".local/share/opencode/opencode.db")
 }
@@ -126,24 +107,19 @@ pub(crate) fn read(
     }
     let mut statement = connection
         .prepare(
-            "SELECT id, typeof(data) = 'text', \
-             CASE WHEN typeof(data) = 'text' AND octet_length(data) <= ?4 THEN data END \
+            "SELECT rowid, typeof(data) = 'text', octet_length(data), octet_length(id) \
              FROM message WHERE session_id = ?1 \
              ORDER BY time_created, id LIMIT ?2 OFFSET ?3",
         )
         .map_err(|error| refusal(&error))?;
     let rows = statement
-        .query_map(
-            params![
-                session_id,
-                MESSAGES_PER_READ,
-                start as i64,
-                MESSAGE_LIMIT_BYTES
-            ],
-            |row| Ok((row.get::<_, String>(0)?, row_data(row, 1, 2)?)),
-        )
-        .map_err(|error| refusal(&error))?
-        .collect::<Result<Vec<_>, _>>()
+        .query(params![session_id, MESSAGES_PER_READ, start as i64])
+        .map_err(|error| refusal(&error))?;
+    let mut rows = rows;
+    // Sorting visits only row headers, not 200 retained metadata payloads.
+    // The payload query runs only after the cumulative budget admits it.
+    let mut metadata = connection
+        .prepare("SELECT id, data FROM message WHERE rowid = ?1")
         .map_err(|error| refusal(&error))?;
     let mut part_bytes = connection
         .prepare(
@@ -153,10 +129,12 @@ pub(crate) fn read(
         .map_err(|error| refusal(&error))?;
     let mut parts = connection
         .prepare(
-            "SELECT typeof(data) = 'text', \
-             CASE WHEN typeof(data) = 'text' AND octet_length(data) <= ?2 THEN data END \
+            "SELECT rowid, typeof(data) = 'text', octet_length(data) \
              FROM part WHERE message_id = ?1 ORDER BY time_created, id",
         )
+        .map_err(|error| refusal(&error))?;
+    let mut part_data = connection
+        .prepare("SELECT data FROM part WHERE rowid = ?1")
         .map_err(|error| refusal(&error))?;
     let mut transcript = Read {
         events: Vec::new(),
@@ -167,21 +145,32 @@ pub(crate) fn read(
     let mut stopped_early = false;
     let mut over_budget = false;
     let mut spent = 0_u64;
-    for (message_id, data) in &rows {
-        let data = match data {
-            RowData::Text(data) => data,
-            RowData::TooLarge => {
-                transcript.skip("message_capacity");
-                next += 1;
-                continue;
-            }
-            RowData::NotText => {
-                transcript.skip("not_text");
-                next += 1;
-                continue;
-            }
-        };
-        let Ok(message) = serde_json::from_str::<Value>(data) else {
+    let mut visited = 0_i64;
+    while let Some(row) = rows.next().map_err(|error| refusal(&error))? {
+        visited += 1;
+        if !row.get::<_, bool>(1).map_err(|error| refusal(&error))? {
+            transcript.skip("not_text");
+            next += 1;
+            continue;
+        }
+        let data_bytes: u64 = row.get(2).map_err(|error| refusal(&error))?;
+        let id_bytes: u64 = row.get(3).map_err(|error| refusal(&error))?;
+        let metadata_bytes = data_bytes.saturating_add(id_bytes);
+        if data_bytes > MESSAGE_LIMIT_BYTES as u64 || id_bytes > MESSAGE_LIMIT_BYTES as u64 {
+            transcript.skip("message_capacity");
+            next += 1;
+            continue;
+        }
+        if metadata_bytes > READ_BUDGET_BYTES.saturating_sub(spent) {
+            over_budget = true;
+            break;
+        }
+        spent += metadata_bytes;
+        let rowid: i64 = row.get(0).map_err(|error| refusal(&error))?;
+        let (message_id, data): (String, String) = metadata
+            .query_row(params![rowid], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|error| refusal(&error))?;
+        let Ok(message) = serde_json::from_str::<Value>(&data) else {
             transcript.skip("malformed_json");
             next += 1;
             continue;
@@ -200,30 +189,36 @@ pub(crate) fn read(
             .query_row(params![message_id, ROW_LIMIT_BYTES], |row| row.get(0))
             .map_err(|error| refusal(&error))?;
         let size = u64::try_from(size).unwrap_or(0);
-        let size = size + data.len() as u64;
         // The first message of a read is always taken, so a read moves on
-        // however large it is; its parts past the budget are skipped.
-        if spent > 0 && spent + size > READ_BUDGET_BYTES {
+        // however large its parts are; admission still precedes allocation.
+        if next > start && size > READ_BUDGET_BYTES.saturating_sub(spent) {
             over_budget = true;
             break;
         }
-        spent += data.len() as u64;
         let mut part_rows = Vec::new();
-        for part in parts
-            .query_map(params![message_id, ROW_LIMIT_BYTES], |row| {
-                row_data(row, 0, 1)
-            })
-            .map_err(|error| refusal(&error))?
-        {
-            match part.map_err(|error| refusal(&error))? {
-                RowData::Text(part) if spent + part.len() as u64 <= READ_BUDGET_BYTES => {
-                    spent += part.len() as u64;
-                    part_rows.push(part);
-                }
-                RowData::Text(_) => transcript.skip("read_budget"),
-                RowData::TooLarge => transcript.skip("part_capacity"),
-                RowData::NotText => transcript.skip("not_text"),
+        let mut part_headers = parts
+            .query(params![message_id])
+            .map_err(|error| refusal(&error))?;
+        while let Some(part) = part_headers.next().map_err(|error| refusal(&error))? {
+            if !part.get::<_, bool>(1).map_err(|error| refusal(&error))? {
+                transcript.skip("not_text");
+                continue;
             }
+            let bytes: u64 = part.get(2).map_err(|error| refusal(&error))?;
+            if bytes > ROW_LIMIT_BYTES as u64 {
+                transcript.skip("part_capacity");
+                continue;
+            }
+            if bytes > READ_BUDGET_BYTES.saturating_sub(spent) {
+                transcript.skip("read_budget");
+                continue;
+            }
+            spent += bytes;
+            let rowid: i64 = part.get(0).map_err(|error| refusal(&error))?;
+            let data = part_data
+                .query_row(params![rowid], |row| row.get::<_, String>(0))
+                .map_err(|error| refusal(&error))?;
+            part_rows.push(data);
         }
         transcript.message(role, at, next, &part_rows);
         next += 1;
@@ -234,7 +229,7 @@ pub(crate) fn read(
         .rev()
         .find(|event| event.kind == LabelEventKind::Human)
         .map(|event| ConversationCheckpoint::at_offset(event.offset));
-    let has_more = over_budget || (!stopped_early && rows.len() as i64 == MESSAGES_PER_READ);
+    let has_more = over_budget || (!stopped_early && visited == MESSAGES_PER_READ);
     let skipped_lines = transcript.skipped.values().sum();
     let skipped_reasons = transcript
         .skipped

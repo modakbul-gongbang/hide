@@ -294,6 +294,85 @@ fn a_long_opencode_session_is_read_a_budget_at_a_time_and_whole_in_the_end() {
 }
 
 #[test]
+fn opencode_metadata_uses_the_read_budget_even_when_it_cannot_be_parsed() {
+    let home = home(Agent::OpenCode);
+    let path = home.path().join(".local/share/opencode/opencode.db");
+    let writer = rusqlite::Connection::open(path).unwrap();
+    writer
+        .execute_batch("DELETE FROM part; DELETE FROM message;")
+        .unwrap();
+    // Each record fits the metadata row limit, but together they exceed
+    // the read budget by more than ten times. Invalid JSON is still input
+    // that the reader loaded, and must consume the same byte budget.
+    let metadata = "x".repeat(63 * 1024);
+    for index in 0..200 {
+        writer
+            .execute(
+                "INSERT INTO message VALUES (?1, ?2, ?3, ?3, ?4)",
+                rusqlite::params![
+                    format!("msg_metadata_{index:03}"),
+                    request(Agent::OpenCode).reference_value,
+                    START + index,
+                    metadata
+                ],
+            )
+            .unwrap();
+    }
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert!(first.events.is_empty());
+    assert_eq!(first.checkpoint.offset(), 16);
+    assert_eq!(first.skipped_reasons.get("malformed_json"), Some(&16));
+    assert!(first.has_more, "remaining metadata belongs to a later read");
+    let mut again = request(Agent::OpenCode);
+    again.checkpoint = Some(first.checkpoint);
+    let next = read(home.path(), &again).unwrap();
+    assert_eq!(next.checkpoint.offset(), 32);
+    assert_eq!(next.skipped_reasons.get("malformed_json"), Some(&16));
+}
+
+#[test]
+fn an_oversized_first_opencode_message_has_bounded_output_and_allows_progress() {
+    let home = home(Agent::OpenCode);
+    let path = home.path().join(".local/share/opencode/opencode.db");
+    let writer = rusqlite::Connection::open(path).unwrap();
+    writer
+        .execute_batch("DELETE FROM part; DELETE FROM message;")
+        .unwrap();
+    add_opencode_request(home.path(), 0, 200 * 1024);
+    for index in 1..12 {
+        writer
+            .execute(
+                "INSERT INTO part VALUES (?1, 'msg_big_000', ?2, ?3, ?3, ?4)",
+                rusqlite::params![
+                    format!("prt_extra_{index:03}"),
+                    request(Agent::OpenCode).reference_value,
+                    START + 300_000 + index,
+                    serde_json::json!({ "type": "text", "text": "x".repeat(200 * 1024) })
+                        .to_string()
+                ],
+            )
+            .unwrap();
+    }
+    add_opencode_request(home.path(), 1, 200 * 1024);
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    let output_bytes: usize = first.events.iter().map(|event| event.text.len()).sum();
+    assert!(output_bytes <= hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES as usize);
+    assert_eq!(first.checkpoint.offset(), 1);
+    assert_eq!(first.skipped_reasons.get("read_budget"), Some(&7));
+    assert!(first.has_more);
+    let mut again = request(Agent::OpenCode);
+    again.checkpoint = Some(first.checkpoint);
+    let next = read(home.path(), &again).unwrap();
+    assert!(
+        next.events
+            .iter()
+            .any(|event| event.text.starts_with("1 x"))
+    );
+    assert_eq!(next.checkpoint.offset(), 2);
+    assert!(!next.has_more);
+}
+
+#[test]
 fn an_opencode_row_that_holds_no_text_or_too_much_is_skipped_and_the_read_goes_on() {
     let home = home(Agent::OpenCode);
     let path = home.path().join(".local/share/opencode/opencode.db");
