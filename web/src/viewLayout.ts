@@ -288,9 +288,3 @@ export function focusRequestArrived(request: ViewFocusRequest, workspace: string
   if (!located || layout.active_area !== located.area.id || located.area.active !== request.displayId) return false;
   return !request.from || located.area.id !== request.from.areaId || located.index !== request.from.index;
 }
-
-/**
- * Where Grow or Shrink moves the split the active area sits in: one step,
- * within the core's range and, when the areas are drawn, both sides'
- * minimums; or why it cannot move that way.
- */

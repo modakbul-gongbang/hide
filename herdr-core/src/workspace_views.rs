@@ -482,8 +482,6 @@ fn settle(
     for view in &mut workspaces {
         view.views_width = view.views_width.map(clamp_column_width);
         view.tools_width = view.tools_width.map(clamp_column_width);
-        // An entry whose panel showed only the tools has no view to show.
-        view.close_empty_views();
         for note in view
             .layout
             .repair()
@@ -492,6 +490,10 @@ fn settle(
         {
             repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
         }
+        // After the repair, which can drop the last display: an entry whose
+        // panel showed only the tools, or whose views were all dropped, has
+        // no view to show.
+        view.close_empty_views();
         // A bookmark names the areas the repaired layout still has.
         let layout = &view.layout;
         view.view_bookmarks

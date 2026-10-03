@@ -21,7 +21,8 @@ import { workspaceKey } from "./viewLayout";
 import { columnFrame, dividerLanding, workspaceViewOf, type ColumnFrame, type ColumnSizes, type SideColumn, type WorkspaceView } from "./workspace";
 import { hostKind } from "./host";
 import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
-import { displayCommand } from "./shortcuts";
+import { displayCommand, hostRegistry } from "./shortcuts";
+import "./columnCalls";
 
 // A Workspace (PRD S6 D-01..D-05; S7 B12, B13; PRD three-column-panel D-01,
 // D-02, D-04, D-07, D-12): one checkout's toolbar across the whole body, and
@@ -72,22 +73,15 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
     slots,
   });
   const checkoutId = checkout?.id ?? null;
-  // A narrow body starts on Agent Views in each Workspace it draws, and
-  // whenever the body narrows into one column: only a call made there
-  // gives the one column to another (D-07).
-  useEffect(() => useUiStore.getState().resetColumnSlots(), [checkoutId]);
+  // A narrow body starts on Agent Views in each Workspace it draws
+  // (`columnCalls.ts`), and whenever the body narrows into one column: only a
+  // call made there gives the one column to another (D-07).
   const step = frame.step;
   const previousStep = useRef(step);
   useEffect(() => {
     if (step === "narrow" && previousStep.current !== "narrow") useUiStore.getState().callColumn("agents");
     previousStep.current = step;
   }, [step]);
-  // After the Workspace's own reset, so a reveal that brought this Workspace
-  // in front still shows File Views.
-  const viewsCalls = view?.views_called;
-  useEffect(() => {
-    if (viewsCalls !== undefined) useUiStore.getState().noteViewsCalls(viewsCalls);
-  }, [viewsCalls]);
   const viewsShown = frame.views !== null;
   const toolsShown = frame.tools !== null;
   const agentsCovered = frame.agents === null;
@@ -314,6 +308,9 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
   const setScreen = useUiStore((s) => s.setScreen);
+  // The chords as bound, so a rebound one shows as bound (B7).
+  const viewsChord = useShellStore((s) => displayCommand("toggle_right_panel", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
+  const toolsChord = useShellStore((s) => displayCommand("toggle_explorer", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
   const name = checkout.branch ?? checkout.label;
   // What the toolbar acts on is this Workspace: its columns, its path and
   // its Project (B15). Opening the menu changes none of them.
@@ -371,7 +368,7 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
         <div className="flex shrink-0 items-center gap-xxs" role="group" aria-label="Workspace columns" data-column-toggles="true">
           <RunningServers key={checkout.id} checkout={checkout} view={view} actions={actions} />
           {/* One name per icon, its state in aria-pressed; the tooltip carries the name and the chord (B7, B8). */}
-          <Hint label="File Views" shortcut={displayCommand("toggle_right_panel", hostKind())}>
+          <Hint label="File Views" shortcut={viewsChord}>
             <Button
               variant={viewsShown ? "secondary" : "ghost"}
               size="icon-sm"
@@ -390,7 +387,7 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
               ) : null}
             </Button>
           </Hint>
-          <Hint label="Tools" shortcut={displayCommand("toggle_explorer", hostKind())}>
+          <Hint label="Tools" shortcut={toolsChord}>
             <Button variant={toolsShown ? "secondary" : "ghost"} size="icon-sm" aria-pressed={toolsShown} aria-label="Tools" data-column-toggle="tools" onClick={() => actions.toggleTools()}>
               <PanelRightIcon />
             </Button>

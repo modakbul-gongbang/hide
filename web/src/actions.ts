@@ -85,23 +85,17 @@ export type Actions = ReturnType<typeof createActions>;
 
 /**
  * The column an event calls into sight in a narrow Workspace body (PRD
- * three-column-panel D-07): an open or focus of a file, diff or page calls
- * File Views, a tool or a reveal calls Tools, and an agent or tab chosen
- * calls Agent Views. Read here, where every operator event passes, so no
- * path can forget it; it is page state and never sent.
+ * three-column-panel D-07): File Views turned on calls File Views, a tool or
+ * a reveal calls Tools, and an agent or tab chosen calls Agent Views. Read
+ * here, where every operator event passes, so no path can forget it; it is
+ * page state and never sent. An open, a History selection or a Recent Panels
+ * display calls File Views through the core's call number instead
+ * (`columnCalls.ts`), the one way a call from the CLI or another page arrives
+ * too, so a call is never applied twice.
  */
 export function columnCalled(event: Parameters<DispatchFn>[0]): Column | null {
   const payload = event.payload;
   switch (event.kind) {
-    case "file_open":
-    case "file_focus":
-    case "browser_open":
-    case "reveal_path":
-      return "views";
-    case "changes_select":
-      return payload.path ? "views" : null;
-    case "focus_checkout":
-      return payload.display_id ? "views" : null;
     case "workspace_view":
       return payload.views === true ? "views" : payload.tools === true || payload.tool !== undefined || payload.reveal !== undefined ? "tools" : null;
     case "focus_pane":

@@ -145,7 +145,7 @@ function deviceViews(views: boolean): WorkspaceView {
     tool: "explorer",
     views_width: null,
     tools_width: null,
-    views_called: 0,
+    views_called: 0, views_calls: 0,
     layout: { root: { area: { id: "a1", active: "d2", displays: [notes] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: 1 },
   };
 }

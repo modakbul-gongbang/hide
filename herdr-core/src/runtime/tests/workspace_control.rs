@@ -405,7 +405,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap()
         .context;
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
-    let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().views_called;
+    let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().views_calls;
     runtime
         .workspace_control_action(
             "local",
@@ -446,6 +446,18 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
     // The shell shows a called File Views in a narrow body; a call from the
     // CLI reaches it only as this count rising (PRD three-column-panel D-07).
     assert_eq!(called(&runtime), 1, "a reveal calls File Views");
+    let numbered = runtime
+        .workspace_views
+        .as_ref()
+        .unwrap()
+        .views_called
+        .get(&(key.0.to_owned(), key.1.to_owned()))
+        .copied();
+    assert_eq!(
+        numbered,
+        Some(1),
+        "the call is numbered for the Workspace it called"
+    );
 }
 
 fn views_of(runtime: &Runtime, key: (&str, &str)) -> bool {

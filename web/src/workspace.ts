@@ -25,8 +25,10 @@ export type WorkspaceView = {
   views_width: number | null;
   /** The Tools column's width, the same way. */
   tools_width: number | null;
-  /** How many times File Views has been called since the core started; a rise shows it in a narrow body (D-07). */
+  /** The number of this Workspace's last File Views call, 0 for none since the core started (`readCalls`). */
   views_called: number;
+  /** How many File Views calls the core has numbered, in any Workspace. */
+  views_calls: number;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */
@@ -76,9 +78,9 @@ export type ColumnFrame = {
   tools: number | null;
 };
 
-/** The body widths where a third and a second column stop fitting. */
+/** The body widths where a third and a second column stop fitting at their minimums, with the dividers between them. */
 export function bodySteps(sizes: ColumnSizes): { wide: number; mid: number } {
-  return { wide: sizes.agentMin + sizes.viewsMin + sizes.toolsMin, mid: sizes.agentMin + sizes.viewsMin };
+  return { wide: sizes.agentMin + sizes.viewsMin + sizes.toolsMin + 2 * sizes.divider, mid: sizes.agentMin + sizes.viewsMin + sizes.divider };
 }
 
 export function bodyStep(body: number, sizes: ColumnSizes): BodyStep {
@@ -172,4 +174,38 @@ export type Provider = (typeof KNOWN_PROVIDERS)[number];
 
 export function knownProvider(kind: string | null | undefined): Provider | null {
   return (KNOWN_PROVIDERS as readonly string[]).includes(kind ?? "") ? (kind as Provider) : null;
+}
+
+/** What the page has read of the core's File Views calls. */
+export type CallsSeen = {
+  /** The core's call count when the page first read it; older calls are history. */
+  baseline: number | null;
+  /** The Workspace in front at the last read, by device and path. */
+  front: string | null;
+  /** Each Workspace's last call number the page has shown. */
+  handled: Record<string, number>;
+};
+
+export const NO_CALLS_SEEN: CallsSeen = { baseline: null, front: null, handled: {} };
+
+type FrontView = Pick<WorkspaceView, "device_id" | "path" | "views_called" | "views_calls">;
+
+/**
+ * The page's reading of the front Workspace's calls: `reset` when another
+ * Workspace came in front (a narrow body starts on Agent Views there), and
+ * `call` when that Workspace was called since the page last looked. A core
+ * that started again counts from zero, so its lower count is a new baseline.
+ */
+export function readCalls(seen: CallsSeen, view: FrontView | null | undefined): { seen: CallsSeen; reset: boolean; call: boolean } {
+  if (!view) return { seen: seen.front === null ? seen : { ...seen, front: null }, reset: false, call: false };
+  const key = `${view.device_id}\u0000${view.path}`;
+  const reset = key !== seen.front;
+  const { baseline } = seen;
+  let { handled } = seen;
+  if (baseline === null || view.views_calls < baseline) {
+    return { seen: { baseline: view.views_calls, front: key, handled: {} }, reset, call: false };
+  }
+  const call = view.views_called > Math.max(baseline, handled[key] ?? 0);
+  if (call) handled = { ...handled, [key]: view.views_called };
+  return { seen: { baseline, front: key, handled }, reset, call };
 }

@@ -173,6 +173,9 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect.poll(async () => (await agentArea.boundingBox())!.width).toBeLessThan(agentsBeforeViews.width - 300);
     await expect.poll(resizes, { timeout: 10_000 }).toBeGreaterThan(resizesBeforeViews);
     await settled();
+    // Once: one resize for each pane on screen, none for a frame between.
+    const panesShown = await page.locator("[data-pane-view]").count();
+    expect(resizes() - resizesBeforeViews).toBe(panesShown);
     // Left to right, docked edge to edge: Agent Views, File Views, Tools.
     const agentsBox = (await agentArea.boundingBox())!;
     const viewsBox = (await viewsColumn.boundingBox())!;
@@ -279,6 +282,8 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
       .poll(() => page.evaluate(() => document.activeElement?.closest("[data-pane-view]")?.getAttribute("data-pane-view") ?? null))
       .not.toBeNull();
     await expect.poll(resizes, { timeout: 10_000 }).toBeGreaterThan(resizesBeforeHide);
+    await settled();
+    expect(resizes() - resizesBeforeHide).toBe(panesShown);
     await screenshot(page, "s6-columns-views-off");
     await viewsToggle.click();
     expect(last.get("workspace_view")).toEqual({ views: true });

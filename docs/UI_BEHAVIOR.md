@@ -261,12 +261,13 @@ In a plain browser tab the view keeps its address on the toolbar row, level with
 ### Narrow windows
 
 How many columns show depends on the Workspace body's width, not the window's, so hiding the sidebar with ⌘B can bring a column back.
-At 1100px and wider every column that is on shows.
-From 840px to under 1100px, Agent Views shows with one more column: File Views when both are on, Tools hidden first.
+The steps are where the column minimums and the 8px dividers between them fit: 1100px of columns (1116px of body with both dividers) and 840px (848px).
+At the wide step every column that is on shows.
+Between the two steps, Agent Views shows with one more column: File Views when both are on, Tools hidden first.
 Calling Tools there (⌘E, its icon, a reveal) puts Tools in File Views' place with its icon pressed and File Views' not, and opening a file or ⌘⇧B brings File Views back.
-Under 840px one column shows, Agent Views first; calling File Views or Tools, or opening a file, gives that column the whole body, with Agent Views kept at its size out of sight and taking no pointer or keyboard.
+Under the lower step one column shows, Agent Views first; calling File Views or Tools, or opening a file, gives that column the whole body, with Agent Views kept at its size out of sight and taking no pointer or keyboard.
 Choosing an agent from the sidebar, the palette or a tab cycle, or pressing the shown column's icon or chord again, gives the body back to Agent Views; that press sends nothing, so the column stays on.
-A narrower body starts on Agent Views each time it drops under 840px and each time another Workspace is drawn.
+A narrower body starts on Agent Views each time it drops under the lower step and each time another Workspace comes in front, unless that Workspace was just called, as a `--reveal` does.
 No column ever floats over another.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
 Widening the window brings back what the Workspace stores, whether each column is on, their widths, the tool and the area sizes, because none of these narrow arrangements is stored, and another Workspace's columns never change while one is narrow.

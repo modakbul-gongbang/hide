@@ -60,13 +60,16 @@ pub(super) struct WorkspaceViewStore {
     /// The last load stamp a browser display was given (`next_browser_load`).
     /// Runtime only.
     pub(super) browser_load: u64,
-    /// Counts the area intents that called File Views, whichever page, CLI
-    /// `--reveal` or event asked. The shell draws a called column in a body
-    /// too narrow for all of them (PRD three-column-panel D-07, B26, B27),
-    /// and a call that did not start in that page reaches it only as this
-    /// count rising. Runtime only: which column a narrow body shows is never
-    /// stored (B28).
-    pub(super) views_called: u64,
+    /// Numbers the area intents that called File Views, whichever page, CLI
+    /// `--reveal` or event asked, and remembers the number of each
+    /// Workspace's last call. The shell draws a called column in a body too
+    /// narrow for all of them (PRD three-column-panel D-07, B26, B27), and a
+    /// call that did not start in that page reaches it only as the front
+    /// Workspace's number passing the last one it read, so a call into
+    /// another Workspace never moves the front one's columns. Runtime only:
+    /// which column a narrow body shows is never stored (B28).
+    pub(super) views_calls: u64,
+    pub(super) views_called: HashMap<WorkspaceKey, u64>,
     /// The Workspace the operator last chose, in this process or before it
     /// started: the one the app opens on (D-11); none on a first run.
     resumable: Option<WorkspaceKey>,
@@ -231,7 +234,8 @@ impl WorkspaceViewStore {
                 derived_active: None,
                 split_requests: HashMap::new(),
                 browser_load: 0,
-                views_called: 0,
+                views_calls: 0,
+                views_called: HashMap::new(),
                 unshown: HashSet::new(),
                 resumable,
                 pending_choice: None,
@@ -339,7 +343,8 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };
-        store.views_called += 1;
+        store.views_calls += 1;
+        store.views_called.insert(key.clone(), store.views_calls);
         let entry = store.views.entry(&key.0, &key.1);
         let before = (entry.views, entry.tool, entry.tools);
         entry.views = true;
@@ -397,6 +402,24 @@ impl Runtime {
         let store = self.workspace_views.as_mut().expect("checked above");
         let entry = store.views.entry(&key.0, &key.1);
         let before = entry.clone();
+        // File Views is never an empty column: turned on with no view, it
+        // opens the New tab page in the same event (D-10, B16). That is the
+        // one step that can fail, so it runs before anything else changes and
+        // a refusal leaves the entry as it was.
+        if payload.views == Some(true) && entry.layout.displays().next().is_none() {
+            let load = self.next_browser_load();
+            if let Err(error) = self.change_view_layout(&key, |layout, stamp| {
+                let display = layout.new_browser_display("", load);
+                let area = layout.active_area().id.clone();
+                layout.insert(&area, display, stamp)?;
+                Ok(((), true))
+            }) {
+                self.set_error(error.kind(), error.message(), false);
+                return true;
+            }
+        }
+        let store = self.workspace_views.as_mut().expect("checked above");
+        let entry = store.views.entry(&key.0, &key.1);
         // A reveal is the Explorer's; a tool chosen turns its column on.
         let tool = if payload.reveal.is_some() {
             Some(Tool::Explorer)
@@ -416,26 +439,8 @@ impl Runtime {
         if let Some(width) = payload.tools_width {
             entry.tools_width = Some(workspace_views::clamp_column_width(width));
         }
-        // File Views is never an empty column: turned on with no view, it
-        // opens the New tab page in the same event (D-10, B16).
-        let empty = entry.layout.displays().next().is_none();
-        match payload.views {
-            Some(true) if empty => {
-                let load = self.next_browser_load();
-                if let Err(error) = self.change_view_layout(&key, |layout, stamp| {
-                    let display = layout.new_browser_display("", load);
-                    let area = layout.active_area().id.clone();
-                    layout.insert(&area, display, stamp)?;
-                    Ok(((), true))
-                }) {
-                    self.set_error(error.kind(), error.message(), false);
-                    return true;
-                }
-                let store = self.workspace_views.as_mut().expect("checked above");
-                store.views.entry(&key.0, &key.1).views = true;
-            }
-            Some(views) => entry.views = views,
-            None => {}
+        if let Some(views) = payload.views {
+            entry.views = views;
         }
         let revealed = payload
             .reveal
@@ -610,7 +615,8 @@ impl Runtime {
             tool: view.tool,
             views_width: view.views_width,
             tools_width: view.tools_width,
-            views_called: store.views_called,
+            views_called: store.views_called.get(key).copied().unwrap_or(0),
+            views_calls: store.views_calls,
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
             agent_layout: self.agent_layout_snapshot(&view.agent_layout),

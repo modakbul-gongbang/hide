@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, StripTab } from "./snapshot";
-import { agentEntries, bodyStep, columnFrame, dividerLanding, DEFAULT_SLOTS, type ColumnSizes, type ColumnSlots } from "./workspace";
+import { agentEntries, bodyStep, columnFrame, dividerLanding, DEFAULT_SLOTS, NO_CALLS_SEEN, readCalls, type ColumnSizes, type ColumnSlots } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -26,8 +26,11 @@ const frame = (input: { views?: boolean; tools?: boolean; viewsWidth?: number | 
   columnFrame({ views: input.views ?? false, tools: input.tools ?? false, viewsWidth: input.viewsWidth ?? null, toolsWidth: input.toolsWidth ?? null, body: input.body, sizes, slots: input.slots ?? DEFAULT_SLOTS });
 
 describe("the Workspace columns (PRD three-column-panel)", () => {
-  it("steps at the sums of the column minimums: 1100 and 840 (D-07, B25)", () => {
-    expect([1100, 1099, 840, 839].map((body) => bodyStep(body, sizes))).toEqual(["wide", "mid", "mid", "narrow"]);
+  it("steps where the column minimums and their dividers fit: 1100 and 840 plus the dividers (D-07, B25)", () => {
+    expect([1116, 1115, 848, 847].map((body) => bodyStep(body, sizes))).toEqual(["wide", "mid", "mid", "narrow"]);
+    // Just over each step Agent Views still has its minimum.
+    expect(columnFrame({ views: true, tools: true, viewsWidth: null, toolsWidth: null, body: 1116, sizes, slots: DEFAULT_SLOTS }).agents).toBe(480);
+    expect(columnFrame({ views: true, tools: false, viewsWidth: null, toolsWidth: null, body: 848, sizes, slots: DEFAULT_SLOTS }).agents).toBe(480);
   });
 
   it("shows Agent Views alone with nothing on, and gives it the whole body (B1, B2)", () => {
@@ -91,5 +94,37 @@ describe("the Workspace columns (PRD three-column-panel)", () => {
     const shown = frame({ tools: true, body: 1600 });
     expect(dividerLanding({ divider: "tools", x: 1600 - 8 - 500, body: 1600, frame: shown, sizes })).toEqual({ tools_width: 500 });
     expect(dividerLanding({ divider: "tools", x: 1590, body: 1600, frame: shown, sizes })).toEqual({ tools_width: 260 });
+  });
+});
+
+describe("readCalls", () => {
+  const view = (path: string, views_called: number, views_calls: number) => ({ device_id: "local", path, views_called, views_calls });
+
+  it("takes the first count as history, then shows File Views for a call to the Workspace in front", () => {
+    const first = readCalls(NO_CALLS_SEEN, view("/a", 3, 5));
+    expect(first).toMatchObject({ reset: true, call: false });
+    const same = readCalls(first.seen, view("/a", 3, 5));
+    expect(same).toMatchObject({ reset: false, call: false });
+    const called = readCalls(same.seen, view("/a", 6, 6));
+    expect(called).toMatchObject({ reset: false, call: true });
+    expect(readCalls(called.seen, view("/a", 6, 6)).call).toBe(false);
+  });
+
+  it("leaves the front Workspace alone for a call into another, and shows it there when that one comes in front", () => {
+    const start = readCalls(NO_CALLS_SEEN, view("/a", 0, 2)).seen;
+    const elsewhere = readCalls(start, view("/a", 0, 3));
+    expect(elsewhere.call).toBe(false);
+    // The Overview in between, then the called Workspace in front.
+    const away = readCalls(elsewhere.seen, null).seen;
+    expect(readCalls(away, view("/b", 3, 3))).toMatchObject({ reset: true, call: true });
+    // A Workspace whose last call is older than the page is not called.
+    expect(readCalls(away, view("/c", 1, 3)).call).toBe(false);
+  });
+
+  it("counts again from a core that started again", () => {
+    const old = readCalls(NO_CALLS_SEEN, view("/a", 9, 9)).seen;
+    const restarted = readCalls(old, view("/a", 0, 0));
+    expect(restarted.call).toBe(false);
+    expect(readCalls(restarted.seen, view("/a", 1, 1)).call).toBe(true);
   });
 });
