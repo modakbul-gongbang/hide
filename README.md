@@ -19,7 +19,7 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-hide is a multi-agent IDE built on [Herdr](https://github.com/herdrdev/herdr), shipped as a macOS desktop app.
+hide is a multi-agent IDE built on [Herdr](https://github.com/herdrdev/herdr), with an Electron desktop host and a Rust daemon.
 It brings local and remote workspaces, checkouts, terminal panes, files, and coding agents into one keyboard-first window.
 It surfaces the questions, approvals, and results that need a person's attention while leaving session state and credentials with the tools that own them.
 
@@ -63,20 +63,22 @@ The web shell renders that state and sends typed user events back, so the UI doe
 
 ## Install
 
-hide currently ships for Apple Silicon Macs running macOS 14 or later, with unsigned Windows x64 and Linux x64 packages beside it ([Windows and Linux](docs/INSTALL.md#windows-and-linux)).
-If the [Releases](https://github.com/modakbul-gongbang/hide/releases) page has no public build yet, install from source:
+The packaging targets are Apple Silicon Macs running macOS 14 or later, Windows x64 and Linux x64 ([Windows and Linux](docs/INSTALL.md#windows-and-linux)).
+Published builds are listed on [GitHub Releases](https://github.com/modakbul-gongbang/hide/releases); a draft or a successful package build is not a public download.
+To build locally, install a Rust toolchain with Rust 2024 support, Node.js 22 and pnpm 10, then:
 
 ```sh
 git clone https://github.com/modakbul-gongbang/hide.git
 cd hide
 pnpm install --frozen-lockfile
-pnpm --dir desktop package
+HIDE_VERSION=0.0.0-local pnpm --dir desktop package
 sudo /usr/bin/ditto --rsrc --extattr --qtn desktop/out/hide-darwin-arm64/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
 
-The source build creates an ad-hoc signed `hide.app`, a versioned zip archive, and a SHA-256 sidecar under `desktop/out/`.
-It also bundles the pinned Herdr v0.9.1 runtime, so a separate Herdr install is not required for a first launch.
+On macOS the source build creates an ad-hoc signed `hide.app`, a versioned zip archive, and a SHA-256 sidecar under `desktop/out/`.
+`0.0.0-local` identifies a local build; set the intended version explicitly when packaging another build.
+The app bundles the pinned upstream Herdr runtime, so a separate Herdr install is not required for a first launch.
 
 See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verification, Gatekeeper steps, first-launch behavior, updates, and troubleshooting.
 
@@ -125,7 +127,8 @@ Repository map:
 - `assets/pet-theme/` - artwork kept for a future Electron feature ([issue #184](https://github.com/modakbul-gongbang/hide/issues/184)); the current app does not use it.
 - `docs/` - [current documentation map](docs/README.md), with runtime guides separated from historical and visual references.
 
-Before visual verification, read [Which app is actually running](docs/dev-runtime.md) and confirm exactly one running instance.
+Before visual verification, read [Which app is actually running](docs/dev-runtime.md) and [Verification](docs/VERIFICATION.md).
+Identify the candidate by its executable, build, PID and window; an isolated candidate can run beside the operator's app.
 
 ## Design and license
 
