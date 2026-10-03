@@ -41,6 +41,14 @@ use crate::{
 const BUSY_WAIT: Duration = Duration::from_millis(50);
 /// The most messages one read takes; a longer session is read over several.
 const MESSAGES_PER_READ: i64 = 200;
+/// Bounds header visits and payload queries even for empty or skipped parts.
+const PARTS_PER_MESSAGE: i64 = 256;
+const PARTS_PER_READ: i64 = 512;
+/// Covers each retained String slot and header independently of payload size.
+const PART_OVERHEAD_BYTES: u64 = 64;
+/// Also bound SQLite's scans/sorts when a provider index is missing or its
+/// database is corrupt: LIMIT alone bounds returned rows, not query work.
+const SQL_STEPS_PER_READ: usize = 1_000_000;
 /// The most row data one read loads, as much as one JSONL increment.
 const READ_BUDGET_BYTES: u64 = SESSION_INCREMENT_READ_LIMIT_BYTES;
 /// A part row over this is skipped without being loaded.
@@ -74,6 +82,17 @@ pub(crate) fn read(
     .map_err(|error| refusal(&error))?;
     connection
         .busy_timeout(BUSY_WAIT)
+        .map_err(|error| refusal(&error))?;
+    let mut sql_steps = 0;
+    connection.progress_handler(
+        1_000,
+        Some(move || {
+            sql_steps += 1_000;
+            sql_steps >= SQL_STEPS_PER_READ
+        }),
+    );
+    connection
+        .execute_batch("BEGIN")
         .map_err(|error| refusal(&error))?;
     let (title, created) = connection
         .query_row(
@@ -123,14 +142,16 @@ pub(crate) fn read(
         .map_err(|error| refusal(&error))?;
     let mut part_bytes = connection
         .prepare(
-            "SELECT coalesce(sum(CASE WHEN typeof(data) = 'text' AND octet_length(data) <= ?2 \
-             THEN octet_length(data) END), 0) FROM part WHERE message_id = ?1",
+            "SELECT coalesce(sum(CASE WHEN is_text AND bytes <= ?2 \
+             THEN bytes ELSE 0 END + ?4), 0) FROM \
+             (SELECT typeof(data) = 'text' AS is_text, octet_length(data) AS bytes \
+             FROM part WHERE message_id = ?1 ORDER BY time_created, id LIMIT ?3)",
         )
         .map_err(|error| refusal(&error))?;
     let mut parts = connection
         .prepare(
             "SELECT rowid, typeof(data) = 'text', octet_length(data) \
-             FROM part WHERE message_id = ?1 ORDER BY time_created, id",
+             FROM part WHERE message_id = ?1 ORDER BY time_created, id LIMIT ?2",
         )
         .map_err(|error| refusal(&error))?;
     let mut part_data = connection
@@ -146,7 +167,12 @@ pub(crate) fn read(
     let mut over_budget = false;
     let mut spent = 0_u64;
     let mut visited = 0_i64;
+    let mut part_work = 0_i64;
     while let Some(row) = rows.next().map_err(|error| refusal(&error))? {
+        if part_work >= PARTS_PER_READ {
+            over_budget = true;
+            break;
+        }
         visited += 1;
         if !row.get::<_, bool>(1).map_err(|error| refusal(&error))? {
             transcript.skip("not_text");
@@ -185,8 +211,12 @@ pub(crate) fn read(
             .pointer("/time/created")
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        let part_limit = PARTS_PER_MESSAGE.min(PARTS_PER_READ - part_work);
         let size: i64 = part_bytes
-            .query_row(params![message_id, ROW_LIMIT_BYTES], |row| row.get(0))
+            .query_row(
+                params![message_id, ROW_LIMIT_BYTES, part_limit, PART_OVERHEAD_BYTES],
+                |row| row.get(0),
+            )
             .map_err(|error| refusal(&error))?;
         let size = u64::try_from(size).unwrap_or(0);
         // The first message of a read is always taken, so a read moves on
@@ -197,9 +227,23 @@ pub(crate) fn read(
         }
         let mut part_rows = Vec::new();
         let mut part_headers = parts
-            .query(params![message_id])
+            // One extra header proves the per-message cap was crossed.
+            // It is never loaded or retained: at most 200 cap probes/read.
+            .query(params![message_id, part_limit + 1])
             .map_err(|error| refusal(&error))?;
+        let mut message_parts = 0;
         while let Some(part) = part_headers.next().map_err(|error| refusal(&error))? {
+            if message_parts == part_limit {
+                transcript.skip("part_work_capacity");
+                break;
+            }
+            message_parts += 1;
+            part_work += 1;
+            if PART_OVERHEAD_BYTES > READ_BUDGET_BYTES.saturating_sub(spent) {
+                transcript.skip("read_budget");
+                continue;
+            }
+            spent += PART_OVERHEAD_BYTES;
             if !part.get::<_, bool>(1).map_err(|error| refusal(&error))? {
                 transcript.skip("not_text");
                 continue;
@@ -345,6 +389,7 @@ fn refusal(error: &rusqlite::Error) -> String {
         Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
             "opencode_db_busy".to_owned()
         }
+        Some(rusqlite::ErrorCode::OperationInterrupted) => "opencode_db_work_capacity".to_owned(),
         _ => "opencode_db_unreadable".to_owned(),
     }
 }

@@ -7,8 +7,8 @@
 //! a temporary file and a rename, mode 0600, never under the runtime mutex.
 //! Labels are the provider's short summaries, positions are byte offsets and
 //! file identities, turns are hashes; the only conversation text is each
-//! pane's last request and reply, capped (`facts`, PRD overview-request-view
-//! B31). A file
+//! local pane's last request and reply, capped (`facts`, PRD overview-request-view
+//! B31). Device records remain in memory only. A file
 //! that cannot be read starts empty with a diagnostic (B21); nothing in it is
 //! shown until the pane's current session reference proves it.
 
@@ -229,6 +229,9 @@ impl LabelStore {
             }
         };
         let mut targets = file.targets;
+        // Older versions wrote device facts here. Do not restore them,
+        // and the save below removes those records from the existing file.
+        targets.retain(|target, _| target == LOCAL_TARGET);
         for record in targets.values_mut().flat_map(BTreeMap::values_mut) {
             record.upgrade_v3();
         }
@@ -262,7 +265,8 @@ impl LabelStore {
         self.lock().targets.get(key).cloned().unwrap_or_default()
     }
 
-    /// Replaces a worker's records and writes the file.
+    /// Replaces a worker's records. Only this machine's records reach disk;
+    /// a device's conversation stays available to its worker in memory.
     pub(crate) fn save_target(&self, key: &str, records: &BTreeMap<String, PaneRecord>) {
         {
             let mut file = self.lock();
@@ -271,7 +275,9 @@ impl LabelStore {
             }
             file.targets.insert(key.to_owned(), records.clone());
         }
-        self.save();
+        if key == LOCAL_TARGET {
+            self.save();
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, LabelsFile> {
@@ -286,7 +292,26 @@ impl LabelStore {
             .writing
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let bytes = match serde_json::to_vec(&*self.lock()) {
+        let encoded = {
+            let file = self.lock();
+            // Filter at the final serialization boundary as well: a later
+            // local save must never serialize device entries held in memory.
+            #[derive(Serialize)]
+            struct LocalFile<'a> {
+                version: u32,
+                targets: BTreeMap<&'a str, &'a BTreeMap<String, PaneRecord>>,
+            }
+            serde_json::to_vec(&LocalFile {
+                version: SCHEMA_VERSION,
+                targets: file
+                    .targets
+                    .iter()
+                    .filter(|(target, _)| target.as_str() == LOCAL_TARGET)
+                    .map(|(target, records)| (target.as_str(), records))
+                    .collect(),
+            })
+        };
+        let bytes = match encoded {
             Ok(bytes) => bytes,
             Err(error) => {
                 crate::diagnostic!(json!({
@@ -340,6 +365,50 @@ mod tests {
         let reopened = LabelStore::open(Some(root.path()), None);
         assert_eq!(reopened.target(LOCAL_TARGET), records);
         assert!(hide_platform::fs::private::is_private(&root.path().join(LABELS_FILE)).unwrap());
+    }
+
+    #[test]
+    fn device_conversation_stays_in_memory_even_after_a_local_save() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LabelStore::open(Some(root.path()), None);
+        let mut device = record("remote-owner");
+        device.facts = serde_json::from_value(json!({
+            "operator_request": {"text":"private remote operator", "at_unix_ms":1, "requester":{"kind":"operator"}},
+            "other_request": {"text":"private remote sender", "at_unix_ms":2, "requester":{"kind":"agent"}},
+            "reply": {"text":"private remote reply", "at_unix_ms":3}
+        })).unwrap();
+        let remote = BTreeMap::from([("w2:p1".to_owned(), device)]);
+        store.save_target("device:mini", &remote);
+        assert_eq!(store.target("device:mini"), remote);
+        let local = BTreeMap::from([("w1:p1".to_owned(), record("local-owner"))]);
+        store.save_target(LOCAL_TARGET, &local);
+        let disk = std::fs::read_to_string(root.path().join(LABELS_FILE)).unwrap();
+        assert!(
+            !disk.contains("private remote"),
+            "device conversation reached disk"
+        );
+        let reopened = LabelStore::open(Some(root.path()), None);
+        assert_eq!(reopened.target(LOCAL_TARGET), local);
+        assert!(reopened.target("device:mini").is_empty());
+        assert_eq!(store.target("device:mini"), remote);
+    }
+
+    #[test]
+    fn opening_a_legacy_store_removes_device_records_from_disk() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(LABELS_FILE);
+        std::fs::write(&path, serde_json::to_vec(&json!({"version":1,"targets":{
+            "local":{"w1:p1":record("local-owner")},
+            "device:mini":{"w2:p1":{"facts":{"reply":{"text":"legacy private remote","at_unix_ms":1}}}}
+        }})).unwrap()).unwrap();
+        let opened = LabelStore::open(Some(root.path()), None);
+        assert_eq!(opened.target(LOCAL_TARGET)["w1:p1"], record("local-owner"));
+        assert!(opened.target("device:mini").is_empty());
+        assert!(
+            !std::fs::read_to_string(path)
+                .unwrap()
+                .contains("legacy private remote")
+        );
     }
 
     #[test]

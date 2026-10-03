@@ -6,8 +6,8 @@
 //! record, so a restarted daemon shows a pane with no new turn from what it
 //! stored rather than reading its conversation again (B31). The request and
 //! the reply are the conversation's own words, each cut to
-//! [`MAX_TEXT_BYTES`]; they live in `labels.json`, which only the operator
-//! can read, as the pane itself already shows them.
+//! [`MAX_TEXT_BYTES`]; local records live in the private `labels.json`.
+//! Device records stay in memory and are read again after a daemon restart.
 //!
 //! Who sent a request is decided once per message and kept with its offset
 //! (D-19): the hcoord envelope's sender; else the operator when Hide saw them

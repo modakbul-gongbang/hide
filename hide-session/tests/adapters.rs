@@ -331,6 +331,133 @@ fn opencode_metadata_uses_the_read_budget_even_when_it_cannot_be_parsed() {
 }
 
 #[test]
+fn opencode_empty_and_skipped_parts_have_a_work_cap_and_advance() {
+    for data in [
+        rusqlite::types::Value::Text(String::new()),
+        rusqlite::types::Value::Blob(vec![0]),
+    ] {
+        let home = home(Agent::OpenCode);
+        let writer =
+            rusqlite::Connection::open(home.path().join(".local/share/opencode/opencode.db"))
+                .unwrap();
+        writer
+            .execute_batch("DELETE FROM part; DELETE FROM message;")
+            .unwrap();
+        add_opencode_request(home.path(), 0, 10);
+        writer
+            .execute("DELETE FROM part WHERE message_id = 'msg_big_000'", [])
+            .unwrap();
+        for index in 0..2_000 {
+            writer
+                .execute(
+                    "INSERT INTO part VALUES (?1, 'msg_big_000', ?2, ?3, ?3, ?4)",
+                    rusqlite::params![
+                        format!("prt_empty_{index:04}"),
+                        request(Agent::OpenCode).reference_value,
+                        START + index,
+                        data
+                    ],
+                )
+                .unwrap();
+        }
+        add_opencode_request(home.path(), 1, 10);
+        let transcript = read(home.path(), &request(Agent::OpenCode)).unwrap();
+        let reason = if matches!(data, rusqlite::types::Value::Text(_)) {
+            "malformed_json"
+        } else {
+            "not_text"
+        };
+        assert_eq!(transcript.skipped_reasons.get(reason), Some(&256));
+        assert_eq!(
+            transcript.skipped_reasons.get("part_work_capacity"),
+            Some(&1)
+        );
+        assert_eq!(transcript.checkpoint.offset(), 2);
+        assert!(
+            transcript
+                .events
+                .iter()
+                .any(|event| event.text.starts_with("1 x"))
+        );
+        assert!(!transcript.has_more);
+    }
+}
+
+#[test]
+fn opencode_part_work_is_bounded_across_messages_and_resumes() {
+    let home = home(Agent::OpenCode);
+    let writer =
+        rusqlite::Connection::open(home.path().join(".local/share/opencode/opencode.db")).unwrap();
+    writer
+        .execute_batch("DELETE FROM part; DELETE FROM message;")
+        .unwrap();
+    for message in 0..3 {
+        add_opencode_request(home.path(), message, 10);
+        if message == 2 {
+            continue;
+        }
+        writer
+            .execute(
+                "DELETE FROM part WHERE message_id = ?1",
+                [format!("msg_big_{message:03}")],
+            )
+            .unwrap();
+        for index in 0..300 {
+            writer
+                .execute(
+                    "INSERT INTO part VALUES (?1, ?2, ?3, ?4, ?4, '')",
+                    rusqlite::params![
+                        format!("prt_work_{message}_{index:03}"),
+                        format!("msg_big_{message:03}"),
+                        request(Agent::OpenCode).reference_value,
+                        START + index
+                    ],
+                )
+                .unwrap();
+        }
+    }
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert!(first.events.is_empty());
+    assert_eq!(first.skipped_reasons.get("malformed_json"), Some(&512));
+    assert_eq!(first.skipped_reasons.get("part_work_capacity"), Some(&2));
+    assert_eq!(first.checkpoint.offset(), 2);
+    assert!(first.has_more);
+    let mut again = request(Agent::OpenCode);
+    again.checkpoint = Some(first.checkpoint);
+    let last = read(home.path(), &again).unwrap();
+    assert!(
+        last.events
+            .iter()
+            .any(|event| event.text.starts_with("2 x"))
+    );
+    assert_eq!(last.checkpoint.offset(), 3);
+    assert!(!last.has_more);
+}
+
+#[test]
+fn opencode_bounds_sql_work_when_a_part_sort_cannot_use_an_index() {
+    let home = home(Agent::OpenCode);
+    let writer =
+        rusqlite::Connection::open(home.path().join(".local/share/opencode/opencode.db")).unwrap();
+    writer
+        .execute_batch("DELETE FROM part; DELETE FROM message;")
+        .unwrap();
+    add_opencode_request(home.path(), 0, 10);
+    writer.execute_batch("WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<100000) INSERT INTO part SELECT printf('prt_many_%06d', n), 'msg_big_000', 'ses_0a1b2c3d4e5f60718293a4b5c6', n, n, '' FROM rows;").unwrap();
+    assert_eq!(
+        read(home.path(), &request(Agent::OpenCode)).unwrap_err(),
+        "opencode_db_work_capacity"
+    );
+    let parts: i64 = writer
+        .query_row("SELECT count(*) FROM part", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        parts, 100001,
+        "the bounded read must not change the provider database"
+    );
+}
+
+#[test]
 fn an_oversized_first_opencode_message_has_bounded_output_and_allows_progress() {
     let home = home(Agent::OpenCode);
     let path = home.path().join(".local/share/opencode/opencode.db");
