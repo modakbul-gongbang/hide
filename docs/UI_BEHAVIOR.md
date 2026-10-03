@@ -494,6 +494,7 @@ A double click, ⌘Enter or `패널 열기` opens the agent's pane as the Agents
 The arrows step through the group heads, rows and chips in the order drawn, Home and End go to the ends, and Escape leaves the Overview.
 With no agent the view is one line and New agent; when every row rests it reads `할 일 없음` above the folded 쉬는 중.
 While the view is on screen the page says so, and the core re-reads a project's pull requests once a minute while one of its rows has checks running; nothing else is read for it.
+Unchanged request, agent, descendant and issue/PR inputs keep the row tree asleep when an unrelated snapshot field changes; the shared elapsed-time clock updates its own text leaves.
 
 ### Agents: graph
 

@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon, LinkIcon, SquareArrowOutUpRightIcon, SquareTerminalIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { markTone } from "./agentRow";
@@ -59,7 +59,7 @@ export type RequestViewProps = {
   onNewAgent?: () => void;
 };
 
-export function RequestView({ rows, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
+export const RequestView = memo(function RequestView({ rows, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
   const groups = useMemo(() => requestGroups(rows), [rows]);
   // While a window shows the view, the core re-reads running checks (D-32).
   // A hidden page is not showing it, and a reconnect is a new connection
@@ -140,6 +140,28 @@ export function RequestView({ rows, scope, lens, onLens, handlers, actions, onNe
       })}
     </div>
   );
+}, sameViewInputs);
+
+/** The store already shares unchanged snapshot subtrees. Compare those
+ * identities and the few project/checkout fields this view reads, rather
+ * than rendering every row when another rest field changes. No text is
+ * serialized and no timer, read or notification is added (B30, B43).
+ */
+function sameViewInputs(before: RequestViewProps, after: RequestViewProps): boolean {
+  if (before.scope !== after.scope || before.lens !== after.lens || before.onLens !== after.onLens || before.handlers !== after.handlers || before.actions !== after.actions || before.onNewAgent !== after.onNewAgent || before.rows.length !== after.rows.length) return false;
+  const projects = new Map<Workspace, Workspace>();
+  return before.rows.every((row, index) => {
+    const next = after.rows[index]!;
+    const a = row.lens;
+    const b = next.lens;
+    if (row.verb !== next.verb || a.agent !== b.agent || a.task !== b.task || a.device !== b.device || a.checkout.branch !== b.checkout.branch || a.checkout.label !== b.checkout.label || row.children.length !== next.children.length || row.children.some((child, i) => child !== next.children[i])) return false;
+    if (a.project === b.project || projects.get(a.project) === b.project) return true;
+    const p = a.project;
+    const q = b.project;
+    if (p.id !== q.id || p.device_id !== q.device_id || p.label !== q.label || p.tasks !== q.tasks || p.pull_requests !== q.pull_requests || p.checkouts.find((checkout) => checkout.github)?.github !== q.checkouts.find((checkout) => checkout.github)?.github) return false;
+    projects.set(p, q);
+    return true;
+  });
 }
 
 // --- keyboard ----------------------------------------------------------------

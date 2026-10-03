@@ -1,5 +1,5 @@
 import { CircleDotIcon, FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { Kbd } from "./components/ui/kbd";
@@ -72,6 +72,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const rows = useMemo(() => requestRows(lensAgents, projects.flatMap((project) => project.agents)), [lensAgents, projects]);
   // The request view's expanded rows and fold, this screen's own page state.
   const [requestLens, setRequestLens] = useState<RequestLens>(NO_REQUEST_LENS);
+  const onRequestLens = useCallback((patch: Partial<RequestLens>) => setRequestLens((lens) => ({ ...lens, ...patch })), []);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
   const boards = view !== "projects";
@@ -109,14 +110,14 @@ export function MainScreen({ actions }: { actions: Actions }) {
   // the 요청 tab the rows to answer, the 요청 tile's.
   const waiting = agentsTile(lensAgents, { state: "ready" }).badge?.count ?? 0;
   const answering = rows.filter((row) => row.verb === "answer").length;
-  const lensActions = lensHandlers(actions, {
+  const lensActions = useMemo(() => lensHandlers(actions, {
     openIssue: (_owner, task) => {
       setView("tasks");
       setFocusTask(task.key);
       setPanel(task.key);
     },
     toggleFold: (fold) => setFolds((open) => toggledFold(open, fold)),
-  });
+  }), [actions, setView]);
   // With the issue panel open the board and the panel scroll on their own (D-43).
   const scrolls = view !== "projects" && !(view === "tasks" && panelCard(tasks, panel) !== null);
   const unavailable = sections.filter((section) => section.availability.state !== "ready");
@@ -192,7 +193,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
         ))
       ) : null}
       {view === "requests" ? (
-        <RequestView rows={rows} scope="all" lens={requestLens} onLens={(patch) => setRequestLens((lens) => ({ ...lens, ...patch }))} handlers={lensActions} actions={actions} />
+        <RequestView rows={rows} scope="all" lens={requestLens} onLens={onRequestLens} handlers={lensActions} actions={actions} />
       ) : view === "tasks" ? (
         <IssuesView
           board={tasks}

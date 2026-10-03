@@ -1,5 +1,5 @@
 import { ArrowDownIcon, FolderGit2Icon, GitMergeIcon, HardDriveIcon, PlusIcon, RefreshCwIcon, SquareTerminalIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -43,6 +43,11 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const sessions = useShellStore((s) => s.projectSessions);
   const setScreen = useUiStore((s) => s.setScreen);
   const setLens = useUiStore((s) => s.setLens);
+  const onRequestLens = useCallback((requests: Partial<OverviewLens["requests"]>) => setLens({ requests: { ...lens.requests, ...requests } }), [setLens, lens.requests]);
+  const lensActions = useMemo(() => lensHandlers(actions, {
+    openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key, panel: task.key }),
+    toggleFold: (fold) => setLens({ folds: toggledFold(lens.folds, fold) }),
+  }), [actions, setLens, lens.folds]);
   // The Project whose Done column is open.
   const [doneOpenFor, setDoneOpenFor] = useState<string | null>(null);
   const found = useMemo(() => overviewProject(rest, agents, projectId), [rest, agents, projectId]);
@@ -118,10 +123,6 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     showCheckouts: () => setLens({ tab: "agents", panel: null, folds: lens.folds.includes(foldId("empty", project.id)) ? lens.folds : [...lens.folds, foldId("empty", project.id)] }),
   };
   // An issue chip opens the Issues tile at its card with the issue's panel open.
-  const lensActions = lensHandlers(actions, {
-    openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key, panel: task.key }),
-    toggleFold: (fold) => setLens({ folds: toggledFold(lens.folds, fold) }),
-  });
   const view = lens.tab;
   // With the issue panel open the board and the panel scroll on their own, under a header that stays (D-43).
   const split = view === "issues" && panelCard(tasks, lens.panel) !== null;
@@ -198,7 +199,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
         <PullRequestsView board={pullRequests} project={project} lens={lens.prs} onLens={(prs) => setLens({ prs: { ...lens.prs, ...prs } })} handlers={lensActions} now={now} />
       ) : view === "requests" ? (
         availability.state === "ready" ? (
-          <RequestView rows={rows} scope="project" lens={lens.requests} onLens={(requests) => setLens({ requests: { ...lens.requests, ...requests } })} handlers={lensActions} actions={actions} onNewAgent={newAgent} />
+          <RequestView rows={rows} scope="project" lens={lens.requests} onLens={onRequestLens} handlers={lensActions} actions={actions} onNewAgent={rows.length === 0 ? newAgent : undefined} />
         ) : (
           <div className="flex-1" data-requests-unavailable={availability.state} />
         )
