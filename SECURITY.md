@@ -18,6 +18,7 @@ Fixes ship as a normal release; the advisory is published once the release is ou
 
 Hide delegates provider sign-in to the installed agent CLIs and remote authentication to the operator's existing SSH configuration.
 It does not ask the operator to paste a provider API key or an SSH password into the app.
+For Codex usage status, hide reads the installed CLI's existing `auth.json` access token and account ID and sends a bearer-authenticated request to the provider's usage endpoint.
 Hide does generate and store its own authentication material, including the daemon's local client token, phone pairing credentials and Project Memory receipt keys.
 Treat local state, app databases, pairing information and run artifacts as private; do not attach them unredacted to a public issue or pull request.
 A report that exposes credentials, bypasses an authentication boundary, or discloses private local content is in scope.
