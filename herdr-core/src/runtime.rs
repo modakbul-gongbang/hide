@@ -1921,6 +1921,9 @@ impl Runtime {
                 && self.snapshot.status.last_error.is_none()
             {
                 self.apply_area_intent(intent);
+                // The call is numbered even when nothing else moved (an
+                // open of the view already shown), and the shell must hear it.
+                changed = true;
             }
             if chooses_workspace && self.snapshot.status.last_error.is_none() {
                 self.mark_front_chosen();

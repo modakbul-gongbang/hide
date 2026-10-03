@@ -110,15 +110,15 @@ describe("readCalls", () => {
     expect(readCalls(called.seen, view("/a", 6, 6)).call).toBe(false);
   });
 
-  it("leaves the front Workspace alone for a call into another, and shows it there when that one comes in front", () => {
+  it("leaves the front Workspace alone for a call into another, and shows the one a call brings in front", () => {
     const start = readCalls(NO_CALLS_SEEN, view("/a", 0, 2)).seen;
     const elsewhere = readCalls(start, view("/a", 0, 3));
     expect(elsewhere.call).toBe(false);
-    // The Overview in between, then the called Workspace in front.
+    // That older call does not move its Workspace when it is chosen later.
+    expect(readCalls(elsewhere.seen, view("/b", 3, 3))).toMatchObject({ reset: true, call: false });
+    // A reveal from the Overview: the called Workspace comes in front with the call.
     const away = readCalls(elsewhere.seen, null).seen;
-    expect(readCalls(away, view("/b", 3, 3))).toMatchObject({ reset: true, call: true });
-    // A Workspace whose last call is older than the page is not called.
-    expect(readCalls(away, view("/c", 1, 3)).call).toBe(false);
+    expect(readCalls(away, view("/c", 4, 4))).toMatchObject({ reset: true, call: true });
   });
 
   it("counts again from a core that started again", () => {
@@ -126,5 +126,9 @@ describe("readCalls", () => {
     const restarted = readCalls(old, view("/a", 0, 0));
     expect(restarted.call).toBe(false);
     expect(readCalls(restarted.seen, view("/a", 1, 1)).call).toBe(true);
+    // A core first read at zero that starts again at zero still counts its calls.
+    const fresh = readCalls(readCalls(NO_CALLS_SEEN, view("/a", 0, 0)).seen, view("/a", 3, 3)).seen;
+    const again = readCalls(fresh, view("/a", 0, 0)).seen;
+    expect(readCalls(again, view("/a", 1, 1)).call).toBe(true);
   });
 });

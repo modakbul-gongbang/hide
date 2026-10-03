@@ -2490,3 +2490,68 @@ fn empty_browser_open_targets_the_named_area_and_navigation_keeps_its_id() {
     assert_eq!(navigated.id, page.id);
     assert_eq!(navigated.url.as_deref(), Some("https://example.com"));
 }
+
+/// PRD three-column-panel D-07, D-08: a reveal of a file in another checkout
+/// calls that checkout's File Views once it settles there and leaves the
+/// Workspace that was in front alone, so its narrow body never moves.
+#[test]
+fn a_reveal_calls_the_file_views_of_its_own_checkout() {
+    let (mut runtime, checkout_id, directory) = strip_checkout("view-reveal-own");
+    let (other, other_checkout) = second_checkout(&mut runtime, &directory);
+    let mut runtime = with_views(runtime, &views_path("view-reveal-own"));
+    files(&other, &["b.md"]);
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("notes.md"),
+        false,
+        false,
+    );
+    let calls = |runtime: &Runtime| {
+        let store = runtime.workspace_views.as_ref().unwrap();
+        let mut numbered: Vec<_> = store
+            .views_called
+            .iter()
+            .map(|((_, path), number)| (path.clone(), *number))
+            .collect();
+        numbered.sort();
+        (store.views_calls, numbered)
+    };
+    let (count, first_call) = calls(&runtime);
+
+    runtime.dispatch_json(&explorer_event(
+        "reveal_path",
+        serde_json::json!({
+            "path": other.join("b.md"), "workspace_id": "workspace:other",
+            "checkout_id": other_checkout, "is_directory": false,
+        }),
+    ));
+    assert!(runtime.snapshot.status.last_error.is_none());
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(view.path, other.to_string_lossy());
+    assert!(
+        view.views && view.tools,
+        "the reveal turns both columns on there"
+    );
+    assert_eq!(
+        view.views_called,
+        count + 1,
+        "the call is the revealed Workspace's"
+    );
+    let (_, numbered) = calls(&runtime);
+    let front_before: Vec<_> = numbered
+        .iter()
+        .filter(|(path, _)| *path == directory.to_string_lossy())
+        .cloned()
+        .collect();
+    let expected: Vec<_> = first_call
+        .iter()
+        .filter(|(path, _)| *path == directory.to_string_lossy())
+        .cloned()
+        .collect();
+    assert_eq!(
+        front_before, expected,
+        "the Workspace in front before is not called"
+    );
+}

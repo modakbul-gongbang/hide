@@ -296,7 +296,6 @@ type UiStore = {
   callColumn: (column: Column) => void;
   /** Another Workspace is drawn: a narrow body starts on Agent Views again. */
   resetColumnSlots: () => void;
-
   setShownColumns: (shown: ShownColumns) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
@@ -384,7 +383,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   resetColumnSlots: () => {
     if (get().columnSlots !== DEFAULT_SLOTS) set({ columnSlots: DEFAULT_SLOTS });
   },
-
   setShownColumns: (shown) => {
     const current = get().shownColumns;
     if (current.views !== shown.views || current.tools !== shown.tools || current.step !== shown.step) set({ shownColumns: shown });

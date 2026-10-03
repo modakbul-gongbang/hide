@@ -106,7 +106,6 @@ impl AreaIntent {
             Event::FileOpen(_) | Event::FileFocus(_) => Some(Self::Views),
             // A deselect opens nothing.
             Event::ChangesSelect(payload) if payload.path.is_some() => Some(Self::Views),
-            Event::RevealPath(_) => Some(Self::RevealInViews),
             _ => None,
         }
     }

@@ -178,34 +178,29 @@ export function knownProvider(kind: string | null | undefined): Provider | null 
 
 /** What the page has read of the core's File Views calls. */
 export type CallsSeen = {
-  /** The core's call count when the page first read it; older calls are history. */
-  baseline: number | null;
+  /** The core's call count at the last read, or null before the first. */
+  last: number | null;
   /** The Workspace in front at the last read, by device and path. */
   front: string | null;
-  /** Each Workspace's last call number the page has shown. */
-  handled: Record<string, number>;
 };
 
-export const NO_CALLS_SEEN: CallsSeen = { baseline: null, front: null, handled: {} };
+export const NO_CALLS_SEEN: CallsSeen = { last: null, front: null };
 
 type FrontView = Pick<WorkspaceView, "device_id" | "path" | "views_called" | "views_calls">;
 
 /**
  * The page's reading of the front Workspace's calls: `reset` when another
  * Workspace came in front (a narrow body starts on Agent Views there), and
- * `call` when that Workspace was called since the page last looked. A core
- * that started again counts from zero, so its lower count is a new baseline.
+ * `call` when that Workspace was called since the last read, the call that
+ * brought it in front included. A call older than the last read is history,
+ * so an old call never moves a Workspace chosen later; a core that started
+ * again counts from zero, so its lower count is only read.
  */
 export function readCalls(seen: CallsSeen, view: FrontView | null | undefined): { seen: CallsSeen; reset: boolean; call: boolean } {
   if (!view) return { seen: seen.front === null ? seen : { ...seen, front: null }, reset: false, call: false };
-  const key = `${view.device_id}\u0000${view.path}`;
-  const reset = key !== seen.front;
-  const { baseline } = seen;
-  let { handled } = seen;
-  if (baseline === null || view.views_calls < baseline) {
-    return { seen: { baseline: view.views_calls, front: key, handled: {} }, reset, call: false };
-  }
-  const call = view.views_called > Math.max(baseline, handled[key] ?? 0);
-  if (call) handled = { ...handled, [key]: view.views_called };
-  return { seen: { baseline, front: key, handled }, reset, call };
+  const front = `${view.device_id}\u0000${view.path}`;
+  const reset = front !== seen.front;
+  const call = seen.last !== null && view.views_calls >= seen.last && view.views_called > seen.last;
+  const next = seen.last === view.views_calls && !reset ? seen : { last: view.views_calls, front };
+  return { seen: next, reset, call };
 }

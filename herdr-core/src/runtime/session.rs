@@ -4238,6 +4238,14 @@ impl Runtime {
         {
             self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
         }
+        // The reveal calls the columns of its own checkout's Workspace, once
+        // it has settled there, not of whichever was in front when it was
+        // asked (D-08).
+        if self.separate_view_areas()
+            && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+        {
+            self.apply_area_intent_to(&key, super::workspace_view::AreaIntent::RevealInViews);
+        }
         self.snapshot.ui_state.right_panel_visible = true;
         self.snapshot.ui_state.right_panel_section = RightPanelSection::Explorer;
         for expanded in reveal_expansion_paths(&checkout_path, &payload.path, payload.is_directory)
