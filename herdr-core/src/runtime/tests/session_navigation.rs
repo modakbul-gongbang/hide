@@ -558,7 +558,7 @@ fn tab_layouts_survive_a_tab_switch_with_no_empty_canvas() {
     );
 }
 
-fn finish_running_pane_focus(runtime: &mut Runtime, result: Result<(), &str>) {
+pub(super) fn finish_running_pane_focus(runtime: &mut Runtime, result: Result<(), &str>) {
     let control = runtime.pane_focus_in_flight.clone().expect("running focus");
     let result = result
         .map(|()| {
@@ -1525,9 +1525,9 @@ fn pane_focus_burst_keeps_only_the_latest_successor_and_resumes_external_follow(
 }
 
 #[test]
-fn superseded_same_pane_failure_cannot_fail_a_newer_correlated_request() {
+fn superseded_same_pane_focus_failure_cannot_fail_a_newer_correlated_request() {
     let mut runtime = live_runtime();
-    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
     runtime.dispatch_json(&correlated_pane_focus_event("w1:p2", "first"));
     let first = runtime.pane_focus_in_flight.clone().unwrap();
@@ -1564,7 +1564,7 @@ fn superseded_same_pane_failure_cannot_fail_a_newer_correlated_request() {
 #[test]
 fn unknown_pane_focus_ends_the_automatic_burst_without_claiming_success() {
     let mut runtime = live_runtime();
-    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
     runtime.dispatch_json(&operator_focus_event("w1:p2"));
     let first = runtime.pane_focus_in_flight.clone().unwrap();
@@ -1626,7 +1626,7 @@ fn unknown_pane_focus_ends_the_automatic_burst_without_claiming_success() {
 #[test]
 fn old_connection_focus_completion_runs_the_latest_intent_on_the_new_connection() {
     let mut runtime = live_runtime();
-    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
     runtime.dispatch_json(&correlated_pane_focus_event("w1:p2", "reconnected"));
     let old_generation = runtime
@@ -1670,7 +1670,7 @@ fn old_connection_focus_completion_runs_the_latest_intent_on_the_new_connection(
 #[test]
 fn latest_pane_focus_is_not_released_by_a_layout_while_an_older_request_is_running() {
     let mut runtime = live_runtime();
-    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
 
     runtime.dispatch_json(&operator_focus_event("w1:p2"));
