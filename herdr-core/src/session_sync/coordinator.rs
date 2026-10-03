@@ -757,6 +757,20 @@ fn publish_replica(
     labels: &mut Option<LabelWorker>,
 ) -> bool {
     let mut payload = replica.project();
+    // Observe native state before label overlays add UI timestamps. This is
+    // bounded memory work; no delivery I/O or notifier is started here.
+    if let Some(runtime) = context.runtime.upgrade() {
+        if let Ok(mut guard) = runtime.lock() {
+            match &context.target {
+                SessionSyncTarget::Local { socket_path } => {
+                    guard.observe_delivery("local", &payload, socket_path.to_str())
+                }
+                SessionSyncTarget::Remote { target_id, .. } => {
+                    guard.observe_delivery(target_id, &payload, None)
+                }
+            }
+        }
+    }
     let overlay = labels.as_mut().map(|worker| {
         observe_labels(worker, replica);
         worker.overlay()

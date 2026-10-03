@@ -63,6 +63,7 @@ pub struct CoreOptions {
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
     pub schema_version: u32,
+    pub delivery_watches: Vec<crate::delivery::watch::View>,
     pub navigator: NavigatorSnapshot,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
@@ -3701,6 +3702,7 @@ impl Snapshot {
 
         Self {
             schema_version: SCHEMA_VERSION,
+            delivery_watches: Vec::new(),
             navigator: NavigatorSnapshot {
                 root_path: None,
                 changes_root_path: None,
@@ -3841,6 +3843,7 @@ impl PetSnapshot {
 /// no mutation site needs dirty-tracking discipline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RestSections {
+    pub delivery_watches: Vec<crate::delivery::watch::View>,
     pub navigator: NavigatorSnapshot,
     pub sessions: SessionsSnapshot,
     pub card: CheckoutCardSnapshot,
@@ -3876,6 +3879,7 @@ pub struct RestSections {
 impl RestSections {
     pub fn capture(snapshot: &Snapshot) -> Self {
         Self {
+            delivery_watches: snapshot.delivery_watches.clone(),
             navigator: snapshot.navigator.clone(),
             sessions: snapshot.sessions.clone(),
             card: snapshot.card.clone(),
@@ -3912,7 +3916,8 @@ impl RestSections {
     /// Field-by-field equality against the live snapshot, so the unchanged
     /// case costs a comparison instead of a clone.
     pub fn matches(&self, snapshot: &Snapshot) -> bool {
-        self.navigator == snapshot.navigator
+        self.delivery_watches == snapshot.delivery_watches
+            && self.navigator == snapshot.navigator
             && self.sessions == snapshot.sessions
             && self.card == snapshot.card
             && self.git_worktrees == snapshot.git_worktrees
@@ -4060,6 +4065,7 @@ pub struct ChangedDocumentWire<'a> {
 
 #[derive(Serialize)]
 pub struct RestWire<'a> {
+    pub delivery_watches: &'a [crate::delivery::watch::View],
     pub navigator: &'a NavigatorSnapshot,
     pub sessions: &'a SessionsSnapshot,
     pub card: &'a CheckoutCardSnapshot,
@@ -4092,6 +4098,7 @@ pub struct RestWire<'a> {
 impl<'a> RestWire<'a> {
     fn borrow(rest: &'a RestSections) -> Self {
         Self {
+            delivery_watches: &rest.delivery_watches,
             navigator: &rest.navigator,
             sessions: &rest.sessions,
             card: &rest.card,

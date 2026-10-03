@@ -12,6 +12,9 @@ pub struct Watch {
     pub first_warning_at_unix_ms: Option<u64>,
     pub warning_count: u8,
     pub activity_failures: u32,
+    pub last_status: String,
+    pub last_state_change_seq: Option<u64>,
+    pub status_changed_at_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -20,6 +23,8 @@ pub struct View {
     pub parent_pane_id: String,
     pub target_pane_id: String,
     pub warning_count: u8,
+    pub first_warning_at_unix_ms: Option<u64>,
+    pub last_activity_at_unix_ms: u64,
 }
 
 impl Watch {
@@ -29,6 +34,8 @@ impl Watch {
             parent_pane_id: self.parent.pane_id.clone(),
             target_pane_id: self.target.pane_id.clone(),
             warning_count: self.warning_count,
+            first_warning_at_unix_ms: self.first_warning_at_unix_ms,
+            last_activity_at_unix_ms: self.last_activity_at_unix_ms,
         }
     }
 
@@ -38,6 +45,7 @@ impl Watch {
             && self.target.valid()
             && self.parent.device_id == "local"
             && self.warning_count <= 2
+            && super::valid_key(&self.last_status)
             && (self.warning_count == 0) == self.first_warning_at_unix_ms.is_none()
     }
 }
@@ -51,11 +59,11 @@ pub fn start(
     if parent.device_id != "local" {
         return Err("local_parent_required".into());
     }
-    if let Some(watch) = ledger.watches.iter().find(|watch| {
-        watch.parent.pane_id == parent.pane_id
-            && watch.target.pane_id == target.pane_id
-            && watch.target.device_id == target.device_id
-    }) {
+    if let Some(watch) = ledger
+        .watches
+        .iter()
+        .find(|watch| watch.parent.same_identity(parent) && watch.target.same_identity(target))
+    {
         return Ok(watch.clone());
     }
     if ledger.watches.len() >= WATCH_LIMIT {
@@ -71,6 +79,9 @@ pub fn start(
         first_warning_at_unix_ms: None,
         warning_count: 0,
         activity_failures: 0,
+        last_status: "unknown".into(),
+        last_state_change_seq: None,
+        status_changed_at_unix_ms: activity,
     };
     ledger.watches.push(watch.clone());
     Ok(watch)
@@ -80,19 +91,17 @@ pub fn stop(ledger: &mut Ledger, parent: &Actor, id: &str) -> Result<(), String>
     let index = ledger
         .watches
         .iter()
-        .position(|watch| {
-            watch.id == id
-                && watch.parent.pane_id == parent.pane_id
-                && watch.parent.device_id == parent.device_id
-        })
+        .position(|watch| watch.id == id && watch.parent.same_identity(parent))
         .ok_or("watch_unavailable")?;
     ledger.watches.remove(index);
     Ok(())
 }
 
+#[derive(Clone)]
 pub struct Reading {
     pub id: String,
     pub status: String,
+    pub state_change_seq: Option<u64>,
     pub status_changed_at_unix_ms: u64,
     pub session_modified_at_unix_ms: Option<u64>,
     pub failure: Option<String>,
@@ -124,10 +133,17 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             continue;
         }
         let watch = &mut ledger.watches[index];
+        if watch.last_status != reading.status
+            || watch.last_state_change_seq != reading.state_change_seq
+        {
+            watch.last_status = reading.status.clone();
+            watch.last_state_change_seq = reading.state_change_seq;
+            watch.status_changed_at_unix_ms = reading.status_changed_at_unix_ms.min(now);
+        }
         let activity = reading
             .session_modified_at_unix_ms
             .unwrap_or(0)
-            .max(reading.status_changed_at_unix_ms)
+            .max(watch.status_changed_at_unix_ms)
             .min(now);
         if reading.failure.is_some() {
             watch.activity_failures = watch.activity_failures.saturating_add(1);
@@ -204,12 +220,14 @@ mod tests {
             name: id.into(),
             kind: "codex".into(),
             device_id: "local".into(),
+            session: None,
         }
     }
     fn reading(id: &str, activity: u64) -> Reading {
         Reading {
             id: id.into(),
             status: "idle".into(),
+            state_change_seq: Some(activity),
             status_changed_at_unix_ms: activity,
             session_modified_at_unix_ms: None,
             failure: None,
@@ -316,6 +334,7 @@ mod tests {
         let mut reading = Reading {
             id: watch.id.clone(),
             status: "unknown".into(),
+            state_change_seq: None,
             status_changed_at_unix_ms: 1,
             session_modified_at_unix_ms: None,
             failure: None,

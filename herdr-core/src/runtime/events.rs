@@ -1522,6 +1522,9 @@ impl Runtime {
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
+                if let Some(observation) = self.delivery_observations.get_mut(&payload.pane_id) {
+                    observation.last_input_at_unix_ms = super::unix_milliseconds();
+                }
                 if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
                     return changed;
                 }

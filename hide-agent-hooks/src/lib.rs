@@ -19,6 +19,7 @@
 //! or polls.
 
 pub mod counters;
+pub mod delivery;
 pub mod diagnosis;
 pub mod install;
 pub mod memory;

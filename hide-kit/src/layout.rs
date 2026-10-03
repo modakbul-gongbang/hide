@@ -78,6 +78,11 @@ pub fn label_generators(state_dir: &Path) -> PathBuf {
     state_dir.join("label-generators")
 }
 
+/// Durable local requests and watches; its owner is the core delivery worker.
+pub fn delivery_ledger(state_dir: &Path) -> PathBuf {
+    state_dir.join("delivery-ledger.json")
+}
+
 /// `~/rest` of a helper root spelling under `home`; an absolute spelling as
 /// it is.
 pub fn expand_home(spelling: &str, home: &Path) -> PathBuf {

@@ -64,7 +64,7 @@ pub(crate) fn send(
         return Err("invalid_intent".into());
     }
     if let Some(letter) = ledger.letters.iter().find(|letter| {
-        letter.sender.pane_id == sender.pane_id
+        letter.sender.same_identity(sender)
             && letter.intent == intent
             && (letter.open() || now.saturating_sub(letter.created_at_unix_ms) < RETENTION_MS)
     }) {
@@ -108,19 +108,29 @@ pub fn apply(
     now: u64,
 ) -> Result<Value, String> {
     match command {
-        Command::Send { intent, body, .. } => Ok(json!(send(
-            ledger,
-            actor,
-            target.ok_or("target_unavailable")?,
-            intent,
-            body,
-            "request",
-            None,
-            now
-        )?)),
+        Command::Send { intent, body, .. } => {
+            if let Some(letter) = ledger.letters.iter().find(|letter| {
+                letter.sender.same_identity(actor)
+                    && letter.intent == *intent
+                    && (letter.open()
+                        || now.saturating_sub(letter.created_at_unix_ms) < RETENTION_MS)
+            }) {
+                return Ok(json!(letter));
+            }
+            Ok(json!(send(
+                ledger,
+                actor,
+                target.ok_or("target_unavailable")?,
+                intent,
+                body,
+                "request",
+                None,
+                now
+            )?))
+        }
         Command::Reply { id, intent, body } => {
             let original = authorized(ledger, actor, id)?.clone();
-            if original.recipient.pane_id != actor.pane_id {
+            if !original.recipient.same_identity(actor) {
                 return Err("recipient_required".into());
             }
             let reply = send(
@@ -146,12 +156,10 @@ pub fn apply(
         }
         Command::Ack { id } | Command::Cancel { id } => {
             let original = authorized(ledger, actor, id)?;
-            if matches!(command, Command::Ack { .. }) && original.recipient.pane_id != actor.pane_id
-            {
+            if matches!(command, Command::Ack { .. }) && !original.recipient.same_identity(actor) {
                 return Err("recipient_required".into());
             }
-            if matches!(command, Command::Cancel { .. }) && original.sender.pane_id != actor.pane_id
-            {
+            if matches!(command, Command::Cancel { .. }) && !original.sender.same_identity(actor) {
                 return Err("sender_required".into());
             }
             let letter = ledger
@@ -177,7 +185,7 @@ pub fn apply(
             ledger
                 .letters
                 .iter()
-                .filter(|letter| letter.recipient.pane_id == actor.pane_id
+                .filter(|letter| letter.recipient.same_identity(actor)
                     && matches!(letter.state, State::Pending | State::Undelivered))
                 .collect::<Vec<_>>()
         )),
@@ -188,7 +196,7 @@ pub fn apply(
             }
             for id in ids {
                 let letter = authorized(ledger, actor, id)?;
-                if letter.recipient.pane_id != actor.pane_id {
+                if !letter.recipient.same_identity(actor) {
                     return Err("recipient_required".into());
                 }
             }
@@ -219,8 +227,7 @@ fn authorized<'a>(ledger: &'a Ledger, actor: &Actor, id: &str) -> Result<&'a Let
         .iter()
         .find(|letter| {
             letter.id == id
-                && (letter.sender.pane_id == actor.pane_id
-                    || letter.recipient.pane_id == actor.pane_id)
+                && (letter.sender.same_identity(actor) || letter.recipient.same_identity(actor))
         })
         .ok_or_else(|| "letter_unavailable".into())
 }
@@ -236,9 +243,7 @@ pub fn pull(ledger: &Ledger, actor: &Actor) -> Intake {
     let mut pending: Vec<_> = ledger
         .letters
         .iter()
-        .filter(|letter| {
-            letter.recipient.pane_id == actor.pane_id && letter.state == State::Pending
-        })
+        .filter(|letter| letter.recipient.same_identity(actor) && letter.state == State::Pending)
         .collect();
     pending.sort_by_key(|letter| letter.created_at_unix_ms);
     let mut context = String::new();
@@ -288,6 +293,7 @@ mod tests {
             name: id.into(),
             kind: "codex".into(),
             device_id: "local".into(),
+            session: None,
         }
     }
     #[test]

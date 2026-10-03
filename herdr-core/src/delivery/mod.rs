@@ -2,6 +2,7 @@
 pub mod ledger;
 pub mod mailbox;
 pub mod watch;
+pub mod worker;
 
 pub use mailbox::Command;
 
@@ -25,6 +26,7 @@ pub struct Actor {
     pub name: String,
     pub kind: String,
     pub device_id: String,
+    pub session: Option<String>,
 }
 
 impl Actor {
@@ -33,6 +35,13 @@ impl Actor {
             && valid_key(&self.name)
             && valid_key(&self.kind)
             && valid_key(&self.device_id)
+            && self.session.as_deref().is_none_or(valid_key)
+    }
+
+    pub(crate) fn same_identity(&self, other: &Self) -> bool {
+        self.pane_id == other.pane_id
+            && self.device_id == other.device_id
+            && self.session == other.session
     }
 }
 

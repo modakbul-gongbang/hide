@@ -13,6 +13,7 @@
 //! operator owns, and the only paths authorised to do that are Hide's first
 //! run and the Settings action the operator pressed (PRD D-25, D-31, B28).
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -59,6 +60,7 @@ fn usage() -> String {
 }
 
 fn run_hook(arguments: &[String]) {
+    let started = Instant::now();
     let Some(event) =
         argument_value("--event", arguments).and_then(|value| HookEvent::parse(&value))
     else {
@@ -68,6 +70,7 @@ fn run_hook(arguments: &[String]) {
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
     let Some(home) = home_directory() else { return };
     let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
+    let delivery_deadline = started + Duration::from_millis(1_900);
     let mut output = if let Some(runtime) = runtime.filter(|_| {
         arguments
             .iter()
@@ -87,15 +90,54 @@ fn run_hook(arguments: &[String]) {
             hide_agent_hooks::runtime::append_session_context(&value, &context).unwrap_or(value)
         });
     }
+    let intake = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
+        match hide_agent_hooks::delivery::pull(delivery_deadline) {
+            Ok(intake) => intake,
+            Err(code) => {
+                hide_agent_hooks::delivery::diagnose(&home, code);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(intake) = &intake {
+        output = match output {
+            Some(existing) => {
+                hide_agent_hooks::runtime::append_session_context(&existing, &intake.context)
+            }
+            None => runtime.and_then(|runtime| {
+                hide_agent_hooks::runtime::hook_stdout_with_context(
+                    runtime,
+                    event,
+                    Some(&intake.context),
+                )
+            }),
+        };
+    }
+    let mut flushed = false;
     if let Some(output) = output {
         // PowerShell runs the hook on Windows and re-encodes what it prints.
-        if cfg!(windows) {
-            println!("{}", hide_agent_hooks::runtime::ascii_json(&output));
+        let output = if cfg!(windows) {
+            hide_agent_hooks::runtime::ascii_json(&output)
         } else {
-            println!("{output}");
-        }
+            output
+        };
+        let mut stdout = std::io::stdout().lock();
+        flushed = writeln!(stdout, "{output}")
+            .and_then(|_| stdout.flush())
+            .is_ok();
     }
     if event == HookEvent::UserPromptSubmit {
+        if let Some(intake) = intake {
+            if flushed {
+                if let Err(code) = hide_agent_hooks::delivery::confirm(&intake, delivery_deadline) {
+                    hide_agent_hooks::delivery::diagnose(&home, code);
+                }
+            } else {
+                hide_agent_hooks::delivery::diagnose(&home, "stdout");
+            }
+        }
         return;
     }
     let Some(pane_id) = std::env::var("HERDR_PANE_ID")
