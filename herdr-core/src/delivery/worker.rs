@@ -736,7 +736,7 @@ mod tests {
             }
             let (worker, client) = Worker::spawn(
                 Arc::downgrade(&runtime),
-                ChangeNotifier::new(),
+                ChangeNotifier::noop(),
                 path.clone(),
             )
             .unwrap();

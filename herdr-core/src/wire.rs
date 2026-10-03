@@ -1294,7 +1294,8 @@ pub(crate) fn delivery_agent(value: Value) -> Result<DeliveryAgent, String> {
                 .and_then(|session| session_digest(&session.value)),
             status: agent.agent_status.to_string(),
             state_change_seq: agent.state_change_seq,
-            ready: agent.interactive_ready && !agent.launch_pending,
+            // Missing readiness is uncertainty, never permission to write.
+            ready: agent.interactive_ready == Some(true) && agent.launch_pending == Some(false),
         }),
         _ => Err("delivery_agent_format".into()),
     }
@@ -1314,7 +1315,7 @@ pub(crate) fn delivery_input_params(pane: &str, text: &str) -> Result<Value, Str
     params(req::PaneSendInputParams {
         pane_id: pane.into(),
         text: Some(text.into()),
-        keys: Some(vec!["enter".into()]),
+        keys: vec!["enter".into()],
     })
 }
 
