@@ -31,6 +31,16 @@ pub struct Actor {
 }
 
 impl Actor {
+    /// Mailbox authority requires a positively observed native session. Watch
+    /// targets may lack it and use status-only activity, without mailbox access.
+    pub(crate) fn require_native_identity(&self) -> Result<(), String> {
+        if self.valid() && self.session.is_some() {
+            Ok(())
+        } else {
+            Err("native_identity_required".into())
+        }
+    }
+
     pub(crate) fn valid(&self) -> bool {
         valid_key(&self.pane_id)
             && valid_key(&self.name)

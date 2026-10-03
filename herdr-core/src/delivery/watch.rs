@@ -56,6 +56,7 @@ pub fn start(
     target: &Actor,
     activity: u64,
 ) -> Result<Watch, String> {
+    parent.require_native_identity()?;
     if parent.device_id != "local" {
         return Err("local_parent_required".into());
     }
@@ -322,6 +323,33 @@ mod tests {
             failure: None,
             gone: false,
         }
+    }
+
+    #[test]
+    fn missing_target_reference_keeps_status_only_watch_without_mailbox_authority() {
+        let mut ledger = Ledger::default();
+        let parent = actor("parent");
+        let mut target = actor("target");
+        target.session = None;
+        let watch = start(&mut ledger, &parent, &target, 1).unwrap();
+        let mut sample = reading(&watch.id, 1);
+        sample.failure = Some("session_reference_missing".into());
+        let outcome = tick(&mut ledger, &[sample], 1 + INACTIVITY_MS).unwrap();
+        assert!(outcome.rejections.is_empty());
+        assert_eq!(ledger.watches[0].warning_count, 1);
+        assert_eq!(ledger.watches[0].target.session, None);
+        assert_eq!(ledger.letters[0].recipient, parent);
+        assert!(ledger.letters[0].body.contains("status_transition_only"));
+        assert_eq!(
+            super::super::mailbox::pull(&ledger, &target).unwrap_err(),
+            "native_identity_required"
+        );
+        let before = ledger.clone();
+        assert_eq!(
+            start(&mut ledger, &target, &parent, 1).unwrap_err(),
+            "native_identity_required"
+        );
+        assert_eq!(ledger, before);
     }
 
     #[test]

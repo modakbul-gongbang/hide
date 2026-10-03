@@ -172,6 +172,7 @@ impl Runtime {
             .ok_or("agent_pane_required")?
             .actor
             .clone();
+        actor.require_native_identity()?;
         let repeated = match &command {
             Command::Send { intent, .. } => self.delivery_ledger.as_ref().is_ok_and(|ledger| {
                 crate::delivery::mailbox::existing_intent(
@@ -201,6 +202,13 @@ impl Runtime {
             }
             _ => None,
         };
+        if matches!(&command, Command::Send { .. }) && !repeated {
+            target
+                .as_ref()
+                .ok_or("target_unavailable")?
+                .actor
+                .require_native_identity()?;
+        }
         Ok(Prepared::new(
             self.delivery_client.clone().ok_or("delivery_unavailable")?,
             actor,

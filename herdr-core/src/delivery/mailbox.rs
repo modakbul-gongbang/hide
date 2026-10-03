@@ -67,6 +67,8 @@ pub(crate) fn send(
     reply_to: Option<String>,
     now: u64,
 ) -> Result<Letter, String> {
+    sender.require_native_identity()?;
+    recipient.require_native_identity()?;
     if sender.device_id != "local" || recipient.device_id != "local" {
         return Err("remote_delivery_unsupported".into());
     }
@@ -116,6 +118,7 @@ pub fn apply(
     command: &Command,
     now: u64,
 ) -> Result<Value, String> {
+    actor.require_native_identity()?;
     if let Command::Send { intent, .. } | Command::Reply { intent, .. } = command
         && let Some(letter) = existing_intent(ledger, actor, intent, now)
     {
@@ -194,7 +197,7 @@ pub fn apply(
                     || letter.sender.same_identity(actor) && letter.state == State::Undelivered)
                 .collect::<Vec<_>>()
         )),
-        Command::Pull => Ok(json!(pull(ledger, actor))),
+        Command::Pull => Ok(json!(pull(ledger, actor)?)),
         Command::Confirm { ids } => {
             if ids.len() > HOOK_LETTERS {
                 return Err("capacity".into());
@@ -244,7 +247,8 @@ pub struct Intake {
     pub remaining: usize,
 }
 
-pub fn pull(ledger: &Ledger, actor: &Actor) -> Intake {
+pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
+    actor.require_native_identity()?;
     let mut pending: Vec<_> = ledger
         .letters
         .iter()
@@ -282,11 +286,11 @@ pub fn pull(ledger: &Ledger, actor: &Actor) -> Intake {
             "\n대기 {remaining}통 더 있음. hide inbox로 확인하세요.\n"
         ));
     }
-    Intake {
+    Ok(Intake {
         context,
         ids,
         remaining,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -298,7 +302,87 @@ mod tests {
             name: id.into(),
             kind: "codex".into(),
             device_id: "local".into(),
-            session: None,
+            session: Some(format!("session-{id}")),
+        }
+    }
+
+    #[test]
+    fn missing_native_identity_cannot_send_read_or_confirm_previous_occupant_mail() {
+        let mut ledger = Ledger::default();
+        let sender = actor("sender");
+        let recipient = actor("recipient");
+        let letter = send(
+            &mut ledger,
+            &sender,
+            &recipient,
+            "first",
+            "private",
+            "request",
+            None,
+            1,
+        )
+        .unwrap();
+        let mut unknown = recipient.clone();
+        unknown.session = None;
+        assert_eq!(
+            send(
+                &mut ledger,
+                &sender,
+                &unknown,
+                "second",
+                "private",
+                "request",
+                None,
+                2
+            )
+            .unwrap_err(),
+            "native_identity_required"
+        );
+        // A retained legacy record with no native owner must not turn two
+        // missing references in the same pane into authorization.
+        ledger.letters[0].recipient.session = None;
+        let before = ledger.clone();
+        for command in [
+            Command::Inbox,
+            Command::Pull,
+            Command::Show {
+                id: letter.id.clone(),
+            },
+            Command::Confirm {
+                ids: vec![letter.id.clone()],
+            },
+            Command::Send {
+                target: sender.pane_id.clone(),
+                intent: "third".into(),
+                body: "private".into(),
+            },
+        ] {
+            assert_eq!(
+                apply(&mut ledger, &unknown, Some(&sender), &command, 2).unwrap_err(),
+                "native_identity_required"
+            );
+            assert_eq!(ledger, before);
+        }
+        assert_eq!(
+            pull(&ledger, &unknown).unwrap_err(),
+            "native_identity_required"
+        );
+        let mut replacement = recipient.clone();
+        replacement.session = Some("new-occupant".into());
+        assert!(pull(&ledger, &replacement).unwrap().ids.is_empty());
+        for command in [
+            Command::Show {
+                id: letter.id.clone(),
+            },
+            Command::Confirm {
+                ids: vec![letter.id],
+            },
+        ] {
+            assert_eq!(
+                apply(&mut ledger, &replacement, None, &command, 2).unwrap_err(),
+                "letter_unavailable"
+            );
+            assert_eq!(ledger, before);
         }
     }
     #[test]
@@ -307,8 +391,8 @@ mod tests {
         let a = actor("a");
         let b = actor("b");
         let letter = send(&mut ledger, &a, &b, "intent", "body", "request", None, 1).unwrap();
-        assert_eq!(pull(&ledger, &b).ids, vec![letter.id.clone()]);
-        assert_eq!(pull(&ledger, &b).ids, vec![letter.id.clone()]);
+        assert_eq!(pull(&ledger, &b).unwrap().ids, vec![letter.id.clone()]);
+        assert_eq!(pull(&ledger, &b).unwrap().ids, vec![letter.id.clone()]);
         apply(
             &mut ledger,
             &b,
@@ -319,7 +403,7 @@ mod tests {
             2,
         )
         .unwrap();
-        assert!(pull(&ledger, &b).ids.is_empty());
+        assert!(pull(&ledger, &b).unwrap().ids.is_empty());
         apply(
             &mut ledger,
             &a,
@@ -367,12 +451,12 @@ mod tests {
             )
             .unwrap();
         }
-        let intake = pull(&ledger, &b);
+        let intake = pull(&ledger, &b).unwrap();
         assert_eq!(intake.ids.len(), 5);
         assert_eq!(intake.remaining, 2);
         assert!(intake.context.contains("대기 2통 더 있음"));
         ledger.letters[0].body = "한".repeat(BODY_LIMIT / 3);
-        let intake = pull(&ledger, &b);
+        let intake = pull(&ledger, &b).unwrap();
         assert!(intake.context.len() <= HOOK_LIMIT);
         assert!(intake.context.contains("hide request show letter-1"));
         assert_eq!(ledger.letters[0].body.len(), (BODY_LIMIT / 3) * 3);

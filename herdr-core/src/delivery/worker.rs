@@ -496,23 +496,35 @@ fn run(
                     actor,
                     target,
                     command,
-                } => runtime
-                    .lock()
-                    .map(|guard| {
-                        guard.delivery_identity_current(actor)
-                            && (!matches!(command, Command::WatchStart { .. })
-                                || target.as_ref().is_some_and(|target| {
-                                    guard.delivery_identity_current(&target.actor)
-                                }))
-                    })
-                    .unwrap_or(false),
-                _ => true,
+                } => {
+                    // The intent lookup uses the owned candidate outside Runtime.
+                    // Replays converge even after the original recipient leaves.
+                    let target_required = matches!(command, Command::WatchStart { .. })
+                        || matches!(command, Command::Send { intent, .. }
+                            if super::mailbox::existing_intent(&candidate, actor, intent, now).is_none());
+                    runtime
+                        .lock()
+                        .map_err(|_| "delivery_unavailable".to_owned())
+                        .and_then(|guard| {
+                            actor.require_native_identity()?;
+                            if !guard.delivery_identity_current(actor) {
+                                return Err("caller_identity_changed".into());
+                            }
+                            if target_required {
+                                let target = target.as_ref().ok_or("target_unavailable")?;
+                                if matches!(command, Command::Send { .. }) {
+                                    target.actor.require_native_identity()?;
+                                }
+                                if !guard.delivery_identity_current(&target.actor) {
+                                    return Err("target_identity_changed".into());
+                                }
+                            }
+                            Ok(())
+                        })
+                }
+                _ => Ok(()),
             };
-            let result = if current {
-                apply(&mut candidate, request, now)
-            } else {
-                Err("caller_identity_changed".into())
-            };
+            let result = current.and_then(|()| apply(&mut candidate, request, now));
             let result = result.and_then(|(value, publish)| {
                 candidate.bytes()?;
                 transitions |= publish;
@@ -720,8 +732,8 @@ mod tests {
             },
         );
         let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
-            {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1},
-            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1},
+            {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"recipient-session"},
         ]})).unwrap();
         runtime.observe_delivery("local", &payload, None);
         let actor = Actor {
@@ -729,7 +741,7 @@ mod tests {
             name: "sender".into(),
             kind: "codex".into(),
             device_id: "local".into(),
-            session: None,
+            session: Some("sender-session".into()),
         };
         let target = runtime
             .delivery_observation(&Actor {
@@ -737,7 +749,7 @@ mod tests {
                 name: "recipient".into(),
                 kind: "codex".into(),
                 device_id: "local".into(),
-                session: None,
+                session: Some("recipient-session".into()),
             })
             .unwrap();
         (
@@ -746,6 +758,95 @@ mod tests {
             target,
             hide_kit::layout::delivery_ledger(&state),
         )
+    }
+
+    #[test]
+    fn stale_new_recipient_is_refused_while_retained_intent_replays_after_exit() {
+        for replacement in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let (runtime, actor, target, path) = fixture(root.path());
+            let sender = json!({"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"});
+            let changed: SessionSnapshotPayload = serde_json::from_value(json!({"agents": if replacement {
+                vec![sender.clone(), json!({"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"replacement-session"})]
+            } else { vec![sender.clone()] }})).unwrap();
+            runtime
+                .lock()
+                .unwrap()
+                .observe_delivery("local", &changed, None);
+            let (worker, client) = Worker::spawn(
+                Arc::downgrade(&runtime),
+                ChangeNotifier::noop(),
+                path.clone(),
+            )
+            .unwrap();
+            let command = Command::Send {
+                target: "recipient".into(),
+                intent: "once".into(),
+                body: "private".into(),
+            };
+            assert_eq!(
+                client
+                    .submit(
+                        Effect::Command {
+                            actor: actor.clone(),
+                            target: Some(Box::new(target.clone())),
+                            command: command.clone()
+                        },
+                        Duration::from_secs(5)
+                    )
+                    .unwrap_err(),
+                "target_identity_changed"
+            );
+            assert!(
+                runtime
+                    .lock()
+                    .unwrap()
+                    .delivery_state()
+                    .unwrap()
+                    .letters
+                    .is_empty()
+            );
+            assert!(ledger::load(&path).unwrap().letters.is_empty());
+
+            let present: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[sender.clone(),
+                {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"recipient-session"}
+            ]})).unwrap();
+            runtime
+                .lock()
+                .unwrap()
+                .observe_delivery("local", &present, None);
+            let first = client
+                .submit(
+                    Effect::Command {
+                        actor: actor.clone(),
+                        target: Some(Box::new(target)),
+                        command: command.clone(),
+                    },
+                    Duration::from_secs(5),
+                )
+                .unwrap();
+            let absent: SessionSnapshotPayload =
+                serde_json::from_value(json!({"agents":[sender]})).unwrap();
+            runtime
+                .lock()
+                .unwrap()
+                .observe_delivery("local", &absent, None);
+            let replay = client
+                .submit(
+                    Effect::Command {
+                        actor,
+                        target: None,
+                        command,
+                    },
+                    Duration::from_secs(5),
+                )
+                .unwrap();
+            assert_eq!(first["id"], replay["id"]);
+            let persisted = ledger::load(&path).unwrap();
+            assert_eq!(persisted.letters.len(), 1);
+            assert_eq!(persisted.letters[0].id, first["id"].as_str().unwrap());
+            drop(worker);
+        }
     }
 
     #[test]
