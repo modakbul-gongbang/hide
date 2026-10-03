@@ -321,7 +321,7 @@ fn an_opencode_row_that_holds_no_text_or_too_much_is_skipped_and_the_read_goes_o
     add_opencode_request(home.path(), 2, 10);
 
     let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
-    assert_eq!(first.title.as_ref().unwrap().chars().count(), 512);
+    assert_eq!(first.title, None, "a title past the cut is no title");
     assert_eq!(first.skipped_reasons.get("not_text"), Some(&1));
     assert_eq!(first.skipped_reasons.get("message_capacity"), Some(&1));
     assert!(

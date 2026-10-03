@@ -19,7 +19,8 @@
 //! One read loads at most [`READ_BUDGET_BYTES`] of rows and leaves the rest
 //! for the next; a part the budget cannot take in the first message of a
 //! read is skipped (`read_budget`). The title is cut to
-//! [`TITLE_LIMIT_CHARS`] before it leaves SQLite.
+//! [`TITLE_LIMIT_CHARS`] before it leaves SQLite, and a title too long to
+//! cut that way (over four bytes a character) is no title.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -95,9 +96,10 @@ pub(crate) fn read(
         .map_err(|error| refusal(&error))?;
     let (title, created) = connection
         .query_row(
-            "SELECT substr(title, 1, ?2), time_created FROM session WHERE id = ?1",
+            "SELECT CASE WHEN typeof(title) = 'text' AND octet_length(title) <= ?2 * 4 \
+             THEN substr(title, 1, ?2) END, time_created FROM session WHERE id = ?1",
             params![session_id, TITLE_LIMIT_CHARS],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?)),
         )
         .optional()
         .map_err(|error| refusal(&error))?
@@ -252,7 +254,7 @@ pub(crate) fn read(
         rescanned,
         skipped_lines,
         skipped_reasons,
-        title: Some(title).filter(|title| !title.trim().is_empty()),
+        title: title.filter(|title| !title.trim().is_empty()),
         custom_title: None,
         pr_sightings: transcript.sightings,
         subagents: Default::default(),

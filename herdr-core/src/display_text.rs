@@ -51,21 +51,30 @@ pub(crate) fn one_line(text: &str, max_chars: usize) -> Option<String> {
     (!line.is_empty()).then_some(line)
 }
 
-/// Text kept as written, line breaks and tabs included, with ignorable
-/// characters and every other control dropped.
+fn bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+/// Text kept as written, line breaks and tabs included, with the
+/// bidirectional controls that reorder it and every other control dropped.
+/// Joiners and variation selectors stay: a request or a reply is prose
+/// (emoji sequences, Persian and Indic script), not a name to tell apart.
 pub(crate) fn block(text: &str) -> String {
     text.chars()
-        .filter(|&c| !ignorable(c) && (!c.is_control() || matches!(c, '\n' | '\t')))
+        .filter(|&c| !bidi_control(c) && (!c.is_control() || matches!(c, '\n' | '\t')))
         .collect()
 }
 
 /// What a name looks like once compatibility forms are folded (full-width
-/// letters, jamo that compose to a syllable), ignorable characters and
-/// spaces dropped and case folded: two names with the same skeleton read
-/// the same on screen.
+/// letters, jamo that compose to a syllable), case folded, and everything
+/// but letters and digits dropped (ignorables, spaces, blanks such as
+/// U+2800, punctuation): two names with the same skeleton read alike.
 pub(crate) fn skeleton(text: &str) -> String {
     text.nfkc()
-        .filter(|&c| !ignorable(c) && !c.is_whitespace() && !c.is_control())
+        .filter(|&c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect()
 }
@@ -83,11 +92,19 @@ mod tests {
         assert_eq!(one_line("\u{200B}\u{3164} ", 64), None);
         assert_eq!(one_line("가나다라", 2).as_deref(), Some("가나"));
         assert_eq!(block("첫 줄\u{202E}\n\t둘째\u{0007}"), "첫 줄\n\t둘째");
+        assert_eq!(block("👩\u{200D}💻 ❤\u{FE0F}"), "👩\u{200D}💻 ❤\u{FE0F}");
     }
 
     #[test]
     fn names_that_read_the_same_share_a_skeleton() {
-        for lookalike in ["나\u{200B}", " 나 ", "\u{1102}\u{1161}", "ㄴㅏ"] {
+        for lookalike in [
+            "나\u{200B}",
+            " 나 ",
+            "\u{1102}\u{1161}",
+            "ㄴㅏ",
+            "나\u{2800}",
+            "나\u{FFFC}",
+        ] {
             assert_eq!(skeleton(lookalike), skeleton("나"), "{lookalike:?}");
         }
         assert_eq!(skeleton("ｏｐｅｒａｔｏｒ"), "operator");
