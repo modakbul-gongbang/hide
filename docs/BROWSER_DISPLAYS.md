@@ -69,8 +69,11 @@ CDP target creation uses authenticated `/browser-control/action` and the existin
 The core inserts a distinct browser display into the capability's named area even when another area is active or the same address is already open.
 An unknown area refuses before placement.
 CDP exposes only HTTP(S) and blank pages; native `file:` displays, filesystem paths and other schemes return `browser_address_unsupported` for attachment or creation.
-The native host also prevents a controlled HTTP(S) page from loading file resources or navigating to a native file before content can be read, and revokes the capability when its native page generation leaves scope.
+Every HTTP(S) or blank native page generation blocks `file:` requests before its first load, independently of debugger attachment, and retains that restriction until the generation ends.
+The native guard cancels file main-frame and child-frame navigation, redirects, resources and popup requests, including addresses assembled by `Runtime.evaluate`; it never attempts to recognize JavaScript source text.
 Manual local-file displays retain the file policy below and are never CDP targets.
+An explicit manual navigation to a validated local file replaces the restricted WebContents with the existing separate file partition instead of relaxing an in-flight generation.
+Downloads and filesystem writes are disabled once a generation has held a debugger lease, including after disconnect.
 Close and select bind the authenticated area into the core action and recheck the display's area and browser kind under the commit lock after retry lookup.
 A page moved after the query is refused without changing its selection or closing it; shell renderers and terminal displays cannot be selected or closed by this route.
 The app has one retry identity per launch registration, so retransmitting a completed close returns its receipt after the page is gone.
@@ -81,6 +84,79 @@ Capabilities pin that incarnation, so a coalesced snapshot that hides the interm
 The core records loss of authority when a session or checkout catalog is updated, before another worker update or snapshot read can hide it.
 Unregistering a checkout, disconnecting its device or removing its area permanently revokes existing capabilities, so registering it again requires a fresh connection URL.
 Closing an area's final page retains its area scope and allows a fresh target there without reviving an expired checkout capability.
+
+The gateway creates a new private control token and random capability path for each app launch; restarting the app or replacing its daemon connection invalidates every old URL and debugger session.
+It binds only numeric loopback, checks Host and Origin, and serves discovery only under the issued capability path.
+It does not enable Electron's process-wide debugging port, and its target provider contains only the BrowserViews inventory, never the shell renderer or another area's pages.
+The tab's attachment mark follows an actual debugger lease; disconnect detaches the client while preserving the display, and closing the display ends its sessions.
+Browser-wide cookie, cache, permission, download, context and shutdown commands are refused; page-origin cookie reads are scoped to the current page.
+Flattened descendant iframe sessions and one level of legacy session envelopes are supported; deeper legacy envelopes are refused before a mutation.
+Limits are fixed in the host: 64 capabilities, 32 sockets, eight clients, 16 HTTP requests, 32 pending commands per client, 64 sessions per client, 4 MiB messages, 8 MiB buffered output and 600 commands per minute per client.
+A command has a ten-second deadline; each client keeps at most 128 mutation receipts, accepts a replay for at most nine minutes, and retries an ambiguous core action at most three times with its original request identity.
+
+### Client invocations
+
+Use the complete `browser_ws_url` from `hide browser connect` as `browser_ws_url` below.
+It is a capability: preserve its path, keep it out of shared logs, and request a fresh URL after its authority ends.
+The supported profiles are agent-browser 0.38.2, chrome-devtools-mcp 1.10.1, Playwright 1.63.0 and the Browser Use 0.13.10 low-level session API.
+Each client connects to an existing HTTP(S) or blank display; an area capability also permits a new display in that same area.
+
+```sh
+agent-browser --cdp "$browser_ws_url" open http://127.0.0.1:3000
+agent-browser --cdp "$browser_ws_url" snapshot -i
+```
+
+```sh
+chrome-devtools-mcp --wsEndpoint "$browser_ws_url" --no-usage-statistics --no-performance-crux
+```
+
+MCP's literal `--browser-url` mode resolves discovery at `/json/version` and loses the capability prefix; use its official `--wsEndpoint` option.
+Anonymous root discovery remains unavailable.
+
+```js
+import { chromium } from "playwright";
+
+const browser = await chromium.connectOverCDP(browser_ws_url, { noDefaults: true });
+try {
+  const context = browser.contexts()[0];
+  const page = context.pages()[0];
+  console.log(await page.title());
+} finally {
+  await browser.close(); // Disconnects this external client; preserves the display.
+}
+```
+
+Playwright uses the existing context with `noDefaults: true`; creating another context or applying its default global download configuration is unsupported.
+
+```sh
+BU_CDP_URL="$browser_ws_url" python - <<'PY'
+import asyncio
+import os
+from browser_use import BrowserSession
+
+async def main():
+    session = BrowserSession(
+        cdp_url=os.environ["BU_CDP_URL"], is_local=False, keep_alive=True,
+        use_cloud=False, enable_default_extensions=False, accept_downloads=False,
+        permissions=[], captcha_solver=False, auto_download_pdfs=False,
+    )
+    try:
+        await session.connect()
+        print(await session.get_tabs())
+        page = await session.get_current_page()
+        if page is None:
+            raise RuntimeError("No eligible browser display is attached")
+        print(await page.evaluate("() => document.title"))
+    finally:
+        await session.stop()
+
+asyncio.run(main())
+PY
+```
+
+This Browser Use example explicitly passes `BU_CDP_URL` to the Python API and uses `connect`, page queries and `stop`.
+Default `Agent` or `start` watchdogs request browser-wide download behavior and are unsupported; this profile does not establish Browser Use CLI support.
+Native file displays and unrestricted browser-context administration are unsupported for every client.
 
 ## The file boundary
 
