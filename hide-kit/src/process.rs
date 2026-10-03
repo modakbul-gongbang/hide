@@ -144,16 +144,67 @@ fn drain(mut stream: impl Read + Send + 'static) -> thread::JoinHandle<String> {
 mod tests {
     use super::*;
 
+    const ROLE: &str = "HIDE_KIT_PROCESS_TEST_ROLE";
+    const MARKER: &str = "HIDE_KIT_PROCESS_TEST_MARKER";
+    const CHILD_ARGS: &[&str] = &[
+        "--exact",
+        "process::tests::child_role",
+        "--nocapture",
+        "--test-threads=1",
+    ];
+
+    // A real portable child, as hide-platform's process contract uses. The
+    // assertions below are unchanged: a deadline/stop ends the whole tree,
+    // and the caller receives output, status and only its explicit env.
+    #[test]
+    fn child_role() {
+        let Ok(role) = std::env::var(ROLE) else {
+            return;
+        };
+        match role.as_str() {
+            "tree" => {
+                let mut grandchild = Command::new(std::env::current_exe().unwrap())
+                    .args(CHILD_ARGS)
+                    .env(ROLE, "grandchild")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap();
+                thread::sleep(Duration::from_secs(30));
+                grandchild.wait().unwrap();
+            }
+            "grandchild" => {
+                thread::sleep(Duration::from_secs(2));
+                std::fs::write(std::env::var_os(MARKER).unwrap(), "survived").unwrap();
+            }
+            "sleep" => thread::sleep(Duration::from_secs(30)),
+            "output" => {
+                println!(
+                    "RESULT {}|{}|{}",
+                    std::env::var("HOME").unwrap(),
+                    std::env::var("HIDE_KIT_TEST_LEAK").unwrap_or_default(),
+                    std::env::var("GIVEN").unwrap()
+                );
+                eprintln!("oops");
+                std::process::exit(3);
+            }
+            other => panic!("unknown child role {other}"),
+        }
+    }
+
     #[test]
     fn a_child_past_its_deadline_is_stopped_with_its_group() {
         let home = tempfile::tempdir().unwrap();
         let marker = home.path().join("grandchild-survived");
-        let script = format!("(sleep 2; touch '{}') & sleep 30", marker.display());
         let started = Instant::now();
         let result = run(
-            Path::new("/bin/sh"),
-            &["-c", &script],
-            &[],
+            &std::env::current_exe().unwrap(),
+            CHILD_ARGS,
+            &[
+                (ROLE.into(), "tree".into()),
+                (MARKER.into(), marker.display().to_string()),
+            ],
             home.path(),
             Duration::from_millis(300),
             &AtomicBool::new(false),
@@ -177,9 +228,9 @@ mod tests {
         };
         let started = Instant::now();
         let result = run(
-            Path::new("/bin/sh"),
-            &["-c", "sleep 30"],
-            &[],
+            &std::env::current_exe().unwrap(),
+            CHILD_ARGS,
+            &[(ROLE.into(), "sleep".into())],
             home.path(),
             Duration::from_secs(60),
             &stop,
@@ -195,16 +246,26 @@ mod tests {
         // SAFETY: tests in this module do not read this variable concurrently.
         unsafe { std::env::set_var("HIDE_KIT_TEST_LEAK", "leaked") };
         let finished = run(
-            Path::new("/bin/sh"),
-            &["-c", "printf '%s|%s|%s' \"$HOME\" \"$HIDE_KIT_TEST_LEAK\" \"$GIVEN\"; echo oops >&2; exit 3"],
-            &[("GIVEN".to_owned(), "yes".to_owned())],
+            &std::env::current_exe().unwrap(),
+            CHILD_ARGS,
+            &[
+                (ROLE.into(), "output".into()),
+                ("GIVEN".into(), "yes".into()),
+            ],
             home.path(),
             Duration::from_secs(5),
             &AtomicBool::new(false),
         )
         .unwrap();
         assert_eq!(finished.code, Some(3));
-        assert_eq!(finished.stdout, format!("{}||yes", home.path().display()));
+        let payload = finished
+            .stdout
+            .lines()
+            .find_map(|line| line.split_once("RESULT ").map(|(_, payload)| payload));
+        assert_eq!(
+            payload,
+            Some(format!("{}||yes", home.path().display()).as_str())
+        );
         assert_eq!(finished.last_error_line(), "oops");
     }
 }

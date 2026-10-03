@@ -1,7 +1,7 @@
 //! Hide's install kit: the one list of what Hide puts on a machine, and how
 //! each part is installed, judged and removed.
 //!
-//! The same code runs for this Mac, inside `hided`, and for a device, inside
+//! The same code runs for this machine, inside `hided`, and for a device, inside
 //! `hide-host-helper`; only the [`KitTarget`] differs, so a device gets
 //! exactly what this Mac gets (PRD device-parity D-09, D-10). Adding a part is
 //! adding a [`ComponentId`] and its three answers here; nothing else in the
@@ -48,7 +48,7 @@ pub use record::kit_state_dir;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ComponentId {
-    /// The `hide` command, linked in the account's command folder.
+    /// The `hide` command, installed in the account's command folder.
     Cli,
     /// Hide's entries in `~/.claude/settings.json`.
     ClaudeCodeHook,
@@ -182,10 +182,10 @@ pub struct KitTarget {
     /// The folder holding this build's parts: `hide`, `hide-agent-hooks`
     /// and `hcoord/dist/`. It is the path the hooks,
     /// the `hide` link and the hcoord shim name, so it must outlive the
-    /// process: the app bundle's `Contents/Resources` on this Mac, the helper
+    /// process: the desktop package's resources on this machine, the helper
     /// root's `current` link on a device (D-11).
     pub kit_dir: PathBuf,
-    /// Where `hide` is linked (`~/.local/bin` unless the daemon was told
+    /// Where the `hide` command is installed (`~/.local/bin` unless the daemon was told
     /// otherwise).
     pub cli_dir: PathBuf,
     /// Folders whose links are Hide's own besides an app bundle's
@@ -422,6 +422,9 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         if matches!(after, Observed::Current) && !record.contains(id) {
             record.insert(id);
             changed = true;
+        }
+        if matches!(after, Observed::Current) && id == ComponentId::Cli {
+            changed |= record.remember_cli(cli::wanted(target));
         }
         let recorded_now = record.contains(id);
         components.push(report(id, target, after, recorded_now, failure));

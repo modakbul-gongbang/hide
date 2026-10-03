@@ -1,5 +1,5 @@
-//! The `hide` command: a link named `hide` in the account's command folder,
-//! pointing at this build's `hide` (B6).
+//! The `hide` command in the account's command folder: a Unix link, or a
+//! Windows command shim and directory junction (no symlink privilege).
 //!
 //! The name is Hide's to replace only when it is absent or is already a link
 //! into a place only Hide puts it: an app bundle's `Contents/Resources`, or
@@ -9,15 +9,25 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::{KitTarget, Observed, RemoveOutcome};
+use crate::KitTarget;
+#[cfg(not(windows))]
+use crate::{Observed, RemoveOutcome};
 
-const CLI_NAME: &str = "hide";
+#[cfg(windows)]
+#[path = "cli_windows.rs"]
+mod windows;
+#[cfg(windows)]
+pub(crate) use windows::{install, observe, remove};
+
+const CLI_NAME: &str = if cfg!(windows) { "hide.exe" } else { "hide" };
 
 pub(crate) fn link_path(target: &KitTarget) -> PathBuf {
-    target.cli_dir.join(CLI_NAME)
+    target
+        .cli_dir
+        .join(if cfg!(windows) { "hide.cmd" } else { "hide" })
 }
 
-fn wanted(target: &KitTarget) -> PathBuf {
+pub(crate) fn wanted(target: &KitTarget) -> PathBuf {
     target.kit_dir.join(CLI_NAME)
 }
 
@@ -31,6 +41,14 @@ fn hides_own(target: &KitTarget, destination: &Path) -> bool {
         return false;
     }
     if destination == wanted(target) {
+        return true;
+    }
+    // A generic `resources/hide` suffix is not ownership. A live package
+    // proves it by layout; our last installed destination proves it after
+    // that package is gone. An unreadable record grants no authority.
+    if crate::bundled_kit_dir(destination).is_some()
+        || crate::record::load(&target.home).is_ok_and(|record| record.owns_cli(destination))
+    {
         return true;
     }
     if target
@@ -49,6 +67,7 @@ fn hides_own(target: &KitTarget, destination: &Path) -> bool {
             .is_some_and(|bundle| Path::new(bundle).extension() == Some(OsStr::new("app")))
 }
 
+#[cfg(not(windows))]
 pub(crate) fn observe(target: &KitTarget) -> Observed {
     let link = link_path(target);
     if !wanted(target).is_file() {
@@ -89,6 +108,7 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
     }
 }
 
+#[cfg(not(windows))]
 pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
     let link = link_path(target);
     std::fs::create_dir_all(&target.cli_dir)
@@ -97,6 +117,7 @@ pub(crate) fn install(target: &KitTarget) -> Result<(), String> {
         .map_err(|error| format!("{} could not be linked: {error}", link.display()))
 }
 
+#[cfg(not(windows))]
 pub(crate) fn remove(target: &KitTarget) -> RemoveOutcome {
     let link = link_path(target);
     match std::fs::read_link(&link) {

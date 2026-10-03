@@ -133,7 +133,7 @@ A device where Hide may not install, or whose platform this build does not carry
 
 ## Installing
 
-Hide's hooks are one part of its install kit (`hide-kit`; [ARCHITECTURE.md, The install kit](ARCHITECTURE.md#the-install-kit)), which installs the same set on this Mac at every launch of the installed app and on every device at every helper connection, without asking: the operator agreed to it once, by installing the app or by adding the device.
+Hide's hooks are one part of its install kit (`hide-kit`; [ARCHITECTURE.md, The install kit](ARCHITECTURE.md#the-install-kit)), which installs the same set on this machine at every launch of the packaged app and on every device at every helper connection, without asking: the operator agreed to it once, by installing the app or by adding the device.
 Every entry's command is guarded, so a session whose app or helper was moved or deleted carries on without a hook error (PRD device-parity B3), and it is written in the form its runtime runs a hook on that system:
 
 | System | Runtime | Entry |
@@ -155,15 +155,16 @@ The marker is looked for in an entry's `command` and in each of its `args`, wher
 The marker stays at version 6: the macOS and Linux bytes are the ones version 6 wrote (`the_posix_entry_is_exactly_what_macos_and_linux_have_installed` pins them), and no earlier build installed anything on Windows.
 `hide-agent-hooks/tests/windows_hook_command.rs` runs both Windows entries the way their runtimes start them, under Windows PowerShell and PowerShell 7, with the real helper in a folder whose name has a space, a quote, brackets and a `$`, and proves stdin reached the helper by the Memory receipt only the session it read can produce, in the `windows check` lane.
 Version 6 is the first guarded command, so an older entry reads outdated and the next launch or connection replaces it.
-The kit folder is a path that survives a rebuild: the installed app bundle's `Contents/Resources` on this Mac, and the helper root's `current` link on a device, which each new build of the helper points at itself.
+The kit folder is a path that survives a rebuild: the installed app bundle's `Contents/Resources` on macOS, the unpacked package's `resources` on Windows/Linux, and the helper root's `current` link on a device, which each new build of the helper points at itself.
 
-A `hided` that is not running from an app bundle installs nothing, and This Mac's row in Settings says the installed app is where the kit comes from.
-`hide_kit::bundled_kit_dir` decides that from the layout rather than the file name: the executable's parent must be `Resources`, its parent `Contents`, and its parent must end in `.app`.
+A `hided` outside a desktop package installs nothing, and This machine's row in Settings says the packaged app is where the kit comes from.
+`hide_kit::bundled_kit_dir` decides that from the layout: macOS `*.app/Contents/Resources`, or Windows/Linux `resources` with `app.asar` inside and Electron `hide[.exe]` in its parent folder.
+A folder merely named `resources` grants no install authority.
 The rule exists because a hook command outlives the process that wrote it.
 It is a path stored in the operator's own configuration file and run by every future session of that agent, so the only path worth writing is one that survives a rebuild.
 On 2026-09-10 a development build resolved the helper beside its own executable under `target/debug/deps`, which Cargo deletes on the next build, and wrote that path into both `~/.claude/settings.json` and `~/.codex/hooks.json`.
 Every Claude and Codex session on the machine then failed four hooks per turn with `No such file or directory` until the entries were taken out by hand.
-Resolving "beside the executable" was the defect; the bundle layout is the whole answer, and `only_a_daemon_inside_an_app_bundle_has_a_kit_folder` is the test that keeps it.
+Resolving "beside the executable" was the defect; the package layout is the boundary, and `only_a_daemon_inside_an_app_bundle_has_a_kit_folder` plus `unpacked_package_requires_both_the_shell_archive_and_electron` keep it.
 
 The kit records what it installed in `~/.hide/kit/installed.json`.
 A hook it installed that the operator then removed is not put back by the next launch or connection: its part reads Removed and comes back only through Reinstall (D-26).
