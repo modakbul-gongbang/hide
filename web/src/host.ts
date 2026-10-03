@@ -71,7 +71,7 @@ export type BrowserBridge = {
   onEvent(listener: (event: BrowserHostEvent) => void): () => void;
 };
 
-/** A path on this Mac as the host found it: its physical spelling and whether it is a folder; null when it does not exist. */
+/** A path on this computer as the host found it: its physical path in the wire spelling (`/` between names, `C:/...` on Windows) and whether it is a folder; null when it does not exist. */
 export type ProbedPath = { real: string; kind: "file" | "directory" } | null;
 
 export type HostBridge = {
@@ -82,13 +82,13 @@ export type HostBridge = {
   onCommand(listener: (id: string) => void): () => void;
   /** Hands the host the stored macOS pane chords (`ui_state.shortcut_bindings`) it builds the menu from. */
   reportBindings(bindings: Record<string, string>): void;
-  /** Shows a file or folder of this computer in the OS file manager, selected in its parent folder; nothing is opened. */
+  /** Shows a file or folder of this computer, named in the wire spelling, in the OS file manager, selected in its parent folder; nothing is opened. */
   revealPath(path: string): void;
-  /** The native folder picker, modal to the window; the chosen folder, or null when the operator cancelled. */
+  /** The native folder picker, modal to the window; the chosen folder in the wire spelling, or null when the operator cancelled. */
   pickFolder(): Promise<string | null>;
-  /** What each absolute or `~/` path names on this Mac, in order; at most `MAX_PROBE_PATHS` (64) per call. */
+  /** What each absolute (in the wire spelling) or `~/` path names on this computer, in order; at most `MAX_PROBE_PATHS` (64) per call. */
   probePaths(paths: string[]): Promise<ProbedPath[]>;
-  /** Hands an absolute path to macOS: its default application, a Finder window for a folder, or a Finder reveal when opening would run it. */
+  /** Hands an absolute path, in the wire spelling, to the system: its default application, a folder window, or a file manager reveal when opening would run it. */
   openPath(path: string): void;
   browser: BrowserBridge;
 };

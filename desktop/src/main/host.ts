@@ -39,7 +39,8 @@ import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { openRoute, probe, probeRequest } from "./localPath";
-import { revealablePath, revealTarget } from "./reveal";
+import { revealTarget } from "./reveal";
+import { fromPage, toPage, WirePathError } from "./wirePath";
 
 declare const __HIDE_BACKGROUND__: string;
 
@@ -198,11 +199,12 @@ export class DesktopHost {
   }
 
   /**
-   * Add a project's Browse folder: macOS's own folder picker, a sheet on this
-   * window, which can also make a new folder. Only this window's page on the
-   * daemon origin is answered; a refused sender and a cancelled pick both
-   * answer null, and hided judges the chosen path like any other. The log
-   * records the outcome, never the path.
+   * Add a project's Browse folder: the system's own folder picker, a sheet on
+   * this window on macOS, which can also make a new folder. Only this window's
+   * page on the daemon origin is answered; a refused sender and a cancelled
+   * pick both answer null, the chosen folder is answered in the wire spelling
+   * (`wirePath.ts`) or refused with the reason when it has none, and hided
+   * judges it like any other path. The log records the outcome, never the path.
    */
   private listenPickFolder(): void {
     ipcMain.handle(PICK_FOLDER_CHANNEL, async (event: IpcMainInvokeEvent) => {
@@ -212,18 +214,31 @@ export class DesktopHost {
       }
       const picked = await dialog.showOpenDialog(this.window, { properties: ["openDirectory", "createDirectory"] });
       const folder = picked.canceled ? null : (picked.filePaths[0] ?? null);
-      this.log.event("pick_folder.answered", { picked: folder !== null });
-      return folder;
+      if (folder === null) {
+        this.log.event("pick_folder.answered", { picked: false });
+        return null;
+      }
+      try {
+        const wire = toPage(folder);
+        this.log.event("pick_folder.answered", { picked: true });
+        return wire;
+      } catch (error) {
+        if (!(error instanceof WirePathError)) throw error;
+        // The page's diagnostic says the picker failed, with the reason and not the path.
+        this.log.event("pick_folder.refused", { reason: error.reason });
+        throw error;
+      }
     });
   }
 
   /**
-   * Terminal links on this Mac: a probe answers which of the named paths
-   * exist and what they are, and an open hands one to macOS, in its default
-   * application or as a Finder window, or revealed in Finder when opening
-   * would run it (`localPath.ts`). Only this window's page on the daemon
-   * origin is heard; a probe is not logged, since it runs on hover, and an
-   * open logs its route and never the path.
+   * Terminal links on this computer: a probe answers which of the named paths
+   * exist and what they are, and an open hands one to the system, in its
+   * default application or as a folder window, or revealed in the file manager
+   * when opening would run it (`localPath.ts`). The page names and is
+   * answered paths in the wire spelling (`wirePath.ts`). Only this window's
+   * page on the daemon origin is heard; a probe is not logged, since it runs
+   * on hover, and an open logs its route and never the path.
    */
   private listenLocalPaths(): void {
     ipcMain.handle(PROBE_PATHS_CHANNEL, async (event: IpcMainInvokeEvent, reported: unknown) => {
@@ -243,7 +258,7 @@ export class DesktopHost {
         this.log.event("open_path.refused", { reason: "sender" });
         return;
       }
-      const target = revealablePath(reported);
+      const target = fromPage(reported);
       if (target === null) {
         this.log.event("open_path.refused", { reason: "path" });
         return;

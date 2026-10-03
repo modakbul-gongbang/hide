@@ -9,6 +9,8 @@ import { MAX_PROBE_PATHS, executableHeader, openRoute, probe, probeRequest } fro
 // folder's long name, where `os.tmpdir()` may give its 8.3 short one.
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-local-path-")));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+/** The page's spelling of a native path, `/` between names, which the probe takes and answers in. */
+const page = (native: string): string => native.split(path.sep).join("/");
 
 function file(name: string, contents: string | Uint8Array, mode = 0o644): string {
   const target = path.join(root, name);
@@ -19,18 +21,27 @@ function file(name: string, contents: string | Uint8Array, mode = 0o644): string
 }
 
 describe("probeRequest", () => {
-  it("takes absolute and home paths, at most the cap", () => {
-    expect(probeRequest(["/tmp/a", "~/b"])).toEqual(["/tmp/a", "~/b"]);
-    expect(probeRequest(Array.from({ length: MAX_PROBE_PATHS }, () => "/a"))).toHaveLength(MAX_PROBE_PATHS);
+  it("takes absolute paths in the page's spelling and home paths, at most the cap, and hands back this system's own", () => {
+    const docs = path.join(root, "docs");
+    expect(probeRequest([page(docs), `${page(root)}/x/../docs`, "~/b"])).toEqual([docs, docs, "~/b"]);
+    expect(probeRequest(Array.from({ length: MAX_PROBE_PATHS }, () => page(docs)))).toHaveLength(MAX_PROBE_PATHS);
   });
 
   it("refuses the whole request when any entry is not a path the shell may name", () => {
-    expect(probeRequest(Array.from({ length: MAX_PROBE_PATHS + 1 }, () => "/a"))).toBeNull();
-    expect(probeRequest(["/a", "relative/b"])).toBeNull();
-    expect(probeRequest(["/a\0b"])).toBeNull();
+    const docs = page(path.join(root, "docs"));
+    expect(probeRequest(Array.from({ length: MAX_PROBE_PATHS + 1 }, () => docs))).toBeNull();
+    expect(probeRequest([docs, "relative/b"])).toBeNull();
+    expect(probeRequest([`${docs}\0b`])).toBeNull();
     expect(probeRequest(["~b"])).toBeNull();
-    expect(probeRequest("/a")).toBeNull();
+    // A rooted path without a drive is not absolute on Windows and is relative elsewhere.
+    expect(probeRequest([docs, "\\docs"])).toBeNull();
+    expect(probeRequest(docs)).toBeNull();
     expect(probeRequest([42])).toBeNull();
+  });
+
+  it.runIf(process.platform === "win32")("refuses a native Windows spelling, which is not the page's", () => {
+    expect(probeRequest([path.join(root, "docs")])).toBeNull();
+    expect(probeRequest(["C:docs"])).toBeNull();
   });
 });
 
@@ -48,19 +59,19 @@ describe("probe", () => {
     }
   });
 
-  it("answers each path's physical spelling and kind, and null for missing or unsupported paths", async () => {
+  it("answers each path's physical spelling, in the page's, and kind, and null for missing or unsupported paths", async () => {
     const note = file("docs/note.md", "# note");
     fs.symlinkSync(path.join(root, "docs"), path.join(root, "linked"));
     const answers = await probe([note, path.join(root, "linked/./note.md"), path.join(root, "docs"), path.join(root, "missing.md"), "~/note.md"], root);
     expect(answers).toEqual([
-      { real: note, kind: "file" },
-      { real: note, kind: "file" },
-      { real: path.join(root, "docs"), kind: "directory" },
+      { real: page(note), kind: "file" },
+      { real: page(note), kind: "file" },
+      { real: page(path.join(root, "docs")), kind: "directory" },
       null,
       null,
     ]);
     // `~/` is the home the host was given.
-    expect(await probe(["~/docs/note.md"], root)).toEqual([{ real: note, kind: "file" }]);
+    expect(await probe(["~/docs/note.md"], root)).toEqual([{ real: page(note), kind: "file" }]);
   });
 });
 
