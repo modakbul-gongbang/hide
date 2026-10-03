@@ -2,9 +2,10 @@
 //! `hide-agent-hooks`, which owns the file format and the rule that another
 //! tool's entry is never rewritten (D-15).
 //!
-//! The entry runs `<kit_dir>/hide-agent-hooks` and exits quietly when that
-//! file is gone (D-11), so it points at the kit folder that outlives a build:
-//! the app bundle on this Mac, the helper root's `current` on a device.
+//! The entry runs `<kit_dir>/hide-agent-hooks` (`.exe` on Windows) and exits
+//! quietly when that file is gone (D-11), so it points at the kit folder that
+//! outlives a build: the app bundle on this Mac, the helper root's `current`
+//! on a device.
 
 use std::path::{Path, PathBuf};
 
