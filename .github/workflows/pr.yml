@@ -91,7 +91,9 @@ jobs:
         # The manifest is the pin; the script verifies the download against
         # the manifest's digest before the binary answers anything. This lane
         # is the one place the release's Linux asset is run.
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
+        run: |
+          bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Compare the Herdr API schema with the contract
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
       - name: Install dependencies

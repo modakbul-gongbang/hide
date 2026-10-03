@@ -32,6 +32,7 @@ on:
       - contracts/herdr-bundle.json
       - scripts/fetch-herdr-runtime.*
       - scripts/verify-cargo.sh
+      - scripts/verify-web.sh
       - scripts/toolchain-env.sh
       - hided/build.rs
       - hided/src/cli.rs
