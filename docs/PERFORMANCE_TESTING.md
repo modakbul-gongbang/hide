@@ -241,6 +241,8 @@ A Chrome window opens on the desktop for the run; the loop throttles in an occlu
 ## Scoped browser gateway discovery
 
 Browser inventory area identity is projected in the existing changed-layout generation pass, one visit per area and display, with no additional notification or timer.
+Each sync also compares borrowed identities for at most 256 saved Workspace layouts against the current connected checkout catalog, with no allocation when the scope is unchanged.
+A scope transition advances that same generation and rebuilds the inventory; removed or disconnected checkouts retain their saved layouts but retain no native page authority.
 The daemon's gateway registration retains at most four app process identities; each discovery or action checks those bounded identities outside the Runtime mutex.
 Discovery and browser actions share eight admission permits; exceeding the cap reports `browser_control_busy` rather than queuing more work.
 Discovery does loopback HTTP outside the core owner thread, with no proxy or redirect, an eight-second deadline and a 16 KiB answer cap.

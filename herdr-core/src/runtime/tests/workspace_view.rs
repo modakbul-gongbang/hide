@@ -80,6 +80,79 @@ pub(super) fn active_label(runtime: &Runtime) -> Option<String> {
         .map(|tab| tab.label.clone())
 }
 
+#[test]
+fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().to_string_lossy().into_owned();
+    let mut runtime = runtime();
+    runtime.snapshot.status.herdr.state = "connected".into();
+    let project = workspace(
+        "inventory-project",
+        "Inventory",
+        &path,
+        vec![checkout(
+            "inventory-project",
+            "inventory-checkout",
+            &path,
+            None,
+        )],
+    );
+    runtime.snapshot.navigator.workspaces = vec![project.clone()];
+    runtime = with_views_only(runtime, &directory.path().join("views.json"));
+    let store = runtime.workspace_views.as_mut().unwrap();
+    let layout = &mut store.views.entry("local", &path).layout;
+    let browser = layout.new_browser_display("https://example.test/inventory", 1);
+    let id = browser.id.clone();
+    layout.insert("a1", browser, 1).unwrap();
+    store.generation += 1;
+    runtime.sync_workspace_view();
+    assert_eq!(runtime.snapshot.browser_views.len(), 1);
+    assert_eq!(runtime.snapshot.browser_views[0].view_id, id);
+    assert_eq!(runtime.snapshot.browser_views[0].area_id, "a1");
+    let published = runtime.snapshot.browser_views_revision;
+    runtime.sync_workspace_view();
+    assert_eq!(
+        runtime.snapshot.browser_views_revision, published,
+        "unchanged scope does not publish again"
+    );
+
+    runtime.snapshot.navigator.workspaces.clear();
+    runtime.sync_workspace_view();
+    assert!(
+        runtime.snapshot.browser_views.is_empty(),
+        "removed catalog cannot retain a page"
+    );
+    assert_ne!(runtime.snapshot.browser_views_revision, published);
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .views
+            .get("local", &path)
+            .unwrap()
+            .layout
+            .display(&id)
+            .is_some(),
+        "saved layout remains restorable"
+    );
+
+    runtime.snapshot.navigator.workspaces = vec![project];
+    runtime.snapshot.status.herdr.state = "disconnected".into();
+    runtime.sync_workspace_view();
+    assert!(
+        runtime.snapshot.browser_views.is_empty(),
+        "offline saved layout has no page authority"
+    );
+    runtime.snapshot.status.herdr.state = "connected".into();
+    runtime.sync_workspace_view();
+    assert_eq!(
+        runtime.snapshot.browser_views.len(),
+        1,
+        "reconnected checkout gets fresh inventory"
+    );
+}
+
 fn with_tabs(runtime: &mut Runtime, directory: &Path) {
     let tabs = ["w-order:t1", "w-order:t2"];
     assert!(runtime.ingest_session(Ok(tab_order_payload(
