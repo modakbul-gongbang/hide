@@ -7,15 +7,27 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if ! git check-ignore --no-index -q agents/runs/example; then
-    printf 'the harness namespace agents/ is not ignored\n' >&2
-    exit 1
-fi
+check_ignore() {
+    local path="$1" expected="$2" failure="$3" status
+    if git check-ignore --no-index -q -- "$path" > /dev/null 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+    if [[ "$status" != 0 && "$status" != 1 ]]; then
+        printf 'cannot inspect the harness ignore boundary\n' >&2
+        exit 1
+    fi
+    if [[ "$status" != "$expected" ]]; then
+        printf '%s\n' "$failure" >&2
+        exit 1
+    fi
+}
 
-if git check-ignore --no-index -q .claude/agents/simplify-scout.md; then
-    printf 'the ignore rule still matches .claude/agents/\n' >&2
-    exit 1
-fi
+for path in agents/ agents/config.json agents/prd/example/prd.md; do
+    check_ignore "$path" 0 'the harness namespace agents/ is not ignored'
+done
+check_ignore .claude/agents/simplify-scout.md 1 'the ignore rule still matches .claude/agents/'
 
 if git ls-files --error-unmatch -- agents > /dev/null 2>&1; then
     printf 'root agents/ must have zero indexed paths; preserve local files when removing tracking\n' >&2

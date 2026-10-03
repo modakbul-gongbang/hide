@@ -64,16 +64,16 @@ class HarnessNamespaceTests(unittest.TestCase):
                 self.assertTrue(target.exists())
 
     def test_unanchored_ignore_is_rejected_even_for_a_tracked_subagent(self):
-        self.write(".claude/agents/example.md")
-        self.git("add", "--", ".claude/agents/example.md")
+        self.write(".claude/agents/simplify-scout.md")
+        self.git("add", "--", ".claude/agents/simplify-scout.md")
         (self.root / ".gitignore").write_text("agents/\n")
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("still matches .claude/agents/", result.stderr)
 
     def test_repo_subagent_can_remain_tracked(self):
-        self.write(".claude/agents/example.md")
-        self.git("add", "--", ".claude/agents/example.md")
+        self.write(".claude/agents/simplify-scout.md")
+        self.git("add", "--", ".claude/agents/simplify-scout.md")
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -82,6 +82,24 @@ class HarnessNamespaceTests(unittest.TestCase):
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("not ignored", result.stderr)
+
+    def test_partial_run_ignore_does_not_cover_the_namespace(self):
+        (self.root / ".gitignore").write_text("/agents/runs/\n")
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not ignored", result.stderr)
+
+    def test_failed_collateral_query_is_not_a_success(self):
+        target = self.root / "subagent-source"
+        target.mkdir()
+        try:
+            (self.root / ".claude").symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"directory symlink unavailable: {error.__class__.__name__}")
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cannot inspect", result.stderr)
+        self.assertNotIn("zero indexed paths", result.stdout)
 
 
 if __name__ == "__main__":
