@@ -119,8 +119,9 @@ jobs:
 
   # What differs on Windows (issue #293), as a required lane: the whole
   # workspace compiles for Windows, hided's pane bootstrap and end-to-end
-  # tests pass there, hided drives the pinned Herdr for Windows (a pane opened
-  # through `/ws` and a typed line echoed back), and the web and desktop unit
+  # tests pass there, the agent hook entries run through PowerShell as Claude
+  # Code and Codex run them, hided drives the pinned Herdr for Windows (a pane
+  # opened through `/ws` and a typed line echoed back), and the web and desktop unit
   # suites pass with the same assertions as on macOS and Linux. The job took
   # 4-8 minutes on 2026-10-03 with a warm cache; a cold one compiles the
   # workspace from nothing, so the timeout leaves room for that.

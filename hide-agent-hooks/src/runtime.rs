@@ -65,9 +65,9 @@ pub fn hook_stdout_with_context(
 /// `json` with every character outside ASCII written as a `\u` escape,
 /// which every JSON reader decodes to the same value.
 ///
-/// On Windows both runtimes run the hook through PowerShell, which reads a
-/// program's output in the console code page and writes it out again
-/// (`docs/agent-hooks.md`, What is written, and where); ASCII is the one
+/// On Windows both runtimes run the hook through PowerShell, which can read
+/// a program's output in the console code page and write it out again
+/// (`docs/agent-hooks.md`, Installing); ASCII is the one
 /// encoding that survives that unchanged, and the context carries `…` and
 /// Memory text in any language.
 pub fn ascii_json(json: &str) -> String {

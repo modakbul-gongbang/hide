@@ -1,10 +1,11 @@
 //! The Windows entries, started the way each runtime starts a hook there
-//! (`docs/agent-hooks.md`, What is written, and where): Claude Code spawns
+//! (`docs/agent-hooks.md`, Installing): Claude Code spawns
 //! the exec form's `command` with its `args` and no shell; Codex hands the
 //! command to its session shell, PowerShell, as `<shell> -NoProfile -Command
-//! <command>`. The helper is the real one, in a folder whose name has a space
-//! and a quote, so the quoting, the guard, the arguments and the output all
-//! cross PowerShell as they will on an operator's machine.
+//! <command>`. The helper is the real one, in a folder whose name has a
+//! space, a quote, brackets and a `$`, so the quoting, the guard, the
+//! arguments, stdin and the output all cross PowerShell as they will on an
+//! operator's machine.
 #![cfg(windows)]
 
 use std::io::Write;
@@ -40,7 +41,7 @@ fn session_start_hook(home: &Path, runtime: AgentRuntime) -> Value {
     document["hooks"]["SessionStart"][0]["hooks"][0].clone()
 }
 
-fn run(runtime: AgentRuntime, hook: &Value, shell: &str, home: &Path) -> Output {
+fn run(runtime: AgentRuntime, hook: &Value, shell: &str, home: &Path, cwd: &Path) -> Output {
     let mut command = match runtime {
         AgentRuntime::ClaudeCode => {
             let mut command = Command::new(hook["command"].as_str().unwrap());
@@ -71,7 +72,7 @@ fn run(runtime: AgentRuntime, hook: &Value, shell: &str, home: &Path) -> Output 
     let input = serde_json::json!({
         "session_id": "windows-hook-command",
         "hook_event_name": "SessionStart",
-        "cwd": home,
+        "cwd": cwd,
     });
     child
         .stdin
@@ -82,38 +83,60 @@ fn run(runtime: AgentRuntime, hook: &Value, shell: &str, home: &Path) -> Output 
     child.wait_with_output().unwrap()
 }
 
+/// A Project with Memory on and nothing in it: its SessionStart context
+/// carries a receipt only when the helper read the session and the cwd from
+/// stdin, which is how the test sees stdin cross the shell.
+fn enable_memory(home: &Path, project_root: &Path) {
+    let project = hide_project::resolve(project_root, "local").unwrap();
+    let path = hide_agent_hooks::memory::database_path(home);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let store = hide_memory::MemoryStore::open(&path).unwrap();
+    store
+        .ensure_project(&project.id, &project.root, "local")
+        .unwrap();
+    store.set_enabled(&project.id, true, true).unwrap();
+}
+
+const RECEIPT: &str = "<hide-memory-receipt event=\"SessionStart\"";
+
+/// A debug helper on a shared runner can miss its 75 ms Memory budget and
+/// answer without the receipt; without stdin it never carries one, so one
+/// receipt in a few runs is the proof.
+const ATTEMPTS: usize = 5;
+
 #[test]
 fn the_windows_entries_run_the_helper_through_powershell_only_while_it_is_there() {
-    let home = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let project = root.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
     for runtime in AgentRuntime::ALL {
-        std::fs::create_dir_all(runtime.home_directory(home.path())).unwrap();
+        std::fs::create_dir_all(runtime.home_directory(&home)).unwrap();
     }
-    let helper = home.path().join("it's here").join(HELPER_BINARY_NAME);
+    // `[`, `]` and `$` are what PowerShell could take for a wildcard or a
+    // variable outside a literal.
+    let helper = home.join("it's [1] $x here").join(HELPER_BINARY_NAME);
     for runtime in AgentRuntime::ALL {
-        hide_agent_hooks::install(runtime, home.path(), &helper).unwrap();
+        hide_agent_hooks::install(runtime, &home, &helper).unwrap();
         assert_eq!(
-            hide_agent_hooks::installed_helper_path(runtime, home.path()).as_deref(),
+            hide_agent_hooks::installed_helper_path(runtime, &home).as_deref(),
             helper.to_str(),
             "{runtime:?}: the path is read back from the PowerShell guard"
         );
     }
     let shells = codex_shells();
-    let runs = |runtime: AgentRuntime| -> Vec<(String, Output)> {
-        let hook = session_start_hook(home.path(), runtime);
+    let ways = |runtime: AgentRuntime| -> Vec<&'static str> {
         match runtime {
-            AgentRuntime::ClaudeCode => {
-                vec![("exec form".to_owned(), run(runtime, &hook, "", home.path()))]
-            }
-            AgentRuntime::Codex => shells
-                .iter()
-                .map(|shell| (shell.to_string(), run(runtime, &hook, shell, home.path())))
-                .collect(),
+            AgentRuntime::ClaudeCode => vec!["exec form"],
+            AgentRuntime::Codex => shells.clone(),
         }
     };
 
     // The app was moved away: every hook succeeds and says nothing (B3).
     for runtime in AgentRuntime::ALL {
-        for (how, output) in runs(runtime) {
+        let hook = session_start_hook(&home, runtime);
+        for how in ways(runtime) {
+            let output = run(runtime, &hook, how, &home, &project);
             assert!(
                 output.status.success() && output.stdout.is_empty(),
                 "{runtime:?} under {how}: {output:?}"
@@ -123,23 +146,40 @@ fn the_windows_entries_run_the_helper_through_powershell_only_while_it_is_there(
 
     std::fs::create_dir_all(helper.parent().unwrap()).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_hide-agent-hooks"), &helper).unwrap();
+    enable_memory(&home, &project);
     for runtime in AgentRuntime::ALL {
-        for (how, output) in runs(runtime) {
-            let stdout = String::from_utf8_lossy(&output.stdout);
+        let hook = session_start_hook(&home, runtime);
+        for how in ways(runtime) {
+            let mut receipt = false;
+            for _ in 0..ATTEMPTS {
+                let output = run(runtime, &hook, how, &home, &project);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                assert!(
+                    output.status.success(),
+                    "{runtime:?} under {how}: {output:?}"
+                );
+                assert!(stdout.is_ascii(), "{runtime:?} under {how}: {stdout}");
+                let envelope: Value = serde_json::from_str(&stdout)
+                    .unwrap_or_else(|error| panic!("{runtime:?} under {how}: {error}: {stdout}"));
+                assert_eq!(
+                    envelope["hookSpecificOutput"]["hookEventName"], "SessionStart",
+                    "{runtime:?} under {how}"
+                );
+                let context = envelope["hookSpecificOutput"]["additionalContext"]
+                    .as_str()
+                    .unwrap();
+                assert!(
+                    context.starts_with(PURPOSE_CONTEXT),
+                    "{runtime:?} under {how}: the context's `…` crossed PowerShell intact: {context}"
+                );
+                if context.contains(RECEIPT) {
+                    receipt = true;
+                    break;
+                }
+            }
             assert!(
-                output.status.success(),
-                "{runtime:?} under {how}: {output:?}"
-            );
-            assert!(stdout.is_ascii(), "{runtime:?} under {how}: {stdout}");
-            let envelope: Value = serde_json::from_str(&stdout)
-                .unwrap_or_else(|error| panic!("{runtime:?} under {how}: {error}: {stdout}"));
-            assert_eq!(
-                envelope["hookSpecificOutput"]["hookEventName"], "SessionStart",
-                "{runtime:?} under {how}"
-            );
-            assert_eq!(
-                envelope["hookSpecificOutput"]["additionalContext"], PURPOSE_CONTEXT,
-                "{runtime:?} under {how}: the context's `…` crossed PowerShell intact"
+                receipt,
+                "{runtime:?} under {how}: no run read the session from stdin"
             );
         }
     }

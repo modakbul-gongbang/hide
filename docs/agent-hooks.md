@@ -25,10 +25,10 @@ Entries belonging to other tools are counted before and after, and a regression 
 Five events are registered: `SessionStart`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
 
-Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command.
+Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command (in Claude Code's Windows entry, inside its `args`).
 The runtime argument selects that runtime's stdout envelope; the version-6 marker makes an installation whose command is not guarded against a missing helper outdated, so the next launch or connection replaces it.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
-Nothing parses the rest of the command, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
+Nothing else is read from the command but the helper's quoted path, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
 
 ## What the hook returns and reports back
 
@@ -140,14 +140,14 @@ On Windows `<guard>` is `if (Test-Path -LiteralPath '<kit folder>\hide-agent-hoo
 The forms follow what each runtime documents or, where its documentation is silent, what its source does:
 
 - Claude Code passes a command string to `sh -c` on macOS and Linux, to Git Bash on Windows, or to PowerShell when Git Bash is not installed, and spawns `command` with `args` directly, with no shell, on every system (hooks reference, "Exec form and shell form", <https://code.claude.com/docs/en/hooks>; `args` since 2.1.139, below the 2.1.278 Memory needs). A string would meet two different shells on two Windows machines, so the Windows entry names PowerShell in exec form and the guard always runs in PowerShell.
-- Codex documents `commandWindows` as a Windows override without saying what runs it (<https://developers.openai.com/codex/hooks>). Its source at `rust-v0.160.0` runs a command through the session's shell (`core/src/session/mod.rs`, `build_hooks_config`), which on Windows is PowerShell 7 or else Windows PowerShell, started `-NoProfile -Command <command>` (`shell-command/src/shell_detect.rs`, `default_user_shell`; `core/src/shell.rs`, `derive_exec_args`), and through `%COMSPEC% /C` only when the session reports no shell (`hooks/src/engine/command_runner.rs`, `build_command`). The file is that machine's, so the guard is written as `command`.
+- Codex documents `commandWindows` as a Windows override without saying what runs it (<https://developers.openai.com/codex/hooks>). Its source at `rust-v0.160.0`, and the same code at `rust-v0.155.1`, the oldest Codex Hide installs into, runs a command through the session's shell (`core/src/session/mod.rs`, `build_hooks_config`), which on Windows is PowerShell 7 or else Windows PowerShell, started `-NoProfile -Command <command>` (`shell-command/src/shell_detect.rs`, `default_user_shell`; `core/src/shell.rs`, `derive_exec_args`), and through `%COMSPEC% /C` only when the session reports no shell (`hooks/src/engine/command_runner.rs`, `build_command`). The file is that machine's, so the guard is written as `command`.
 - A Codex session that falls back to `cmd` cannot read the PowerShell guard: its hooks fail with cmd's syntax error, the turn goes on without Hide's context, and nothing else on the machine changes.
 
 PowerShell starts before the helper on every Windows hook, which Codex does for any hook there; the 100 ms Memory deadline above counts from the helper's own launch.
-PowerShell also reads what the helper prints in the console code page and writes it out again, so on Windows the helper prints its JSON in ASCII, every other character as a `\u` escape that decodes to the same text.
+PowerShell can read what the helper prints in the console code page and write it out again (no runtime documents whether it does), so on Windows the helper prints its JSON in ASCII, every other character as a `\u` escape that decodes to the same text.
 The marker is looked for in an entry's `command` and in each of its `args`, where Claude Code's Windows entry carries it, so a second install on Windows recognises its entries and converges as it does elsewhere.
 The marker stays at version 6: the macOS and Linux bytes are the ones version 6 wrote (`the_posix_entry_is_exactly_what_macos_and_linux_have_installed` pins them), and no earlier build installed anything on Windows.
-`hide-agent-hooks/tests/windows_hook_command.rs` runs both Windows entries the way their runtimes start them, under Windows PowerShell and PowerShell 7, with the real helper in a folder whose name has a space and a quote, in the `windows check` lane.
+`hide-agent-hooks/tests/windows_hook_command.rs` runs both Windows entries the way their runtimes start them, under Windows PowerShell and PowerShell 7, with the real helper in a folder whose name has a space, a quote, brackets and a `$`, and proves stdin reached the helper by the Memory receipt only the session it read can produce, in the `windows check` lane.
 Version 6 is the first guarded command, so an older entry reads outdated and the next launch or connection replaces it.
 The kit folder is a path that survives a rebuild: the installed app bundle's `Contents/Resources` on this Mac, and the helper root's `current` link on a device, which each new build of the helper points at itself.
 

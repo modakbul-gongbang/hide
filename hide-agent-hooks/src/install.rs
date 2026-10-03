@@ -235,7 +235,7 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
 
 /// The entry Hide writes: one command hook, carrying its own marker, in the
 /// form this system's runtimes run a hook command (`docs/agent-hooks.md`,
-/// What is written, and where).
+/// Installing).
 ///
 /// The command runs the helper only while it is there. A hook outlives the
 /// bundle or helper folder that wrote it: the app is moved to the Trash, a
