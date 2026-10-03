@@ -28,7 +28,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ownUntilWorkerExit } from "./worker-owned";
-import { fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
+import { compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 
 export type HerdrFixture = {
   bin: string;
@@ -59,7 +59,7 @@ const SHIM_SOURCE = `#include <fcntl.h>
 #define read _read
 #define write _write
 #define open _open
-typedef int ssize_t;
+typedef int fixture_count_t;
 static void raw_terminal(void) {
   HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
   DWORD mode;
@@ -68,7 +68,7 @@ static void raw_terminal(void) {
   mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
   if (!SetConsoleMode(input, mode) || !SetConsoleCP(CP_UTF8) || !SetConsoleOutputCP(CP_UTF8)) exit(1);
 }
-static ssize_t terminal_read(char *bytes, size_t size) {
+static fixture_count_t terminal_read(char *bytes, size_t size) {
   static WCHAR pending = 0;
   WCHAR input[4096];
   for (;;) {
@@ -84,14 +84,15 @@ static ssize_t terminal_read(char *bytes, size_t size) {
     }
   }
 }
-static ssize_t terminal_write(const char *bytes, size_t size) {
+static fixture_count_t terminal_write(const char *bytes, size_t size) {
   DWORD count;
-  return WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), bytes, (DWORD)size, &count, NULL) ? (ssize_t)count : -1;
+  return WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), bytes, (DWORD)size, &count, NULL) ? (fixture_count_t)count : -1;
 }
 #else
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+typedef ssize_t fixture_count_t;
 #define terminal_read(bytes, size) read(0, bytes, size)
 #define terminal_write(bytes, size) write(1, bytes, size)
 static void raw_terminal(void) {
@@ -160,7 +161,7 @@ int main(int argc, char **argv) {
 #else
   char b[4096];
 #endif
-  ssize_t n;
+  fixture_count_t n;
   while ((n = terminal_read(b, sizeof b)) > 0) {
     if (log >= 0 && write(log, b, (size_t)n) < 0) return 1;
     if (terminal_write(b, (size_t)n) < 0) return 1;
@@ -517,7 +518,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     env = isolatedEnv(root, socket);
     fs.writeFileSync(path.join(root, "shim.c"), SHIM_SOURCE);
     const shim = path.join(root, "bin", fixtureExecutable("claude"));
-    execFileSync(process.platform === "win32" ? "clang.exe" : "cc", ["-O1", "-o", shim, path.join(root, "shim.c")]);
+    compileFixtureC(path.join(root, "shim.c"), shim);
     if (process.platform === "win32") fs.copyFileSync(shim, path.join(root, "bin", fixtureExecutable("hide-open")));
     // Keep host-installed providers out while retaining system tools.
     fixturePath = fixtureToolPath(path.join(root, "bin"));
