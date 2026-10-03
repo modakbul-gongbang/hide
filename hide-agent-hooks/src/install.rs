@@ -699,17 +699,18 @@ mod tests {
     /// `origin/main` at 91877ba9 wrote them, quote escaping included.
     #[test]
     fn the_posix_entry_is_exactly_what_macos_and_linux_have_installed() {
-        let helper = Path::new("/Users/o'brien/hide.app/Contents/Resources/hide-agent-hooks");
+        let helper =
+            Path::new("/Users/example/o'brien/hide.app/Contents/Resources/hide-agent-hooks");
         let pinned = [
             (
                 AgentRuntime::ClaudeCode,
                 HookEvent::SessionStart,
-                r#"{"type":"command","command":"if [ -x '/Users/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime claude-code --event SessionStart --memory-injection --source hide-subagents@6; fi","timeout":8}"#,
+                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime claude-code --event SessionStart --memory-injection --source hide-subagents@6; fi","timeout":8}"#,
             ),
             (
                 AgentRuntime::Codex,
                 HookEvent::Stop,
-                r#"{"type":"command","command":"if [ -x '/Users/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime codex --event Stop --memory-injection --source hide-subagents@6; fi","timeout":8}"#,
+                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime codex --event Stop --memory-injection --source hide-subagents@6; fi","timeout":8}"#,
             ),
         ];
         for (runtime, event, bytes) in pinned {
