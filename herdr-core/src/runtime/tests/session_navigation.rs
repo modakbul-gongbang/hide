@@ -1527,7 +1527,7 @@ fn pane_focus_burst_keeps_only_the_latest_successor_and_resumes_external_follow(
 #[test]
 fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_external_move() {
     let mut runtime = live_runtime();
-    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
     runtime.dispatch_json(&operator_focus_event("w1:p2"));
     finish_running_pane_focus(&mut runtime, Ok(()));
@@ -1586,7 +1586,7 @@ fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
 #[test]
 fn pane_focus_completion_during_session_read_does_not_authorize_an_unchecked_stream_move() {
     let mut runtime = live_runtime();
-    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
     runtime.dispatch_json(&operator_focus_event("w1:p2"));
     let stale = finished_tab_payload(&panes, "w1:p1");
