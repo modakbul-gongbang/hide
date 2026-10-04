@@ -31,7 +31,7 @@ hide request send parent-name --kind report --intent task-complete-1 --body 'The
 ```
 
 The recipient can acknowledge or reply; the sender can cancel.
-Acknowledgement changes the receipt state, and a reply separately closes the original request's answer wait.
+Acknowledgement marks a letter as manually checked without changing its durable `hook_confirmed` intake receipt; a reply separately closes the original request's answer wait.
 Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery.
 Use a new intent for a new letter.
 The envelope identifies the sender and letter kind; it is not a session-level authority or anti-forgery proof.
@@ -51,14 +51,14 @@ The reservation is persisted before input, and the adapter repeats the native/co
 A crash or changed composer after reservation may consume an attempt while leaving the letter pending.
 Legacy records with a successful bell but no total count conservatively have no automatic attempts left; manual and prompt-hook intake remain available.
 
-The next `UserPromptSubmit` hook pulls the oldest pending letters, emits their context, flushes stdout, then confirms those IDs.
+The next `UserPromptSubmit` hook pulls the oldest pending letters and newly acknowledged letters with `hook_confirmed: false`, which remain open for capacity and retention, emits their context, flushes stdout, then confirms those IDs.
 Transport arrival and the doorbell alone do not confirm intake.
 Interruption before confirmation can repeat the same letter ID; confirmed letters do not appear again in hook context.
 The hook emits at most five letters and 8 KiB of context, with a remaining-count line and `hide inbox` guidance when more are pending.
 A large letter is truncated at a UTF-8 boundary and includes its ID and `hide request show` command for the complete body.
 The installed prompt hook supervises one guarded internal operation with a 1.85-second deadline inside the two-second caller budget, including Memory, filesystem, output and diagnostic work.
 The internal operation requires positive owner proof and inherits the runtime payload and output streams; it confirms only after its output is successfully flushed.
-Failure leaves unconfirmed letters pending and attempts a rate-limited private diagnostic inside that same budget.
+Failure leaves actual intake unconfirmed and attempts a rate-limited private diagnostic inside that same budget.
 A blocked diagnostic store or output stream can prevent the diagnostic from finishing; the outer timeout performs no filesystem or output tail that could hold submission open.
 CLI output collection uses the canonical platform capture, with a 64 KiB bound and no reader thread or blocking join after timeout.
 Cleanup uncertainty is a separate private diagnostic field and never authorizes confirmation.
@@ -92,7 +92,8 @@ Capacity errors retain existing letters and watches.
 | Letter body / ledger file | 16 KiB / 16 MiB |
 | Hook batch / context / total deadline | Five letters / 8 KiB / two seconds |
 
-The delivery deadline and watch clocks are distinct.
+Automatic expiry and doorbells apply only to `pending` letters, while watch clocks remain distinct.
+Legacy records with missing or null `hook_confirmed` prove intake only in `delivered` state; older `acknowledged` records remain unknown, excluded from pull and subject to their previous closed-state retention rules unless still awaiting a reply.
 There is no transition to `expired` in this contract; an undelivered letter uses the existing human notification paths without creating another letter or UI banner.
 First-warning time and count persist across daemon restarts; activity resets both.
 
@@ -126,7 +127,7 @@ A tick also performs one bounded ledger encoding and bounded per-watch admission
 A target exit or parent's explicit stop ends the watch.
 A normal reply closes the request's answer wait and leaves the watch active.
 A done target remains watched until exit, explicit stop or a completion report.
-`hide request send --kind report` ends its sender's watch when delivery to the parent is confirmed, without waiting for acknowledgement.
+The first actual post-flush confirmation records `hook_confirmed: true` and ends a matching sender-parent watch for `hide request send --kind report`, even after acknowledgement, cancellation or the delivery deadline; replay after restart preserves a watch explicitly started after that receipt.
 A report from an unwatched sender is an ordinary letter; the parent can restart a watch explicitly.
 
 ## Agent registration and spawning
