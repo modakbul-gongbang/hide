@@ -550,3 +550,30 @@ fn before_the_worktree_is_read_only_an_open_pull_request_attaches() {
             .is_none()
     );
 }
+
+/// The connection of a settled pull request needs its head commit and its
+/// repository, which the wire leaves out; the saved file must carry them or a
+/// restart draws a merged pull request on no worktree until the first read.
+#[test]
+fn a_merged_pull_request_attaches_to_its_worktree_after_a_restart_from_the_saved_file() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("github-snapshot.json");
+    let merged = pull_request_at(1, PullRequestBadge::Merged, "merged-head", 10);
+
+    let mut first = pr_runtime(vec![merged]);
+    first.github_store = Some(crate::github_store::GithubStore::new(file.clone()));
+    let mut answer = first.github.clone();
+    answer.projects[0].status.last_success_at_unix_ms = Some(2);
+    assert!(first.ingest_github_answer(answer, true));
+    drop(first.github_store.take());
+
+    let mut second = pr_runtime(Vec::new());
+    second.github = crate::model::GithubSnapshot::default();
+    let store = crate::github_store::GithubStore::new(file);
+    let restored = store.restore();
+    second.install_github_store(store, restored);
+    second.ingest_worktrees(catalog_at("merged-head"), 0);
+    assert_eq!(shown_on_task(&second), (Some(1), Some(1)));
+    second.ingest_worktrees(catalog_at("a-new-commit"), 0);
+    assert_eq!(shown_on_task(&second), (None, None));
+}

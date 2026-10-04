@@ -1152,7 +1152,9 @@ fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::Gi
     let runtime = context.runtime.upgrade()?;
     let request = {
         let mut guard = runtime.lock().ok()?;
-        guard.reread_pending_checks(Instant::now());
+        let now = Instant::now();
+        guard.reread_pending_checks(now);
+        guard.reread_stale_github(now);
         guard.github_request()
     };
     drop(runtime);

@@ -79,6 +79,12 @@ pub fn delivery_ledger(state_dir: &Path) -> PathBuf {
     state_dir.join("delivery-ledger.json")
 }
 
+/// The last GitHub answer per project, restored when the daemon starts; its
+/// owner is the core's GitHub store.
+pub fn github_snapshot(state_dir: &Path) -> PathBuf {
+    state_dir.join("github-snapshot.json")
+}
+
 /// `~/rest` of a helper root spelling under `home`; an absolute spelling as
 /// it is.
 pub fn expand_home(spelling: &str, home: &Path) -> PathBuf {

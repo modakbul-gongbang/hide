@@ -1365,7 +1365,24 @@ pub struct Runtime {
     /// project counter; equal generations reuse the cached answer indefinitely.
     github_generations: HashMap<String, u64>,
     worktree_project_generations: HashMap<String, u64>,
-    sidebar_github_projects: HashSet<String>,
+    /// Where each local project is in the five-minute re-read cycle
+    /// (`reread_stale_github`).
+    github_clock: HashMap<String, projects::GithubClock>,
+    /// Projects a screen named with `github_request` or `overview_refresh`;
+    /// they are read before the others when the count passes the limit.
+    github_wanted: HashSet<String>,
+    /// Projects an answer arrived for since the clock last looked; the next
+    /// wake starts their five minutes.
+    github_answered: HashSet<String>,
+    /// Local projects whose first read has been answered, with or without a
+    /// result; until then a project without an answer is loading.
+    github_settled: HashSet<String>,
+    /// The number of local Git projects past `GITHUB_PROJECT_LIMIT` last
+    /// stated, so a count is logged once rather than on every wake.
+    github_over_limit: usize,
+    /// Where the last answer is kept across a restart; absent in a runtime
+    /// that has no state folder to keep it in.
+    github_store: Option<crate::github_store::GithubStore>,
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
     disk_generation: u64,
@@ -1750,7 +1767,12 @@ impl Runtime {
             disk_usage: Vec::new(),
             github_generations: HashMap::new(),
             worktree_project_generations: HashMap::new(),
-            sidebar_github_projects: HashSet::new(),
+            github_clock: HashMap::new(),
+            github_wanted: HashSet::new(),
+            github_answered: HashSet::new(),
+            github_settled: HashSet::new(),
+            github_over_limit: 0,
+            github_store: None,
             disk_generation: 0,
             disk_project: None,
             cleanup: None,

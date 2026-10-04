@@ -742,7 +742,7 @@ fn a_named_project_overview_measures_its_whole_disk() {
 }
 
 #[test]
-fn sidebar_github_request_is_scoped_idempotent_and_does_not_move_focus() {
+fn a_github_request_event_changes_nothing_until_it_asks_for_a_refresh() {
     let mut runtime = runtime();
     let mut project = workspace(
         "workspace-1",
@@ -762,22 +762,26 @@ fn sidebar_github_request_is_scoped_idempotent_and_does_not_move_focus() {
         }))
         .unwrap()
     };
-    assert!(runtime.dispatch_json(&event(false)));
+    // Both projects are read already, so a plain request has nothing to add.
+    runtime.apply_pull_requests();
+    assert_eq!(runtime.github_request().projects.len(), 2);
     assert!(!runtime.dispatch_json(&event(false)));
     assert_eq!(runtime.snapshot.focused, focus);
-    assert_eq!(runtime.github_request().projects.len(), 1);
-    assert_eq!(
-        runtime.github_request().projects[0].root,
-        PathBuf::from("/tmp/hide")
-    );
-    assert_eq!(runtime.github_request().projects[0].generation, 0);
-    assert!(
-        runtime.snapshot.navigator.workspaces[0].checkouts[0]
-            .github
-            .loading
-    );
+    let generations = |runtime: &Runtime| {
+        runtime
+            .github_request()
+            .projects
+            .iter()
+            .map(|project| project.generation)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(generations(&runtime), vec![0, 0]);
     assert!(runtime.dispatch_json(&event(true)));
-    assert_eq!(runtime.github_request().projects[0].generation, 1);
+    assert_eq!(
+        generations(&runtime),
+        vec![1, 0],
+        "only the named project is read again"
+    );
 }
 
 #[test]
@@ -874,68 +878,6 @@ fn opening_a_project_overview_restarts_only_its_git_and_pr_reads() {
         Some("main")
     );
     assert!(initial.snapshot.git_worktrees_loading);
-}
-
-/// Overview reads its focused project; explicit sidebar requests remain
-/// independent of the retired right-panel Git tab.
-#[test]
-fn pull_requests_are_scoped_to_overview_and_explicit_sidebar_requests() {
-    let mut runtime = runtime();
-    let mut hide = workspace(
-        "workspace-1",
-        "hide",
-        "/tmp/hide",
-        vec![settled_worktree(crate::model::PullRequestBadge::Open)],
-    );
-    hide.is_git = true;
-    runtime.snapshot.navigator.focused_checkout_id = Some(hide.checkouts[0].id.clone());
-    let mut other = workspace("workspace-2", "other", "/tmp/other", Vec::new());
-    other.is_git = true;
-    runtime.snapshot.navigator.workspaces = vec![hide, other];
-    let generations = |runtime: &Runtime| -> Vec<(String, u64)> {
-        runtime
-            .github_request()
-            .projects
-            .into_iter()
-            .map(|project| {
-                (
-                    project.root.to_string_lossy().into_owned(),
-                    project.generation,
-                )
-            })
-            .collect()
-    };
-    assert_eq!(
-        generations(&runtime),
-        vec![("/tmp/hide".to_owned(), 0)],
-        "Overview reads only its project"
-    );
-    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Explorer;
-    assert!(generations(&runtime).is_empty());
-    assert!(!runtime.projected_card().github.loading);
-    runtime.snapshot.ui_state.right_panel_visible = true;
-    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Overview;
-    assert!(runtime.projected_card().github.loading);
-    assert_eq!(generations(&runtime), vec![("/tmp/hide".to_owned(), 0)]);
-    runtime.refresh_pull_requests("/tmp/hide");
-    assert_eq!(generations(&runtime), vec![("/tmp/hide".to_owned(), 1)]);
-    runtime.refresh_card();
-    assert!(runtime.snapshot.card.github.loading);
-    let leave_git = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "ui_state_update",
-        "payload": {
-            "expanded_paths": [],
-            "right_panel_section": "explorer",
-            "focused_checkout_id": runtime.snapshot.navigator.focused_checkout_id,
-        }
-    }))
-    .expect("leave Git event");
-    assert!(runtime.dispatch_json(&leave_git));
-    assert!(!runtime.snapshot.card.github.loading);
-    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Overview;
-    runtime.snapshot.ui_state.right_panel_visible = false;
-    assert!(!runtime.projected_card().github.loading);
 }
 
 /// The card consumes the same deletion gate as the sidebar and Git list.

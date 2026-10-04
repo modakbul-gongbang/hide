@@ -226,6 +226,19 @@ impl Core {
                 None
             }
         };
+        // Before any coordinator starts, so the sidebar draws the last run's
+        // pull request state from its first frame instead of after a `gh` pass.
+        if let Some(directory) = std::path::Path::new(&options.app_state_path)
+            .parent()
+            .filter(|directory| !directory.as_os_str().is_empty())
+        {
+            // Read before the lock is taken: the file is the disk's, not the
+            // runtime's.
+            let store =
+                crate::github_store::GithubStore::new(hide_kit::layout::github_snapshot(directory));
+            let restored = store.restore();
+            lock_recover(&runtime).install_github_store(store, restored);
+        }
         // Before any coordinator starts, because each builds its label worker
         // on these, and before the kit runs, because the plugin state the
         // store imports once is what the kit's retirement deletes.
