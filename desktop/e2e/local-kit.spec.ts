@@ -36,6 +36,8 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
   const resources = path.join(bundle, "Contents", "Resources");
   const local = await startHerdr({ agents: false });
   const run = isolate(local, "lk");
+  // The release daemon and the host's discovery CLI must come from this bundle.
+  run.env.HIDE_CLI_PATH = path.join(resources, "hide");
   const home = run.env.HOME!;
   const original = seedAgentFiles(home);
   const daemonLog = path.join(run.root, "daemon.log");
@@ -48,6 +50,7 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
   fs.writeFileSync(daemonLog, "");
   let daemon = startDaemon();
   let app: ElectronApplication | undefined;
+  const errors: unknown[] = [];
   try {
     await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
     // B1: the first launch installs every part, asking nothing.
@@ -89,13 +92,17 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     expect(applied(daemonLog)[1]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
     expect([claudeSettings(home), codexHooks(home)].map((file) => fs.statSync(file).mtimeMs)).toEqual(written);
   } catch (error) {
+    errors.push(error);
     console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
     console.log(fs.readFileSync(daemonLog, "utf8"));
-    throw error;
   } finally {
-    await app?.close().catch(() => undefined);
-    run.cleanup();
-    if (daemon.exitCode === null) daemon.kill("SIGTERM");
-    local.stop();
+    try { await app?.close(); } catch (error) { errors.push(error); }
+    try { run.cleanup(); } catch (error) { errors.push(error); }
+    try {
+      if (daemon.exitCode === null && daemon.signalCode === null) daemon.kill("SIGTERM");
+    } catch (error) { errors.push(error); }
+    try { local.stop(); } catch (error) { errors.push(error); }
   }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, "private kit fixture failed; original and cleanup errors are retained");
 });

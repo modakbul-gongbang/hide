@@ -73,6 +73,8 @@ When the behavior depends on the order of two events, the test fixes that order;
 - A retirement test injects its service-control boundary and uses private legacy folders and ledger fixtures.
   A real launchd call to the account's default retired-service label reaches the operator's service regardless of a private `HOME`, so it is never part of fixture teardown.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
+- A fixture that starts the packaged daemon also sets the host's `HIDE_CLI_PATH` to that bundle's `hide`, because an unbundled debug CLI correctly refuses a different release build.
+  Keep the installation and idempotence assertions unchanged; a mixed-build fixture never reaches them through the window.
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
   The exit callback cannot run after SIGKILL, an OOM kill or host loss; these require separate recovery and are not proven by a `process.exit()` regression.
