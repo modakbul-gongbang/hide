@@ -314,13 +314,13 @@ fn capture_run(
     let (mut out_end, mut err_end) = (false, false);
     let mut status = None;
     loop {
-        if status.is_none() {
-            status = child.try_wait().map_err(RunFailure::Wait)?;
-            if status.is_some() {
-                // Even exit 0 can leave a descendant holding either pipe.
-                // End the owned tree before waiting for those pipes to close.
-                child.kill_tree().map_err(RunFailure::Wait)?;
-            }
+        if status.is_none() && sys::has_exited(&child.child).map_err(RunFailure::Wait)? {
+            // Observe without reaping: the leader's identity still belongs to
+            // this owner while its group and remaining descendants are ended.
+            child.kill_tree().map_err(RunFailure::Wait)?;
+            status = Some(child.try_wait().map_err(RunFailure::Wait)?.ok_or_else(|| {
+                RunFailure::Wait(io::Error::other("observed exit could not be reaped"))
+            })?);
         }
         if stop.load(Ordering::Relaxed) {
             return Err(RunFailure::Stopped);
@@ -553,6 +553,28 @@ mod sys {
             }
             result => result.map(Some),
         }
+    }
+
+    pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
+        // SAFETY: waitid writes initialized storage; WNOWAIT keeps the owned
+        // leader unreaped so its pid/group cannot be reused before teardown.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        #[cfg(target_os = "macos")]
+        return Ok(info.si_pid != 0);
+        #[cfg(target_os = "linux")]
+        // SAFETY: waitid initialized the union above.
+        return Ok(unsafe { info.si_pid() } != 0);
     }
 
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
@@ -1109,6 +1131,18 @@ mod sys {
         }
         let count = bytes.len().min(available as usize);
         pipe.read(&mut bytes[..count]).map(Some)
+    }
+
+    pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
+        use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+        // SAFETY: the borrowed process handle is owned by child; zero never
+        // blocks or releases its identity.
+        match unsafe { WaitForSingleObject(child.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            _ => Err(io::Error::last_os_error()),
+        }
     }
 
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {

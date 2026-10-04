@@ -363,7 +363,7 @@ The bootstrap accepts on a thread of its own and hands each connection to the as
 `process` is the second module and the one place a child is started or a pid is asked about.
 `OwnedChild::spawn` starts a child that leads its own group (Unix) or lives in its own job object (Windows, started suspended so it cannot start a process before it is inside the job); `kill_tree` and the owner's `Drop` end the child and everything it started, and the Windows job also ends the tree when the owner dies without a destructor.
 No Unix system offers that for a group, so an owner that must outlive its own crash keeps a channel the child watches (the codex app-server's stdin is one; the opener supervisor's socket is another), which is why `OwnedChild` promises the drop and not the crash.
-`run_to_end` ends the owned tree before draining pipes after a normal exit, since a descendant may still hold either inherited output stream.
+`run_to_end` observes exit without reaping its leader, ends the owned tree while its identity is retained, then drains pipes after normal exit, since a descendant may still hold either inherited output stream.
 It reads only available bytes, keeps at most 64 KiB from each stream, and observes the original deadline and stop flag through draining without reader threads or blocking joins.
 After ending the tree, reaping has a separate bound of one existing 20 ms poll interval; an unconfirmed cleanup returns `RunCleanupFailure` inside `RunFailure::Wait`, retaining the original outcome and child owner for recovery without a blocking destructor.
 An escaped helper reparented before the process walk cannot be attributed by Unix ancestry; its open pipe cannot extend the drain deadline, and a kernel call has no universal cancellation guarantee.
