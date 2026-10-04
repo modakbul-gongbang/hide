@@ -39,6 +39,7 @@ DIAGNOSTIC_RECORD_BYTES = 32 * 1024
 MAX_RETAINED_RUNS = 32
 MAX_PROCESSES = 32
 MAX_PROC_ENTRIES = 65536
+MAX_RSS_BYTES = 3 * 1024 ** 3
 BUILD_JOBS = 2
 TOTAL_SECONDS = 570
 CLEANUP_SECONDS = 5
@@ -180,8 +181,13 @@ def parse_execution(output, selected, group):
     return len(selected)
 
 
-def group_count(pgid):
-    """Count only this new command's group, with bounded native queries."""
+def group_resources(pgid):
+    """Sample the group's process count and resident bytes from the kernel.
+
+    RSS is sampled, not a claim about unsampled instantaneous peaks. This
+    measurement does not fix the separate detached-descendant ownership gap.
+    No process is started to inspect another process.
+    """
     if sys.platform == "darwin":
         library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
         # proc_listpids returns bytes; proc_listpgrppids returns a PID count.
@@ -193,10 +199,33 @@ def group_count(pgid):
         size = query(2, pgid, buffer, ctypes.sizeof(buffer))  # PROC_PGRP_ONLY
         if ctypes.get_errno() or size < 0 or size % ctypes.sizeof(ctypes.c_int):
             raise OSError("cannot count owned process group")
-        return size // ctypes.sizeof(ctypes.c_int)
+        count = size // ctypes.sizeof(ctypes.c_int)
+        if count > MAX_PROCESSES:
+            return count, 0
+        info = library.proc_pidinfo
+        info.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                         ctypes.c_void_p, ctypes.c_int]
+        info.restype = ctypes.c_int
+        rss = 0
+        for pid in buffer[:count]:
+            # proc_taskinfo: six uint64 values followed by twelve int32 values.
+            # pti_resident_size is the second uint64, in bytes.
+            task = (ctypes.c_uint64 * 12)()
+            ctypes.set_errno(0)
+            written = info(pid, 4, 0, task, ctypes.sizeof(task))  # PROC_PIDTASKINFO
+            if written != ctypes.sizeof(task):
+                error = ctypes.get_errno()
+                if error == errno.ESRCH:
+                    continue  # This sampled member exited during the query.
+                raise OSError(error, "cannot measure owned group resident bytes")
+            rss += task[1]
+        return count, rss
     if sys.platform != "linux":
         raise ValueError("unsupported POSIX contract runner")
-    count = 0
+    count, rss = 0, 0
+    page_size = os.sysconf("SC_PAGE_SIZE")
+    if page_size <= 0:
+        raise ValueError("invalid native page size")
     with os.scandir("/proc") as entries:
         for index, entry in enumerate(entries):
             if index >= MAX_PROC_ENTRIES:
@@ -211,13 +240,17 @@ def group_count(pgid):
             if len(data) > 4096:
                 raise ValueError("process stat exceeds bounded query capacity")
             fields = data.rsplit(b")", 1)[-1].split()
-            if len(fields) < 3:
+            if len(fields) < 22:
                 raise ValueError("invalid process group information")
             if int(fields[2]) == pgid:
                 count += 1
+                pages = int(fields[21])
+                if pages < 0:
+                    raise ValueError("invalid resident page count")
+                rss += pages * page_size
                 if count > MAX_PROCESSES:
-                    return count
-    return count
+                    return count, rss
+    return count, rss
 
 
 def end_group(process):
@@ -244,6 +277,8 @@ class PosixOwned:
         self.returncode = None
         self.error = None
         self.peak = 0
+        self.peak_rss_bytes = 0
+        self.memory_scope = "sampled_posix_process_group"
         self.closed = False
 
     def poll(self):
@@ -267,6 +302,7 @@ class PosixOwned:
                 else:
                     self.returncode = record["returncode"]
                     self.error, self.peak = record["error"], record["peak"]
+                    self.peak_rss_bytes = record["peak_rss_bytes"]
                     if record["cleanup_error"]:
                         self.error = ((self.error + "; ") if self.error else "") + record["cleanup_error"]
         if self.error:
@@ -322,10 +358,14 @@ class WindowsOwned:
     inherited handles are the two explicitly supplied standard-stream handles.
     See Microsoft's UpdateProcThreadAttribute and Job Objects references.
     """
-    def __init__(self, api, job, process, stdout, accounting_type):
+    def __init__(self, api, job, process, stdout, accounting_type,
+                 process_ids_type, memory_type):
         self.api, self.job, self.process, self.stdout = api, job, process, stdout
         self.accounting_type = accounting_type
+        self.process_ids_type, self.memory_type = process_ids_type, memory_type
         self.peak = 0
+        self.peak_rss_bytes = 0
+        self.memory_scope = "sampled_windows_job_working_set"
 
     @classmethod
     def create(cls, command, environment):
@@ -347,6 +387,17 @@ class WindowsOwned:
         class Accounting(c.Structure):
             _fields_ = [("times", c.c_int64 * 4), ("faults", dword),
                         ("total", dword), ("active", dword), ("limited", dword)]
+
+        class ProcessIds(c.Structure):
+            _fields_ = [("assigned", dword), ("listed", dword),
+                        ("pids", size_t * (MAX_PROCESSES + 1))]
+
+        class Memory(c.Structure):
+            _fields_ = [("size", dword), ("faults", dword),
+                        ("peak_working_set", size_t), ("working_set", size_t),
+                        ("peak_paged_pool", size_t), ("paged_pool", size_t),
+                        ("peak_nonpaged_pool", size_t), ("nonpaged_pool", size_t),
+                        ("pagefile", size_t), ("peak_pagefile", size_t)]
 
         class Startup(c.Structure):
             _fields_ = [("size", dword), ("reserved", c.c_wchar_p),
@@ -378,6 +429,9 @@ class WindowsOwned:
             "GetExitCodeProcess": ([handle, c.POINTER(dword)], c.c_int),
             "WaitForSingleObject": ([handle, dword], dword),
             "TerminateJobObject": ([handle, dword], c.c_int),
+            "OpenProcess": ([dword, c.c_int, dword], handle),
+            "IsProcessInJob": ([handle, handle, c.POINTER(c.c_int)], c.c_int),
+            "K32GetProcessMemoryInfo": ([handle, c.c_void_p, dword], c.c_int),
             "CloseHandle": ([handle], c.c_int),
         }
         for name, (arguments, result) in signatures.items():
@@ -438,7 +492,7 @@ class WindowsOwned:
                                        environment_block, str(ROOT), c.byref(startup), c.byref(info)))
             stdout = os.fdopen(read_fd, "rb", buffering=0)
             read_fd = None
-            result = cls(api, job, info.process, stdout, Accounting)
+            result = cls(api, job, info.process, stdout, Accounting, ProcessIds, Memory)
             job = info.process = None  # Ownership transfers only after the stream is ready.
             return result
         finally:
@@ -465,6 +519,7 @@ class WindowsOwned:
     def poll(self):
         if self.accounting().limited:
             raise RuntimeError("Windows job exceeded its process cap")
+        self.measure_memory()
         status = self.api.WaitForSingleObject(self.process, 0)
         if status == 258:  # WAIT_TIMEOUT
             return None
@@ -474,6 +529,44 @@ class WindowsOwned:
         if not self.api.GetExitCodeProcess(self.process, ctypes.byref(result)):
             raise ctypes.WinError(ctypes.get_last_error())
         return result.value
+
+    def measure_memory(self):
+        # Job memory/PeakJobMemoryUsed counts committed virtual memory, not RSS.
+        # Use working-set bytes from pinned process handles in this exact job.
+        pids = self.process_ids_type()
+        if not self.api.QueryInformationJobObject(self.job, 3, ctypes.byref(pids),
+                                                 ctypes.sizeof(pids), None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if pids.assigned > MAX_PROCESSES or pids.listed > MAX_PROCESSES:
+            raise RuntimeError("Windows job process list exceeded its cap")
+        if pids.assigned != pids.listed:
+            raise RuntimeError("Windows job process list is incomplete")
+        rss = 0
+        for pid in pids.pids[:pids.listed]:
+            # SYNCHRONIZE also permits the exit check after a failed read.
+            process = self.api.OpenProcess(0x100000 | 0x1000 | 0x0010, False, pid)
+            if not process:
+                # A missing handle cannot silently mean zero resident bytes.
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                belongs = ctypes.c_int()
+                if not self.api.IsProcessInJob(process, self.job, ctypes.byref(belongs)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if not belongs.value:
+                    raise RuntimeError("Windows sampled PID no longer belongs to the owned job")
+                memory = self.memory_type()
+                memory.size = ctypes.sizeof(memory)
+                if not self.api.K32GetProcessMemoryInfo(process, ctypes.byref(memory), memory.size):
+                    if self.api.WaitForSingleObject(process, 0) == 0:
+                        continue  # A pinned job member ended during this read.
+                    raise ctypes.WinError(ctypes.get_last_error())
+                rss += memory.working_set
+            finally:
+                if not self.api.CloseHandle(process):
+                    raise ctypes.WinError(ctypes.get_last_error())
+        self.peak_rss_bytes = max(self.peak_rss_bytes, rss)
+        if rss > MAX_RSS_BYTES:
+            raise RuntimeError("owned Windows job exceeded the 3 GiB sampled RSS cap")
 
     def close(self):
         if not self.job:
@@ -552,7 +645,7 @@ def spawn_owned(command, environment, deadline):
             raise
         return result
     process = None
-    error, cleanup_error, returncode, peak = None, None, 1, 0
+    error, cleanup_error, returncode, peak, peak_rss = None, None, 1, 0, 0
     try:
         parent.close()
         os.close(read_fd)
@@ -569,17 +662,20 @@ def spawn_owned(command, environment, deadline):
                                    close_fds=True)
         child.sendall(json.dumps({"pid": process.pid}).encode() + b"\n")
         while process.poll() is None:
-            count = group_count(process.pid)
+            count, rss = group_resources(process.pid)
             peak = max(peak, count)
+            peak_rss = max(peak_rss, rss)
             if count > MAX_PROCESSES:
                 raise RuntimeError("owned process group exceeded 32 processes")
+            if rss > MAX_RSS_BYTES:
+                raise RuntimeError("owned process group exceeded the 3 GiB sampled RSS cap")
             if time.monotonic() >= deadline:
                 raise RuntimeError("contract check exceeded shared 570s deadline")
             ready, _, _ = select.select([child], [], [], 0.1)
             if ready and not child.recv(1):
                 raise RuntimeError("contract check owner exited")
         returncode = process.returncode
-        if group_count(process.pid):
+        if group_resources(process.pid)[0]:
             raise RuntimeError("wrapper exited with owned descendants still present")
     except BaseException as failure:
         error = str(failure)[:512]
@@ -596,7 +692,7 @@ def spawn_owned(command, environment, deadline):
             try:
                 child.sendall(json.dumps({"returncode": returncode, "error": error,
                                           "cleanup_error": cleanup_error,
-                                          "peak": peak}).encode() + b"\n")
+                                          "peak": peak, "peak_rss_bytes": peak_rss}).encode() + b"\n")
             except OSError:
                 pass  # The owner is gone; owned group cleanup was attempted above.
             child.close()
@@ -650,7 +746,9 @@ def run_command(command, deadline, log):
                     raise failures[0]
                 if returncode:
                     raise RuntimeError(f"verification wrapper exited {returncode}")
-                cost = {"output_bytes": len(output), "peak_owned_processes": owned.peak}
+                cost = {"output_bytes": len(output), "peak_owned_processes": owned.peak,
+                        "peak_sampled_rss_bytes": owned.peak_rss_bytes,
+                        "memory_scope": owned.memory_scope}
                 break
             if time.monotonic() >= deadline:
                 raise RuntimeError("contract check exceeded shared 570s deadline")
@@ -674,6 +772,12 @@ def run_command(command, deadline, log):
                 except BaseException as failure:
                     cleanup_failures.append(str(failure)[:512])
     if original_failure is not None or cleanup_failures:
+        if owned is not None:
+            print(json.dumps({"event": "ci.delivery_command_resources", "status": "fail",
+                              "seconds": round(time.monotonic() - started, 3),
+                              "peak_owned_processes": owned.peak,
+                              "peak_sampled_rss_bytes": owned.peak_rss_bytes,
+                              "memory_scope": owned.memory_scope}), file=sys.stderr)
         # Preserve the original failure even if release also fails. UTF-8
         # replacement can expand bytes threefold: 8 KiB raw + 32 KiB JSON
         # and the fixed outcome text stay below the total 64 KiB budget.
@@ -751,6 +855,7 @@ def main():
     record = {"event": "ci.delivery_os_contract", "status": "fail", "groups": [],
               "invocations": 0, "build_jobs": BUILD_JOBS,
               "deadline_seconds": TOTAL_SECONDS, "process_cap": MAX_PROCESSES,
+              "sampled_rss_bytes_cap": MAX_RSS_BYTES,
               "input_bytes_per_command_cap": MAX_OUTPUT_BYTES,
               "selected_names_per_group_cap": MAX_NAMES}
     try:
