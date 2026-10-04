@@ -527,9 +527,11 @@ def spawn_owned(command, environment, deadline):
         stream = None
         try:
             stream = os.fdopen(read_fd, "rb", buffering=0)
-            return PosixOwned(pid, parent, stream)
+            result = PosixOwned(pid, parent, stream)
         except BaseException:
-            parent.close()  # EOF asks the guardian to end its command.
+            # No command starts before ownership of both streams is complete.
+            # EOF releases the waiting guardian even if wrapping stdout failed.
+            parent.close()
             if stream is not None:
                 stream.close()
             else:
@@ -537,9 +539,18 @@ def spawn_owned(command, environment, deadline):
             until = time.monotonic() + CLEANUP_SECONDS + 1
             while not os.waitpid(pid, os.WNOHANG)[0]:
                 if time.monotonic() >= until:
-                    raise RuntimeError("failed ownership transfer; guardian cleanup unproved")
+                    os.kill(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
+                    raise RuntimeError("failed ownership transfer; waiting guardian was killed and reaped")
                 time.sleep(0.05)
             raise
+        try:
+            parent.sendall(b"S")
+        except BaseException:
+            result.close()
+            stream.close()
+            raise
+        return result
     process = None
     error, cleanup_error, returncode, peak = None, None, 1, 0
     try:
@@ -547,6 +558,11 @@ def spawn_owned(command, environment, deadline):
         os.close(read_fd)
         signal.signal(signal.SIGINT, interrupted)
         signal.signal(signal.SIGTERM, interrupted)
+        # The parent may fail while creating its stream or owner handle. Until
+        # its start message arrives this guardian owns no external command.
+        ready, _, _ = select.select([child], [], [], max(0, deadline - time.monotonic()))
+        if not ready or child.recv(1) != b"S":
+            raise RuntimeError("command ownership was not transferred")
         process = subprocess.Popen(command, cwd=ROOT, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=write_fd,
                                    stderr=subprocess.STDOUT, start_new_session=True,
