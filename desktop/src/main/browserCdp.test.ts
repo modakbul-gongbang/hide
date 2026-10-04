@@ -282,6 +282,53 @@ describe("scoped desktop CDP public boundary", () => {
     expect((await browser.call("Runtime.evaluate", {}, page)).error).toBeDefined();
   });
 
+  it("detaches only a virtual parent's independent page while another parent keeps the same page", async () => {
+    const { first, capability, client } = await fixture();
+    const browser = await client((await capability()).browser_ws_url);
+    const alias = async () => ((await browser.call("Target.attachToBrowserTarget")).result as Json).sessionId as string;
+    const parentA = await alias(), parentB = await alias();
+    const pageA = ((await browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, parentA)).result as Json).sessionId as string;
+    const pageB = ((await browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, parentB)).result as Json).sessionId as string;
+    expect(pageA).not.toBe(pageB);
+    expect((await browser.call("Target.detachFromTarget", { sessionId: parentA })).error).toBeUndefined();
+    expect((await browser.call("Runtime.evaluate", {}, pageA)).error).toBeDefined();
+    expect((await browser.call("Runtime.evaluate", {}, pageB)).result).toEqual({ result: { type: "string", value: "native-alias-2" } });
+    expect(first.contents.debugger.isAttached()).toBe(true);
+    expect((await browser.call("Target.detachFromTarget", { sessionId: parentB })).error).toBeUndefined();
+    expect(first.contents.debugger.isAttached()).toBe(false);
+  });
+
+  it("revokes a virtual parent before awaiting detach and refuses its in-flight or later child admission", async () => {
+    const { first, capability, client } = await fixture();
+    const browser = await client((await capability()).browser_ws_url);
+    const parent = ((await browser.call("Target.attachToBrowserTarget")).result as Json).sessionId as string;
+    const page = ((await browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, parent)).result as Json).sessionId as string;
+    const original = first.contents.debugger.sendCommand.bind(first.contents.debugger);
+    let releaseAttach!: () => void, releaseDetach!: () => void, observeAttach!: () => void;
+    const attachBlocked = new Promise<void>((resolve) => { releaseAttach = resolve; });
+    const detachBlocked = new Promise<void>((resolve) => { releaseDetach = resolve; });
+    const attachObserved = new Promise<void>((resolve) => { observeAttach = resolve; });
+    const boundary = vi.spyOn(first.contents.debugger, "sendCommand").mockImplementation(async (method, params, nativeId) => {
+      if (method === "Target.attachToTarget") { observeAttach(); await attachBlocked; }
+      if (method === "Target.detachFromTarget" && params?.sessionId === "native-alias-1") await detachBlocked;
+      return original(method, params, nativeId);
+    });
+    try {
+      const inFlight = browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, parent);
+      await attachObserved;
+      const detached = browser.call("Target.detachFromTarget", { sessionId: parent });
+      expect((await browser.call("Browser.getVersion")).error).toBeUndefined();
+      expect((await browser.call("Runtime.evaluate", {}, page)).error).toBeDefined();
+      expect((await browser.call("Target.attachToTarget", { targetId: "page-12", flatten: true }, parent)).error).toBeDefined();
+      releaseDetach();
+      expect((await detached).error).toBeUndefined();
+      releaseAttach();
+      expect((await inFlight).error).toBeDefined();
+      expect(first.contents.debugger.isAttached()).toBe(false);
+      expect(browser.events.filter((event) => event.method === "Target.attachedToTarget" && event.sessionId === parent)).toHaveLength(1);
+    } finally { releaseAttach(); releaseDetach(); boundary.mockRestore(); }
+  });
+
   it("includes main-frame preparation in the native command deadline and releases the lease", async () => {
     const { first, capability, client } = await fixture();
     const browser = await client((await capability()).browser_ws_url);

@@ -49,7 +49,7 @@ type Lease = {
   root: Session;
   message: DebuggerMessage;
   detach: DebuggerDetach;
-  pageAttaches: { targetId: string; flattened: boolean; browserParent?: string }[];
+  pageAttaches: { targetId: string }[];
   ready: Promise<void>;
   mainFrameId: string;
 };
@@ -471,11 +471,12 @@ export class BrowserCdpGateway {
   private getSession(client: Client, id: string): Session {
     const session = client.sessions.get(id);
     if (!session) throw new ProtocolError("Unknown scoped session");
+    if (session.browserParent && !client.browserSessions.has(session.browserParent)) throw new ProtocolError("Scoped browser parent was released");
     this.page(client.capability, targetId(session.lease.page));
     return session;
   }
   private sessionCount(client: Client): number { return client.sessions.size + client.browserSessions.size; }
-  private attach(client: Client, page: CdpPage, flattened: boolean, kind: "page" | "tab" = "page", browserParent?: string): Session {
+  private attach(client: Client, page: CdpPage, flattened: boolean, kind: "page" | "tab" = "page"): Session {
     const existing = client.leases.get(page.contents.id);
     if (existing) {
       if (existing.root.kind === kind) return existing.root;
@@ -485,7 +486,7 @@ export class BrowserCdpGateway {
     if (this.sessionCount(client) >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
     if (this.owners.has(page.contents.id) || page.contents.debugger.isAttached()) throw new ProtocolError("Target already has a debugger");
     page.contents.debugger.attach("1.3");
-    const root = { id: secret(), targetId: `${kind}-${page.contents.id}`, kind, flattened, browserParent } as Session;
+    const root = { id: secret(), targetId: `${kind}-${page.contents.id}`, kind, flattened } as Session;
     const lease: Lease = { page, client, root, pageAttaches: [], ready: Promise.resolve(), mainFrameId: "", message: (_event, method, params, sessionId) => this.nativeEvent(lease, method, params, sessionId), detach: () => this.release(lease, false) };
     root.lease = lease;
     page.contents.debugger.on("message", lease.message);
@@ -527,20 +528,34 @@ export class BrowserCdpGateway {
   private async attachAdditionalPage(lease: Lease, flattened: boolean, browserParent?: string): Promise<Session> {
     const { client } = lease;
     if (this.sessionCount(client) + lease.pageAttaches.length >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
+    if (browserParent && !client.browserSessions.has(browserParent)) throw new ProtocolError("Scoped browser parent was released");
     const answer: unknown = await this.native(lease.root, "Target.getTargetInfo", {});
     if (!object(answer) || !object(answer.targetInfo) || answer.targetInfo.type !== "page" || typeof answer.targetInfo.targetId !== "string") throw new ProtocolError("The native page cannot create an additional session");
-    const intent = { targetId: answer.targetInfo.targetId, flattened, browserParent };
+    if (browserParent && !client.browserSessions.has(browserParent)) throw new ProtocolError("Scoped browser parent was released");
+    const intent = { targetId: answer.targetInfo.targetId };
     lease.pageAttaches.push(intent);
+    let nativeId: string | undefined;
     try {
       const result: unknown = await this.native(lease.root, "Target.attachToTarget", { targetId: intent.targetId, flatten: true });
       if (!object(result) || typeof result.sessionId !== "string") throw new ProtocolError("The native page could not create an additional session");
+      nativeId = result.sessionId;
       const existing = [...client.sessions.values()].find((session) => session.lease === lease && session.nativeId === result.sessionId);
       if (existing) return existing;
       return this.additionalPageSession(lease, result.sessionId, flattened, browserParent);
+    } catch (error) {
+      if (nativeId && this.owners.get(lease.page.contents.id) === lease && ![...client.sessions.values()].some((session) => session.lease === lease && session.nativeId === nativeId)) {
+        try { await this.native(lease.root, "Target.detachFromTarget", { sessionId: nativeId }); }
+        catch { this.release(lease); }
+      }
+      throw error;
     } finally {
       const index = lease.pageAttaches.indexOf(intent);
       if (index >= 0) lease.pageAttaches.splice(index, 1);
+      this.releaseUnusedLease(lease);
     }
+  }
+  private releaseUnusedLease(lease: Lease): void {
+    if (lease.pageAttaches.length === 0 && ![...lease.client.sessions.values()].some((session) => session.lease === lease)) this.release(lease);
   }
   private additionalPageSession(lease: Lease, nativeId: string, flattened: boolean, browserParent?: string): Session {
     const { client, page } = lease;
@@ -642,6 +657,7 @@ export class BrowserCdpGateway {
       await session.lease.ready;
       this.page(client.capability, targetId(page));
       if (this.owners.get(page.contents.id) !== session.lease) throw new ProtocolError("Debugger session was released");
+      if (session.browserParent && !client.browserSessions.has(session.browserParent)) throw new ProtocolError("Scoped browser parent was released");
       const result = await page.contents.debugger.sendCommand(method, this.frameFields(session.lease, params, false), session.nativeId);
       return object(result) ? this.nativePayload(session.lease, method, result) : result;
     })(), session.lease);
@@ -749,19 +765,29 @@ export class BrowserCdpGateway {
       const page = this.page(client.capability, id);
       const existed = client.leases.has(page.contents.id);
       const kind = id.startsWith("tab-") ? "tab" : "page";
-      const lease = client.leases.get(page.contents.id);
-      const session = lease && kind === "page" ? await this.attachAdditionalPage(lease, params.flatten === true, browserParent) : this.attach(client, page, params.flatten === true, kind, browserParent);
-      if (!existed) this.event(client, "Target.attachedToTarget", { sessionId: session.id, targetInfo: this.info(page, kind), waitingForDebugger: false }, browserParent);
+      if (browserParent && kind !== "page") throw new ProtocolError("Scoped browser sessions attach only page targets");
+      let lease = client.leases.get(page.contents.id);
+      if (browserParent && !lease) {
+        // The physical debugger belongs to the connection. Every virtual
+        // parent's public page gets an independent native child session.
+        const root = this.attach(client, page, true);
+        client.sessions.delete(root.id);
+        lease = root.lease;
+      }
+      let session: Session;
+      try { session = lease && kind === "page" ? await this.attachAdditionalPage(lease, params.flatten === true, browserParent) : this.attach(client, page, params.flatten === true, kind); }
+      finally { if (lease) this.releaseUnusedLease(lease); }
+      if (!existed && !browserParent) this.event(client, "Target.attachedToTarget", { sessionId: session.id, targetInfo: this.info(page, kind), waitingForDebugger: false });
       return { sessionId: session.id };
     }
     if (method === "Target.detachFromTarget") {
       const id = text(params, "sessionId");
       if (client.browserSessions.has(id)) {
         if (parent || browserParent && browserParent !== id) throw new ProtocolError("Session is not a child of this target");
+        client.browserSessions.delete(id);
         for (const session of [...client.sessions.values()]) {
           if (session.browserParent === id && client.sessions.has(session.id)) await this.detachSession(session);
         }
-        client.browserSessions.delete(id);
         this.event(client, "Target.detachedFromTarget", { sessionId: id, targetId: "scoped-browser" });
         return {};
       }
@@ -808,6 +834,7 @@ export class BrowserCdpGateway {
       // Native detach events can arrive after the command reply. Retire the
       // admitted subtree exactly once before granting another command.
       this.retireSession(session);
+      this.releaseUnusedLease(session.lease);
     } else this.release(session.lease);
   }
   private retireSession(child: Session): void {
@@ -899,12 +926,9 @@ export class BrowserCdpGateway {
       if (info.type === "page") {
         if ([...client.sessions.values()].some((session) => session.lease === lease && session.nativeId === params.sessionId)) return;
         const index = lease.pageAttaches.findIndex((intent) => intent.targetId === info.targetId);
-        if (index >= 0) {
-          const intent = lease.pageAttaches.splice(index, 1)[0]!;
-          try { this.additionalPageSession(lease, params.sessionId, intent.flattened, intent.browserParent); }
-          catch { this.release(lease); }
-          return;
-        }
+        // The awaiting native attach result owns admission and cleanup. It
+        // rechecks the virtual parent before publishing this exact session.
+        if (index >= 0) return;
       }
       let depth = 0;
       for (let ancestor: Session | undefined = parent; ancestor; ancestor = ancestor.parent) depth++;
@@ -919,6 +943,6 @@ export class BrowserCdpGateway {
     } else if (method === "Target.detachedFromTarget") {
       const child = [...client.sessions.values()].find((session) => session.lease === lease && session.nativeId === params.sessionId);
       if (child) this.retireSession(child);
-    } else if (!method.startsWith("Target.") && !method.startsWith("Browser.")) this.event(client, method, this.nativePayload(lease, method, params), parent);
+    } else if (client.sessions.has(parent.id) && !method.startsWith("Target.") && !method.startsWith("Browser.")) this.event(client, method, this.nativePayload(lease, method, params), parent);
   }
 }
