@@ -1,0 +1,194 @@
+# Diagnostic repetitions retain the ordinary case deadlines and zero retries.
+# Every repetition starts a fresh libtest or Playwright fixture on its real OS.
+name: isolated failure controls
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  rust:
+    name: Rust boundary controls (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - system: linux
+            runner: ubuntu-latest
+          - system: macos
+            runner: macos-15
+          - system: windows
+            runner: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          save-if: false
+      - name: Build original OS and kit suites
+        timeout-minutes: 10
+        run: bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-kit --no-run
+      - name: Thirty independent native boundary repetitions
+        timeout-minutes: 10
+        env:
+          CI_LANE: boundary-controls
+          CI_JOB_LABEL: Rust boundary controls (${{ matrix.system }})
+        run: |
+          mkdir -p "$RUNNER_TEMP/boundary-controls"
+          cases=(ipc:a_burst_of_clients_that_connect_and_leave_loses_no_connect fs:a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it)
+          if [ "$RUNNER_OS" != Windows ]; then
+            cases+=(node:the_old_homes_shim_still_names_the_node node:a_probe_with_a_version_but_unsuccessful_exit_is_not_a_node)
+          fi
+          for scenario in "${cases[@]}"; do
+            suite=${scenario%%:*}
+            name=${scenario#*:}
+            for repeat in $(seq 1 30); do
+              export CI_REPEAT=$repeat
+              log="$RUNNER_TEMP/boundary-controls/$name-$repeat.log"
+              status=0
+              if [ "$suite" = node ]; then
+                bash scripts/verify-cargo.sh test-scoped -p hide-kit --lib "hcoord::tests::$name" --message-format=json-render-diagnostics -- --exact --nocapture > "$log" 2>&1 || status=$?
+              else
+                bash scripts/verify-cargo.sh test-scoped -p hide-platform --test "$suite" "$name" --message-format=json-render-diagnostics -- --exact --nocapture > "$log" 2>&1 || status=$?
+              fi
+              node scripts/ci-ledger.cjs rust "$log" "$RUNNER_TEMP/boundary-controls/$name-$repeat.json"
+              if [ "$status" -ne 0 ]; then cat "$log"; exit "$status"; fi
+            done
+          done
+      - name: Original platform and kit suites
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-kit
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-ledger-boundary-${{ matrix.system }}
+          path: ${{ runner.temp }}/boundary-controls/*.json
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: boundary-raw-${{ matrix.system }}
+          path: ${{ runner.temp }}/boundary-controls/*.log
+          retention-days: 14
+          if-no-files-found: error
+  web:
+    name: Web boundary controls (${{ matrix.system }}, ${{ matrix.scenario.name }})
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        system: [linux, macos, windows]
+        include:
+          - system: linux
+            runner: ubuntu-latest
+            platform: linux-x86_64
+          - system: macos
+            runner: macos-15
+            platform: macos-aarch64
+          - system: windows
+            runner: windows-latest
+            platform: windows-x86_64
+        scenario:
+          - name: checkout
+            grep: 'With no workspace bound|A new tab in a plain folder'
+          - name: external
+            grep: 'An external focused creation'
+          - name: s2
+            grep: 'checkouts, tabs, splits, zoom, close and the sheet'
+          - name: reported-linux
+            grep: 'Main, Overview and a Workspace with its columns|Agent tabs shrink in stages'
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: controls-${{ matrix.system }}-${{ matrix.scenario.name }}
+      runner: ${{ matrix.runner }}
+      herdr-platform: ${{ matrix.platform }}
+      ledger-lane: web-controls
+      shards: 1
+      grep: ${{ matrix.scenario.grep }}
+      full-suite: true
+      repeat-each: 30
+  desktop:
+    name: Desktop boundary controls (${{ matrix.scenario }})
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        scenario: [bytes, native]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          save-if: false
+      - run: bash scripts/verify-cargo.sh cli
+        timeout-minutes: 20
+      - name: Prepare the real candidate app
+        timeout-minutes: 5
+        run: |
+          bash scripts/verify-web.sh install
+          bash scripts/verify-web.sh web build
+          bash scripts/verify-web.sh hcoord build
+          bash scripts/verify-web.sh desktop electron-install
+          bash scripts/verify-web.sh desktop playwright-install
+      - id: herdr
+        run: |
+          bin=$(zsh scripts/fetch-herdr-runtime.sh)
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Thirty independent desktop fixtures
+        timeout-minutes: 20
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/desktop-controls
+          CI_LEDGER_PATH: ${{ runner.temp }}/desktop-controls/ledger.json
+          CI_LANE: desktop-controls
+          CI_JOB_LABEL: Desktop boundary controls (${{ matrix.scenario }})
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          if [ "$SCENARIO" = bytes ]; then
+            filter='Agent edge drag splits the desktop column'
+          else
+            filter='area cycle native: page input previews one exact area'
+          fi
+          bash scripts/verify-web.sh desktop e2e --grep "$filter" --repeat-each=30 --retries=0
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-ledger-desktop-controls-${{ matrix.scenario }}
+          path: ${{ runner.temp }}/desktop-controls/ledger.json
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-controls-raw-${{ matrix.scenario }}
+          path: |
+            ${{ runner.temp }}/desktop-controls
+            desktop/test-results
+            agents/runs/terminal-input-diagnosis
+          retention-days: 14
+          if-no-files-found: error

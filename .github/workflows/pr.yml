@@ -512,7 +512,7 @@ jobs:
             const fs=require('node:fs');
             fs.mkdirSync('ci-ledgers',{recursive:true});
             const collect=require('./scripts/ci-history.cjs');
-            await collect({github,context,core,directory:'ci-ledgers',plan:JSON.parse(fs.readFileSync('ci-plan.json','utf8'))});
+            await collect({github,context,core,directory:'ci-ledgers',planPath:'ci-plan.json'});
       - uses: actions/upload-artifact@v7
         if: always()
         with:

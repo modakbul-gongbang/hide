@@ -16,9 +16,21 @@ on:
   schedule:
     - cron: "0 18 * * *"
   workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [full, failure-controls, capacity]
+        default: full
+        description: Full coverage, isolated thirty-run failure controls, or matched six-shard capacity measurement.
+      max-parallel:
+        type: choice
+        options: ['4', '6']
+        default: '6'
+        description: Capacity measurement only; all six shards remain selected.
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: nightly-${{ github.ref }}-${{ github.event_name }}
@@ -26,6 +38,7 @@ concurrency:
 
 jobs:
   web-e2e-linux:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
     name: web e2e (Linux full)
     uses: ./.github/workflows/web-e2e.yml
     with:
@@ -36,6 +49,7 @@ jobs:
       full-suite: true
 
   web-e2e-macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
     name: web e2e (macOS full)
     uses: ./.github/workflows/web-e2e.yml
     with:
@@ -46,6 +60,7 @@ jobs:
       full-suite: true
 
   web-e2e-windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
     name: web e2e (Windows full)
     uses: ./.github/workflows/web-e2e.yml
     with:
@@ -56,10 +71,12 @@ jobs:
       full-suite: true
 
   os-contract:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
     name: os contract
     uses: ./.github/workflows/os-contract.yml
 
   desktop-e2e:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
     name: desktop e2e (${{ matrix.system }} full)
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -144,6 +161,8 @@ jobs:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
           CI_LEDGER_PATH: ${{ runner.temp }}/hide-e2e/ledger-${{ matrix.system }}.json
+          CI_LANE: desktop-e2e
+          CI_JOB_LABEL: desktop e2e (${{ matrix.system }} full)
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           if [ "$RUNNER_OS" = Linux ]; then
@@ -159,10 +178,71 @@ jobs:
           path: |
             ${{ runner.temp }}/hide-e2e
             desktop/test-results
+            agents/runs/terminal-input-diagnosis
           if-no-files-found: error
           retention-days: 14
 
+      - name: Keep normalized desktop attempts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-ledger-nightly-desktop-${{ matrix.system }}
+          path: ${{ runner.temp }}/hide-e2e/ledger-${{ matrix.system }}.json
+          retention-days: 30
+          if-no-files-found: error
+
+  capacity:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'capacity'
+    name: six Linux shards capacity ${{ inputs.max-parallel }}
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: capacity-${{ inputs.max-parallel }}
+      runner: ubuntu-latest
+      herdr-platform: linux-x86_64
+      shards: 6
+      max-parallel: ${{ fromJSON(inputs.max-parallel) }}
+      full-suite: true
+
+  failure-controls:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'failure-controls'
+    uses: ./.github/workflows/ci-failure-controls.yml
+
+  history:
+    name: normalized nightly attempts
+    needs: [web-e2e-linux, web-e2e-macos, web-e2e-windows, desktop-e2e, os-contract, package, capacity, failure-controls]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ci-ledger-*
+          path: ci-ledgers
+      - name: Collect actual jobs and bounded attempt history
+        if: always()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const collect=require('./scripts/ci-history.cjs');
+            await collect({github,context,core,directory:'ci-ledgers'});
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-history-attempt-${{ github.run_attempt }}
+          path: ci-history.json
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-history-window
+          path: ci-history-window.json
+          retention-days: 30
+          if-no-files-found: error
+
   package:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
     name: package
     uses: ./.github/workflows/package.yml
     with:
@@ -172,7 +252,7 @@ jobs:
   report:
     name: report a failure
     needs: [web-e2e-linux, web-e2e-macos, web-e2e-windows, desktop-e2e, os-contract, package]
-    if: ${{ always() && github.ref == 'refs/heads/main' }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

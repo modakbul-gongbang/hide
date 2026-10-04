@@ -75,7 +75,7 @@ test('collection API and inventory errors persist a failing partial attempt for 
       listArtifactsForRepo:async()=>{throw Error('history permission denied');}
     }}};
     const options={github,context:{repo:{},runId:7,sha:'tested'},core:{summary:{addRaw:()=>({write:async()=>{}})}},directory:input,outputDirectory:output,
-      plan:kind==='inventory'?{lanes:{'web-e2e':true}}:undefined};
+      plan:kind==='inventory'?{version:1,lanes:{'web-e2e':true}}:undefined};
     await assert.rejects(collect(options),kind==='inventory'?/missing observed/:/permission denied/);
     const attempt=JSON.parse(fs.readFileSync(path.join(output,'ci-history.json')));
     const window=JSON.parse(fs.readFileSync(path.join(output,'ci-history-window.json')));

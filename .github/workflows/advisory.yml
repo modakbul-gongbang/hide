@@ -49,6 +49,7 @@ jobs:
           pattern: ci-ledger-*
           path: ci-ledgers
       - uses: actions/github-script@v8
+        if: always()
         with:
           script: |
             const collect=require('./scripts/ci-history.cjs');

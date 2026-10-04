@@ -27,6 +27,11 @@ on:
         description: The pinned Herdr asset to run, as `fetch-herdr-runtime.sh --platform` names it.
         type: string
         required: true
+      repeat-each:
+        description: Independent fixtures per selected test; bounded diagnostic dispatch only.
+        type: number
+        required: false
+        default: 1
       max-parallel:
         description: Trial capacity, keeping all shard tests and identities.
         type: number
@@ -67,10 +72,13 @@ jobs:
         env:
           SHARDS: ${{ inputs.shards }}
           MAX_PARALLEL: ${{ inputs.max-parallel }}
+          REPEATS: ${{ inputs.repeat-each }}
         run: |
           python3 - <<'PYPLAN'
           import json, os
           shards = int(os.environ['SHARDS'])
+          if int(os.environ['REPEATS']) not in (1, 30):
+              raise ValueError('repetitions must preserve the ordinary or thirty-fixture contract')
           if int(os.environ['MAX_PARALLEL']) not in (4, 6):
               raise ValueError('capacity trial must be 4 or 6')
           if not 1 <= shards <= 8:
@@ -251,9 +259,10 @@ jobs:
           GREP: ${{ inputs.grep }}
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
           FULL_SUITE: ${{ inputs.full-suite }}
+          REPEATS: ${{ inputs.repeat-each }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          args=(--shard="$SHARD")
+          args=(--shard="$SHARD" --repeat-each="$REPEATS" --retries=0)
           if [ "$FULL_SUITE" != true ]; then
             python3 scripts/ci-quarantine.py filter --suite web --mode exclude --os "$RUNNER_OS" --output "$RUNNER_TEMP/quarantine-list.txt"
             args+=(--test-list-invert "$RUNNER_TEMP/quarantine-list.txt")

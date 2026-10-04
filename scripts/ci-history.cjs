@@ -59,7 +59,11 @@ function summary(suites, inventory) {
   return lines.join('\n')+'\n';
 }
 
-async function collectInto({github,context,directory,plan}, state) {
+async function collectInto(options, state) {
+  const {github,context,directory,planPath}=options;
+  state.stage='plan';
+  const plan=planPath?JSON.parse(fs.readFileSync(planPath,'utf8')):options.plan;
+  if (plan && (plan.version!==1 || !plan.lanes)) throw new Error('unknown CI plan');
   state.stage='input';
   const current=readRecords(directory,state.records);
   state.stage='jobs-api';
