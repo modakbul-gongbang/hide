@@ -1226,7 +1226,8 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 General includes Language, using the existing Settings row and selector pattern.
 Its options name English, 한국어, 简体中文 and 日本語 in their own scripts, plus Use system language.
-The selected value comes from the core snapshot; a pending edit keeps the confirmed value visible and disables another edit until confirmation or refusal.
+The selected value comes from the core snapshot; an edit keeps the confirmed value visible until the next snapshot.
+The selector remains available while connected, so a concurrent choice from another client cannot strand a local pending edit.
 An explicit choice is shared by connected shell windows; Use system language resolves separately in each client, with English for unsupported languages.
 [LOCALIZATION.md](LOCALIZATION.md) owns the policy and the remaining integration surfaces.
 

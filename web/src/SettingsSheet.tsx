@@ -169,20 +169,16 @@ function InterfaceLanguageRow({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const choice = useShellStore((state) => state.rest?.ui_state?.interface_language ?? null);
   const connected = useShellStore((state) => state.connection === "live");
-  const [pending, setPending] = useState<{ previous: typeof choice; since: number } | null>(null);
-  const error = useErrorSince(pending?.since ?? null, ["interface_language."]);
-  useEffect(() => {
-    // Another client's confirmed choice can supersede this request in one burst.
-    if (pending && choice !== pending.previous) setPending(null);
-  }, [choice, pending]);
+  const [changedAt, setChangedAt] = useState<number | null>(null);
+  const error = useErrorSince(changedAt, ["interface_language."]);
   return (
     <Group title={t("common.language")} note={t("common.languageDescription")}>
-      <Row label={t("common.language")} detail={error ? <Note tone="error">{t("settings.notSaved", { reason: error })}</Note> : pending ? <Note>{t("common.loading")}</Note> : null}>
-        <Select value={choice ?? "system"} disabled={!connected || (pending !== null && !error)} onValueChange={(value) => {
+      <Row label={t("common.language")} detail={error ? <Note tone="error">{t("settings.notSaved", { reason: error })}</Note> : null}>
+        <Select value={choice ?? "system"} disabled={!connected} onValueChange={(value) => {
           if (value !== "system" && !isInterfaceLanguage(value)) throw new Error("invalid_interface_language");
           const language = value === "system" ? null : value;
           if (language === choice) return;
-          setPending({ previous: choice, since: Date.now() });
+          setChangedAt(Date.now());
           actions.setInterfaceLanguage(language);
         }}>
           <SelectTrigger aria-label={t("common.language")} data-interface-language={choice ?? "system"}><SelectValue /></SelectTrigger>

@@ -25,7 +25,7 @@ Old state files need no migration.
 `instance.ts` creates an independent translator from the embedded four-language catalogs, validating keys and interpolation placeholders before initialization.
 `client.tsx` owns one in-memory translator per shell page and follows confirmed snapshots and browser `languagechange` events.
 It sets the document language and subscribes React surfaces through react-i18next.
-Language selection is disabled while disconnected or waiting for confirmation.
+Language selection is disabled while disconnected, and displays only the confirmed core value while connected.
 A client never translates conversations, terminal bytes, file contents, paths, branch names, device labels, task labels or other user-owned text.
 Such values are interpolation data, rendered as text.
 Diagnostic payloads and copied diagnostic records remain technical source data.
