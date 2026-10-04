@@ -590,26 +590,21 @@ mod tests {
         ));
     }
 
-    struct Fixture(PathBuf);
+    struct Fixture(tempfile::TempDir);
 
     impl Fixture {
         fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "hide-agent-hooks-{name}-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|value| value.as_nanos())
-                    .unwrap_or_default()
-            ));
-            let _ = fs::remove_dir_all(&root);
-            fs::create_dir_all(root.join(".claude")).unwrap();
-            fs::create_dir_all(root.join(".codex")).unwrap();
+            let root = tempfile::Builder::new()
+                .prefix(&format!("hide-agent-hooks-{name}-"))
+                .tempdir()
+                .expect("allocate an exclusively owned hook fixture");
+            fs::create_dir_all(root.path().join(".claude")).unwrap();
+            fs::create_dir_all(root.path().join(".codex")).unwrap();
             Self(root)
         }
 
         fn home(&self) -> &Path {
-            &self.0
+            self.0.path()
         }
 
         fn write(&self, runtime: AgentRuntime, body: &str) {
@@ -622,10 +617,28 @@ mod tests {
         }
     }
 
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+    #[test]
+    fn same_named_fixtures_keep_their_own_settings_until_their_owner_drops() {
+        let first = Fixture::new("same-name");
+        let second = Fixture::new("same-name");
+        let first_home = first.home().to_path_buf();
+        let second_home = second.home().to_path_buf();
+        assert_ne!(first_home, second_home);
+        first.write(AgentRuntime::ClaudeCode, r#"{"owner":"first"}"#);
+        second.write(AgentRuntime::ClaudeCode, r#"{"owner":"second"}"#);
+        second.write(AgentRuntime::Codex, r#"{"owner":"second"}"#);
+
+        drop(first);
+        assert!(!first_home.exists());
+        assert!(second_home.is_dir());
+        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
+            assert_eq!(
+                second.read(runtime),
+                serde_json::json!({ "owner": "second" })
+            );
         }
+        drop(second);
+        assert!(!second_home.exists());
     }
 
     fn helper(fixture: &Fixture) -> PathBuf {

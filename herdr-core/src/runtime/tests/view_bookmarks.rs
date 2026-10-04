@@ -709,6 +709,8 @@ fn open_page(url: &str, reveal: bool) -> Action {
     Action::OpenBrowser {
         url: url.to_owned(),
         reveal,
+        area_id: None,
+        new_target: false,
     }
 }
 
@@ -874,6 +876,7 @@ fn a_view_select_from_another_tab_waits_for_its_tab_and_reveal_does_not() {
         Action::Select {
             view_id: a.clone(),
             reveal: false,
+            expected_browser_area: None,
         },
         "select",
     );
@@ -889,6 +892,7 @@ fn a_view_select_from_another_tab_waits_for_its_tab_and_reveal_does_not() {
         Action::Select {
             view_id: b.clone(),
             reveal: true,
+            expected_browser_area: None,
         },
         "select-reveal",
     );
@@ -953,6 +957,7 @@ fn a_parked_select_and_open_beside_keep_the_operators_area_and_fronts() {
         Action::Select {
             view_id: b.clone(),
             reveal: false,
+            expected_browser_area: None,
         },
         "select-right",
     );

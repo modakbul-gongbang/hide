@@ -238,6 +238,20 @@ The harness resolves that directory to an absolute path before starting child pa
 The driver and the marker still go to the one measured pane, so the other panes are idle shells with mounted xterm instances, and the gate is the same as the single-pane run.
 A Chrome window opens on the desktop for the run; the loop throttles in an occluded or minimized window, so leave it visible and report the load recorded beside each trial.
 
+## Scoped browser gateway discovery
+
+Browser inventory area identity is projected in the existing changed-layout generation pass, one visit per area and display, with no additional notification or timer.
+Each sync also compares borrowed identities for at most 256 saved Workspace layouts against the current connected checkout catalog, with no allocation when the scope is unchanged.
+A scope transition advances that same generation and rebuilds the inventory; removed or disconnected checkouts retain their saved layouts but retain no native page authority.
+Positive area scopes are collected in that same pass (at most 256 Workspaces times six areas), with no allocation or extra notification on unchanged generations.
+Changed generations build one bounded map of the previous scopes to retain their incarnations; missing scopes receive the current generation on regrant, so coalesced revocations cannot preserve old capabilities.
+Session and catalog mutation boundaries use that same borrowed comparison and immediately discard revoked scope incarnations; only a scope transition allocates a bounded checkout set and advances the generation, without a tree reconcile or another notification.
+The daemon's gateway registration retains at most four app process identities; each discovery or action checks those bounded identities outside the Runtime mutex.
+Discovery and browser actions share eight admission permits; exceeding the cap reports `browser_control_busy` rather than queuing more work.
+Discovery does loopback HTTP outside the core owner thread, with no proxy or redirect, an eight-second deadline and a 16 KiB answer cap.
+Browser creation reuses Workspace prepare/read/commit and its existing retry-record cap; checkout file reads remain outside the Runtime mutex.
+Idle pages add no discovery work, and ordinary terminal input, snapshots and tab selection do not start gateway requests.
+
 ## Projects and Overview cost contract
 
 The shared input surface and empty-state renderer add no timers, tasks, I/O or core state.

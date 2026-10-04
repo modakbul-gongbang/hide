@@ -199,12 +199,20 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
 }
 
 pub fn request(path: &Path, query: &str) -> Result<Value, String> {
+    request_query(path, query, None)
+}
+
+pub fn browser_connect(path: &Path, display_id: Option<&str>) -> Result<Value, String> {
+    request_query(path, "browser_connect", display_id)
+}
+
+fn request_query(path: &Path, query: &str, display_id: Option<&str>) -> Result<Value, String> {
     let reference = read_reference(path)?;
     let request_id = fresh_request_id()?;
     run_exchange(
         path,
         &reference,
-        json!({"type":"workspace_query","request_id":request_id,"query":query}),
+        json!({"type":"workspace_query","request_id":request_id,"query":query,"display_id":display_id}),
         &request_id,
         false,
     )

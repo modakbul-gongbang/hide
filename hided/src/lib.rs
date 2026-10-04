@@ -2,6 +2,7 @@ pub mod attachments;
 pub mod boundary;
 mod browser_assets;
 pub mod browser_cli;
+pub mod browser_control;
 pub mod browser_routes;
 pub mod build_id;
 pub mod cli;
@@ -342,6 +343,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         token: Arc::new(token.clone()),
         pane_capabilities: Arc::clone(&pane_capabilities),
         browser_routes,
+        browser_control: Arc::new(browser_control::BrowserControl::default()),
         herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),

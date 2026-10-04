@@ -482,6 +482,13 @@ A remote loopback URL gets an SSH local forward with bounded connections, while 
 Neither route falls back to this Mac's same path or port; close, device loss, or desktop process exit releases the route.
 Client frames are core events (`schema_version`, `kind`, `payload`).
 HTTP serves static assets, `GET /health` (`pid`, `version`, `build`, `schema_version`, `clients`), and token-authenticated Browser route resolution and release for the desktop host.
+The same desktop authentication registers and releases its process-bound private CDP gateway at `/browser-control`; the pane's scoped `browser_connect` query discovers a checkout capability without receiving either private token (`hided/src/browser_control.rs`).
+`/browser-control/action` accepts only browser open, close and select from that registered desktop process and routes them through Workspace prepare/read/commit, not the shell's unrestricted event dispatcher.
+New CDP targets name their existing View area and create a distinct display there; default CLI opens retain URL deduplication and active-area placement.
+The native inventory carries each browser's area ID from the core-owned layout, including background Workspaces.
+Positive browser area scopes ride the same revisioned projection, including empty areas, and require a currently connected catalog checkout.
+The core preserves each area's incarnation only while its authority remains present; a revoke/regrant changes it even if snapshot coalescing hides the intervening absence.
+The shell only forwards them; the native gateway permanently retires capabilities whose scope disappears or changes incarnation, distinct from closing a page in a still-authorized area.
 No HTTP request dispatches a core event.
 The first frame after a valid handshake is `daemon` (`version`, `pid`, `schema_version`, `host_name`, the state paths, the Herdr binary and socket, the idle policy); Settings > General reads it, and it never carries the token.
 The daemon owns the core's two observation flags, the Settings one (`ai_settings.observing`, which runs the provider probe and the hook diagnosis) and a start surface's (`ai_settings.start_observing`, which runs the provider probe alone): a client's hint is only that connection's demand (`hided/src/demand.rs`, one `ObservationDemand` per flag), each flag follows its first observer in and its last one out, and a connection that closes releases both demands, so a closed tab never leaves the probe running.

@@ -10,7 +10,7 @@ There is no Herdr browser pane and no chromux profile behind it, and nothing is 
 | Owner | Holds | Code |
 | --- | --- | --- |
 | The core | Browser View layout, requested address and load stamp, and the native page's reported loading state | `herdr-core/src/view_layout.rs`, `herdr-core/src/runtime/view_areas.rs`, `herdr-core/src/runtime/workspace_control.rs` |
-| hided | The local `file:` event boundary, the checkout-scoped Browser CLI transport, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_routes.rs`, `hided/src/browser_assets.rs` |
+| hided | The local `file:` event boundary, checkout-scoped Browser commands and gateway discovery, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_control.rs`, `hided/src/browser_routes.rs`, `hided/src/browser_assets.rs` |
 | The web shell | Where each page sits, since only it has the geometry, the toolbar, the overlay freeze, and the notice in a plain browser tab | `web/src/BrowserDisplay.tsx`, `web/src/browserViews.ts`, `web/src/host.ts` |
 | The desktop app | The pages: one `WebContentsView` per display it was asked to show, their navigation, route requests, and their lifetime | `desktop/src/main/browser.ts`, `desktop/src/main/browserSync.ts`, `desktop/src/main/host.ts`, `desktop/src/preload/index.ts` |
 
@@ -18,6 +18,8 @@ The core never loads a page and the desktop app never decides which displays exi
 The core's Browser View inventory is sent as an empty array when the last page closes, so the native host removes that page even when no other Browser View remains.
 A display's `load` stamp is how the core asks for a load: the host loads the display's address again whenever the stamp is newer than the one it last applied, so opening an address the Workspace already shows focuses that display and loads it again rather than adding a second one.
 The stamp is not saved; a relaunched page loads its address once when it is first shown.
+The retained inventory also carries the authoritative `area_id`, so native control never guesses a page's area from the front Workspace.
+Only checkouts in the current connected catalog contribute to that inventory; a removed or disconnected checkout's saved layout grants no native page authority.
 
 ## Opening a page
 
@@ -31,6 +33,8 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
   The action receipt and page status carry the load stamp, so a concurrent reopen that supersedes the requested load returns `page_superseded` instead of the newer load's result.
   `--reveal` explicitly brings the caller's checkout and selected Browser View forward, including a connected SSH device.
   The CLI returns one JSON line, exits nonzero on refusal, and never starts Hide.
+  Its successful result includes `cdp_http_url` and `browser_ws_url` when the native gateway can issue a capability for that display.
+  If discovery fails after placement, the result retains its applied View receipt and carries `browser_control.state: unavailable` with a retry command; discovery does not undo or repeat the open.
 - Open in Browser in the Explorer's menu on an HTML file of a local or connected device checkout.
   The device host must have file access consent for a remote page to load.
 - A page that opens a tab, a `target=_blank` link (an image a page wraps in one), a shift-click or `window.open` without window features, gets another browser display in the same Workspace, beside that page so the page that asked stays in view.
@@ -47,6 +51,114 @@ Closing an untouched empty display adds nothing to Recent Closed or draft recove
 
 A nonempty display holds only an `http`, `https` or `file` address with something after the `//`, or `about:blank`, within 8 KiB; anything else is refused with its reason and nothing changes.
 A remote `file:` address is loaded through a checkout-scoped route, never as a file on this Mac.
+
+## Scoped browser control
+
+`hide browser connect [--display <id>]` uses the caller's existing Workspace credential and prints a JSON result with `cdp_http_url` and `browser_ws_url`.
+It accepts no Workspace override and requires a connected desktop renderer.
+An explicit display must be a browser in that credential's checkout; an omitted display uses that checkout's active View area for new targets.
+Discovery does not reveal the Workspace, activate the app, or start a daemon.
+
+The desktop registers one private numeric-loopback gateway address and random control token with hided through daemon-authenticated `/browser-control`.
+The registration is tied to the app PID and process birth, has a four-host cap, and is removed on release or discarded when a later request finds the app gone.
+An ambiguous multi-window registration refuses discovery instead of choosing another window.
+At most eight discovery and browser action requests are in flight, and discovery has an eight-second deadline with a 16 KiB response cap, no proxy and no redirects.
+The CLI receives only the public capability URLs; it never receives the desktop registration token or the shell's daemon token.
+
+CDP target creation uses authenticated `/browser-control/action` and the existing Workspace prepare/read/commit contract.
+The core inserts a distinct browser display into the capability's named area even when another area is active or the same address is already open.
+An unknown area refuses before placement.
+CDP exposes only HTTP(S) and blank pages; native `file:` displays, filesystem paths and other schemes return `browser_address_unsupported` for attachment or creation.
+Every HTTP(S) or blank native page generation blocks `file:` requests before its first load, independently of debugger attachment, and retains that restriction until the generation ends.
+The native guard cancels file main-frame and child-frame navigation, redirects, resources and popup requests, including addresses assembled by `Runtime.evaluate`; it never attempts to recognize JavaScript source text.
+Manual local-file displays retain the file policy below and are never CDP targets.
+An explicit manual navigation to a validated local file replaces the restricted WebContents with the existing separate file partition instead of relaxing an in-flight generation.
+Downloads and filesystem writes are disabled once a generation has held a debugger lease, including after disconnect.
+Each native generation logs its first file request, navigation and popup refusal separately, and its first controlled-download refusal once; repeated attempts remain canceled without more diagnostic output.
+Close and select bind the authenticated area into the core action and recheck the display's area and browser kind under the commit lock after retry lookup.
+A page moved after the query is refused without changing its selection or closing it; shell renderers and terminal displays cannot be selected or closed by this route.
+The app has one retry identity per launch registration, so retransmitting a completed close returns its receipt after the page is gone.
+The core also publishes positive area scopes separately from its browser inventory, including empty areas of connected catalog checkouts.
+Each scope has an incarnation that remains stable during ordinary layout changes and changes after authority is revoked and granted again.
+The shell forwards these scopes through the existing native sync; a missing scope grants no CDP authority.
+Capabilities pin that incarnation, so a coalesced snapshot that hides the intermediate revocation cannot revive an old connection URL.
+The core records loss of authority when a session or checkout catalog is updated, before another worker update or snapshot read can hide it.
+Unregistering a checkout, disconnecting its device or removing its area permanently revokes existing capabilities, so registering it again requires a fresh connection URL.
+Closing an area's final page retains its area scope and allows a fresh target there without reviving an expired checkout capability.
+
+The gateway creates a new private control token and random capability path for each app launch; restarting the app or replacing its daemon connection invalidates every old URL and debugger session.
+It binds only numeric loopback, checks Host and Origin, and serves discovery only under the issued capability path.
+It does not enable Electron's process-wide debugging port, and its target provider contains only the BrowserViews inventory, never the shell renderer or another area's pages.
+The tab's attachment mark follows an actual debugger lease; disconnect detaches the client while preserving the display, and closing the display ends its sessions.
+Browser-wide cookie, cache, permission, download, context and shutdown commands are refused; page-origin cookie reads are scoped to the current page.
+Flattened descendant iframe sessions and one level of legacy session envelopes are supported; deeper legacy envelopes are refused before a mutation.
+Limits are fixed in the host: 64 capabilities, 32 sockets, eight clients, 16 HTTP requests, 32 pending commands per client, 64 sessions per client, 4 MiB messages, 8 MiB buffered output and 600 commands per minute per client.
+A command has a ten-second deadline; each client keeps at most 128 mutation receipts, accepts a replay for at most nine minutes, and retries an ambiguous core action at most three times with its original request identity.
+
+### Client invocations
+
+Use the complete `browser_ws_url` from `hide browser connect` as `browser_ws_url` below.
+It is a capability: preserve its path, keep it out of shared logs, and request a fresh URL after its authority ends.
+The supported profiles are agent-browser 0.38.2, chrome-devtools-mcp 1.10.1, Playwright 1.63.0 and the Browser Use 0.13.10 low-level session API.
+Each client connects to an existing HTTP(S) or blank display; an area capability also permits a new display in that same area.
+
+```sh
+agent-browser --cdp "$browser_ws_url" open http://127.0.0.1:3000
+agent-browser --cdp "$browser_ws_url" snapshot -i
+```
+
+```sh
+chrome-devtools-mcp --wsEndpoint "$browser_ws_url" --no-usage-statistics --no-performance-crux
+```
+
+MCP's literal `--browser-url` mode resolves discovery at `/json/version` and loses the capability prefix; use its official `--wsEndpoint` option.
+Anonymous root discovery remains unavailable.
+
+```js
+import { chromium } from "playwright";
+
+const browser = await chromium.connectOverCDP(browser_ws_url, { noDefaults: true });
+try {
+  const context = browser.contexts()[0];
+  const page = context.pages()[0];
+  console.log(await page.title());
+} finally {
+  await browser.close(); // Disconnects this external client; preserves the display.
+}
+```
+
+Playwright uses the existing context with `noDefaults: true`; creating another context or applying its default global download configuration is unsupported.
+Page, tab and iframe target metadata carries one opaque context identifier per launch so clients can associate those targets with the existing context; it does not grant native context authority.
+
+```sh
+BU_CDP_URL="$browser_ws_url" python - <<'PY'
+import asyncio
+import os
+from browser_use import BrowserSession
+
+async def main():
+    session = BrowserSession(
+        cdp_url=os.environ["BU_CDP_URL"], is_local=False, keep_alive=True,
+        use_cloud=False, enable_default_extensions=False, accept_downloads=False,
+        permissions=[], captcha_solver=False, auto_download_pdfs=False,
+    )
+    try:
+        await session.connect()
+        print(await session.get_tabs())
+        page = await session.get_current_page()
+        if page is None:
+            raise RuntimeError("No eligible browser display is attached")
+        print(await page.evaluate("() => document.title"))
+    finally:
+        await session.stop()
+
+asyncio.run(main())
+PY
+```
+
+This Browser Use example explicitly passes `BU_CDP_URL` to the Python API and uses `connect`, page queries and `stop`.
+Default `Agent` or `start` watchdogs request browser-wide download behavior and are unsupported; this profile does not establish Browser Use CLI support.
+Native file displays and unrestricted browser-context administration are unsupported for every client.
 
 ## The file boundary
 
@@ -191,6 +303,10 @@ It opens a page with `hide browser open`, checks the native view sits on its slo
 The test window never activates the app or takes the keyboard, because the e2e fixture launches every app with `--hide-show-inactive` and `--disable-backgrounding-occluded-windows` (see [BUILD.md](BUILD.md#the-desktop-app)); it is shown behind the operator's windows, keeps painting there, and captures of it are taken by window id.
 The zoom test needs the key window: it is tagged `@needs-focus` and brings its window to the front itself.
 Keep screenshots and logs under local-only `agents/runs/`.
+`desktop/e2e/browser-cdp.spec.ts` exercises the scoped native gateway against its own candidate, including pre-attachment native file-request cancellation and persistent download cancellation after client disconnect.
+Its iframe proof correlates exact scoped parent and child target/session IDs with the candidate's native frame tree and distinct renderer processes, then retires the child and requires stale commands to fail while the parent remains usable.
+A same-renderer cross-site frame fails that OOPIF proof instead of substituting an in-process interaction or forcing launch flags.
+Its download witness confines the candidate app and owned page session to a private sink before every attempt, observes production cancellation on every native callback, and requires one refusal diagnostic and an empty sink.
 `desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server, whose sessions get the private HOME `desktop/e2e/device-home.ts` proves because connecting installs Hide's kit there, and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, route cleanup on close and forced candidate exit, and a return route that comes back after the device's helper connection ends and reconnects, with every remote command run through the `hide` Hide installed and linked on the device.
 
 ## Running Workspace servers

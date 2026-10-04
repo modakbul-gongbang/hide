@@ -39,6 +39,6 @@ describe("new-tab choices", () => {
       { id: "d2", kind: "browser", url: "about:blank" },
     ] } } } as unknown as ViewLayoutSnapshot;
     expect(displayIdentity({ kind: "browser", url: null } as ViewDisplaySnapshot)).toBe("New tab");
-    expect(browserDisplays(layout)).toEqual([{ id: "d2", url: "about:blank", load: 0 }]);
+    expect(browserDisplays(layout)).toEqual([{ id: "d2", area_id: "a1", url: "about:blank", load: 0 }]);
   });
 });
