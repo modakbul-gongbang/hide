@@ -541,15 +541,20 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   let spawnFailed: Error | null = null;
   server.once("error", (error) => { spawnFailed = error; });
   const { stop } = ownUntilWorkerExit(() => {
-    // Listed before the server stops, while its panes are still its children.
+    // On Windows a pane's processes can outlive the server and keep the
+    // root locked. Listed while the server still runs (so its pid is its
+    // own), ended after it stops; a failure here keeps the root and is
+    // thrown after the logs are copied.
+    let failure: unknown;
     let owned: WindowsProcess[] = [];
-    try {
-      if (process.platform === "win32" && server.pid) owned = windowsProcessTree(server.pid);
-    } finally {
-      spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
-      if (server.exitCode === null) server.kill("SIGKILL");
+    if (process.platform === "win32" && server.pid && server.exitCode === null && server.signalCode === null) {
+      try { owned = windowsProcessTree(server.pid); } catch (error) { failure = error; }
     }
-    if (process.platform === "win32") endWindowsProcesses(owned, root);
+    spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
+    if (server.exitCode === null) server.kill("SIGKILL");
+    if (process.platform === "win32") {
+      try { endWindowsProcesses(owned, root); } catch (error) { failure = failure === undefined ? error : afterCleanup(failure, () => { throw error; }); }
+    }
     for (const file of [socket, socket.replace(/\.sock$/, "-client.sock")]) {
       fs.rmSync(file, { force: true });
     }
@@ -571,6 +576,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         }
       }
     }
+    if (failure !== undefined) throw failure;
     fs.rmSync(root, { recursive: true, force: true });
   });
   try {
