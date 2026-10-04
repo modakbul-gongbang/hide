@@ -58,7 +58,10 @@ check("checksum", () => {
 const scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-smoke-")));
 const unpacked = path.join(scratch, "unpacked");
 const home = path.join(scratch, "home");
-const state = path.join(scratch, "state");
+// Keep the state under its selected HOME authority, as the shipped default
+// does. An unrelated external override would require authenticating the
+// system drive namespace before the kit may treat a missing ledger as empty.
+const state = path.join(home, ".hide", "state");
 
 /** Each fixture starts from the actual archive, as an operator's extraction does. */
 function unpackInto(destination) {

@@ -1210,6 +1210,8 @@ It shares `hide_kit::retirement_inspection` predicates with the local pass and n
 The shared authority check refuses relocated legacy homes outside HOME or overlapping the active kit or state, and requires a registered owning checkout for indexed runs outside HOME, before either pass can write.
 No old test server is stopped by name without an ownership receipt; the operator confirms earlier test servers before the transition and refuses automatic cleanup when ownership cannot be established.
 After preflight it stops the former daemon, unloads the LaunchAgent and deletes its plist, removes only Hide-owned command/plugin links, deletes the kit copy, then renames `~/.hide/hcoord` and `~/.hcoord` to siblings ending in `.retired-YYYY-MM-DD`.
+An unavailable Herdr server does not imply a remaining plugin: retirement strictly reads the owned global `plugins.json` at the pinned Herdr's config location, accepting a missing registry or absent coordination entry as already unlinked.
+A registered entry uses Herdr's existing offline uninstall and must disappear from the registry before the step completes; malformed or untrusted state and an unavailable removal command remain resumable failures.
 `~/.hide/kit/coordination-retirement.json` records the step, reason and completion for idempotent retry.
 After a failed retirement step, ordinary parts continue and the retirement row keeps that failure; a preflight refusal precedes the account lock and stops the entire apply.
 The old ledger is never imported or deleted and there is no rollback; the operator chooses the merge/install transition time with all work closed and chooses the later release that removes the stage.
@@ -1314,7 +1316,7 @@ On Windows x64 and Linux x64 the same script ships the same files, `.exe` on Win
 `hide_kit::bundled_kit_dir` recognizes macOS `*.app/Contents/Resources` and the Windows/Linux `resources` folder only when its `app.asar` and the parent folder's Electron `hide[.exe]` exist.
 A packaged daemon installs the CLI and the configured Claude Code/Codex hooks and publishes their kit report to This machine; the one-release retirement row reports its outcome on every platform.
 A packaged CLI resolves its actual executable path before this check and may replace another build's daemon; a standalone copy cannot acquire that authority through a link that merely looks packaged.
-The package smoke uses an isolated home to check installation, new-shell command resolution and hooks, then a complete second package fixture whose daemon has an executable overlay to change its SHA-256, proving replacement and refreshed paths without compiling twice.
+The package smoke uses an isolated home with state beneath that HOME authority to check installation, new-shell command resolution and hooks, then a complete second package fixture whose daemon has an executable overlay to change its SHA-256, proving replacement and refreshed paths without compiling twice.
 Signing with a real identity, notarization, auto-update, installers, a tray item, global shortcuts, Dock badges, a pet, file drops into a pane and the usage display are not part of this host yet (issue 184).
 
 ### The shortcut registry

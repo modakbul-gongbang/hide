@@ -385,12 +385,12 @@ impl Fixture {
             std::env::var_os("HIDE_E2E_HERDR_BIN")
                 .context("set HIDE_E2E_HERDR_BIN to the pinned binary")?,
         );
-        let cli = std::env::var_os("HIDE_E2E_CLI_DIR")
+        let source_cli = std::env::var_os("HIDE_E2E_CLI_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| repository.join("target/debug"));
         for name in ["hide", "hided", "hide-agent-hooks", "hide-host-helper"] {
             ensure!(
-                cli.join(name).is_file(),
+                source_cli.join(name).is_file(),
                 "build this worktree's CLI binaries before remote_delivery"
             );
         }
@@ -409,6 +409,25 @@ impl Fixture {
             Environment::new(&root.join("l"), &ipc.path().join("l.sock"), &bin, &bridge)?;
         let remote_env =
             Environment::new(&root.join("r"), &ipc.path().join("r.sock"), &bin, &bridge)?;
+        // The device installs shipped executables, which carry no debug
+        // data. Stage this candidate's code with the same property: hashing
+        // and uploading a CI debug image can exhaust helper setup's bound.
+        // Never strip the worktree's build output or another candidate.
+        let cli = root.join("cli");
+        fs::create_dir(&cli)?;
+        for name in ["hide", "hided", "hide-agent-hooks", "hide-host-helper"] {
+            let staged = cli.join(name);
+            fs::copy(source_cli.join(name), &staged)?;
+            let mut strip = local_env.command("/usr/bin/strip");
+            strip.arg(&staged);
+            successful(strip)?;
+            #[cfg(target_os = "macos")]
+            {
+                let mut sign = local_env.command("/usr/bin/codesign");
+                sign.args(["--force", "--sign", "-"]).arg(&staged);
+                successful(sign)?;
+            }
+        }
         let manifest: Value =
             serde_json::from_slice(&read(&repository.join("contracts/herdr-bundle.json"))?)?;
         let mut version = local_env.command(&bin);
@@ -536,6 +555,18 @@ impl Fixture {
         })?;
         wait_for("consented private helper", || {
             let snapshot = fixture.snapshot()?;
+            if let Some(host) = snapshot
+                .pointer("/navigator/devices")
+                .and_then(Value::as_array)
+                .and_then(|rows| rows.iter().find(|row| row["id"] == "remote"))
+                .and_then(|row| row.get("host"))
+                && matches!(
+                    host["state"].as_str(),
+                    Some("unavailable" | "unsupported" | "identity_changed")
+                )
+            {
+                bail!("private helper setup failed: {}", host["message"]);
+            }
             Ok(snapshot
                 .pointer("/navigator/devices")
                 .and_then(Value::as_array)

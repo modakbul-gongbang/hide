@@ -72,7 +72,11 @@ When the behavior depends on the order of two events, the test fixes that order;
 - Set every fixture's `HOME` and Hide state folder to private paths before starting a candidate.
 - A retirement test injects its service-control boundary and uses private legacy folders and ledger fixtures.
   A real launchd call to the account's default retired-service label reaches the operator's service regardless of a private `HOME`, so it is never part of fixture teardown.
+- The private SSH mailbox fixture stages candidate executable copies without debug symbols, as shipped binaries are, and ad-hoc signs those copies on macOS.
+  The original build output, setup deadlines, real helper upload and mailbox assertions remain unchanged; terminal helper refusal reports its state message instead of waiting out the readiness deadline.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
+- The Linux and Windows package smoke places state beneath its private HOME, matching the shipped default and preserving the retirement preflight's HOME authority.
+  An external state override still requires the full namespace ownership and permission checks.
 - A fixture that starts the packaged daemon also sets the host's `HIDE_CLI_PATH` to that bundle's `hide`, because an unbundled debug CLI correctly refuses a different release build.
   Keep the installation and idempotence assertions unchanged; a mixed-build fixture never reaches them through the window.
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
