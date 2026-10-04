@@ -1,4 +1,4 @@
-//! Text another program wrote (an agent's title, an hcoord sender's name,
+//! Text another program wrote (an agent's title, a letter sender's name,
 //! a label line, a request or reply), made fit for a row the operator reads.
 //!
 //! Every Unicode default-ignorable code point is dropped: they draw nothing
