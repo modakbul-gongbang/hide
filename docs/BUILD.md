@@ -83,6 +83,8 @@ All test daemons and temporary files are cleaned up on failure as well as succes
 
 `desktop/` is a pnpm workspace member; `pnpm install` at the root installs it with the web shell.
 Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the first launch rather than at install, so a lane that only typechecks never fetches it.
+CI acquires that lock-resolved runtime once with `bash scripts/verify-web.sh desktop electron-install` before desktop or packaged-app fixtures, using the dependency's own checksum-verifying installer within a five-minute step.
+An acquisition failure blocks the suite at that prerequisite and retains the upstream error instead of retrying the download in each test.
 
 | Command | Does |
 | --- | --- |
@@ -94,6 +96,8 @@ Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the
 
 The app attaches to whatever daemon the environment names: without `HIDE_STATE_DIR` it is the operator's own at `~/.hide/state`.
 For QA, set `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR` to private paths, as `desktop/e2e/fixture.ts` does and refuses to launch without.
+Use `web/e2e/platform-fixture.ts` for the native executable and tool paths and for Windows `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` inside that private home.
+The fixture C shim needs the runner's native compiler, `cc` on Unix or `clang.exe` on Windows, with an owned 20-second process bound; this is a fixture prerequisite, not an installed product requirement.
 A packaged app does not need `hide` on `PATH`: it ships its own CLI and Herdr, and only falls back to a login-shell PATH search and the well-known install directories when its own bundled CLI is somehow missing (see `docs/ARCHITECTURE.md`, The desktop host).
 macOS may refuse the unsigned app's first launch until it is opened once with Open from the context menu.
 

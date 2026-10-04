@@ -14,6 +14,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
@@ -31,7 +32,7 @@ type SentEvent = { kind: string; payload: Record<string, unknown> };
 type Stack = {
   herdr: HerdrFixture;
   daemon: Daemon;
-  /** The checkout root as the core spells it (a resolved path). */
+  /** The resolved checkout root in the core's wire spelling. */
   root: string;
   sent: Map<string, number>;
   last: Map<string, Record<string, unknown>>;
@@ -132,7 +133,7 @@ async function startStack(
     await open(page, daemon);
     await enterWorkspace(page, "fixture");
     await showExplorer(page);
-    return { herdr, daemon, root: path.join(fs.realpathSync(herdr.root), "fixture"), sent, last, events, diagnostics };
+    return { herdr, daemon, root: toPage(path.join(fs.realpathSync(herdr.root), "fixture")), sent, last, events, diagnostics };
   } catch (error) {
     daemon?.stop();
     herdr.stop();
@@ -180,7 +181,7 @@ function editor(page: Page, index: number): Locator {
 }
 
 function explorerRow(page: Page, stack: Stack, name: string): Locator {
-  return page.locator(`[data-explorer-row="${path.join(stack.root, name)}"]`);
+  return page.locator(`[data-explorer-row="${stack.root}/${name}"]`);
 }
 
 /** Opens a View tab's own menu (right-click) and picks one item. */
@@ -306,8 +307,8 @@ async function composeKorean(page: Page, steps: string[][]): Promise<void> {
 test("Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-beside", { "shared.txt": LONG, "other.txt": "other\n", "keep.txt": "keep on disk\n" });
-  const shared = path.join(stack.root, "shared.txt");
-  const keep = path.join(stack.root, "keep.txt");
+  const shared = `${stack.root}/shared.txt`;
+  const keep = `${stack.root}/keep.txt`;
   try {
     const row = (name: string) => explorerRow(page, stack, name);
     await row("shared.txt").click();
@@ -667,7 +668,7 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
   });
   const other = await page.context().newPage();
   try {
-    const betaRoot = path.join(path.dirname(stack.root), "beta");
+    const betaRoot = `${path.posix.dirname(stack.root)}/beta`;
     const choose = async (target: Page, project: string) => {
       await target.locator('[data-sidebar-mode="projects"]').click();
       await target.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first().click();
@@ -679,7 +680,7 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
     // A Workspace chosen for the first time starts with File Views off.
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-file-views", "off");
     await showExplorer(page);
-    for (const name of ["b1.txt", "b2.txt"]) await page.locator(`[data-explorer-row="${path.join(betaRoot, name)}"]`).dblclick();
+    for (const name of ["b1.txt", "b2.txt"]) await page.locator(`[data-explorer-row="${betaRoot}/${name}"]`).dblclick();
     await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
     await choose(page, "fixture");
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
@@ -1027,7 +1028,7 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
                 active: "d64",
                 displays: Array.from({ length: 64 }, (_, index) => ({
                   id: `d${index + 1}`,
-                  path: path.join(stack.root, `f${String(index + 1).padStart(2, "0")}.txt`),
+                  path: `${stack.root}/f${String(index + 1).padStart(2, "0")}.txt`,
                   kind: "file",
                   committed: null,
                   preview: false,
@@ -1305,8 +1306,8 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
           explorer: false,
           changes: true,
           agent_share: 0.4,
-          tabs: ["a.txt", "b.txt", "c.txt"].map((name) => ({ path: path.join(stack.root, name), kind: "file", preview: name === "c.txt" })),
-          active: { path: path.join(stack.root, "b.txt"), kind: "file" },
+          tabs: ["a.txt", "b.txt", "c.txt"].map((name) => ({ path: `${stack.root}/${name}`, kind: "file", preview: name === "c.txt" })),
+          active: { path: `${stack.root}/b.txt`, kind: "file" },
           last_used_unix_ms: Date.now(),
         },
       ],
@@ -1421,7 +1422,7 @@ test("the column toggles, tools, kind marks and an open while File Views is off 
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
     await input.fill("c.txt");
-    const row = page.locator(`[data-palette-row="${path.join(stack.root, "c.txt")}"]`);
+    const row = page.locator(`[data-palette-row="${stack.root}/c.txt"]`);
     await expect(row).toBeVisible({ timeout: 20_000 });
     await row.click();
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
