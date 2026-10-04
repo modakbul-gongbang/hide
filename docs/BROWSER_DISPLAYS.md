@@ -315,6 +315,7 @@ Chromium's `Page.getFrameTree` includes local children only, so an out-of-proces
 The proof retains exact parent identity, native frame parentage, distinct renderer processes and child-session runtime execution, then retires the child and requires stale commands to fail while the parent remains usable.
 A same-renderer cross-site frame fails that OOPIF proof instead of substituting an in-process interaction or forcing launch flags.
 JavaScript and HTTP redirect file attempts must leave native file content unreadable and permit the authorized HTTP page to remain usable; a redirect must reject its navigation caller.
+The redirect proof independently requires the fixture's single permitted redirect response to finish with status 302 and the forbidden file location, so an unrelated transport failure cannot satisfy the denial.
 Chromium may preempt these attempts before the host receives them, so each diagnostic category is capped at one rather than required for those attempts.
 The separate app-owned pre-first-load, post-disconnect and native iframe file attempts must each prove guard-caused cancellation with exactly one refusal diagnostic per generation and no file content.
 Each run stores its iframe provenance in a new private evidence directory, preserving earlier results.

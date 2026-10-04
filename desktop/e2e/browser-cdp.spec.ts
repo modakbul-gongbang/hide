@@ -25,6 +25,8 @@ let sequence = 0;
 let fileCanary: string;
 let fileUrl: string;
 let pendingPreload: ServerResponse | null = null;
+let fileRedirectRequested = false;
+let fileRedirect: { status: number; location: string } | null = null;
 /** Two native attempts during the lease and two after it. */
 const MAX_DOWNLOAD_REQUESTS = 4;
 let downloadRequests = 0;
@@ -196,7 +198,15 @@ test.beforeAll(async () => {
       response.end("OWNED_DOWNLOAD_FIXTURE");
       return;
     }
-    if (request.url === "/file-redirect") { response.writeHead(302, { location: fileUrl }); response.end(); return; }
+    if (request.url === "/file-redirect") {
+      if (fileRedirectRequested) { response.writeHead(429); response.end("Fixture redirect request limit exceeded"); return; }
+      fileRedirectRequested = true;
+      response.setHeader("location", fileUrl);
+      response.writeHead(302);
+      response.once("finish", () => { fileRedirect = { status: response.statusCode, location: String(response.getHeader("location")) }; });
+      response.end();
+      return;
+    }
     if (request.url === "/pending-preload") {
       if (pendingPreload) { response.writeHead(503); response.end(); return; }
       pendingPreload = response;
@@ -215,7 +225,10 @@ test.afterAll(async () => {
   herdr?.stop();
   await new Promise<void>((resolve) => server?.close(() => resolve()));
 });
-test.beforeEach(() => { run = isolate(herdr, "browser-cdp"); downloadRequests = 0; });
+test.beforeEach(() => {
+  run = isolate(herdr, "browser-cdp"); downloadRequests = 0;
+  fileRedirectRequested = false; fileRedirect = null;
+});
 test.afterEach(async () => {
   pendingPreload?.end();
   pendingPreload = null;
@@ -693,7 +706,11 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   const nativeRefusals = () => hostLog(run.env).filter((line) => ["browser.navigation_refused", "browser.request_refused"].includes(line.event as string) && line.reason === "cdp_file_boundary" && line.display_id === redirectId).length;
   expect(nativeRefusals()).toBe(0);
   const redirectPage = browser.contexts()[0]!.pages()[0]!;
+  expect(fileRedirectRequested).toBe(false);
+  expect(fileRedirect).toBeNull();
   await expect(redirectPage.goto(`${origin}/file-redirect`)).rejects.toThrow();
+  expect(fileRedirectRequested).toBe(true);
+  await expect.poll(() => fileRedirect).toEqual({ status: 302, location: fileUrl });
   expect(nativeRefusals()).toBeLessThanOrEqual(2);
   for (const event of ["browser.navigation_refused", "browser.request_refused"]) {
     expect(hostLog(run.env).filter((line) => line.event === event && line.reason === "cdp_file_boundary" && line.display_id === redirectId).length).toBeLessThanOrEqual(1);
