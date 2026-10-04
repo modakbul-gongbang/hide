@@ -81,6 +81,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.name", "Fixture"]);
     git(&["config", "user.email", "fixture@example.invalid"]);
+    git(&["config", "commit.gpgsign", "false"]);
     for (name, content) in [
         ("registered/inside.txt", "base inside\n"),
         ("registered/deleted.txt", "deleted content\n"),
