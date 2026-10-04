@@ -260,17 +260,39 @@ fn clients_that_leave_before_accept_never_hold_up_the_next_connect() {
     server.join().unwrap();
 }
 
+/// How far a burst runs ahead of the accept loop: every this many connects,
+/// one client stays for its answer. Half the smallest backlog the contract
+/// promises (64 on Windows, 128 on macOS).
+const IN_FLIGHT: usize = 32;
+
+/// A client that sends `line` and is kept: its connection stays until it is
+/// accepted, on every system, and its answer proves the accept.
+fn connect_and_ask(path: &Path, line: &str) -> std::io::Result<LocalStream> {
+    let mut client = LocalStream::connect(path)?;
+    client.set_read_timeout(Some(Duration::from_secs(10)))?;
+    client.write_all(line.as_bytes())?;
+    Ok(client)
+}
+
 #[test]
 fn a_burst_of_clients_that_connect_and_leave_loses_no_connect() {
     // #315 as it was seen: an accept loop running, and clients connecting and
     // leaving as fast as they can (the 33rd of 50 timed out on Windows). Each
     // is also shut down before its first read, the race the blocked-read test
-    // cannot reach.
+    // cannot reach. The burst stays inside the backlog the contract names:
+    // every `IN_FLIGHT`th client waits for its answer, because a starved
+    // accept thread let 128 pile up and macOS refused the next (#396).
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
     let closer = listener.closer();
     let server = serve_lines(listener);
     for attempt in 0..200 {
+        if attempt % IN_FLIGHT == IN_FLIGHT - 1 {
+            let mut client = connect_and_ask(&path, "stayed\n")
+                .unwrap_or_else(|error| panic!("connect {attempt} failed: {error:?}"));
+            assert_eq!(read_line(&mut client), "STAYED\n", "connect {attempt}");
+            continue;
+        }
         let mut client = connect_promptly(&path, attempt);
         let handle = client.shutdown_handle();
         handle.shutdown();
@@ -282,6 +304,73 @@ fn a_burst_of_clients_that_connect_and_leave_loses_no_connect() {
         );
     }
     let mut client = connect_promptly(&path, 200);
+    client.write_all(b"after\n").unwrap();
+    assert_eq!(read_line(&mut client), "AFTER\n");
+    closer.close();
+    server.join().unwrap();
+}
+
+#[test]
+fn a_connect_past_the_backlog_is_refused_and_the_listener_serves_on() {
+    // Nobody accepts while clients pile up, so the backlog fills: macOS
+    // refuses the next connect at once, Windows after its wait, and Linux,
+    // whose backlog is far larger, may queue every one. Once the accept loop
+    // runs, every queued client is answered and the listener serves as before.
+    const PAST_EVERY_SMALL_BACKLOG: usize = 300;
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let closer = listener.closer();
+    let (done, finished) = mpsc::channel();
+    let flood = {
+        let path = path.clone();
+        thread::spawn(move || {
+            let mut queued = Vec::new();
+            while queued.len() < PAST_EVERY_SMALL_BACKLOG {
+                let started = Instant::now();
+                match connect_and_ask(&path, "queued\n") {
+                    Ok(client) => queued.push(client),
+                    Err(error) => {
+                        let _ = done.send(());
+                        return (queued, Some((error.kind(), started.elapsed())));
+                    }
+                }
+            }
+            let _ = done.send(());
+            (queued, None)
+        })
+    };
+    // The accept loop starts once the flood has its answer. A system whose
+    // connect waits for room instead of refusing never gives one, so this is
+    // also how long such a connect is left waiting before the loop frees it.
+    let _ = finished.recv_timeout(Duration::from_secs(10));
+    let server = serve_lines(listener);
+    let (queued, refusal) = flood.join().unwrap();
+    match refusal {
+        Some((kind, waited)) => {
+            let at = queued.len();
+            assert!(at >= IN_FLIGHT, "refused after only {at} connects");
+            assert!(
+                matches!(
+                    kind,
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+                ),
+                "connect {at} failed with {kind:?}"
+            );
+            assert!(
+                waited < Duration::from_secs(5),
+                "connect {at} took {waited:?} to be refused"
+            );
+        }
+        None => assert_eq!(
+            std::env::consts::OS,
+            "linux",
+            "{PAST_EVERY_SMALL_BACKLOG} connects queued without a refusal"
+        ),
+    }
+    for (index, mut client) in queued.into_iter().enumerate() {
+        assert_eq!(read_line(&mut client), "QUEUED\n", "queued connect {index}");
+    }
+    let mut client = connect_promptly(&path, PAST_EVERY_SMALL_BACKLOG);
     client.write_all(b"after\n").unwrap();
     assert_eq!(read_line(&mut client), "AFTER\n");
     closer.close();
