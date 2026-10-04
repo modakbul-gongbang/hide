@@ -33,3 +33,20 @@ export function ownUntilWorkerExit(stop: () => void): { stop: () => void; disown
   running.add(owned);
   return { stop: owned, disown: () => void running.delete(owned) };
 }
+
+/**
+ * Runs `cleanup` after `primary` failed and returns `primary` for the caller
+ * to throw. A cleanup that also fails is appended to the stack Playwright
+ * prints, so the original message and location stay first and the cleanup
+ * failure is still reported.
+ */
+export function afterCleanup(primary: unknown, cleanup: () => void): unknown {
+  try {
+    cleanup();
+  } catch (secondary) {
+    const detail = secondary instanceof Error ? (secondary.stack ?? secondary.message) : String(secondary);
+    if (!(primary instanceof Error)) return new Error(`${String(primary)}\n\ncleanup after it also failed: ${detail}`);
+    primary.stack = `${primary.stack ?? primary.message}\n\ncleanup after it also failed: ${detail}`;
+  }
+  return primary;
+}

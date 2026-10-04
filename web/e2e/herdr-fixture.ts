@@ -27,8 +27,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ownUntilWorkerExit } from "./worker-owned";
-import { compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
+import { afterCleanup, ownUntilWorkerExit } from "./worker-owned";
+import { compileFixtureC, endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
 
 export type HerdrFixture = {
   bin: string;
@@ -529,8 +529,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     // Keep host-installed providers out while retaining system tools.
     fixturePath = fixtureToolPath(path.join(root, "bin"));
   } catch (error) {
-    fs.rmSync(root, { recursive: true, force: true });
-    throw error;
+    throw afterCleanup(error, () => fs.rmSync(root, { recursive: true, force: true }));
   }
   // Workspaces created later inherit the server's PATH, not hided's PATH.
   // Keep every pane on the same fake agent binary, including new workspaces.
@@ -542,8 +541,15 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   let spawnFailed: Error | null = null;
   server.once("error", (error) => { spawnFailed = error; });
   const { stop } = ownUntilWorkerExit(() => {
-    spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
-    if (server.exitCode === null) server.kill("SIGKILL");
+    // Listed before the server stops, while its panes are still its children.
+    let owned: WindowsProcess[] = [];
+    try {
+      if (process.platform === "win32" && server.pid) owned = windowsProcessTree(server.pid);
+    } finally {
+      spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
+      if (server.exitCode === null) server.kill("SIGKILL");
+    }
+    if (process.platform === "win32") endWindowsProcesses(owned, root);
     for (const file of [socket, socket.replace(/\.sock$/, "-client.sock")]) {
       fs.rmSync(file, { force: true });
     }
@@ -690,8 +696,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       stop,
     };
   } catch (error) {
-    stop();
-    throw error;
+    throw afterCleanup(error, stop);
   }
 }
 
