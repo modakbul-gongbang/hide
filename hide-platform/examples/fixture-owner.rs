@@ -33,6 +33,9 @@ impl Receipt {
             "v1\t{phase}\t{}\t{}\t{code}\t{survivors}\t{detail}\n",
             self.pid, self.birth
         );
+        if line.len() > RECEIPT_BYTES {
+            return Err(io::Error::other("fixture receipt byte cap exceeded"));
+        }
         atomic::write_file(&self.file, line.as_bytes(), Access::Private)?;
         Ok(())
     }
@@ -86,141 +89,189 @@ fn run() -> io::Result<i32> {
     let mut child = match OwnedChild::spawn(&mut command) {
         Ok(child) => child,
         Err(error) => {
-            receipt.write("launch-failed", -1, 0, &error.to_string())?;
-            return Err(error);
+            return match receipt.write("launch-failed", -1, 0, &error.to_string()) {
+                Ok(()) => Err(error),
+                Err(report) => Err(io::Error::new(
+                    error.kind(),
+                    format!("launch-failed: {error}; secondary receipt-write-failed: {report}"),
+                )),
+            };
         }
     };
     receipt.pid = child.id();
     receipt.birth = match start_time(child.id()) {
         Ok(birth) => birth,
         Err(error) => {
-            let cleanup = child.finish_tree_until(Instant::now() + SHUTDOWN, MEMBERS);
-            receipt.write(
-                "launch-identity-failed",
-                -1,
-                if cleanup.is_err() { -1 } else { 0 },
-                &format!("{error}; cleanup: {cleanup:?}"),
-            )?;
-            return Err(error);
+            return finish(
+                &mut child,
+                &receipt,
+                &root,
+                &request,
+                root_id,
+                false,
+                Some(("launch-identity-failed", error)),
+            );
         }
     };
-    // -1 is unobserved, never a fabricated survivor count.
-    receipt.write("running", 0, -1, "")?;
     let (lost, owner) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
+    let watch = std::thread::Builder::new().spawn(move || {
         let mut byte = [0u8; 1];
-        // No target inherits this pipe. Only worker death or explicit pipe
-        // closure can end the lifetime watch, even after root exit.
-        let answer = std::io::stdin().read(&mut byte);
-        let _ = lost.send(answer);
+        // The worker alone owns the write end; targets receive null stdin.
+        let _ = lost.send(std::io::stdin().read(&mut byte));
     });
-    let mut primary = None;
-    let owner_lost = loop {
-        match owner.try_recv() {
-            Ok(Ok(0)) => break true,
-            Ok(Ok(_)) => {
-                primary = Some((
-                    "owner-protocol-failed",
-                    io::Error::other("fixture owner pipe carried unexpected bytes"),
-                ));
-                break true;
+    if let Err(error) = watch {
+        return finish(
+            &mut child,
+            &receipt,
+            &root,
+            &request,
+            root_id,
+            false,
+            Some(("owner-watch-start-failed", error)),
+        );
+    }
+    let mut phase = "launch-receipt-failed";
+    let observed = (|| -> io::Result<bool> {
+        receipt.write("running", 0, -1, "")?;
+        loop {
+            phase = "owner-pipe-failed";
+            match owner.try_recv() {
+                Ok(Ok(0)) => return Ok(true),
+                Ok(Ok(_)) => {
+                    phase = "owner-protocol-failed";
+                    return Err(io::Error::other(
+                        "fixture owner pipe carried unexpected bytes",
+                    ));
+                }
+                Ok(Err(error)) => return Err(error),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(io::Error::other("fixture owner watch disconnected"));
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
             }
-            Ok(Err(error)) => {
-                primary = Some(("owner-pipe-failed", error));
-                break true;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                primary = Some((
-                    "owner-pipe-failed",
-                    io::Error::other("fixture owner watch disconnected"),
-                ));
-                break true;
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-        }
-        if request.exists() {
-            if std::fs::metadata(&request)?.len() > 128 {
-                receipt.write(
-                    "stop-refused",
-                    -1,
-                    -1,
-                    "fixture stop request byte cap exceeded",
-                )?;
-            } else {
-                let intent = std::fs::read_to_string(&request)?;
-                let expected = format!("{} {}", receipt.pid, receipt.birth);
-                if intent.trim() != expected {
+            phase = "stop-request-metadata-failed";
+            match std::fs::symlink_metadata(&request) {
+                Ok(metadata) => {
+                    // Bound allocation even if the request grows after metadata.
+                    // A directory still reaches the actual native read boundary.
+                    phase = "stop-request-read-failed";
+                    if metadata.is_file() && metadata.len() > 128 {
+                        return Err(io::Error::other("fixture stop request byte cap exceeded"));
+                    }
+                    let mut intent = String::new();
+                    std::fs::File::open(&request)?
+                        .take(129)
+                        .read_to_string(&mut intent)?;
+                    if intent.len() > 128 {
+                        return Err(io::Error::other("fixture stop request byte cap exceeded"));
+                    }
+                    if intent.trim() == format!("{} {}", receipt.pid, receipt.birth) {
+                        return Ok(false);
+                    }
+                    phase = "stop-refusal-receipt-failed";
                     receipt.write(
                         "stop-refused",
                         -1,
                         -1,
                         "fixture launch identity mismatch; preserve home",
                     )?;
-                } else {
-                    break false;
+                    phase = "stop-request-remove-failed";
+                    std::fs::remove_file(&request)?;
                 }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
             }
-            std::fs::remove_file(&request)?;
+            phase = "child-exit-observation-failed";
+            if child.has_exited()? {
+                return Ok(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
-        if child.has_exited()? {
-            break false;
-        }
-        std::thread::sleep(Duration::from_millis(5));
+    })();
+    let (owner_lost, primary) = match observed {
+        Ok(owner_lost) => (owner_lost, None),
+        Err(error) => (false, Some((phase, error))),
     };
-    let deadline = Instant::now() + SHUTDOWN;
-    let result = child.finish_tree_until(deadline, MEMBERS);
-    match result {
-        Ok(status) => {
-            // Normal stop leaves deletion to the calling fixture. Hard owner
-            // loss deletes only this supervisor's root after confirmed exit.
-            if owner_lost {
-                let removal = (|| {
-                    if identity::file_id_nofollow(&root)? != root_id {
-                        return Err(io::Error::other(
-                            "fixture home identity changed; preserve entry",
-                        ));
-                    }
-                    std::fs::remove_dir_all(&root)
-                })();
-                if let Err(error) = removal {
-                    let detail = primary
-                        .as_ref()
-                        .map(|(_, source)| format!("{source}; home cleanup also failed: {error}"))
-                        .unwrap_or_else(|| error.to_string());
-                    receipt.write("home-cleanup-failed", -1, 0, &detail)?;
-                    return Err(io::Error::new(error.kind(), detail));
-                }
-            }
-            if request.exists() {
-                std::fs::remove_file(request)?;
-            }
-            if let Some((phase, error)) = primary {
-                receipt.write(phase, -1, 0, &error.to_string())?;
-                Err(error)
-            } else {
-                receipt.write(
-                    if owner_lost {
-                        "owner-lost-exited"
-                    } else {
-                        "exited"
-                    },
-                    status.code().unwrap_or(-1),
-                    0,
-                    "",
-                )?;
-                Ok(0)
-            }
-        }
+    finish(
+        &mut child, &receipt, &root, &request, root_id, owner_lost, primary,
+    )
+}
+
+/// Every post-launch outcome attempts the same owned termination and reports
+/// the original boundary plus each later failure. No failed query is an empty
+/// tree, and only confirmed exit can authorize home removal.
+fn finish(
+    child: &mut OwnedChild,
+    receipt: &Receipt,
+    root: &std::path::Path,
+    request: &std::path::Path,
+    root_id: identity::FileId,
+    owner_lost: bool,
+    primary: Option<(&'static str, io::Error)>,
+) -> io::Result<i32> {
+    let mut failures: Vec<_> = primary.into_iter().collect();
+    let (code, survivors) = match child.finish_tree_until(Instant::now() + SHUTDOWN, MEMBERS) {
+        Ok(status) => (status.code().unwrap_or(-1), 0),
         Err(error) => {
-            let detail = primary
-                .as_ref()
-                .map(|(_, source)| format!("{source}; owned exit also failed: {error}"))
-                .unwrap_or_else(|| error.to_string());
-            receipt.write("exit-unconfirmed", -1, -1, &detail)?;
-            Err(io::Error::new(error.kind(), detail))
+            failures.push(("exit-unconfirmed", error));
+            (-1, -1)
+        }
+    };
+    if survivors == 0 {
+        if let Err(error) = std::fs::remove_file(request)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            failures.push(("stop-request-cleanup-failed", error));
+        }
+        if owner_lost && failures.is_empty() {
+            let removal = (|| {
+                if identity::file_id_nofollow(root)? != root_id {
+                    return Err(io::Error::other(
+                        "fixture home identity changed; preserve entry",
+                    ));
+                }
+                std::fs::remove_dir_all(root)
+            })();
+            if let Err(error) = removal {
+                failures.push(("home-cleanup-failed", error));
+            }
         }
     }
+    if let Some((phase, primary)) = failures.first() {
+        // At most observation, tree, request and home failures can be present.
+        // The phase remains primary even when a secondary exit is unconfirmed.
+        let detail = failures
+            .iter()
+            .map(|(phase, error)| {
+                format!(
+                    "{phase}: {error}; kind={:?}; raw={:?}",
+                    error.kind(),
+                    error.raw_os_error()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; secondary: ");
+        let report = receipt.write(phase, -1, survivors, &detail);
+        let detail = match report {
+            Ok(()) => detail,
+            Err(error) => format!("{detail}; receipt-write-failed: {error}"),
+        };
+        Err(io::Error::new(primary.kind(), detail))
+    } else {
+        receipt.write(
+            if owner_lost {
+                "owner-lost-exited"
+            } else {
+                "exited"
+            },
+            code,
+            0,
+            "",
+        )?;
+        Ok(0)
+    }
 }
+
 fn main() {
     match run() {
         Ok(code) => std::process::exit(code),

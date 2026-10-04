@@ -32,6 +32,13 @@ def receipt(file):
         'code': int(code), 'survivors': int(survivors), 'error': bytes.fromhex(detail).decode()}
 
 
+def publish(file, content):
+    temporary = file.with_suffix('.tmp')
+    with temporary.open('x') as output:
+        output.write(content)
+    temporary.replace(file)
+
+
 class ProcessObservation:
     def __init__(self, pid):
         self.pid = pid
@@ -104,14 +111,23 @@ if len(sys.argv) == 2:
     time.sleep(60)
 else:
     child = subprocess.Popen([sys.executable, __file__, 'leaf'], start_new_session=os.name != 'nt')
-    pathlib.Path(sys.argv[2]).write_text(json.dumps({'root':os.getpid(), 'child':child.pid}))
+    file = pathlib.Path(sys.argv[2]); temporary = file.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'root':os.getpid(), 'child':child.pid})); temporary.replace(file)
     time.sleep(60)
 """)
             worker = root / 'worker.py'
             worker.write_text("""import json, pathlib, subprocess, sys, time
 child = subprocess.Popen([sys.argv[1], sys.argv[2], sys.argv[3], sys.executable, sys.argv[4], 'root', sys.argv[5]], stdin=subprocess.PIPE)
-pathlib.Path(sys.argv[6]).write_text(json.dumps({'helper':child.pid}))
-time.sleep(60)
+file = pathlib.Path(sys.argv[6]); temporary = file.with_suffix('.tmp')
+def publish():
+    temporary.write_text(json.dumps({'helper':child.pid, 'code':child.poll()})); temporary.replace(file)
+publish()
+deadline = time.monotonic() + 60
+while time.monotonic() < deadline:
+    if child.poll() is not None:
+        publish()
+        time.sleep(60)
+    time.sleep(.005)
 """)
             # The fixture receives a pipe owned only by this worker. Its target
             # has null stdin, and the worker's death never kills the supervisor.
@@ -128,15 +144,28 @@ time.sleep(60)
                     observations = [ProcessObservation(ids[key]) for key in ('root', 'child')] + [ProcessObservation(owner_id['helper'])]
                     self.assertTrue(all(not observed.exited() for observed in observations))
                     if mode == 'identity-refusal':
-                        state.with_suffix('.stop').write_text(f"{running['pid']} {int(running['birth']) + 1}")
+                        publish(state.with_suffix('.stop'), f"{running['pid']} {int(running['birth']) + 1}")
                         refused = until(lambda: (value if value['phase'] == 'stop-refused' else None) if (value := receipt(state)) else None)
                         self.assertIn('launch identity mismatch', refused['error'])
                         self.assertEqual(refused['survivors'], -1)
                         self.assertEqual((home / 'sentinel').read_text(), 'original home')
                         self.assertTrue(all(not observed.exited() for observed in observations))
-                        state.with_suffix('.stop').write_text(f"{running['pid']} {running['birth']}")
+                        publish(state.with_suffix('.stop'), f"{running['pid']} {running['birth']}")
                         finished = until(lambda: (value if value['phase'] == 'exited' else None) if (value := receipt(state)) else None)
                         self.assertTrue(home.exists())
+                    elif mode == 'stop-directory':
+                        self.assertEqual((home / 'sentinel').read_text(), 'original home')
+                        state.with_suffix('.stop').mkdir()
+                        finished = until(lambda: (value if value['phase'] == 'stop-request-read-failed' else None) if (value := receipt(state)) else None)
+                        self.assertEqual(finished['survivors'], 0)
+                        self.assertIn('stop-request-read-failed:', finished['error'])
+                        self.assertIn('stop-request-cleanup-failed:', finished['error'])
+                        self.assertIn('raw=Some(', finished['error'])
+                        if os.name != 'nt':
+                            self.assertIn('Is a directory (os error 21)', finished['error'])
+                        self.assertEqual((home / 'sentinel').read_text(), 'original home')
+                        exit_record = until(lambda: (value if value['code'] is not None else None) if (value := json.loads(worker_identity.read_text())) else None)
+                        self.assertNotEqual(exit_record['code'], 0)
                     else:
                         started = time.monotonic()
                         process.kill()  # exactly the worker PID, no killpg or tree command
@@ -173,6 +202,9 @@ time.sleep(60)
 
     def test_wrong_launch_identity_refuses_a_real_live_target(self):
         self.exercise('identity-refusal')
+
+    def test_native_stop_request_error_preserves_primary_cleanup_and_home(self):
+        self.exercise('stop-directory')
 
 
 if __name__ == '__main__':
