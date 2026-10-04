@@ -169,10 +169,11 @@ function InterfaceLanguageRow({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const choice = useShellStore((state) => state.rest?.ui_state?.interface_language ?? null);
   const connected = useShellStore((state) => state.connection === "live");
-  const [pending, setPending] = useState<{ language: typeof choice; since: number } | null>(null);
+  const [pending, setPending] = useState<{ previous: typeof choice; since: number } | null>(null);
   const error = useErrorSince(pending?.since ?? null, ["interface_language."]);
   useEffect(() => {
-    if (pending && choice === pending.language) setPending(null);
+    // Another client's confirmed choice can supersede this request in one burst.
+    if (pending && choice !== pending.previous) setPending(null);
   }, [choice, pending]);
   return (
     <Group title={t("common.language")} note={t("common.languageDescription")}>
@@ -181,7 +182,7 @@ function InterfaceLanguageRow({ actions }: { actions: Actions }) {
           if (value !== "system" && !isInterfaceLanguage(value)) throw new Error("invalid_interface_language");
           const language = value === "system" ? null : value;
           if (language === choice) return;
-          setPending({ language, since: Date.now() });
+          setPending({ previous: choice, since: Date.now() });
           actions.setInterfaceLanguage(language);
         }}>
           <SelectTrigger aria-label={t("common.language")} data-interface-language={choice ?? "system"}><SelectValue /></SelectTrigger>
@@ -230,7 +231,7 @@ function GeneralTab({ actions }: { actions: Actions }) {
           <Value>{daemon ? `hided ${daemon.version}` : t("common.unavailable")}</Value>
         </Row>
         <Row label={t("settings.process")}>
-          <Value>{daemon ? t("settings.processValue", { pid: daemon.pid, schema: daemon.schema_version }) : t("common.unavailable")}</Value>
+          <Value>{daemon ? t("settings.processValue", { pid: String(daemon.pid), schema: String(daemon.schema_version) }) : t("common.unavailable")}</Value>
         </Row>
         <Row label={t("settings.lifetime")}>
           <Value mono={false}>{daemon ? (daemon.keep_alive ? t("settings.keptAlive") : t("settings.exitsAfter", { minutes: Math.round(daemon.idle_secs / 60) })) : t("common.unavailable")}</Value>
@@ -263,7 +264,7 @@ function GeneralTab({ actions }: { actions: Actions }) {
           <Value>{shown(herdr?.received_version)}</Value>
         </Row>
         <Row label={t("settings.protocol")}>
-          <Value>{herdr?.received_protocol != null ? t("settings.protocolValue", { received: herdr.received_protocol, expected: shown(herdr.expected_protocol) }) : t("common.unavailable")}</Value>
+          <Value>{herdr?.received_protocol != null ? t("settings.protocolValue", { received: String(herdr.received_protocol), expected: shown(herdr.expected_protocol) }) : t("common.unavailable")}</Value>
         </Row>
         <Row label={t("settings.socket")}>
           <Value>{shown(herdr?.socket_path ?? daemon?.herdr_socket_path)}</Value>
