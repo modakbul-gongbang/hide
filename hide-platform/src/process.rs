@@ -1780,6 +1780,11 @@ mod sys {
         command: &mut Command,
         deadline: Option<Instant>,
     ) -> io::Result<(Child, Tie)> {
+        // Only the handles explicitly selected by Command belong to this
+        // child. In particular, an inherited Node duplex stdin pipe must not
+        // become a hidden owner-pipe holder in a null-stdin target. Stdio's
+        // explicit inherit still makes its own inheritable duplicate.
+        prevent_stdio_inheritance()?;
         for key in OWNER_LAUNCH_KEYS {
             command.env_remove(key);
         }
@@ -2124,6 +2129,10 @@ mod sys {
 
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        prevent_stdio_inheritance()
+    }
+
+    fn prevent_stdio_inheritance() -> io::Result<()> {
         for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
             // SAFETY: a plain call; null or INVALID_HANDLE_VALUE means none.
             let handle = unsafe { GetStdHandle(which) };

@@ -20,24 +20,43 @@ export async function nativeInputReceivers(fixture: HerdrFixture, panes: string[
     const file = path.join(fixture.root, `received-${pane.replaceAll(":", "-")}.bytes`);
     execFileSync(fixture.bin, ["pane", "send-text", pane, fixtureShellCommand(binary, ["--fixture-receive-input", file, pane, fixturePosixShell()]) + "\n"], { env: fixture.env, timeout: 30_000 });
     let receiver: Receiver | undefined;
-    await expect.poll(() => {
+    let phase = "identity-publication";
+    let observed: { published?: Omit<Receiver, "file">; shellPid?: number | null; foregroundPids?: number[]; readyText?: boolean } = {};
+    try { await expect.poll(() => {
       if (!fs.existsSync(file + ".identity")) return false;
+      phase = "identity-read";
       const stat = fs.lstatSync(file + ".identity");
       if (!stat.isFile() || stat.size > 256) throw new Error("invalid native receiver identity file");
       const value = fs.readFileSync(file + ".identity", "utf8");
       const match = value.match(/^([^\s]+) (\d+) (\d+) (\d+)\n$/);
       if (!match || match[1] !== pane || !Number.isSafeInteger(Number(match[2])) || Number(match[2]) <= 0) throw new Error("native receiver launch identity mismatch");
       const pid = Number(match[2]);
+      observed = { published: { pane, pid, inputFlagsBefore: Number(match[3]), inputFlagsAfter: Number(match[4]) } };
+      phase = "pane-process-observation";
       const answer = fixture.run(["pane", "process-info", "--pane", pane]) as {
         result: { process_info: { shell_pid: number | null; foreground_processes: { pid: number }[] } };
       };
-      const observed = answer.result.process_info;
-      if (observed.shell_pid !== pid && !observed.foreground_processes.some(process => process.pid === pid)) return false;
+      const native = answer.result.process_info;
+      if (native.foreground_processes.length > 256) throw new Error("native receiver foreground inventory cap exceeded");
+      observed.shellPid = native.shell_pid;
+      observed.foregroundPids = native.foreground_processes.map(process => process.pid);
+      if (native.shell_pid !== pid && !native.foreground_processes.some(process => process.pid === pid)) return false;
+      phase = "pane-ready-text";
       const screen = execFileSync(fixture.bin, ["pane", "read", pane, "--source", "visible", "--format", "text"], { env: fixture.env, encoding: "utf8", timeout: 10_000 });
-      if (!screen.includes("fixture input receiver ready")) return false;
+      observed.readyText = screen.includes("fixture input receiver ready");
+      if (!observed.readyText) return false;
       receiver = { pane, pid, file, inputFlagsBefore: Number(match[3]), inputFlagsAfter: Number(match[4]) };
       return true;
-    }).toBe(true);
+    }).toBe(true); } catch (primary) {
+      // Retain the original assertion identity and actual admission boundary.
+      // PID/flags, not renderer telemetry or copied byte expectations, explain
+      // whether the published receiver reached this actual pane's foreground.
+      const original = primary instanceof Error ? primary : new Error(String(primary));
+      const detail = new Error(JSON.stringify({ phase, pane, ...observed }), { cause: original.cause });
+      const reported = new Error(original.message, { cause: detail });
+      reported.name = original.name; reported.stack = original.stack;
+      throw reported;
+    }
     if (!receiver) throw new Error("native receiver was not observed in its actual pane");
     receivers.push(receiver);
   }

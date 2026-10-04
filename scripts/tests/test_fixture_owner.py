@@ -8,6 +8,7 @@ import subprocess
 import shutil
 import shlex
 import signal
+import stat
 import sys
 import tempfile
 import time
@@ -84,7 +85,26 @@ class OwnedControlRoot:
 
     def __exit__(self, _type, failure, _traceback):
         if self.confirmed:
-            shutil.rmtree(self.path)
+            try:
+                # Git's native Windows object files are deliberately read-only.
+                # This is an attribute transition on our confirmed private
+                # root, not a retry of a busy executable or unknown child.
+                if os.name == 'nt':
+                    entries = 0
+                    for root, directories, files in os.walk(self.path, followlinks=False):
+                        entries += len(directories) + len(files)
+                        if entries > 10000:
+                            raise RuntimeError('control cleanup entry cap exceeded; retain root')
+                        for name in files:
+                            file = Path(root) / name
+                            metadata = file.lstat()
+                            if stat.S_ISREG(metadata.st_mode) and metadata.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+                                file.chmod(metadata.st_mode | stat.S_IWRITE)
+                shutil.rmtree(self.path)
+            except BaseException as cleanup:
+                if failure is None:
+                    raise
+                failure.add_note(f'Confirmed control root release also failed: {cleanup}; retained root: {self.path}')
         elif failure:
             failure.add_note(f'Control child exit unconfirmed; retained root: {self.path}')
         else:
@@ -276,6 +296,7 @@ while time.monotonic() < deadline:
                 process = subprocess.Popen([shutil.which('node'),str(worker),str(ROOT),str(target),mode,str(proof),str(launch),str(outcome)],
                     cwd=ROOT,env={**os.environ,'CI_FIXTURE_BASH':self.shell},stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
                 data = None
+                ids = None
                 try:
                     data = until(lambda: json.loads(launch.read_text()) if launch.exists() else None)
                     if mode != 'complete':
@@ -312,6 +333,10 @@ while time.monotonic() < deadline:
                         facts.append({'mode':mode,'launch':data,'outcome':result,'ownedSurvivors':0})
                     until(lambda: all(target.exited() for target in observations))
                     owned.confirmed = True
+                except BaseException as failure:
+                    facts.append({'mode': mode, 'status': 'failed', 'error': str(failure),
+                        'stack': traceback.format_exc(), 'launch': data, 'targets': ids})
+                    raise
                 finally:
                     primary = sys.exc_info()[1]
                     if process.poll() is None: process.kill(); process.wait(timeout=5)
@@ -325,7 +350,13 @@ while time.monotonic() < deadline:
                             primary.add_note(f'Preparation control cleanup also failed: {cleanup}')
                     for observed in observations: observed.close()
                     process.stdout.close(); process.stderr.close()
-        (artifacts/'preparation-command.json').write_text(json.dumps(facts,indent=2)+'\n')
+                    # Preserve completed independent modes even when a later
+                    # actual worker-only loss fails to confirm termination.
+                    try:
+                        publish(artifacts/'preparation-command.json', json.dumps(facts,indent=2)+'\n')
+                    except BaseException as report:
+                        if primary is None: raise
+                        primary.add_note(f'Preparation control receipt also failed: {report}')
 
     def test_wrong_launch_identity_refuses_a_real_live_target(self):
         self.exercise('identity-refusal')

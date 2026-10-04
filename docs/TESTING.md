@@ -119,6 +119,7 @@ Keep native filesystem paths for file operations and portable page paths for UI 
 Herdr, hided, shell fixtures and the C compiler launch through its native `fixture-owner` supervisor, built in this worktree by the CLI preparation and included in the checked shard artifact.
 For a direct local browser gate, first run `bash scripts/verify-cargo.sh build -p hided --bins -p hide-platform --example fixture-owner`; the desktop gate also needs `-p hide-agent-hooks` in that build.
 Its dedicated stdin pipe belongs only to the Playwright worker; worker loss ends the original native process group/job, records confirmed or unconfirmed exit outside the private home, and removes that same home only after confirmed exit.
+The Windows owned-process boundary clears implicit standard-handle inheritance before starting a target; explicit output inheritance remains available, while a null-stdin target cannot retain Node's duplex owner pipe.
 Herdr setup observes the native running identity, endpoint and an admitted initial snapshot within its existing ten-second readiness bound before creating a workspace.
 That read-only query uses the same owned command boundary; only a live target's explicit `server_not_running` response is a pending endpoint state.
 Refusal, malformed inventory, command timeout and unconfirmed query exit fail setup with the original error and cleanup outcome; an absent workspace inventory is never treated as empty.
@@ -128,6 +129,7 @@ Normal stop uses that launch identity and keeps the existing two-second terminat
 After confirmed exit it attempts each independent release even when an earlier release failed; unconfirmed exit preserves the live home and skips those filesystem releases.
 The supervisor has 256 owned-member, 16 KiB receipt and 128-byte stop-request bounds; the worker has 256 active owners and a 10,000-file receipt bound.
 The isolated failure-controls workflow runs real native refusal/I/O controls and an actual ordinary Playwright worker-only hard kill on each OS; a missing result is unverified, and helper-only controls do not substitute for those consumer results.
+After confirmed child exit, native controls remove read-only Git object attributes in their own Windows temporary root before release; a locked entry or cleanup cap remains an error, and an existing primary failure is retained with the release failure.
 Its Python build and Playwright subprocesses use the exact Actions Bash executable, explicitly translated from Git Bash on Windows; setup failure leaves its original phase/error receipt even before any test runs.
 Native ownership controls run in that prepared workflow or by an explicit script invocation, separately from ordinary Python unit discovery.
 Socket or HTTP readiness alone does not establish launch identity: consumers also require the native running receipt with the original target PID and birth.

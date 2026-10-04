@@ -71,6 +71,7 @@ jobs:
           path: |
             agents/runs/ci-test-refactor/fixture-owner-controls
             agents/runs/ci-fixture-owners
+            agents/runs/ci-preparation/owners/*.receipt
           retention-days: 14
           if-no-files-found: error
   rust:

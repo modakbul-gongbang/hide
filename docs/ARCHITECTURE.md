@@ -424,6 +424,8 @@ The bootstrap accepts on a thread of its own and hands each connection to the as
 
 `process` is the second module and the one place a child is started or a pid is asked about.
 `OwnedChild::spawn` starts a child that leads its own group (Unix) or lives in its own job object (Windows, started suspended so it cannot start a process before it is inside the job); `kill_tree` and the owner's `Drop` end the child and everything it started, and the Windows job also ends the tree when the owner dies without a destructor.
+Windows starts also clear implicit inheritance of the parent's standard handles through the same primitive used by `detach`; only the streams explicitly selected by `Command` are passed on, so a null-stdin target cannot retain a caller's owner pipe.
+An explicit `Stdio::inherit` still receives the standard library's inheritable duplicate.
 No Unix system offers that for a group, so an owner that must outlive its own crash keeps a channel the child watches (the codex app-server's stdin is one; the opener supervisor's socket is another), which is why `OwnedChild` promises the drop and not the crash.
 The opt-in `OwnedChild::spawn_guarded` uses that same ownership helper and waits within an absolute deadline for a cooperative Unix child's `OwnerWatch::from_launch`, which retains an independent socket until all work finishes and ends its still-owned tree on owner loss; the runtime descriptor is restored close-on-exec before acknowledgement, and downstream starts remove its metadata.
 It admits one watch per process, preserves stdin for the caller's payload, and uses the existing kill-on-close job on Windows; detached daemons and arbitrary uncooperative Unix executables retain the legacy launch contract.
