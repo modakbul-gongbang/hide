@@ -60,9 +60,12 @@ class Group:
     selection: str
     exact: bool
     required: tuple[str, ...]
+    additional_prefixes: tuple[str, ...] = ()
 
     def accepts(self, name):
-        return name == self.selection if self.exact else name.startswith(self.selection)
+        if self.exact:
+            return name == self.selection
+        return name.startswith((self.selection, *self.additional_prefixes))
 
     def command(self, listing):
         command = ["bash", "scripts/verify-cargo.sh", "test-scoped", "-p",
@@ -101,7 +104,11 @@ GROUPS = (
         "delivery::worker::tests::two_parent_watches_share_one_target_sample_and_refresh_it_next_tick",
         "delivery::worker::tests::uncertain_native_acquisition_or_loss_preserves_unbound_watch_and_original_clocks",
         "delivery::worker::tests::same_native_metadata_acquisition_is_accepted_but_positive_replacement_or_absence_ends_watch",
-    )),
+        "delivery::ledger::tests::validated_startup_reestablishes_the_installed_version_without_repairing_corruption",
+        "delivery::ledger::tests::startup_bootstraps_private_sibling_state_and_preserves_refused_or_corrupt_bytes",
+        "delivery::worker::tests::unavailable_store_refuses_all_intake_and_effects_until_validated_restart",
+        "runtime::delivery::tests::prepared_command_refuses_changed_pane_or_checkout_capability_context_without_saving",
+    ), additional_prefixes=("runtime::delivery::",)),
     Group("herdr-core", "wire::tests::delivery_requires_positive_readiness_and_preserves_visible_styling", True, (
         "wire::tests::delivery_requires_positive_readiness_and_preserves_visible_styling",
     )),
@@ -109,6 +116,8 @@ GROUPS = (
         "session_activity::tests::both_providers_return_only_mtime_and_size_without_parsing_conversation",
         "session_activity::tests::missing_unsupported_and_outside_references_return_path_free_errors",
         "session_activity::tests::a_reference_without_native_owner_is_not_activity",
+        "session_activity::tests::id_lookup_counts_skipped_entries_across_directories_and_refuses_capacity",
+        "session_activity::tests::below_capacity_id_lookup_preserves_reported_native_owner_and_fresh_activity",
     )),
     Group("hide-host", "serve::tests::activity_helper_answers_metadata_only_and_refuses_unsupported_references", True, (
         "serve::tests::activity_helper_answers_metadata_only_and_refuses_unsupported_references",

@@ -35,6 +35,19 @@ class DeliveryOutputContract(unittest.TestCase):
         selected = GATE.parse_listing(LISTED.replace(b"\n", b"\r\n"), GROUP)
         self.assertEqual(GATE.parse_execution(PASSED.replace(b"\n", b"\r\n"), selected, GROUP), 2)
 
+    def test_selected_runtime_namespace_runs_but_other_substring_matches_fail(self):
+        runtime = "runtime::delivery::tests::refuses_stale_owner"
+        group = GATE.Group("example", "delivery::", False, (FIRST,),
+                           additional_prefixes=("runtime::delivery::",))
+        listing = LISTED.replace(SECOND.encode(), runtime.encode())
+        selected = GATE.parse_listing(listing, group)
+        self.assertEqual(selected, (FIRST, runtime))
+        self.assertEqual(GATE.parse_execution(PASSED.replace(SECOND.encode(), runtime.encode()),
+                                             selected, group), 2)
+        with self.assertRaises(ValueError):
+            GATE.parse_listing(listing.replace(runtime.encode(),
+                               b"runtime::unrelated::delivery::tests::refuses_stale_owner"), group)
+
     def test_empty_missing_required_wrong_namespace_and_duplicate_lists_fail(self):
         invalid = [
             b"0 tests, 0 benchmarks\n",
