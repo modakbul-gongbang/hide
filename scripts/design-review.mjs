@@ -94,12 +94,12 @@ function pngSize(file) {
 }
 
 /** Exports Pen nodes to `<directory>/<node>.png` from `file`, through a session whose output is thrown away. */
-async function exportFrames(file, nodes, directory, cwd) {
+async function exportFrames(file, nodes, directory, cwd, cleanup) {
   fs.mkdirSync(directory, {recursive: true});
   const session = path.join(directory, `.session-${randomUUID()}.pen`);
   const call = `Export(${JSON.stringify(nodes)}, "png", ${JSON.stringify(directory)}, {scale: ${PIXEL_RATIO}})`;
   try {
-    const output = await pen(['interactive', '-i', file, '-o', session], {cwd, input: `execute({ input: ${JSON.stringify(call)} })\nexit()\n`, timeoutMs: EXPORT_TIMEOUT_MS, action: 'the Pen export'});
+    const output = await pen(['interactive', '-i', file, '-o', session], {cwd, input: `execute({ input: ${JSON.stringify(call)} })\nexit()\n`, timeoutMs: EXPORT_TIMEOUT_MS, action: 'the Pen export', cleanup});
     const missing = nodes.filter(node => !fs.existsSync(path.join(directory, `${node}.png`)) || fs.statSync(path.join(directory, `${node}.png`)).size === 0);
     if (missing.length) throw new Error(`Pen exported no image for ${missing.join(', ')}; is the node id in ${path.basename(file)}?\n${output.slice(-2000)}`);
   } finally {
@@ -400,10 +400,10 @@ async function review(root, args) {
   };
   const incomplete = (reason, next) => report.incomplete.push({reason, next});
   // The run owns its Pen session, dev server and browser. A cancel at any point
-  // closes what is open and ends the whole command; pen() kills its own group
-  // on the same signal.
+  // closes what is open and joins its Pen task before ending the command.
   const cleanup = [];
-  const stop = async () => {
+  let stopping, cancelled = 0;
+  const stop = () => stopping ??= (async () => {
     for (const close of cleanup.splice(0).reverse()) {
       try { await close(); }
       catch (error) {
@@ -411,18 +411,22 @@ async function review(root, args) {
         incomplete(`A process this run started did not close: ${error.message.split('\n')[0]}`, 'Check for a leftover vite or Chromium process from this checkout and end it.');
       }
     }
+  })();
+  const interrupt = signal => () => {
+    cancelled = 128 + (signal === 'SIGINT' ? 2 : 15);
+    void stop().finally(() => process.exit(cancelled));
   };
-  const interrupt = signal => () => { void stop().finally(() => process.exit(128 + (signal === 'SIGINT' ? 2 : 15))); };
   const onInt = interrupt('SIGINT'), onTerm = interrupt('SIGTERM');
   process.once('SIGINT', onInt);
   process.once('SIGTERM', onTerm);
   try {
-    await reviewParts(root, {noPen: Boolean(options['no-pen']), slug, bundle, manifest, target, themes, widths, contents, scales, states, out, report, incomplete, cleanup});
+    await reviewParts(root, {noPen: Boolean(options['no-pen']), slug, bundle, manifest, target, themes, widths, contents, scales, states, out, report, incomplete, cleanup, cancelled: () => cancelled !== 0});
   } finally {
     process.removeListener('SIGINT', onInt);
     process.removeListener('SIGTERM', onTerm);
     await stop();
   }
+  if (cancelled) return;
 
   const failedRules = report.rules.filter(rule => rule.pass === false);
   if (report.static.exitCode !== 0 || failedRules.length) report.status = 'FAIL';
@@ -436,7 +440,7 @@ async function review(root, args) {
 }
 
 /** The static contract, the current Pen frames, and the measured and captured screen. */
-async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes, widths, contents, scales, states, out, report, incomplete, cleanup}) {
+async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes, widths, contents, scales, states, out, report, incomplete, cleanup, cancelled}) {
   if (report.baseline.integrity.length) incomplete(`The reference bundle does not match its manifest: ${report.baseline.integrity.join('; ')}`, 'Restore the bundle from where it was copied, or make a new baseline with another --name.');
 
   // 1. The static design contract, as CI runs it.
@@ -450,8 +454,9 @@ async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes,
     report.pen = {status: 'NOT RENDERED', reason: '--no-pen was given'};
   } else {
     try {
-      await requirePen(root);
-      current = await exportFrames(currentFile, manifest.frames.map(frame => frame.node), path.join(out, 'current-pen'), root);
+      await requirePen(root, {cleanup});
+      if (cancelled()) return;
+      current = await exportFrames(currentFile, manifest.frames.map(frame => frame.node), path.join(out, 'current-pen'), root, cleanup);
       const hash = sha256(currentFile);
       // Only the same file can be said to have changed; a proposal's bundle came from a scratch copy.
       report.pen = {status: 'RENDERED', file: target.file, sha256: hash, changedSinceBaseline: target.file === manifest.source.file ? hash !== manifest.source.sha256 : null};
@@ -459,6 +464,7 @@ async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes,
       report.pen = {status: 'NOT RENDERED', reason: error instanceof PenError ? error.reason : error.message.split('\n')[0]};
     }
   }
+  if (cancelled()) return;
   if (report.pen.status !== 'RENDERED') incomplete(`The current Pen frames were not rendered: ${report.pen.reason}`, `Rerun on a machine with pen and a Pen login: node scripts/design-review.mjs review ${slug} --baseline ${path.relative(root, bundle)}`);
 
   // 3. The production screen in Chromium, measured and captured per condition.

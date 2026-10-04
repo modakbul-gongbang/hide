@@ -314,6 +314,75 @@ fn worktree_events_invalidate_the_change_driven_reader_once() {
     assert!(outcome.refresh_worktrees);
 }
 
+/// A workspace's first tab is named before its tab and pane events arrive.
+/// Publishing that incomplete workspace can erase the complete pane snapshot
+/// already delivered by the workspace creation worker, losing its view size.
+#[test]
+fn a_new_workspace_waits_for_its_first_tab_layout_before_publication() {
+    let created: Value = serde_json::from_str(&snapshot().to_string().replace("w1", "w2")).unwrap();
+    let mut empty = snapshot();
+    empty["focused_pane_id"] = Value::Null;
+    for field in ["workspaces", "tabs", "panes", "layouts"] {
+        empty[field] = json!([]);
+    }
+    for initial in [empty, snapshot()] {
+        let mut replica = SessionReplica::from_snapshot(&initial).unwrap();
+        let before = replica.project();
+        for next in [
+            event(
+                "workspace_created",
+                json!({"type":"workspace_created", "workspace":created["workspaces"][0]}),
+            ),
+            event(
+                "workspace_focused",
+                json!({"type":"workspace_focused", "workspace_id":"w2"}),
+            ),
+            event(
+                "tab_created",
+                json!({"type":"tab_created", "tab":created["tabs"][0]}),
+            ),
+            event(
+                "pane_created",
+                json!({"type":"pane_created", "pane":created["panes"][0]}),
+            ),
+        ] {
+            let outcome = replica.apply(next, ApplyMode::Strict).unwrap();
+            assert!(!outcome.publish, "the first tab has no complete layout yet");
+            let projected = replica.project();
+            assert_eq!(projected.workspaces.len(), before.workspaces.len());
+            assert_eq!(projected.panes.len(), before.panes.len());
+            assert_eq!(projected.layouts.len(), before.layouts.len());
+            assert_eq!(projected.focused_pane_id, before.focused_pane_id);
+        }
+        let outcome = replica
+            .apply(
+                event(
+                    "layout_updated",
+                    json!({"type":"layout_updated", "layout":created["layouts"][0]}),
+                ),
+                ApplyMode::Strict,
+            )
+            .unwrap();
+        assert!(outcome.publish);
+        let projected = replica.project();
+        assert!(projected.panes.iter().any(|pane| pane.pane_id == "w2:p1"));
+        assert!(
+            projected
+                .layouts
+                .iter()
+                .any(|layout| layout.tab_id == "w2:t1")
+        );
+        for pane in before.panes {
+            assert!(
+                projected
+                    .panes
+                    .iter()
+                    .any(|current| current.pane_id == pane.pane_id)
+            );
+        }
+    }
+}
+
 /// Where a test's socket folder goes: directly under `/tmp` on Unix, whose
 /// socket paths have a hard length limit, and the temporary folder on
 /// Windows, which names a pipe after the path.

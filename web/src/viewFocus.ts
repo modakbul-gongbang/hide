@@ -89,7 +89,7 @@ export function installKeyboardOwner(): () => void {
     const rest = useShellStore.getState().rest;
     const view = workspaceViewOf(rest);
     const checkout = frontCheckout(rest);
-    if (!view?.layout || !checkout || view.panel === "closed" || workspaceKey(view) !== event.workspace) return;
+    if (!view?.layout || !checkout || !view.views || workspaceKey(view) !== event.workspace) return;
     const located = locateDisplay(view.layout.root, event.id);
     if (!located) return;
     noteKeyboardOwner({ kind: "view", workspace: checkout.id, areaId: located.area.id });

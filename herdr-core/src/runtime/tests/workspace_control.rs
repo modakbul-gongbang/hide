@@ -1,6 +1,5 @@
 use super::*;
 use crate::workspace_control::{Action, ActionPreparation, Edge, Query};
-use crate::workspace_views::PanelState;
 
 fn action_id(suffix: &str) -> String {
     format!("{}-{suffix}", unix_milliseconds())
@@ -406,6 +405,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         .unwrap()
         .context;
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
+    let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().views_calls;
     runtime
         .workspace_control_action(
             "local",
@@ -420,11 +420,11 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         )
         .unwrap();
     assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
-    assert_eq!(
-        panel_of(&runtime, key),
-        PanelState::Closed,
-        "a background select leaves the side panel closed"
+    assert!(
+        !views_of(&runtime, key),
+        "a background select leaves File Views off"
     );
+    assert_eq!(called(&runtime), 0, "a background select calls no column");
     runtime
         .workspace_control_action(
             "local",
@@ -442,14 +442,25 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         runtime.snapshot.navigator.focused_workspace_id.as_deref(),
         Some("workspace-b")
     );
+    assert!(views_of(&runtime, key), "a reveal turns File Views on");
+    // The shell shows a called File Views in a narrow body; a call from the
+    // CLI reaches it only as this count rising (PRD three-column-panel D-07).
+    assert_eq!(called(&runtime), 1, "a reveal calls File Views");
+    let numbered = runtime
+        .workspace_views
+        .as_ref()
+        .unwrap()
+        .views_called
+        .get(&(key.0.to_owned(), key.1.to_owned()))
+        .copied();
     assert_eq!(
-        panel_of(&runtime, key),
-        PanelState::Open,
-        "a reveal opens the side panel"
+        numbered,
+        Some(1),
+        "the call is numbered for the Workspace it called"
     );
 }
 
-fn panel_of(runtime: &Runtime, key: (&str, &str)) -> PanelState {
+fn views_of(runtime: &Runtime, key: (&str, &str)) -> bool {
     runtime
         .workspace_views
         .as_ref()
@@ -458,7 +469,7 @@ fn panel_of(runtime: &Runtime, key: (&str, &str)) -> PanelState {
         .workspaces
         .iter()
         .find(|view| view.is(key.0, key.1))
-        .map(|view| view.panel)
+        .map(|view| view.views)
         .unwrap()
 }
 

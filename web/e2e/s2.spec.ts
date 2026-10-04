@@ -6,6 +6,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
 import os from "node:os";
+import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
@@ -68,6 +70,12 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
       ]) as { result: { tab: { tab_id: string } } };
       tabs.push(made.result.tab.tab_id);
     }
+    // Checkout owner D-11/B13: this existing plain-folder workspace owns
+    // the tabs this flow adds. An unmarked workspace would correctly make
+    // Hide open a new owner instead (covered by checkout-owner.spec.ts).
+    const folder = fs.realpathSync(path.join(herdr.root, "fixture"));
+    const owner = crypto.createHash("sha256").update(`local\0${folder}`).digest("hex").slice(0, 32);
+    execFileSync(herdr.bin, ["workspace", "report-metadata", herdr.workspace, "--source", "e2e-owner", "--token", `hide_owner=${owner}`], { env: herdr.env, timeout: 30_000 });
     daemon = await startHided(herdr);
     const lastSent = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, lastSent);
@@ -126,6 +134,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     const nextLabel = (await page.locator("[data-new-agent-tab]").first().getAttribute("aria-label"))!.replace("New tab ", "");
     await page.keyboard.press(chord("new_tab"));
     await expect(page.locator("[role=tab]")).toHaveCount(4);
+    // The fourth tab belongs to the marked owner, not a second workspace.
+    await expect.poll(() => (herdr.run(["tab", "list", "--workspace", herdr.workspace]) as { result: { tabs: unknown[] } }).result.tabs.length).toBe(4);
     // The label is Herdr's: the strip shows an automatic label only until
     // Herdr reports the pane's process, which then names the tab.
     const labelled = () => (herdr.run(["api", "snapshot"]) as { result: { snapshot: { tabs: { tab_id: string; label?: string }[] } } }).result.snapshot.tabs.find((tab) => tab.label === nextLabel)?.tab_id;
@@ -371,7 +381,9 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await expect.poll(() => sent.get("close_pane")).toBe(1);
     await expect(page.locator("[data-confirm-close]")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__hideProbe?.liveTerminals() ?? [])).not.toContain(closingPane);
-    await expect(page.locator("[data-terminal-parking] [data-terminal]")).toHaveCount(0);
+    // Other open tabs keep their parked terminals (D-05); only the closed
+    // pane must be absent from the parking lot.
+    await expect(page.locator(`[data-terminal-parking] [data-terminal="${closingPane}"]`)).toHaveCount(0);
 
     // Agent areas own local order (B7/D19): one move changes the strip without a Herdr reorder.
     const secondTab = page.locator(`[data-tab="${tabs[1]}"]`);
@@ -407,7 +419,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.keyboard.press(chord("shortcuts"));
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
     // On macOS the S5 Settings row (⌥, in place of Chrome's ⌘,) is a move
-    // and Add project (desktop app only) no longer is; Toggle Explorer (issue 170) is the 28th row, and the two numbered
+    // and Add project (desktop app only) no longer is; Toggle Tools is the 28th row, and the two numbered
     // families (Select tab 1-9, Select agent 1-9) fold into one row each,
     // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
     // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st,
