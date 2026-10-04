@@ -3,6 +3,8 @@
 // edit sent as the one core event that owns it. Nothing here decides a value;
 // a pending edit shows as pending until the snapshot says it landed.
 
+import { useInterfaceTranslation } from "./i18n/client";
+import { INTERFACE_LANGUAGES, LANGUAGE_NAMES, isInterfaceLanguage } from "./i18n/locale";
 import { TriangleAlertIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
@@ -61,7 +63,6 @@ import {
   kitPartSwitch,
   kitPartNeedsReinstall,
   offeredModels,
-  ownerLine,
   providerLine,
   environmentTone,
   shown,
@@ -110,9 +111,10 @@ export function SettingsGate({ actions }: { actions: Actions }) {
 }
 
 function SettingsSheet({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const close = () => useUiStore.getState().closeOverlay("settings");
   const [tab, setTab] = useState<SettingsTab>(() => useUiStore.getState().settingsTab);
-  const subtitle = SETTINGS_TABS.find((row) => row.id === tab)?.subtitle ?? "";
+  const subtitle = t(`settings.tabs.${tab}Description`);
   const daemon = useShellStore((s) => s.daemon);
   const selected = useShellStore((s) => {
     const id = s.rest?.navigator?.focused_device_id ?? "local";
@@ -123,14 +125,15 @@ function SettingsSheet({ actions }: { actions: Actions }) {
       <DialogContent data-settings="true" className="w-(--size-settings-sheet-w) h-(--size-settings-sheet-h-max)">
         <header className="flex items-start gap-md border-b border-border px-xl py-lg">
           <div className="min-w-0 flex-1">
-            <DialogTitle className="text-headline">Settings</DialogTitle>
+            <DialogTitle className="text-headline">{t("common.settings")}</DialogTitle>
             <DialogDescription>{subtitle}</DialogDescription>
             <p className="mt-xxs text-caption text-muted-foreground" data-settings-owner={daemon?.host_name ?? "unknown"}>
-              {ownerLine(daemon, selected)}
+              {t("settings.owner", { host: daemon?.host_name ?? t("settings.daemonMachine") })}
+              {selected?.kind === "remote" ? ` ${t("settings.ownerRemote", { device: selected.label })}` : ""}
             </p>
           </div>
-          <Hint label="Close Settings" shortcut="Esc">
-            <Button variant="ghost" size="icon-sm" aria-label="Close Settings" onClick={close} data-settings-close="true">
+          <Hint label={t("settings.close")} shortcut="Esc">
+            <Button variant="ghost" size="icon-sm" aria-label={t("settings.close")} onClick={close} data-settings-close="true">
               <XIcon />
             </Button>
           </Hint>
@@ -138,15 +141,15 @@ function SettingsSheet({ actions }: { actions: Actions }) {
         {/* Radix Tabs owns the roving tabindex and Left/Right (plus Home/End)
             arrow-key navigation the hand-built tablist used to implement. */}
         <Tabs value={tab} onValueChange={(value) => setTab(value as SettingsTab)} className="min-h-0 flex-1 flex-col gap-none">
-          <TabsList aria-label="Settings section" className="w-full flex-wrap justify-start gap-xs rounded-none border-b border-border bg-sidebar px-xl py-sm">
+          <TabsList aria-label={t("settings.section")} className="w-full flex-wrap justify-start gap-xs rounded-none border-b border-border bg-sidebar px-xl py-sm">
             {SETTINGS_TABS.map((row) => (
-              <TabsTrigger key={row.id} value={row.id} data-settings-tab={row.id}>
-                {row.title}
+              <TabsTrigger key={row} value={row} data-settings-tab={row}>
+                {t(`settings.tabs.${row}`)}
               </TabsTrigger>
             ))}
           </TabsList>
           <TabsContent value={tab} className="min-h-0 flex-1 overflow-auto px-xl py-lg">
-            {tab === "general" ? <GeneralTab /> : null}
+            {tab === "general" ? <GeneralTab actions={actions} /> : null}
             {tab === "appearance" ? <AppearanceTab actions={actions} /> : null}
             {tab === "agents" ? <AgentsTab actions={actions} /> : null}
             {tab === "issues" ? <IssuesTab actions={actions} /> : null}
@@ -161,9 +164,41 @@ function SettingsSheet({ actions }: { actions: Actions }) {
   );
 }
 
+/** The displayed choice always comes from the core, never an optimistic edit. */
+function InterfaceLanguageRow({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const choice = useShellStore((state) => state.rest?.ui_state?.interface_language ?? null);
+  const connected = useShellStore((state) => state.connection === "live");
+  const [pending, setPending] = useState<{ language: typeof choice; since: number } | null>(null);
+  const error = useErrorSince(pending?.since ?? null, ["interface_language."]);
+  useEffect(() => {
+    if (pending && choice === pending.language) setPending(null);
+  }, [choice, pending]);
+  return (
+    <Group title={t("common.language")} note={t("common.languageDescription")}>
+      <Row label={t("common.language")} detail={error ? <Note tone="error">{t("settings.notSaved", { reason: error })}</Note> : pending ? <Note>{t("common.loading")}</Note> : null}>
+        <Select value={choice ?? "system"} disabled={!connected || (pending !== null && !error)} onValueChange={(value) => {
+          if (value !== "system" && !isInterfaceLanguage(value)) throw new Error("invalid_interface_language");
+          const language = value === "system" ? null : value;
+          if (language === choice) return;
+          setPending({ language, since: Date.now() });
+          actions.setInterfaceLanguage(language);
+        }}>
+          <SelectTrigger aria-label={t("common.language")} data-interface-language={choice ?? "system"}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="system" data-language-option="system">{t("common.systemLanguage")}</SelectItem>
+            {INTERFACE_LANGUAGES.map((language) => <SelectItem key={language} value={language} data-language-option={language}>{LANGUAGE_NAMES[language]}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </Row>
+    </Group>
+  );
+}
+
 // --- General -----------------------------------------------------------------
 
-function GeneralTab() {
+function GeneralTab({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const daemon = useShellStore((s) => s.daemon);
   const connection = useShellStore((s) => s.connection);
   const herdr = useShellStore((s) => s.rest?.status?.herdr);
@@ -189,28 +224,29 @@ function GeneralTab() {
   };
   return (
     <>
-      <Group title="Daemon" note="This page is a client of the daemon above; its settings and registrations live in that state file.">
-        <Row label="Version">
-          <Value>{daemon ? `hided ${daemon.version}` : "unavailable"}</Value>
+      <InterfaceLanguageRow actions={actions} />
+      <Group title={t("settings.daemon")} note={t("settings.daemonDescription")}>
+        <Row label={t("settings.version")}>
+          <Value>{daemon ? `hided ${daemon.version}` : t("common.unavailable")}</Value>
         </Row>
-        <Row label="Process">
-          <Value>{daemon ? `pid ${daemon.pid} · schema ${daemon.schema_version}` : "unavailable"}</Value>
+        <Row label={t("settings.process")}>
+          <Value>{daemon ? t("settings.processValue", { pid: daemon.pid, schema: daemon.schema_version }) : t("common.unavailable")}</Value>
         </Row>
-        <Row label="Lifetime">
-          <Value mono={false}>{daemon ? (daemon.keep_alive ? "Kept alive" : `Exits ${Math.round(daemon.idle_secs / 60)} min after the last page closes`) : "unavailable"}</Value>
+        <Row label={t("settings.lifetime")}>
+          <Value mono={false}>{daemon ? (daemon.keep_alive ? t("settings.keptAlive") : t("settings.exitsAfter", { minutes: Math.round(daemon.idle_secs / 60) })) : t("common.unavailable")}</Value>
         </Row>
-        <Row label="State file">
+        <Row label={t("settings.stateFile")}>
           <Value>{shown(daemon?.core_state_path)}</Value>
         </Row>
-        <Row label="Page connection">
+        <Row label={t("settings.pageConnection")}>
           <Status tone={connection === "live" ? "ok" : "warn"} data-page-connection={connection}>
-            {connection}
+            {t(`settings.connection.${connection}`)}
           </Status>
         </Row>
       </Group>
-      <Group title="Herdr runtime">
+      <Group title={t("settings.herdrRuntime")}>
         <Row
-          label="Connection"
+          label={t("settings.connection")}
           detail={
             line.tone !== "ok" && herdr?.message ? (
               <Note tone={line.tone === "error" ? "error" : "warn"} data-herdr-message="true">
@@ -223,21 +259,21 @@ function GeneralTab() {
             {line.text}
           </Status>
         </Row>
-        <Row label="Version">
+        <Row label={t("settings.version")}>
           <Value>{shown(herdr?.received_version)}</Value>
         </Row>
-        <Row label="Protocol">
-          <Value>{herdr?.received_protocol != null ? `${herdr.received_protocol} (expects ${shown(herdr.expected_protocol)})` : "unavailable"}</Value>
+        <Row label={t("settings.protocol")}>
+          <Value>{herdr?.received_protocol != null ? t("settings.protocolValue", { received: herdr.received_protocol, expected: shown(herdr.expected_protocol) }) : t("common.unavailable")}</Value>
         </Row>
-        <Row label="Socket">
+        <Row label={t("settings.socket")}>
           <Value>{shown(herdr?.socket_path ?? daemon?.herdr_socket_path)}</Value>
         </Row>
-        <Row label="Binary">
+        <Row label={t("settings.binary")}>
           <Value>{shown(daemon?.herdr_bin_path)}</Value>
         </Row>
       </Group>
       {environment && environment.length > 0 ? (
-        <Group title="Environment">
+        <Group title={t("settings.environment")}>
           {environment.map((row) => (
             <Row key={row.key} label={<span className="font-mono">{row.key}</span>} detail={row.message ? <Note>{row.message}</Note> : null}>
               <Status tone={environmentTone(row.state, row.required)}>{row.state.replace(/_/g, " ")}</Status>
@@ -246,28 +282,29 @@ function GeneralTab() {
         </Group>
       ) : null}
       <Group
-        title="Diagnostics"
-        note="Copy carries versions, paths, states and the core's recent diagnostics. It never carries the page token, terminal output or anything typed into a pane."
+        title={t("settings.diagnostics")}
+        note={t("settings.diagnosticsDescription")}
       >
-        <Row label="Recent" detail={<DiagnosticList />}>
+        <Row label={t("settings.recent")} detail={<DiagnosticList />}>
           <Button variant="secondary" onClick={copyDiagnostics} data-copy-diagnostics="true">
-            Copy diagnostics
+            {t("settings.copyDiagnostics")}
           </Button>
-          {copy === "copied" ? <Status tone="ok">Copied</Status> : null}
-          {copy === "failed" ? <Status tone="error">The browser refused the clipboard</Status> : null}
+          {copy === "copied" ? <Status tone="ok">{t("common.copied")}</Status> : null}
+          {copy === "failed" ? <Status tone="error">{t("settings.clipboardRefused")}</Status> : null}
         </Row>
       </Group>
-      <Group title="Authentication">
-        <Row label={<span className="text-body text-subtle-foreground">Hide delegates authentication to Herdr, SSH and the agent CLIs on the daemon's machine. It has no credential, token or passphrase field.</span>} />
+      <Group title={t("settings.authentication")}>
+        <Row label={<span className="text-body text-subtle-foreground">{t("settings.authenticationDescription")}</span>} />
       </Group>
     </>
   );
 }
 
 function DiagnosticList() {
+  const { t } = useInterfaceTranslation();
   const diagnostics = useShellStore((s) => s.rest?.status?.diagnostics);
   const rows = (diagnostics ?? []).slice(-8).reverse();
-  if (rows.length === 0) return <Note>No diagnostics recorded yet.</Note>;
+  if (rows.length === 0) return <Note>{t("settings.noDiagnostics")}</Note>;
   return (
     <ul className="space-y-xxs" data-diagnostics={rows.length}>
       {rows.map((row) => (

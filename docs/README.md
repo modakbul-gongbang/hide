@@ -9,6 +9,7 @@ A document's location or an old PRD citation does not make it current authority.
 | Question | Read | Executable authority or enforcement |
 | --- | --- | --- |
 | Working rules, routing, and the invariants that hold everywhere | [AGENTS.md](../AGENTS.md) | `herdr-core/`, `hided/`, `web/`, `desktop/`, relevant local rules |
+| Interface language policy, translation boundaries and integration coverage | [LOCALIZATION.md](LOCALIZATION.md) | `web/src/i18n/`, `SettingsSheet.tsx`, core UI-state persistence and language events |
 | What the UI does: behavior rules for every screen, grouped by area, independent of exact pixel values | [UI_BEHAVIOR.md](UI_BEHAVIOR.md) | `web/src/`, `herdr-core/src/runtime/` |
 | How a design change moves from scratch to a shipped PR: authorities, the Pen scratch/approval flow, the reference bundle and review run, the screen transplant procedure, and how to add a token, a System part, or a Component | [DESIGN_WORKFLOW.md](DESIGN_WORKFLOW.md) | `scripts/design-scratch.mjs`, `scripts/design-review.mjs`, `design/review-targets.json`, `scripts/gen-tokens.mjs`, `scripts/gen-pen.mjs`, `scripts/pen-transplant.mjs`, `scripts/check-design-contract.mjs` |
 | Architecture, Herdr versus core ownership, the wire boundary and its schema gaps, the bundled runtime | [ARCHITECTURE.md](ARCHITECTURE.md) | `herdr-core/src/runtime.rs`, `session_sync/{coordinator,projection,replica,subscription}.rs`, `wire.rs`, `hided/src/{env,cli,server}.rs`, `desktop/src/main/`, contract and boundary tests |

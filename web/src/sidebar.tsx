@@ -1,3 +1,4 @@
+import { useInterfaceTranslation } from "./i18n/client";
 import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, LayoutDashboardIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
@@ -55,6 +56,7 @@ function herdrRowLabel(state: string | null): string | null {
 }
 
 export function Sidebar({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const herdrState = useShellStore((s) => s.herdrState);
   const mode = useUiStore((s) => s.sidebarMode);
   const visible = useShellStore((s) => s.rest?.ui_state?.left_sidebar_visible ?? true);
@@ -162,7 +164,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
               <span className="flex-1" />
               <WeeklyUsage actions={actions} />
-              <Hint label={`Settings (${commandLabel("settings")})`}>
+              <Hint label={t("common.settings")} shortcut={commandLabel("settings")}>
                 <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
                   <SettingsIcon />
                 </Button>

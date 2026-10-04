@@ -48,7 +48,7 @@ export const commonEnglish = {
   "common.terminal": "Terminal",
   "common.language": "Language",
   "common.systemLanguage": "Use system language",
-  "common.languageDescription": "A language you choose here applies to every connected window and phone. Until then, each uses its system language.",
+  "common.languageDescription": "A language you choose here applies to every connected window. Until then, each uses its system language.",
 } as const;
 
 const ko = {
@@ -99,7 +99,7 @@ const ko = {
   "common.terminal": "터미널",
   "common.language": "언어",
   "common.systemLanguage": "시스템 언어 사용",
-  "common.languageDescription": "여기서 선택한 언어는 연결된 모든 창과 폰에 적용됩니다. 선택 전에는 각 기기의 시스템 언어를 사용합니다.",
+  "common.languageDescription": "여기서 선택한 언어는 연결된 모든 창에 적용됩니다. 선택 전에는 각 기기의 시스템 언어를 사용합니다.",
 } satisfies Catalog<typeof commonEnglish>;
 
 const zhCN = {
@@ -150,7 +150,7 @@ const zhCN = {
   "common.terminal": "终端",
   "common.language": "语言",
   "common.systemLanguage": "使用系统语言",
-  "common.languageDescription": "在此选择的语言会应用于所有已连接的窗口和手机。选择前，各设备使用自己的系统语言。",
+  "common.languageDescription": "在此选择的语言会应用于所有已连接的窗口。选择前，各设备使用自己的系统语言。",
 } satisfies Catalog<typeof commonEnglish>;
 
 const ja = {
@@ -201,7 +201,7 @@ const ja = {
   "common.terminal": "ターミナル",
   "common.language": "言語",
   "common.systemLanguage": "システムの言語を使用",
-  "common.languageDescription": "ここで選択した言語は、接続されたすべてのウィンドウとスマートフォンに適用されます。選択前は各デバイスのシステムの言語を使用します。",
+  "common.languageDescription": "ここで選択した言語は、接続されたすべてのウィンドウに適用されます。選択前は各デバイスのシステムの言語を使用します。",
 } satisfies Catalog<typeof commonEnglish>;
 
 export const commonCatalogs = { en: commonEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof commonEnglish>;

@@ -35,12 +35,17 @@ const interfaceFormatter: FormatterModule = {
  * native and worker callers use the same catalogs and standard t function.
  */
 export async function createInterfaceI18n(selected: InterfaceLanguage): Promise<i18n> {
+  return initializeInterfaceI18n(selected);
+}
+
+/** Embedded resources initialize synchronously, before the first render. */
+export function initializeInterfaceI18n(selected: InterfaceLanguage): i18n {
   const language = requireInterfaceLanguage(selected);
   validateCatalogs(english, catalogs);
   const instance = createInstance().use(interfaceFormatter);
   // Also guard callers of the library's public language-changing API.
   instance.on("languageChanging", requireInterfaceLanguage);
-  await instance.init({
+  void instance.init({
     lng: language,
     supportedLngs: [...INTERFACE_LANGUAGES],
     load: "currentOnly",
@@ -74,5 +79,6 @@ export async function createInterfaceI18n(selected: InterfaceLanguage): Promise<
       alwaysFormat: true,
     },
   });
+  if (!instance.isInitialized) throw new Error("interface_i18n_not_initialized");
   return instance;
 }

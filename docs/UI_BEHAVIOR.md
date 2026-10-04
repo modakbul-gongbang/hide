@@ -1224,6 +1224,12 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
 
+General includes Language, using the existing Settings row and selector pattern.
+Its options name English, 한국어, 简体中文 and 日本語 in their own scripts, plus Use system language.
+The selected value comes from the core snapshot; a pending edit keeps the confirmed value visible and disables another edit until confirmation or refusal.
+An explicit choice is shared by connected shell windows; Use system language resolves separately in each client, with English for unsupported languages.
+[LOCALIZATION.md](LOCALIZATION.md) owns the policy and the remaining integration surfaces.
+
 Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, hcoord, `Codex를 pane마다 실행`), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
 hcoord's place is `~/.hide/hcoord/bin/hcoord`; an `hcoord` on `PATH` that is not Hide's, and an old `~/.hcoord` left beside `~/.hide/hcoord`, are named in a dimmed line under the installed hcoord row's location, and a move from the old `~/.hcoord` that failed reads failed with the reason and that the next launch or Reinstall tries again (PRD hide-home-layout B12, B14).
 A `~/.hide/hcoord` that holds a ledger but no `bin/hcoord` reads outdated, not removed, and is finished on the next launch: it is a move whose install did not complete, and hcoord's home is never taken by removal.

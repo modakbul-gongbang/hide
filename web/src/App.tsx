@@ -1,3 +1,4 @@
+import { InterfaceLanguageBoundary } from "./i18n/client";
 import { agentCapacityNotice } from "./agentLayout";
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
@@ -233,6 +234,7 @@ export function App() {
 
   return (
     <TooltipProvider>
+      <InterfaceLanguageBoundary />
       <div className="relative flex h-full flex-col bg-background text-foreground">
         <ConnectionBadge />
         <NoticeBar actions={actions} />
