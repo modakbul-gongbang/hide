@@ -1,3 +1,4 @@
+import { useEscapeLayer } from "./components/ui/layer";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
@@ -165,6 +166,7 @@ function HistoryControls({
     onProvider(next.id);
     event.currentTarget.querySelector<HTMLElement>(`[data-provider-choice="${next.id}"]`)?.focus();
   };
+  useEscapeLayer(query !== "", () => onQuery(""));
   const onSearchKey = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
       // Into the list, at the row the list would give focus to on Tab.

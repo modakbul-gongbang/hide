@@ -1,3 +1,4 @@
+import { useEscapeLayer } from "./components/ui/layer";
 import { CornerDownRightIcon, GitMergeIcon, SearchIcon, XIcon } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
@@ -543,6 +544,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
  */
 export function GraphFilterControls({ agents, filter, onChange }: { agents: readonly LensAgent[]; filter: GraphFilter; onChange: (filter: GraphFilter) => void }) {
   const devices = useMemo(() => graphDevices(agents), [agents]);
+  useEscapeLayer(filter.query !== "", () => onChange({ ...filter, query: "" }));
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-sm" data-graph-filter={graphFilterActive(filter) ? "active" : "none"}>
       <ToggleGroup type="multiple" value={[...filter.chips]} onValueChange={(chips) => onChange({ ...filter, chips: chips as StatusChip[] })} aria-label="상태" data-graph-chips="true">

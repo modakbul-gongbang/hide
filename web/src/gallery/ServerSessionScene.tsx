@@ -42,7 +42,7 @@ export function ServerSessionScene({ scene: kind, theme, scale, content }: Scene
   }), [fixture]);
   useLayoutEffect(() => {
     useShellStore.setState({rest:fixture.scene.rest,agents:fixture.scene.agents,connection:"live",projectSessions:{device_id:"local",workspace_id:fixture.workspace.id,loading:false,failure:null,unavailable_reason:null,rows:[fixture.row],detail:null},sessionSearch:null});
-    useUiStore.setState({sidebarMode:"projects",screen:kind === "session-search" ? {kind:"overview",projectId:fixture.workspace.id,lens:{...entryLens(null,"board"),tab:"sessions"}} : {kind:"workspace"}});
+    useUiStore.setState({sidebarMode:"projects",screen:kind === "session-search" ? {kind:"main"} : {kind:"workspace"},overviewProjectId:kind === "session-search" ? fixture.workspace.id : null,overviewLens:{...entryLens(null,"board"),tab:"sessions"}});
     document.documentElement.classList.toggle("dark",theme === "dark");
     document.documentElement.classList.toggle("light",theme === "light");
     document.documentElement.style.setProperty("--interface-scale",String(scale));

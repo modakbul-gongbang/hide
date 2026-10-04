@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, overviewRowSelected, projectRowExpansion, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
 import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
 function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
@@ -315,21 +315,25 @@ describe("sidebar row activation", () => {
     expect(checkoutRowExpansion(false, true, true)).toBeUndefined();
   });
 
-  it("unfolds a project row unless its own Overview is open and it is unfolded", () => {
-    expect(projectRowExpansion(workspace("repo", { expanded: false }), null, true)).toBe(true);
-    expect(projectRowExpansion(workspace("repo", { expanded: false }), "repo", true)).toBe(true);
-    expect(projectRowExpansion(workspace("repo", { expanded: true }), "other", true)).toBe(true);
-    expect(projectRowExpansion(workspace("repo", { expanded: true }), "repo", true)).toBe(false);
-    expect(projectRowExpansion(workspace("repo", {}), "repo", true)).toBe(false);
-    expect(projectRowExpansion(workspace("repo", { expanded: true }), "repo", false)).toBeUndefined();
+  it("unfolds a project unless its return checkout is already in front", () => {
+    const target = { id: "main" } as Checkout;
+    expect(projectRowExpansion(workspace("repo", { expanded: false }), target, "main", true)).toBe(true);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), target, "other", true)).toBe(true);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), target, "main", true)).toBe(false);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), target, "main", false)).toBeUndefined();
   });
 
-  it("selects the Git project's Overview child only for its own Overview", () => {
-    const project = workspace("repo", { is_git: true });
-    expect(overviewRowSelected(project, "repo")).toBe(true);
-    expect(overviewRowSelected(project, "other")).toBe(false);
-    expect(overviewRowSelected(project, null)).toBe(false);
-    expect(overviewRowSelected(workspace("notes", { is_git: false }), "notes")).toBe(false);
+  it("returns to the latest usable checkout on the same device before primary and row order", () => {
+    const checkouts = [
+      { id: "first", exists: true }, { id: "primary", exists: true, is_primary: true },
+      { id: "recent", exists: true }, { id: "missing", exists: false },
+    ] as Checkout[];
+    const project = workspace("repo", { device_id: "mini", checkouts });
+    const visit = (device_id: string, checkout_id: string) => ({ device_id, checkout_id, project_name: "repo", branch: checkout_id, device_name: device_id });
+    expect(projectCheckout(project, [visit("local", "first"), visit("mini", "missing"), visit("mini", "recent")])?.id).toBe("recent");
+    expect(projectCheckout(project)?.id).toBe("primary");
+    expect(projectCheckout({ ...project, checkouts: [checkouts[0]!, checkouts[2]!] })?.id).toBe("first");
+    expect(projectCheckout({ ...project, checkouts: [checkouts[3]!] })).toBeNull();
   });
 });
 

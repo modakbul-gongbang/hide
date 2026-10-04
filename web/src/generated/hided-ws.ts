@@ -158,4 +158,16 @@ export interface FocusCheckoutPayload {
   focus_device?: boolean;
   display_id?: string;
   expanded?: boolean;
+  project_expanded?: boolean;
+}
+/**
+ * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.
+ */
+export type InterfaceLanguage = null | "en" | "ko" | "zh-CN" | "ja";
+
+/**
+ * Payload of interface_language_set. This event alone edits the core preference; ui_state_update never changes it.
+ */
+export interface InterfaceLanguageSetPayload {
+  language: InterfaceLanguage;
 }

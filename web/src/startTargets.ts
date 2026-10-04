@@ -77,20 +77,20 @@ function mainCheckout(workspace: Workspace): Checkout | null {
 }
 
 /** The key of the thing in front on the front device, before it is checked against the menu. */
-function frontKey(rest: SnapshotRest, screen: Screen | null, noProject: boolean, deviceId: string, workspaces: Workspace[]): string {
+function frontKey(rest: SnapshotRest, screen: Screen | null, noProject: boolean, deviceId: string, workspaces: Workspace[], projectId: string | null): string {
   const home = homeKey(deviceId);
   // Settings sits in front of a center that stays where it was, so what the center shows is not what is in front.
   if (noProject) return home;
+  if (projectId) {
+    const project = workspaces.find((row) => row.id === projectId);
+    const checkout = project && !project.is_home ? mainCheckout(project) : null;
+    return checkout ? checkoutKey(deviceId, checkout.path) : home;
+  }
   if (screen?.kind === "workspace") {
     const checkout = frontCheckout(rest);
     if (!checkout) return home;
     const workspace = workspaces.find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id));
     return workspace && !workspace.is_home ? checkoutKey(deviceId, checkout.path) : home;
-  }
-  if (screen?.kind === "overview") {
-    const workspace = workspaces.find((row) => row.id === screen.projectId);
-    const checkout = workspace && !workspace.is_home ? mainCheckout(workspace) : null;
-    return checkout ? checkoutKey(deviceId, checkout.path) : home;
   }
   // All projects, a device's Home and Settings are all "no project in front".
   return home;
@@ -101,7 +101,7 @@ function frontKey(rest: SnapshotRest, screen: Screen | null, noProject: boolean,
  * Home is the default. A device's own Home screen names its device, which is
  * then the front device.
  */
-export function startTargets(rest: SnapshotRest | null, screen: Screen | null, settings = false): StartTargets {
+export function startTargets(rest: SnapshotRest | null, screen: Screen | null, settings = false, projectId: string | null = null): StartTargets {
   if (!rest) return { groups: [], defaultKey: null };
   const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [LOCAL];
   const named = screen?.kind === "main" ? screen.deviceId : undefined;
@@ -112,7 +112,7 @@ export function startTargets(rest: SnapshotRest | null, screen: Screen | null, s
   const usable = (key: string) => items.some((item) => item.key === key && item.disabled === null);
   const front = groups[0];
   const workspaces = front ? deviceWorkspaces(rest, ordered[0]!).workspaces : [];
-  const wanted = front ? frontKey(rest, screen, settings, front.deviceId, workspaces) : null;
+  const wanted = front ? frontKey(rest, screen, settings, front.deviceId, workspaces, projectId) : null;
   const defaultKey =
     (wanted && usable(wanted) ? wanted : null) ?? (front && usable(homeKey(front.deviceId)) ? homeKey(front.deviceId) : null) ?? items.find((item) => item.disabled === null)?.key ?? null;
   return { groups, defaultKey };

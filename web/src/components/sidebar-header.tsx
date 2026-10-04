@@ -1,11 +1,14 @@
-import { ChevronDownIcon, LaptopIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
+import { useInterfaceTranslation } from "../i18n/client";
+import { ChevronDownIcon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { Kbd } from "./ui/kbd";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { SIDEBAR_MODES, type SidebarMode } from "../ui";
 import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
 
-const MODE_LABEL: Record<SidebarMode, string> = { projects: "Projects", agents: "Agents" };
+const MODE_LABEL: Record<SidebarMode, "overview.projects" | "overview.agents"> = { projects: "overview.projects", agents: "overview.agents" };
 
 /** A device the hidden rail's menu lists. */
 export type MenuDevice = { id: string; label: string; remote: boolean; connected: boolean };
@@ -21,9 +24,9 @@ export type DeviceMenu = {
 
 /**
  * The top of the sidebar (quick device-rail-badges, replacing PRD
- * home-device-rail D-13, D-14). Every device's sidebar is the same two lines:
+ * home-device-rail D-13, D-14). Every device's sidebar is the same three lines:
  * the name of the device in front (`This Mac`, `mini Remote`) with Add project
- * and Search at its right end, then the `Projects | Agents` tab strip. While
+ * and Search at its right end, the shared Overview row, then `Projects | Agents`. While
  * the rail is hidden the name is a menu that lists the devices, `기기 추가…`
  * and `레일 표시`, since the rail is no longer the way to another device. A
  * device that cannot be read shows its name alone: it has no list to switch.
@@ -36,7 +39,10 @@ export function SidebarHeader({
   addProject,
   tabs,
   mode,
-  switchChord,
+  projectChord,
+  agentChord,
+  overview,
+  compact = false,
   searchChord,
   newWorkspaceChord,
   deviceMenu,
@@ -53,8 +59,11 @@ export function SidebarHeader({
   /** The Projects | Agents strip is drawn (not for a device that cannot be read). */
   tabs: boolean;
   mode: SidebarMode;
-  /** The bound `toggle_sidebar_view` chord; it has none until the operator binds one. */
-  switchChord: string | null;
+  compact?: boolean;
+  /** The current direct Projects and Agents shortcuts. */
+  projectChord?: string | null;
+  agentChord?: string | null;
+  overview?: { selected: boolean; count: number; chord: string | null; onOpen: () => void };
   searchChord: string | null;
   newWorkspaceChord: string | null;
   deviceMenu: DeviceMenu;
@@ -63,16 +72,17 @@ export function SidebarHeader({
   /** Add project; null where the host cannot pick a folder (a browser tab). */
   onNewWorkspace: (() => void) | null;
 }) {
+  const { t } = useInterfaceTranslation();
   const add =
     addProject && onNewWorkspace ? (
-      <Hint label="Add project" shortcut={newWorkspaceChord}>
+      <Hint label={t("commands.new_workspace")} shortcut={newWorkspaceChord}>
         <Button variant="ghost" size="icon-sm" data-sidebar-new-workspace="true" onClick={onNewWorkspace}>
           <PlusIcon />
         </Button>
       </Hint>
     ) : null;
   const search = (
-    <Hint label="Search" shortcut={searchChord}>
+    <Hint label={t("common.search")} shortcut={searchChord}>
       <Button variant="ghost" size="icon-sm" data-sidebar-search="true" onClick={onSearch}>
         <SearchIcon />
       </Button>
@@ -98,22 +108,31 @@ export function SidebarHeader({
         {add}
         {search}
       </div>
+      {overview ? (
+        <Hint label={overview.count > 0 ? t("overview.needsYouHint", { count: overview.count }) : t("overview.title")} shortcut={overview.chord}>
+          <button type="button" aria-current={overview.selected ? "page" : undefined} data-sidebar-overview="true" onClick={overview.onOpen}
+            className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${overview.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+            <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-left">{t("overview.title")}</span>
+            {overview.count > 0 ? <span data-overview-count="true" className="text-caption text-warning">{t("overview.askingCount", { count: overview.count })}</span> : null}
+            {overview.chord && !compact ? <Kbd className="sidebar-command-keycap">{overview.chord}</Kbd> : null}
+          </button>
+        </Hint>
+      ) : null}
       {tabs ? (
-        <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-xs pl-md text-caption" data-sidebar-strip="true">
-          {SIDEBAR_MODES.map((candidate) => (
-            <ModeHint key={candidate} label={MODE_LABEL[candidate]} chord={switchChord}>
-              <button
-                type="button"
-                data-sidebar-mode={candidate}
-                aria-pressed={mode === candidate}
-                className={mode === candidate ? "text-foreground" : "text-muted-foreground hover:text-subtle-foreground"}
-                onClick={() => onMode(candidate)}
-              >
-                {MODE_LABEL[candidate]}
-              </button>
-            </ModeHint>
-          ))}
-        </div>
+        <Tabs value={mode} onValueChange={(value) => onMode(value as SidebarMode)} className="shrink-0 border-b border-border px-xs py-xxs" data-sidebar-strip="true">
+          <TabsList aria-label={t("overview.sidebarView")} className="w-full bg-transparent">
+            {SIDEBAR_MODES.map((candidate) => {
+              const chord = candidate === "projects" ? projectChord : agentChord;
+              return <ModeHint key={candidate} label={t(MODE_LABEL[candidate])} chord={chord ?? null}>
+                <TabsTrigger value={candidate} data-sidebar-mode={candidate} className="min-w-0 flex-1 gap-xs px-xs text-caption">
+                  <span className="truncate">{t(MODE_LABEL[candidate])}</span>
+                  {chord && !compact ? <Kbd className="sidebar-command-keycap">{chord}</Kbd> : null}
+                </TabsTrigger>
+              </ModeHint>;
+            })}
+          </TabsList>
+        </Tabs>
       ) : null}
     </>
   );

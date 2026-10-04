@@ -116,11 +116,12 @@ export type CommandId =
   | "search"
   | "open_file"
   | "toggle_left_sidebar"
-  | "toggle_sidebar_view"
+  | "overview"
+  | "sidebar_projects"
+  | "sidebar_agents"
   | "toggle_device_rail"
   | "toggle_explorer"
   | "toggle_right_panel"
-  | "project_home"
   | "keep_open"
   | "find_in_pane"
   | "save_file"
@@ -227,9 +228,10 @@ export const REGISTRY: readonly Command[] = [
   ...numberedEntries(NUMBERED_FAMILIES[1]!),
   { id: "search", title: "Search", group: "Navigate", browser: { code: "KeyK", meta: true }, electron: { code: "KeyK", meta: true }, moved: false },
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
-  { id: "project_home", title: "Project home", group: "Navigate", browser: { code: "KeyH", meta: true, shift: true }, electron: { code: "KeyH", meta: true, shift: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
-  { id: "toggle_sidebar_view", title: "Toggle sidebar view", group: "Panels", browser: null, electron: null, moved: false },
+  { id: "overview", title: "Overview", group: "Navigate", browser: { code: "KeyO", meta: true, shift: true }, electron: { code: "KeyO", meta: true, shift: true }, moved: false },
+  { id: "sidebar_projects", title: "Projects sidebar", group: "Panels", browser: { code: "KeyP", meta: true, shift: true }, electron: { code: "KeyP", meta: true, shift: true }, moved: false },
+  { id: "sidebar_agents", title: "Agents sidebar", group: "Panels", browser: { code: "KeyA", meta: true, shift: true }, electron: { code: "KeyA", meta: true, shift: true }, moved: false },
   { id: "toggle_device_rail", title: "Toggle device rail", group: "Panels", browser: null, electron: null, moved: false },
   { id: "toggle_explorer", title: "Toggle Tools", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
   { id: "toggle_right_panel", title: "Toggle File Views", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
@@ -274,6 +276,7 @@ export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browse
   // Chrome keeps Alt+Shift+T (focus the toolbar) on Windows and Linux, and the
   // macOS browser chord ⌥⇧T is those same keys there, so a browser tab
   // reopens with the one free chord on that key.
+  sidebar_agents: { browser: { code: "KeyA", ctrl: true, alt: true } },
   reopen_closed_tab: { browser: { code: "KeyT", ctrl: true, alt: true, shift: true } },
   // Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser size
   // text with Ctrl and =, - or 0.
@@ -347,7 +350,7 @@ function pcCommand(command: Command): Command {
   const deviation = PC_KEYS[command.id];
   const keys = (chord: Chord | null) => chord && (deviation?.chord ?? modChord(chord, "pc"));
   const electron = keys(command.electron);
-  const moved = command.moved && electron !== null && isChromeReserved(electron, "pc");
+  const moved = (command.moved || command.id === "sidebar_agents") && electron !== null && isChromeReserved(electron, "pc");
   return {
     ...command,
     browser: deviation?.browser ?? (command.moved && !moved ? electron : keys(command.browser)),
@@ -397,7 +400,7 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
 // honours the operator's existing shortcut settings).
 export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
-  "toggle_sidebar_view",
+  "overview", "sidebar_projects", "sidebar_agents",
   "toggle_device_rail",
   "split_right",
   "split_down",
@@ -410,13 +413,15 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
 ];
 
 /**
- * The macOS set's name for each editable command. `toggle_sidebar_view`
- * and `toggle_device_rail` have no pane command there: the set keeps the key and the desktop host
+ * The macOS set's name for each editable command. `toggle_device_rail`
+ * has no pane command there: the set keeps the key and the desktop host
  * ignores it, the way this shell ignores
  * `toggle_conversation`.
  */
 const MACOS_KEYS: Readonly<Partial<Record<CommandId, string>>> = {
-  toggle_sidebar_view: "toggle_sidebar_view",
+  overview: "overview",
+  sidebar_projects: "sidebar_projects",
+  sidebar_agents: "sidebar_agents",
   toggle_device_rail: "toggle_device_rail",
   split_right: "split_right",
   split_down: "split_down",
@@ -549,7 +554,7 @@ export function storedBindings(uiState: StoredShortcutSets, host: HostKind): Rec
   return host === "electron" ? uiState?.shortcut_bindings : uiState?.browser_shortcut_bindings;
 }
 
-function withChord(command: Command, chord: Chord, host: HostKind): Command {
+function withChord(command: Command, chord: Chord | null, host: HostKind): Command {
   return host === "electron" ? { ...command, electron: chord } : { ...command, browser: chord, moved: false };
 }
 
@@ -600,13 +605,19 @@ export type EffectiveRegistry = { registry: readonly Command[]; diagnostic: stri
 export function effectiveRegistry(stored: Record<string, string> | null | undefined, host: HostKind, system: KeySystem): EffectiveRegistry {
   const which = host === "electron" ? "pane" : "browser";
   const defaults = systemRegistry(system);
-  const entries = Object.entries(stored ?? {}).filter(([key]) => !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
-  if (entries.length === 0) return { registry: defaults, diagnostic: null };
+  const retired = Object.keys(stored ?? {}).some((key) => ["toggle_sidebar_view", "project_home"].includes(key));
+  const diagnostic = retired ? "Stored project_home or toggle_sidebar_view shortcut is retired and was ignored." : null;
+  const entries = Object.entries(stored ?? {}).filter(([key]) => !["toggle_sidebar_view", "project_home"].includes(key) && !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
+  if (entries.length === 0) return { registry: defaults, diagnostic };
   let registry: Command[] = [...defaults];
   const applied: [CommandId, Chord][] = [];
   for (const [key, text] of entries) {
     const id = EDITABLE_PANE_COMMANDS.find((command) => storedKey(command, host) === key);
     if (!id) return { registry: defaults, diagnostic: `Stored ${which} shortcuts name an unknown command (${key}); defaults are in use.` };
+    if (text === "none") {
+      registry = registry.map((command) => command.id === id ? withChord(command, null, host) : command);
+      continue;
+    }
     const chord = parseStoredChord(text, host, system);
     if (!chord) return { registry: defaults, diagnostic: `Stored ${which} shortcut for ${key} was not usable (unreadable chord); defaults are in use.` };
     registry = registry.map((command) => (command.id === id ? withChord(command, chord, host) : command));
@@ -616,7 +627,7 @@ export function effectiveRegistry(stored: Record<string, string> | null | undefi
     const problem = bindingProblem(id, chord, registry, host, system);
     if (problem) return { registry: defaults, diagnostic: `Stored ${which} shortcut for ${storedKey(id, host)} was not usable (${problem}); defaults are in use.` };
   }
-  return { registry, diagnostic: null };
+  return { registry, diagnostic };
 }
 
 const resolved = new Map<string, { stored: Record<string, string> | null | undefined; value: EffectiveRegistry }>();

@@ -1,3 +1,4 @@
+import { useInterfaceTranslation } from "./i18n/client";
 import { CircleDotIcon, FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
@@ -6,7 +7,7 @@ import { Kbd } from "./components/ui/kbd";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
-import { AGENT_GROUPS, boardProjects, mainSections, overviewScreen, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
+import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
 import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
@@ -36,14 +37,15 @@ import { commandLabel } from "./shortcutLabels";
 // Everything drawn is a value the snapshot carries; a device that cannot
 // answer says why on its own section, with Retry where retrying can help.
 
-const VIEWS: readonly { view: MainView; label: string }[] = [
-  { view: "requests", label: "요청" },
-  { view: "tasks", label: "Tasks" },
-  { view: "agents", label: "Agents" },
-  { view: "projects", label: "Projects" },
+const VIEWS: readonly { view: MainView; label: "requests.title" | "overview.tasks" | "overview.agents" | "overview.projects" }[] = [
+  { view: "requests", label: "requests.title" },
+  { view: "tasks", label: "overview.tasks" },
+  { view: "agents", label: "overview.agents" },
+  { view: "projects", label: "overview.projects" },
 ];
 
 export function MainScreen({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
@@ -71,7 +73,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   const rows = useMemo(() => requestRows(lensAgents, projects.flatMap((project) => project.agents)), [lensAgents, projects]);
   // The request view's expanded rows and fold, this screen's own page state.
-  const requestLens = useUiStore((s) => s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
+  const requestLens = useUiStore((s) => s.overviewOpen ? s.overviewRequests : s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
   const onRequestLens = useCallback((patch: Partial<RequestLens>) => useUiStore.getState().setMainRequestLens(patch), []);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
@@ -132,11 +134,11 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const scrolls = view !== "projects" && !(view === "tasks" && panelCard(tasks, panel) !== null);
   const unavailable = sections.filter((section) => section.availability.state !== "ready");
   return (
-    <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", scrolls && "overflow-y-auto")} aria-label="Overview" data-main-screen="true" data-main-view={view}>
+    <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", scrolls && "overflow-y-auto")} aria-label={t("overview.title")} data-main-screen="true" data-main-view={view}>
       <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
           <h1 className="flex min-w-0 flex-1 items-baseline gap-sm text-headline font-semibold text-foreground">
-            <span className="shrink-0">Home</span>
+            <span className="shrink-0">{t("common.home")}</span>
             <span className="min-w-0 truncate text-body font-normal text-muted-foreground" data-main-device-name={deviceId}>
               {deviceName}
             </span>
@@ -144,13 +146,13 @@ export function MainScreen({ actions }: { actions: Actions }) {
           {hostBridge() ? (
             <Button variant="ghost" onClick={() => actions.openAddProject()} data-main-add-project="true">
               <PlusIcon aria-hidden="true" />
-              Add project <span className="text-muted-foreground">{commandLabel("new_workspace")}</span>
+              {t("commands.new_workspace")} <span className="text-muted-foreground">{commandLabel("new_workspace")}</span>
             </Button>
           ) : null}
           {issueProject ? (
             <Button onClick={newIssue} data-main-new-issue="true">
               <PlusIcon aria-hidden="true" />
-              새 이슈
+              {t("issue.newTitle")}
               <Kbd>C</Kbd>
             </Button>
           ) : null}
@@ -167,10 +169,10 @@ export function MainScreen({ actions }: { actions: Actions }) {
             setPanel(null);
           }}
         >
-          <TabsList aria-label="Overview view">
+          <TabsList aria-label={t("overview.viewLabel")}>
             {VIEWS.map((choice) => (
               <TabsTrigger key={choice.view} value={choice.view} data-main-tab={choice.view}>
-                {choice.label}
+                {t(choice.label)}
                 {choice.view === "requests" && answering > 0 ? (
                   <span className="text-caption text-warning" data-requests-answer={answering} aria-label={`답할 것 ${answering}`}>
                     {answering}
@@ -224,10 +226,10 @@ export function MainScreen({ actions }: { actions: Actions }) {
         <AgentGraph projects={projects} agents={lensAgents} scope="all" selectedBox={null} filter={graphFilter} onFilter={setGraphFilter} folds={folds} handlers={lensActions} now={Date.now()} />
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
-          <p>No project is registered yet.</p>
+          <p>{t("overview.empty")}</p>
           {hostBridge() ? (
             <Button variant="secondary" onClick={() => actions.openAddProject()} data-main-empty-add="true">
-              Add project
+              {t("commands.new_workspace")}
             </Button>
           ) : null}
         </div>
@@ -248,11 +250,12 @@ export const FACTS_LINE = "flex flex-wrap items-center gap-md font-mono text-cap
 
 /** `20 open issues · GitHub`, once the source has answered. */
 function IssuesFact({ source }: { source: SourceState }) {
+  const { t } = useInterfaceTranslation();
   if (source.openIssues === null) return null;
   return (
     <span className={FACT} data-stat="open-issues">
       <CircleDotIcon aria-hidden="true" className="size-(--size-icon)" />
-      {source.openIssues} open {source.openIssues === 1 ? "issue" : "issues"}
+      {t("overview.openIssues", { count: source.openIssues })}
       {source.label ? <span className="text-muted-foreground">· {source.label}</span> : null}
     </span>
   );
@@ -260,23 +263,24 @@ function IssuesFact({ source }: { source: SourceState }) {
 
 /** The Project count, and each total only once every Project gave its part (design #10). */
 function Facts({ stats, source }: { stats: AllProjectsStats; source: SourceState }) {
+  const { t } = useInterfaceTranslation();
   return (
     <div className={FACTS_LINE} data-main-stats="true">
       <span className={FACT} data-stat="projects">
         <FolderIcon aria-hidden="true" className="size-(--size-icon)" />
-        {stats.projects} {stats.projects === 1 ? "project" : "projects"}
+        {t("overview.projects", { count: stats.projects })}
       </span>
       <IssuesFact source={source} />
       {stats.openPullRequests === null ? null : (
         <span className={FACT} data-stat="open-prs">
           <GitPullRequestIcon aria-hidden="true" className="size-(--size-icon)" />
-          {stats.openPullRequests} open {stats.openPullRequests === 1 ? "PR" : "PRs"}
+          {t("overview.openPrs", { count: stats.openPullRequests })}
         </span>
       )}
       {stats.merged ? (
         <span className={cn(FACT, "text-pr-merged")} data-stat="merged">
           <GitMergeIcon aria-hidden="true" className="size-(--size-icon)" />
-          {stats.merged} merged
+          {t("overview.merged", { count: stats.merged })}
         </span>
       ) : null}
     </div>
@@ -284,9 +288,10 @@ function Facts({ stats, source }: { stats: AllProjectsStats; source: SourceState
 }
 
 function DeviceProjects({ section, actions }: { section: DeviceSection; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const { device, availability } = section;
   return (
-    <section aria-label={`Projects on ${device.label}`} data-main-device={device.id} data-device-availability={availability.state}>
+    <section aria-label={t("overview.projectsOnDevice", { device: device.label })} data-main-device={device.id} data-device-availability={availability.state}>
       <h2 className="flex items-center gap-sm pb-xs text-micro uppercase text-muted-foreground">
         <span>{device.label}</span>
         {availability.state === "loading" ? (
@@ -297,7 +302,7 @@ function DeviceProjects({ section, actions }: { section: DeviceSection; actions:
       </h2>
       <UnavailableNotice device={device} availability={availability} actions={actions} />
       {section.projects.length === 0 ? (
-        <p className="px-sm py-xs text-caption text-muted-foreground">{availability.state === "ready" ? "No projects on this device." : "Its projects show once it answers."}</p>
+        <p className="px-sm py-xs text-caption text-muted-foreground">{availability.state === "ready" ? t("overview.noProjectsOnDevice") : t("overview.projectsWhenAnswers")}</p>
       ) : (
         <ul className="flex flex-col" role="list">
           {section.projects.map((project) => (
@@ -315,18 +320,19 @@ function DeviceProjects({ section, actions }: { section: DeviceSection; actions:
  * brought forward, so the operator stays where they were (B2, B21).
  */
 export function OpeningStatus({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const opening = useUiStore((s) => s.opening);
   if (!opening) return null;
   if (!opening.failure) {
     return (
       <p role="status" className="shrink-0 px-md pt-sm text-caption text-muted-foreground" data-opening="pending">
-        Opening…
+        {t("overview.opening")}
       </p>
     );
   }
   return (
     <div role="alert" className="mx-md mt-sm flex shrink-0 items-center gap-sm rounded-sm bg-card px-sm py-xs text-caption text-warning" data-opening="failed">
-      <span className="min-w-0 flex-1 break-words">Not opened: {opening.failure}</span>
+      <span className="min-w-0 flex-1 break-words">{t("overview.notOpened", { reason: opening.failure })}</span>
       <Button variant="secondary" onClick={() => actions.dismissOpening()} data-opening-dismiss="true">
         Dismiss
       </Button>
@@ -336,6 +342,7 @@ export function OpeningStatus({ actions }: { actions: Actions }) {
 
 /** Why a device cannot answer, with Retry where retrying can help (B3). */
 export function UnavailableNotice({ device, availability, actions }: { device: Device; availability: DeviceAvailability; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   if (availability.state !== "unavailable") return null;
   const retry = availability.retry;
   return (
@@ -343,35 +350,35 @@ export function UnavailableNotice({ device, availability, actions }: { device: D
       <span className="min-w-0 flex-1 break-words">{availability.text}</span>
       {retry ? (
         <Button variant="secondary" onClick={() => (retry === "helper" ? actions.retryDeviceHost(device.id) : actions.retryDevice(device.id))} data-device-retry={device.id}>
-          Retry
+          {t("common.retry")}
         </Button>
       ) : null}
     </div>
   );
 }
 
-function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
-  const setScreen = useUiStore((s) => s.setScreen);
+function ProjectRow({ project, actions }: { project: ProjectEntry; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const reachable = project.workspace !== null;
   return (
     <li>
-      <Hint label={reachable ? `${project.label} · ${project.path}` : `${project.label} · ${project.path} · its device has not answered`}>
+      <Hint label={reachable ? `${project.label} · ${project.path}` : t("overview.projectDeviceUnanswered", { project: project.label, path: project.path })}>
       <button
         type="button"
         disabled={!reachable}
         data-main-project={project.id}
         className="flex w-full items-center gap-md rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
-        onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
+        onClick={() => actions.openProjectById(project.deviceId, project.id)}
       >
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-baseline gap-xs text-body text-foreground">
             <span className="min-w-0 truncate">{project.label}</span>
-            {project.pinned ? <span className="text-micro uppercase text-muted-foreground">pinned</span> : null}
+            {project.pinned ? <span className="text-micro uppercase text-muted-foreground">{t("overview.pinned")}</span> : null}
           </span>
           <span className="truncate text-caption text-muted-foreground">{project.path}</span>
         </span>
         <span className="shrink-0 text-caption text-subtle-foreground" data-workspace-count={project.workspaceCount ?? "unknown"}>
-          {project.workspaceCount === null ? "…" : `${project.workspaceCount} ${project.workspaceCount === 1 ? "workspace" : "workspaces"}`}
+          {project.workspaceCount === null ? "…" : t("overview.workspaces", { count: project.workspaceCount })}
         </span>
         <Counts counts={project.counts} />
       </button>
@@ -382,11 +389,12 @@ function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
 
 /** One small cell per non-empty group, in the canonical order; unknown counts read `…`, never zero. */
 function Counts({ counts }: { counts: GroupCounts | null }) {
+  const { t } = useInterfaceTranslation();
   if (!counts) return <span className="w-[var(--size-recent-location-max)] shrink-0 text-right text-caption text-muted-foreground" data-agent-counts="unknown">…</span>;
   const shown = AGENT_GROUPS.filter(({ group }) => counts[group] > 0);
   return (
     <span className="flex w-[var(--size-recent-location-max)] shrink-0 justify-end gap-sm text-caption" data-agent-counts={shown.map(({ group }) => `${group}:${counts[group]}`).join(" ")}>
-      {shown.length === 0 ? <span className="text-muted-foreground">No agents</span> : null}
+      {shown.length === 0 ? <span className="text-muted-foreground">{t("overview.noAgents")}</span> : null}
       {shown.map(({ group, label }) => (
         <Hint key={group} label={`${counts[group]} ${label}`} reveals>
         <span className={group === "needs_you" ? "text-warning" : group === "done" ? "text-success" : group === "working" ? "text-agent-working" : "text-muted-foreground"}>

@@ -3330,6 +3330,60 @@ fn checkout_row_admits_focus_and_disclosure_together_and_rejects_stale_targets()
 }
 
 #[test]
+fn project_row_admits_focus_and_disclosure_together() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "project",
+        "Project",
+        "/tmp/project",
+        vec![
+            checkout("project", "first", "/tmp/project", None),
+            checkout("project", "second", "/tmp/second", None),
+        ],
+    )];
+    let choose = |runtime: &mut Runtime, id: &str, expanded: bool| {
+        runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "focus_checkout",
+            "payload": {"workspace_id": "project", "checkout_id": id, "project_expanded": expanded}
+        })).unwrap());
+    };
+    choose(&mut runtime, "second", false);
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.navigator.focused_checkout_id.as_deref(),
+        Some("second")
+    );
+    assert_eq!(snapshot.ui_state.collapsed_workspace_ids, ["project"]);
+    choose(&mut runtime, "second", false);
+    assert_eq!(
+        runtime.snapshot().ui_state.collapsed_workspace_ids,
+        ["project"]
+    );
+    choose(&mut runtime, "missing", true);
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.navigator.focused_checkout_id.as_deref(),
+        Some("second")
+    );
+    assert_eq!(snapshot.ui_state.collapsed_workspace_ids, ["project"]);
+    assert!(snapshot.status.last_error.is_none());
+    assert!(
+        snapshot
+            .status
+            .diagnostics
+            .iter()
+            .any(|entry| entry.kind == "checkout.row_stale")
+    );
+    choose(&mut runtime, "first", true);
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.navigator.focused_checkout_id.as_deref(),
+        Some("first")
+    );
+    assert!(snapshot.ui_state.collapsed_workspace_ids.is_empty());
+}
+
+#[test]
 fn tab_rename_keeps_the_committed_name_on_failure_and_ignores_old_receipts() {
     let mut runtime = runtime();
     let mut checkout = checkout("w", "c", "/fixture", None);

@@ -1,3 +1,4 @@
+import { InterfaceLanguageBoundary } from "./i18n/client";
 import { agentCapacityNotice } from "./agentLayout";
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
@@ -8,10 +9,9 @@ import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
-import { MainScreen } from "./MainScreen";
+import { OverviewModal, OverviewPage } from "./Overview";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
-import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
 import { expectPane, expectSurface, focusSignature } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
@@ -233,6 +233,7 @@ export function App() {
 
   return (
     <TooltipProvider>
+      <InterfaceLanguageBoundary />
       <div className="relative flex h-full flex-col bg-background text-foreground">
         <ConnectionBadge />
         <NoticeBar actions={actions} />
@@ -245,6 +246,7 @@ export function App() {
             <CenterScreen actions={actions} />
           </main>
         </div>
+        <OverviewModal actions={actions} />
         <CycleOverlay />
         <ConfirmClose actions={actions} />
         <ConfirmTrash actions={actions} />
@@ -332,7 +334,6 @@ function CenterScreen({ actions }: { actions: Actions }) {
       </div>
     );
   }
-  if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} lens={screen.lens} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
-  return <MainScreen actions={actions} />;
+  return <OverviewPage actions={actions} />;
 }

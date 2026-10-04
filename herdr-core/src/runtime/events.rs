@@ -164,6 +164,9 @@ pub(super) struct FocusCheckoutPayload {
     /// Sidebar row disclosure, committed with checkout focus. Omitted by other open entrypoints.
     #[serde(default)]
     pub(super) expanded: Option<bool>,
+    /// A project row's fold belongs to the same admitted checkout intent.
+    #[serde(default)]
+    pub(super) project_expanded: Option<bool>,
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
     /// Also makes this machine the device in front when the checkout is
@@ -1092,6 +1095,13 @@ pub(super) struct EditorTextScalePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct InterfaceLanguageSetPayload {
+    // Required, including an explicit null to return to system language.
+    #[serde(deserialize_with = "serde_json::Value::deserialize")]
+    pub(super) language: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct ThemeSetPayload {
     pub(super) theme: crate::model::ThemePreference,
 }
@@ -1247,6 +1257,7 @@ pub(super) enum Event {
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
     ThemeSet(ThemeSetPayload),
+    InterfaceLanguageSet(InterfaceLanguageSetPayload),
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
@@ -1451,6 +1462,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
+        "interface_language_set" => decode!(InterfaceLanguageSetPayload, InterfaceLanguageSet),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
@@ -1919,6 +1931,18 @@ impl Runtime {
                 {
                     self.set_error(error.kind(), error.message(), false);
                     return true;
+                }
+                if let Some(expanded) = payload.project_expanded {
+                    let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
+                    ids.retain(|id| id != &payload.workspace_id);
+                    if !expanded {
+                        ids.push(payload.workspace_id.clone());
+                        ids.sort();
+                    }
+                    Self::apply_workspace_expansion(
+                        &mut self.snapshot.navigator.workspaces,
+                        &self.snapshot.ui_state.collapsed_workspace_ids,
+                    );
                 }
                 if let Some(expanded) = payload.expanded {
                     let ids = &mut self.snapshot.ui_state.expanded_checkout_ids;
@@ -3224,6 +3248,28 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
+            Event::InterfaceLanguageSet(payload) => {
+                if !payload.language.is_null()
+                    && serde_json::from_value::<crate::model::InterfaceLanguage>(
+                        payload.language.clone(),
+                    )
+                    .is_err()
+                {
+                    self.set_error(
+                        "interface_language.invalid",
+                        "The interface language was not saved",
+                        false,
+                    );
+                    return true;
+                }
+                let language = (!payload.language.is_null()).then_some(payload.language);
+                if self.snapshot.ui_state.interface_language == language {
+                    return false;
+                }
+                self.snapshot.ui_state.interface_language = language;
+                self.persist_ui_state();
+                true
+            }
             Event::ThemeSet(payload) => {
                 if self.snapshot.ui_state.theme == payload.theme {
                     return false;
@@ -3442,6 +3488,7 @@ impl Runtime {
                     accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
                     // `theme_set` owns the theme; a shared UI-state save carries it through.
                     theme: current.theme,
+                    interface_language: current.interface_language,
                     // A width outside the drag's range keeps the last one; the
                     // shell never sends it, so there is nothing to show.
                     sidebar_width: match payload.sidebar_width {

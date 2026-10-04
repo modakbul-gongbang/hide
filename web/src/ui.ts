@@ -53,7 +53,7 @@ export type PendingClose = {
  * (PRD home-device-rail D-13): `deviceId` names the device, and without one it
  * is the device in front.
  */
-export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
+export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "workspace" };
 
 /**
  * How All projects is looked at: every Project's tasks, every agent, or the
@@ -210,6 +210,15 @@ export type PendingTrash = {
 
 type UiStore = {
   screen: Screen | null;
+  /** Overview is a shell layer; opening it leaves the Workspace mounted. */
+  overviewOpen: boolean;
+  overviewProjectId: string | null;
+  overviewLens: OverviewLens;
+  overviewRequests: RequestLens;
+  overviewReturnFocus: HTMLElement | null;
+  searchReturnFocus: HTMLElement | null;
+  setOverviewOpen: (open: boolean) => void;
+  setOverviewProject: (projectId: string | null, lens?: OverviewLens) => void;
   /** All projects' view; the page keeps it while the operator visits a Project. */
   mainView: MainView;
   /** All projects' Tasks mode. */
@@ -217,6 +226,7 @@ type UiStore = {
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
   sidebarMode: SidebarMode;
+  sidebarFocus: number;
   /**
    * The Home row's new-tab start this page sent: its `request_id` until its
    * pane is opened, then, when it was refused, the reason that device's Home
@@ -298,7 +308,7 @@ type UiStore = {
   /** The Main request view's lens rides on its screen for Recent Panels. */
   setMainRequestLens: (patch: Partial<RequestLens>) => void;
   setTasksMode: (mode: TasksMode) => void;
-  /** Changes the Project Overview's lens in place; a no-op on any other screen. */
+  /** Changes the shared Overview scope lens in place. */
   setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
@@ -331,17 +341,26 @@ type UiStore = {
   setRecordingShortcut: (recording: boolean) => void;
   setHint: (hint: NumberedFamily | null) => void;
   /** Registers an Escape layer and returns its removal. */
-  pushEscape: (handler: () => void) => () => void;
+  pushEscape: (handler: () => void, base?: boolean) => () => void;
   /** Registers an open tooltip's close and returns its removal. */
   pushTooltip: (close: () => void) => () => void;
 };
 
 export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
+  overviewOpen: false,
+  overviewProjectId: null,
+  overviewLens: entryLens(null, "board"),
+  overviewRequests: NO_REQUEST_LENS,
+  overviewReturnFocus: null,
+  searchReturnFocus: null,
+  setOverviewOpen: (overviewOpen) => set({ overviewOpen }),
+  setOverviewProject: (overviewProjectId, lens) => set({ overviewProjectId, overviewLens: lens ?? entryLens(null, get().tasksMode) }),
   mainView: "requests",
   tasksMode: "board",
   relation: null,
   sidebarMode: "projects",
+  sidebarFocus: 0,
   homeStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
@@ -369,10 +388,14 @@ export const useUiStore = create<UiStore>((set, get) => ({
   tooltips: [],
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
-  setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, mainView: "requests" } : { screen, opening: null })),
-  restoreScreen: (screen) => set({ screen, opening: null }),
+  setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, overviewOpen: false, mainView: "requests" } : { screen, opening: null, overviewOpen: false })),
+  restoreScreen: (screen) => set({ screen, opening: null, overviewOpen: false }),
   setMainView: (mainView) => set({ mainView }),
   setMainRequestLens: (patch) => {
+    if (get().overviewOpen) {
+      set({ overviewRequests: { ...get().overviewRequests, ...patch } });
+      return;
+    }
     const screen = get().screen;
     if (screen?.kind !== "main") return;
     set({ screen: { ...screen, requests: { ...(screen.requests ?? NO_REQUEST_LENS), ...patch } } });
@@ -382,9 +405,11 @@ export const useUiStore = create<UiStore>((set, get) => ({
   // Overview as it now is; the open request stays, since nothing moved away.
   // An Issues mode chosen here is the page's as well.
   setLens: (patch) => {
-    const screen = get().screen;
-    if (screen?.kind !== "overview") return;
-    set({ screen: { ...screen, lens: { ...screen.lens, ...patch } }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
+    if (get().overviewOpen || (get().screen?.kind === "main" && get().overviewProjectId !== null)) {
+      set({ overviewLens: { ...get().overviewLens, ...patch }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
+      return;
+    }
+
   },
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
@@ -412,7 +437,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),
   searchOver: "none",
-  openOverlay: (overlay) => set((state) => (overlay === "search" ? { overlay, searchOver: state.overlay } : { overlay })),
+  openOverlay: (overlay) => set((state) => (overlay === "search" ? { overlay, searchOver: state.overlay, searchReturnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null } : { overlay })),
   closeOverlay: (overlay) => {
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });
   },
@@ -429,8 +454,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setHint: (hint) => {
     if (get().hint !== hint) set({ hint });
   },
-  pushEscape: (handler) => {
-    set({ escapeLayers: [...get().escapeLayers, handler] });
+  pushEscape: (handler, base = false) => {
+    set({ escapeLayers: base ? [handler, ...get().escapeLayers] : [...get().escapeLayers, handler] });
     return () => set({ escapeLayers: get().escapeLayers.filter((layer) => layer !== handler) });
   },
   pushTooltip: (close) => {
