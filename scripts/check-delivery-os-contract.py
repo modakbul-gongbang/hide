@@ -11,6 +11,7 @@ before this prospective lane is integrated into a branch carrying the modules.
 """
 import ctypes
 from dataclasses import dataclass
+import errno
 import hashlib
 import json
 import os
@@ -282,7 +283,11 @@ class PosixOwned:
             try:
                 self.control.shutdown(socket.SHUT_WR)
             except OSError as error:
-                failure = error  # Reap even when the guardian already closed its pipe.
+                # A received terminal result means the guardian has completed
+                # cleanup and may already have closed its end of this socket.
+                # Reap it below; every other shutdown failure remains visible.
+                if error.errno != errno.ENOTCONN or self.returncode is None:
+                    failure = error
             while True:
                 ended, status = os.waitpid(self.pid, os.WNOHANG)
                 if ended:
