@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import path from "node:path";
+import fs from "node:fs";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot } from "./wire";
+import { enterWorkspace, screenshot, showExplorer } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -34,13 +35,13 @@ type Strip = {
   tabs: { selected: boolean; width: number; title: boolean; close: boolean }[];
 };
 
-async function strip(page: Page): Promise<Strip> {
-  return page.locator("[data-agent-tab-bar] [role=tablist]").evaluate((list) => {
+async function strip(page: Page, column: "agent" | "view" = "agent"): Promise<Strip> {
+  return page.locator(`[data-${column}-tab-bar] [role=tablist]`).evaluate((list) => {
     const shown = (node: Element | null) => node !== null && getComputedStyle(node).display !== "none";
     // The tabs' room is what the bar leaves beside its own controls: the zone
     // holding the strip and New tab, less New tab.
     const zone = list.parentElement!;
-    const newTab = zone.querySelector<HTMLElement>("[data-new-agent-tab]")!;
+    const newTab = zone.querySelector<HTMLElement>("[data-new-agent-tab], [data-view-new-tab]")!;
     const bounds = list.getBoundingClientRect();
     const tabs = [...list.querySelectorAll<HTMLElement>("[role=tab]")];
     const selected = tabs.find((tab) => tab.getAttribute("aria-selected") === "true")?.getBoundingClientRect();
@@ -52,7 +53,7 @@ async function strip(page: Page): Promise<Strip> {
         selected: tab.getAttribute("aria-selected") === "true",
         width: tab.getBoundingClientRect().width,
         title: shown(tab.querySelector("span.truncate")),
-        close: shown(tab.querySelector('button[aria-label^="Close tab"]')),
+        close: shown(tab.querySelector("button")),
       })),
     };
   });
@@ -146,5 +147,77 @@ test("Agent tabs shrink in stages, the selected one keeping its title longest, a
     const narrowest = await strip(page);
     expect(narrowest.scrolls).toBe(true);
     expect(narrowest.selectedInView).toBe(true);
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("File View tabs use the same shrinking strip and transfer the longest title on selection", async ({ page }) => {
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    const names = ["한글 노트.md", "検証結果.md", "项目计划.md", ...Array.from({ length: 9 }, (_, i) => `notes-${i + 1}.md`)];
+    const root = fs.realpathSync(path.join(herdr.root, "fixture"));
+    for (const name of names) fs.writeFileSync(path.join(root, name), `# ${name}\n`);
+    daemon = await startHided(herdr, "file-tab-strip");
+    await page.setViewportSize({ width: 2400, height: 1000 });
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    await showExplorer(page);
+    const tabs = page.locator("[data-view-tab-bar] [role=tab]");
+    for (const name of names) await page.locator(`[data-explorer-row="${root}/${name}"]`).dblclick();
+    await expect(tabs).toHaveCount(names.length);
+    const stages = new Set<Fit>();
+    for (const width of [2400, 2200, 2000, 1900, 1800, 1700, 1600, 1500, 1400, 1300, 1200]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      const workspace = page.locator("[data-workspace-screen]");
+      if (await workspace.getAttribute("data-file-views") === "hidden") await page.locator('[data-column-toggle="views"]').click();
+      await expect(page.locator("[data-view-tab-bar]")).toBeVisible();
+      const handle = page.locator('[data-column-divider="views"]');
+      const divider = await handle.count() ? await handle.boundingBox() : null;
+      const body = await page.locator('[data-column-row="true"]').boundingBox();
+      if (divider && body) {
+        await page.mouse.move(divider.x + divider.width / 2, divider.y + 150);
+        await page.mouse.down();
+        await page.mouse.move(body.x + 10, divider.y + 150, { steps: 4 });
+        await page.mouse.up();
+      }
+      await expect(page.locator("[data-column-guide]")).toHaveCount(0);
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      // A divider release commits once through the core; observe that final
+      // geometry rather than sampling the optimistic drag's guide frame.
+      await expect.poll(async () => {
+        const drawn = await strip(page, "view");
+        const want = expected(drawn.room, names.length);
+        return drawn.tabs.every((tab) => Math.abs(tab.width - (tab.selected ? want.selected[0] : want.others[0])) < 0.5);
+      }).toBe(true);
+      const drawn = await strip(page, "view");
+      const want = expected(drawn.room, names.length);
+      for (const tab of drawn.tabs) {
+        const fit = tab.selected ? want.selected : want.others;
+        expect(tab.width, `File tab at room ${drawn.room}`).toBeCloseTo(fit[0], 0);
+        expect(tab.title).toBe(fit[1] !== "marks");
+        expect(tab.close).toBe(tab.selected || fit[1] === "titled");
+        stages.add(fit[1]);
+      }
+      expect(drawn.scrolls).toBe(want.selected[0] + (names.length - 1) * want.others[0] > drawn.room + 0.01);
+      expect(drawn.selectedInView).toBe(true);
+      await screenshot(page, `file-tab-strip-${width}`);
+      if (want.selected[1] === "titled" && want.others[1] !== "titled") {
+        await tabs.first().click();
+        await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+        const moved = await strip(page, "view");
+        expect(moved.tabs[0]!.width).toBeCloseTo(TITLE_MIN, 0);
+        expect(moved.tabs.at(-1)!.width).toBeCloseTo(want.others[0], 0);
+        await tabs.last().click();
+        await expect(tabs.last()).toHaveAttribute("aria-selected", "true");
+      }
+    }
+    expect([...stages].sort()).toEqual(["compact", "marks", "titled"]);
+    await tabs.first().click();
+    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+    expect((await strip(page, "view")).selectedInView).toBe(true);
+    await expect(tabs.first()).toHaveAccessibleName(/한글 노트.md/);
+    await tabs.first().locator("button").click();
+    await expect(tabs).toHaveCount(names.length - 1);
   } finally { daemon?.stop(); herdr.stop(); }
 });
