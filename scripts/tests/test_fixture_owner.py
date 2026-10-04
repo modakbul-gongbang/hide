@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import subprocess
 import shutil
+import shlex
+import signal
 import sys
 import tempfile
 import time
@@ -308,6 +310,110 @@ while time.monotonic() < deadline:
 
     def test_wrong_launch_identity_refuses_a_real_live_target(self):
         self.exercise('identity-refusal')
+
+    def test_late_preparation_probe_preserves_primary_and_unknown_exit_receipts(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        facts = []
+        modes = ['timeout'] + (['exit-unconfirmed'] if os.name != 'nt' else [])
+        for mode in modes:
+            with OwnedControlRoot(artifacts) as owned:
+                root = owned.path
+                for relative in ['scripts', 'contracts', 'tools', 'target/debug/examples']:
+                    (root / relative).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(HELPER, root / 'target/debug/examples' / HELPER.name)
+                compiled = []
+                for name, kind in [('hided', 'bin'), ('hide', 'bin'), ('fixture-owner', 'example')]:
+                    executable = root / 'target/debug' / ('examples' if kind == 'example' else '') / (name + ('.exe' if os.name == 'nt' else ''))
+                    if kind == 'bin': executable.write_text('controlled external producer output')
+                    compiled.append({'reason': 'compiler-artifact', 'target': {'name': name, 'kind': [kind]},
+                        'profile': {'test': False}, 'features': [], 'executable': str(executable)})
+                # Cargo's output is controlled at the external producer boundary;
+                # the CLI, chosen shell and native supervisor remain real.
+                (root / 'scripts/verify-cargo.sh').write_text("#!/usr/bin/env bash\ncat <<'ARTIFACTS'\n"+
+                    '\n'.join(json.dumps(row) for row in compiled)+"\nARTIFACTS\n")
+                for relative in ['Cargo.lock', 'pnpm-lock.yaml', 'contracts/herdr-bundle.json']:
+                    (root / relative).write_text('unchanged control input')
+                (root / '.gitignore').write_text('target/\nagents/\n')
+                probe = root / 'tools/probe.cjs'
+                probe.write_text("const fs=require('node:fs'),path=require('node:path'),{spawn}=require('node:child_process');\n"
+                    "if(process.argv[2]==='leaf'){setInterval(()=>{},1000);}\n"
+                    "else {const dir=path.resolve('agents/probe');fs.mkdirSync(dir,{recursive:true});\n"
+                    "const counter=path.join(dir,'counter');const n=fs.existsSync(counter)?Number(fs.readFileSync(counter)):0;\n"
+                    "fs.writeFileSync(counter,String(n+1));process.stdout.write('controlled-rust-version\\n');\n"
+                    "if(n){const child=spawn(process.execPath,[__filename,'leaf'],{stdio:'ignore'});\n"
+                    "const file=path.join(dir,'targets.json');fs.writeFileSync(file+'.tmp',JSON.stringify({target:process.pid,child:child.pid}));\n"
+                    "fs.renameSync(file+'.tmp',file);setInterval(()=>{},1000);}}\n")
+                shim = root / 'tools/rustc'
+                shim.write_text('#!/usr/bin/env bash\nexec node '+shlex.quote(probe.as_posix())+' "$@"\n')
+                shim.chmod(0o755)
+                for args in [['init', '--quiet'], ['add', '.'], ['-c', 'core.hooksPath=/dev/null', '-c',
+                        'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'Initial control']]:
+                    subprocess.run(['git', *args], cwd=root, check=True, capture_output=True, text=True)
+                source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
+                environment = {**os.environ, 'CI_FIXTURE_BASH': self.shell,
+                    'PATH': str(root / 'tools') + os.pathsep + os.environ['PATH']}
+                environment.pop('GITHUB_SHA', None)
+                state = root / 'agents/runs/ci-preparation/ledger-build.json'
+                observations = []
+                helper = None
+                suspended = False
+                with (artifacts / ('preparation-late-'+mode+'.log')).open('w') as output:
+                    process = subprocess.Popen([shutil.which('node'), str(ROOT / 'scripts/ci-preparation.cjs'), 'build'],
+                        cwd=root, env=environment, stdout=output, stderr=subprocess.STDOUT)
+                    try:
+                        ids = until(lambda: json.loads((root/'agents/probe/targets.json').read_text())
+                            if (root/'agents/probe/targets.json').exists() else None)
+                        data = until(lambda: value if (value:=json.loads(state.read_text()))['records'][0]['phase']=='identity:rustc:-vV'
+                            and value['records'][0]['commandOwner'] else None)
+                        launch = data['records'][0]['commandOwner']
+                        running = until(lambda: value if (value:=receipt(Path(launch['receipt']))) and value['phase']=='running' else None)
+                        helper = launch['supervisorPid']
+                        observations = [ProcessObservation(pid) for pid in dict.fromkeys([running['pid'], ids['target'], ids['child'], helper])]
+                        self.assertTrue(all(not observed.exited() for observed in observations))
+                        if mode == 'exit-unconfirmed':
+                            os.kill(helper, signal.SIGSTOP)  # Suspend only this control's original supervisor.
+                            suspended = True
+                        self.assertEqual(process.wait(timeout=10), 1)
+                        actual = json.loads(state.read_text())
+                        row = actual['records'][0]
+                        self.assertEqual(row['sha'], source)
+                        self.assertEqual(row['phase'], 'identity:rustc:-vV')
+                        self.assertEqual(row['status'], 'failed')
+                        self.assertEqual(row['failure']['code'], 'ETIMEDOUT')
+                        self.assertEqual(row['assertion'], 'preparation command rustc timed out after 5000ms')
+                        self.assertEqual(row['failure']['message'], row['assertion'])
+                        self.assertIn('controlled-rust-version', row['failure']['stdout']['text'])
+                        self.assertFalse((root/'agents/runs/ci-preparation/build.json').exists())
+                        self.assertEqual(row['commandOwner']['supervisorPid'], helper)
+                        if mode == 'exit-unconfirmed':
+                            self.assertEqual(actual['collection'], 'partial-or-unknown')
+                            self.assertFalse(row['commandOwner']['supervisorExited'])
+                            self.assertEqual(row['commandOwner']['observed']['survivors'], -1)
+                            self.assertTrue(any('owned exit unconfirmed' in item['message'] for item in row['failure']['secondary']))
+                            self.assertTrue(Path(launch['home']).exists())
+                            self.assertTrue(all(not observed.exited() for observed in observations))
+                        else:
+                            self.assertEqual(actual['collection'], 'complete')
+                            self.assertTrue(row['commandOwner']['supervisorExited'])
+                            self.assertEqual(row['commandOwner']['observed']['survivors'], 0)
+                            self.assertEqual(row['failure']['secondary'], [])
+                            self.assertFalse(Path(launch['home']).exists())
+                        (artifacts / ('preparation-late-'+mode+'-ledger.json')).write_text(json.dumps(actual, indent=2)+'\n')
+                        facts.append({'mode': mode, 'source': source, 'targets': ids, 'running': running, 'ledger': actual})
+                    finally:
+                        primary = sys.exc_info()[1]
+                        if suspended: os.kill(helper, signal.SIGCONT)
+                        if process.poll() is None: process.kill(); process.wait(timeout=5)
+                        try:
+                            if observations:
+                                until(lambda: all(observed.exited() for observed in observations))
+                                owned.confirmed = True
+                        except BaseException as cleanup:
+                            if primary is None: raise
+                            primary.add_note(f'Late preparation control cleanup also failed: {cleanup}')
+                        for observed in observations: observed.close()
+        (artifacts/'preparation-late-probe.json').write_text(json.dumps(facts, indent=2)+'\n')
 
     def test_native_stop_request_error_preserves_primary_cleanup_and_home(self):
         self.exercise('stop-directory')

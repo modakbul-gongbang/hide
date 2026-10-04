@@ -63,9 +63,9 @@ function inventory(root) {
   return files;
 }
 async function confirmBoundary(root, before, command) {
-  try {
-    if(JSON.stringify(await identity(root,command))!==JSON.stringify(before)) throw Error('identity mismatch');
-  } catch(cause) { throw new Error('preparation source/toolchain changed during operation',{cause}); }
+  // A failed command is its own failure, not evidence of changed source.
+  // Only two completed identities can establish a toolchain mismatch.
+  if(JSON.stringify(await identity(root,command))!==JSON.stringify(before)) throw Error('preparation source/toolchain changed during operation');
 }
 function verify(value, expected, files) {
   if(value.version!==1 || JSON.stringify(value.identity)!==JSON.stringify(expected)) throw Error('preparation source/profile/features/OS/arch/toolchain mismatch');
@@ -85,14 +85,26 @@ async function main() {
       sha256:crypto.createHash('sha256').update(bytes).digest('hex'),truncated:bytes.length>64*1024};
   };
   function save(status,error) {
-    const assertion=error?.message || '';
-    ledger.write(receiptFile,{version:1,collection:status==='unknown' || (error?.owner && !error.owner.supervisorExited)?'partial-or-unknown':'complete',
+    const chain=[],seen=new Set();
+    let current=error, causeCap=null;
+    while(current) {
+      if(chain.length>=16 || seen.has(current)) {causeCap='preparation error cause/depth cap exceeded';break;}
+      seen.add(current);chain.push(current);current=current.cause;
+    }
+    const primary=chain.at(-1) || error;
+    const assertion=primary?.message || '';
+    const commandOwner=chain.find(value=>value.owner)?.owner || lastOwner;
+    const secondary=chain.flatMap(value=>value.secondary || []).slice(0,64);
+    const secondaryCap=chain.some(value=>value.secondaryCap) || chain.reduce((count,value)=>count+(value.secondary?.length || 0),0)>64;
+    ledger.write(receiptFile,{version:1,collection:status==='unknown' || causeCap || secondaryCap
+      || (commandOwner && (!commandOwner.supervisorExited || commandOwner.observed?.survivors!==0))?'partial-or-unknown':'complete',
       records:[{...metadata,project:'native-preparation',suite:'preparation',test:mode,titlePath:[mode],repeat:0,retry:0,status,
         phase,category:status==='unknown'?'unknown':error?'provisioning':'passed',assertion,signature:assertion?ledger.signature(assertion,phase):null,
-        failure:error?{message:error.message,stack:error.stack,code:error.code,cause:error.cause?{message:error.cause.message,stack:error.cause.stack}:null,
-          stdout:diagnostic(error.stdout || error.cause?.stdout),stderr:diagnostic(error.stderr || error.cause?.stderr),
-          secondary:error.secondary || [],secondaryCap:error.secondaryCap || null}:null,
-        commandOwner:error?.owner || lastOwner,commands}]});
+        failure:error?{message:primary.message,stack:primary.stack,code:primary.code,
+          chain:chain.map(value=>({message:value.message,stack:value.stack,code:value.code})),causeCap,
+          stdout:diagnostic(chain.find(value=>value.stdout)?.stdout),stderr:diagnostic(chain.find(value=>value.stderr)?.stderr),
+          secondary,secondaryCap:secondaryCap?'preparation secondary error cap exceeded':null}:null,
+        commandOwner,commands}]});
   }
   const command=async (name,args)=>{
     phase='identity:'+path.basename(name)+':'+args.join(' ');
@@ -104,6 +116,10 @@ async function main() {
       subject:path.basename(name),
       onOwner:owner=>{lastOwner=owner;save('unknown');}});
     lastOwner=value.owner;
+    if(name==='git' && JSON.stringify(args)===JSON.stringify(['rev-parse','HEAD'])) {
+      metadata.sha=value.stdout.trim();
+      if(metadata.head==='local') metadata.head=metadata.sha;
+    }
     commands.push({phase,owner:lastOwner});
     save('unknown');
     return value.stdout.trim();

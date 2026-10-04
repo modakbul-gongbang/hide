@@ -122,12 +122,15 @@ test('preparation CLI refuses publication when its producer changes tracked sour
   const env={...process.env}; delete env.GITHUB_SHA;
   const result=spawnSync(process.execPath,[path.resolve('scripts/ci-preparation.cjs'),'build'],{cwd:directory,env,encoding:'utf8'});
   assert.notEqual(result.status,0);
-  assert.match(result.stderr,/preparation source\/toolchain changed during operation/);
+  assert.match(result.stderr,/preparation command git exited 1/);
   assert.equal(fs.readFileSync(path.join(directory,'source.txt'),'utf8'),'changed');
   assert.equal(fs.existsSync(path.join(directory,'agents/runs/ci-preparation/build.json')),false);
   const attempt=JSON.parse(fs.readFileSync(path.join(directory,'agents/runs/ci-preparation/ledger-build.json')));
   assert.equal(attempt.records[0].status,'failed');
-  assert.match(attempt.records[0].failure.cause.message,/git.*exited/);
+  assert.match(attempt.records[0].failure.message,/git.*exited/);
+  assert.equal(attempt.records[0].phase,'identity:git:diff --quiet HEAD --');
+  assert.equal(attempt.records[0].commandOwner.observed.code,1);
+  assert.equal(attempt.records[0].commandOwner.observed.survivors,0);
 });
 test('a later pass cannot replace the first failure, and repeated upload deduplicates', () => {
   const ledger = merge([row,row,{...row,retry:1,status:'passed'}]);

@@ -114,6 +114,7 @@ When the behavior depends on the order of two events, the test fixes that order;
 That belongs in one shared fixture helper under `web/e2e/`, which the specs and both fixtures call, not in a `process.platform` branch per spec.
 `web/e2e/platform-fixture.ts` owns native executable names, isolated home variables, system-tool paths and confirmed process-tree exit.
 Herdr, hided, shell fixtures and the C compiler launch through its native `fixture-owner` supervisor, built in this worktree by the CLI preparation and included in the checked shard artifact.
+For a direct local browser gate, first run `bash scripts/verify-cargo.sh build -p hided --bins -p hide-platform --example fixture-owner`; the desktop gate also needs `-p hide-agent-hooks` in that build.
 Its dedicated stdin pipe belongs only to the Playwright worker; worker loss ends the original native process group/job, records confirmed or unconfirmed exit outside the private home, and removes that same home only after confirmed exit.
 Target PID and birth identity come from launch, while measurements use the target PID rather than the supervisor PID.
 Normal stop uses that launch identity and keeps the existing two-second termination bound; callback, native observation and cleanup failures remain failures with their original phase and secondary cause chain.
@@ -170,9 +171,12 @@ The command identity also records that shell's digest and version, and Windows r
 Each tool probe retains its five-second bound and runs through `scripts/ci-owned-command.cjs` and the existing native `fixture-owner` group/job supervisor.
 Output alone does not establish success: the original target receipt and supervisor exit must confirm zero owned survivors, including descendants, before release.
 Timeout or caller loss closes the caller-only owner pipe, retaining the original tool failure and every secondary termination error; unconfirmed exit preserves the command home and an unknown partial outcome.
+A failed end-of-operation probe keeps its original command error rather than being reported as source drift; only two completed identities establish a source/toolchain mismatch.
+Failure collection follows at most sixteen causes and sixty-four secondary errors, retains the actual final command owner and reports a partial outcome on a cycle, cap or unconfirmed native exit.
 The workflow bootstraps that supervisor through the existing Cargo entrypoint before owned preparation commands; that runner-owned bootstrap is a separate boundary.
 Consumers check the downloaded supervisor's source/OS/arch/digest before executing it, then verify the complete toolchain, effective build recipe and output inventory as before.
 The real preparation controls compare completed output, output followed by timeout, and worker-only hard loss on each OS; a local result does not establish another OS's acceptance.
+The actual CLI control also fails a late identity probe after its output and, on Unix, suspends that control's own supervisor to prove the partial receipt, secondary exit failure and retained home.
 
 The link-replacement reader test admits each of forty replacements only after a native file read has consumed its prefix.
 It keeps that file open until publication is observed, reads the suffix afterwards and asserts forty read phases straddled their replacements, alongside concurrent path lookups, old/new-only content, no `NotFound` and no temporary entry.
