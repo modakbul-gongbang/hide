@@ -210,6 +210,15 @@ export type PendingTrash = {
 
 type UiStore = {
   screen: Screen | null;
+  /** Overview is a shell layer; opening it leaves the Workspace mounted. */
+  overviewOpen: boolean;
+  overviewProjectId: string | null;
+  overviewLens: OverviewLens;
+  overviewRequests: RequestLens;
+  overviewReturnFocus: HTMLElement | null;
+  searchReturnFocus: HTMLElement | null;
+  setOverviewOpen: (open: boolean) => void;
+  setOverviewProject: (projectId: string | null, lens?: OverviewLens) => void;
   /** All projects' view; the page keeps it while the operator visits a Project. */
   mainView: MainView;
   /** All projects' Tasks mode. */
@@ -217,6 +226,7 @@ type UiStore = {
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
   sidebarMode: SidebarMode;
+  sidebarFocus: number;
   /**
    * The Home row's new-tab start this page sent: its `request_id` until its
    * pane is opened, then, when it was refused, the reason that device's Home
@@ -338,10 +348,19 @@ type UiStore = {
 
 export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
+  overviewOpen: false,
+  overviewProjectId: null,
+  overviewLens: entryLens(null, "board"),
+  overviewRequests: NO_REQUEST_LENS,
+  overviewReturnFocus: null,
+  searchReturnFocus: null,
+  setOverviewOpen: (overviewOpen) => set({ overviewOpen }),
+  setOverviewProject: (overviewProjectId, lens) => set({ overviewProjectId, overviewLens: lens ?? entryLens(null, get().tasksMode) }),
   mainView: "requests",
   tasksMode: "board",
   relation: null,
   sidebarMode: "projects",
+  sidebarFocus: 0,
   homeStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
@@ -369,10 +388,14 @@ export const useUiStore = create<UiStore>((set, get) => ({
   tooltips: [],
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
-  setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, mainView: "requests" } : { screen, opening: null })),
-  restoreScreen: (screen) => set({ screen, opening: null }),
+  setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, overviewOpen: false, mainView: "requests" } : { screen, opening: null, overviewOpen: false })),
+  restoreScreen: (screen) => set({ screen, opening: null, overviewOpen: false }),
   setMainView: (mainView) => set({ mainView }),
   setMainRequestLens: (patch) => {
+    if (get().overviewOpen) {
+      set({ overviewRequests: { ...get().overviewRequests, ...patch } });
+      return;
+    }
     const screen = get().screen;
     if (screen?.kind !== "main") return;
     set({ screen: { ...screen, requests: { ...(screen.requests ?? NO_REQUEST_LENS), ...patch } } });
@@ -382,6 +405,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   // Overview as it now is; the open request stays, since nothing moved away.
   // An Issues mode chosen here is the page's as well.
   setLens: (patch) => {
+    if (get().overviewOpen || (get().screen?.kind === "main" && get().overviewProjectId !== null)) {
+      set({ overviewLens: { ...get().overviewLens, ...patch }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
+      return;
+    }
     const screen = get().screen;
     if (screen?.kind !== "overview") return;
     set({ screen: { ...screen, lens: { ...screen.lens, ...patch } }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
@@ -412,7 +439,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),
   searchOver: "none",
-  openOverlay: (overlay) => set((state) => (overlay === "search" ? { overlay, searchOver: state.overlay } : { overlay })),
+  openOverlay: (overlay) => set((state) => (overlay === "search" ? { overlay, searchOver: state.overlay, searchReturnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null } : { overlay })),
   closeOverlay: (overlay) => {
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });
   },

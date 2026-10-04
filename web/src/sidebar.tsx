@@ -45,6 +45,7 @@ import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProject
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
+import { useOverviewCount } from "./Overview";
 
 function herdrRowLabel(state: string | null): string | null {
   if (state === "unconfigured" || state === "socket_missing") return "Herdr 소켓 없음";
@@ -87,7 +88,11 @@ export function Sidebar({ actions }: { actions: Actions }) {
   }, [devices, frontId, remoteStatus, actions]);
   useHomeStart();
   // The switch has no chord of its own until the operator binds one (issue 170).
-  const switchChord = useShellStore((s) => commandLabel("toggle_sidebar_view", s.rest?.ui_state));
+  const projectChord = useShellStore((s) => commandLabel("sidebar_projects", s.rest?.ui_state));
+  const agentChord = useShellStore((s) => commandLabel("sidebar_agents", s.rest?.ui_state));
+  const overviewChord = useShellStore((s) => commandLabel("overview", s.rest?.ui_state));
+  const overviewCount = useOverviewCount();
+  const overviewSelected = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main");
   const storedWidth = useShellStore((s) => s.rest?.ui_state?.sidebar_width ?? null);
   // A drag draws the nav alone at the width under the pointer, over the
   // center, so nothing beside it (a terminal above all) reflows per move; the
@@ -97,6 +102,14 @@ export function Sidebar({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (!dragging.current) setPreview(null);
   }, [storedWidth]);
+  const focusRequest = useUiStore((s) => s.sidebarFocus);
+  useEffect(() => {
+    if (!visible || !focusRequest || body === "disconnected") return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-sidebar="${mode}"] [data-sidebar-content] [aria-current="page"], [data-sidebar="${mode}"] [data-sidebar-content] button`)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [visible, mode, body, focusRequest]);
   if (!visible) return null;
   const land = (current: number, landed: number) => {
     const send = sidebarWidthToSend(storedWidth ?? current, landed);
@@ -139,15 +152,18 @@ export function Sidebar({ actions }: { actions: Actions }) {
       >
         {/* The rail is the sidebar's full-height left column, the device's header and lists beside it (quick device-rail-slack). */}
         {rail ? <DeviceRail actions={actions} /> : null}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="sidebar-header-container flex min-h-0 min-w-0 flex-1 flex-col">
           <SidebarHeader
             rail={rail}
             title={title}
             addProject={body !== "agents"}
             tabs={body !== "disconnected"}
             mode={mode}
+            compact={(preview ?? storedWidth ?? tokenPx("--size-sidebar-ideal")) < tokenPx("--size-sidebar-ideal")}
             deviceMenu={deviceMenu}
-            switchChord={switchChord || null}
+            projectChord={projectChord || null}
+            agentChord={agentChord || null}
+            overview={{ selected: overviewSelected, count: overviewCount, chord: overviewChord || null, onOpen: () => actions.openOverviewEntry() }}
             searchChord={commandLabel("search") || null}
             newWorkspaceChord={commandLabel("new_workspace") || null}
             onMode={actions.showSidebarMode}
@@ -307,9 +323,7 @@ function SidebarEdge({
 const HomeSection = memo(function HomeSection({ actions }: { actions: Actions }) {
   const deviceId = useShellStore((s) => frontDeviceId(s.rest));
   const count = useShellStore((s) => (s.rest === null ? null : homeProjectCount(s.rest, deviceId)));
-  // A Home Overview names its device, or follows the one in front when it names none.
-  const screenDevice = useUiStore((s) => (s.screen?.kind === "main" ? (s.screen.deviceId ?? "") : null));
-  const selected = screenDevice !== null && (screenDevice === "" || screenDevice === deviceId);
+  const selected = false;
   const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace");
   const home = useShellStore((s) => contextHome(s.rest));
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
@@ -339,7 +353,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
           onClick={() => {
             const ui = useUiStore.getState();
             if (refusal !== null) ui.setHomeStart(null);
-            ui.setScreen({ kind: "main", deviceId });
+            actions.openHome(deviceId);
           }}
         >
           <HouseIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />

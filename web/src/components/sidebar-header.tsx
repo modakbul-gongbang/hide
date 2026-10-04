@@ -1,5 +1,7 @@
-import { ChevronDownIcon, LaptopIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
+import { ChevronDownIcon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { Kbd } from "./ui/kbd";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { SIDEBAR_MODES, type SidebarMode } from "../ui";
 import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
@@ -36,7 +38,10 @@ export function SidebarHeader({
   addProject,
   tabs,
   mode,
-  switchChord,
+  projectChord,
+  agentChord,
+  overview,
+  compact = false,
   searchChord,
   newWorkspaceChord,
   deviceMenu,
@@ -53,8 +58,11 @@ export function SidebarHeader({
   /** The Projects | Agents strip is drawn (not for a device that cannot be read). */
   tabs: boolean;
   mode: SidebarMode;
+  compact?: boolean;
   /** The bound `toggle_sidebar_view` chord; it has none until the operator binds one. */
-  switchChord: string | null;
+  projectChord?: string | null;
+  agentChord?: string | null;
+  overview?: { selected: boolean; count: number; chord: string | null; onOpen: () => void };
   searchChord: string | null;
   newWorkspaceChord: string | null;
   deviceMenu: DeviceMenu;
@@ -98,22 +106,31 @@ export function SidebarHeader({
         {add}
         {search}
       </div>
+      {overview ? (
+        <Hint label={overview.count > 0 ? `Overview · ${overview.count} Needs You` : "Overview"} shortcut={overview.chord}>
+          <button type="button" aria-current={overview.selected ? "page" : undefined} data-sidebar-overview="true" onClick={overview.onOpen}
+            className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${overview.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+            <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-left">Overview</span>
+            {overview.count > 0 ? <span data-overview-count="true" className="text-caption text-primary">{overview.count}</span> : null}
+            {overview.chord && !compact ? <Kbd className="sidebar-command-keycap">{overview.chord}</Kbd> : null}
+          </button>
+        </Hint>
+      ) : null}
       {tabs ? (
-        <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-xs pl-md text-caption" data-sidebar-strip="true">
-          {SIDEBAR_MODES.map((candidate) => (
-            <ModeHint key={candidate} label={MODE_LABEL[candidate]} chord={switchChord}>
-              <button
-                type="button"
-                data-sidebar-mode={candidate}
-                aria-pressed={mode === candidate}
-                className={mode === candidate ? "text-foreground" : "text-muted-foreground hover:text-subtle-foreground"}
-                onClick={() => onMode(candidate)}
-              >
-                {MODE_LABEL[candidate]}
-              </button>
-            </ModeHint>
-          ))}
-        </div>
+        <Tabs value={mode} onValueChange={(value) => onMode(value as SidebarMode)} className="shrink-0 border-b border-border px-xs py-xxs" data-sidebar-strip="true">
+          <TabsList aria-label="Sidebar view" className="w-full bg-transparent">
+            {SIDEBAR_MODES.map((candidate) => {
+              const chord = candidate === "projects" ? projectChord : agentChord;
+              return <ModeHint key={candidate} label={MODE_LABEL[candidate]} chord={chord ?? null}>
+                <TabsTrigger value={candidate} data-sidebar-mode={candidate} className="min-w-0 flex-1 gap-xs px-xs text-caption">
+                  <span className="truncate">{MODE_LABEL[candidate]}</span>
+                  {chord && !compact ? <Kbd className="sidebar-command-keycap">{chord}</Kbd> : null}
+                </TabsTrigger>
+              </ModeHint>;
+            })}
+          </TabsList>
+        </Tabs>
       ) : null}
     </>
   );

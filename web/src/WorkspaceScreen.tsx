@@ -14,6 +14,7 @@ import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { AgentAreas } from "./AgentAreas";
 import { Tools } from "./Tools";
+import { OverviewButton } from "./Overview";
 import { RunningServers } from "./RunningServers";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
@@ -380,7 +381,7 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
           </span>
         ) : null}
         <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
-          <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
+          <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => actions.openHome()}>
             Home
           </button>
           {project && !project.is_home ? (
@@ -407,6 +408,7 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
           </Hint>
         </nav>
         <div className="flex shrink-0 items-center gap-xxs" role="group" aria-label="Workspace columns" data-column-toggles="true">
+          <OverviewButton actions={actions} />
           <RunningServers key={checkout.id} checkout={checkout} view={view} actions={actions} />
           {/* One name per icon, its state in aria-pressed; the tooltip carries the name and the chord (B7, B8). */}
           <Hint label="File Views" shortcut={viewsChord}>

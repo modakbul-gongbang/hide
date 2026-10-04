@@ -52,7 +52,7 @@ import { fileUrl } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
 import { owningCheckout, probePaths, type FoundPath } from "./terminalLinkProvider";
 import { useShellStore } from "./store";
-import { SIDEBAR_MODES, useUiStore, type PendingClose, type SidebarMode } from "./ui";
+import { useUiStore, type PendingClose, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import {
@@ -125,6 +125,7 @@ export function createActions(send: DispatchFn) {
 
   /** Remembers what was asked to come forward; `CenterScreen` shows it once it is in front. */
   const beginOpening = (target: OpenTarget) => {
+    useUiStore.setState({ overviewOpen: false, overviewReturnFocus: null });
     ui().setOpening({ target, errorBefore: rest()?.status?.last_error?.occurred_at ?? null, failure: null });
   };
 
@@ -1717,10 +1718,46 @@ export function createActions(send: DispatchFn) {
       setDeviceRailVisible(true);
     },
 
-    toggleSidebarView() {
-      const order: SidebarMode[] = [...SIDEBAR_MODES];
-      const index = order.indexOf(ui().sidebarMode);
-      showSidebarMode(order[(index + 1) % order.length] ?? "projects");
+    focusSidebarMode(mode: SidebarMode) {
+      useUiStore.setState({ overviewOpen: false, overviewReturnFocus: null, sidebarMode: mode, sidebarFocus: ui().sidebarFocus + 1 });
+      if (!rest()?.ui_state?.left_sidebar_visible) setLeftSidebarVisible(true);
+    },
+
+    toggleOverview() {
+      const state = ui();
+      if (state.overviewOpen) return state.setOverviewOpen(false);
+      if (state.overlay !== "none" && (state.overlay !== "search" || state.searchOver !== "none")) return;
+      if (state.workspaceDialog || state.pendingClose || (state.overlay !== "search" && state.escapeLayers.length > 0)) return;
+      if (state.overlay === "search") state.closeOverlay();
+      if (state.screen?.kind === "main") {
+        if (frontCheckout(rest()) && rest()?.workspace_view) state.setScreen({ kind: "workspace" });
+        return;
+      }
+      if (state.screen?.kind !== "workspace" || !frontCheckout(rest()) || !rest()?.workspace_view) {
+        state.setScreen({ kind: "main" });
+        return;
+      }
+      const front = frontCheckout(rest());
+      const project = front ? catalogWorkspaces(rest()).find((row) => !row.is_home && row.checkouts.some((checkout) => checkout.id === front.id)) : null;
+      if (!project) state.setOverviewProject(null);
+      else if (state.overviewProjectId !== null && state.overviewProjectId !== project.id) state.setOverviewProject(project.id, overviewScreen(rest(), project.id).lens);
+      const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      useUiStore.setState({ overviewOpen: true, overviewReturnFocus: target, overlay: "none" });
+    },
+
+    openOverviewEntry() {
+      if (ui().screen?.kind === "main") return;
+      this.toggleOverview();
+    },
+
+    openHome(deviceId?: string) {
+      ui().setOverviewProject(null);
+      ui().setScreen({ kind: "main", ...(deviceId ? { deviceId } : {}) });
+    },
+
+    closeOverview() {
+      if (ui().overviewOpen) return ui().setOverviewOpen(false);
+      if (frontCheckout(rest()) && rest()?.workspace_view) ui().setScreen({ kind: "workspace" });
     },
 
     showSidebarMode,

@@ -71,7 +71,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   const rows = useMemo(() => requestRows(lensAgents, projects.flatMap((project) => project.agents)), [lensAgents, projects]);
   // The request view's expanded rows and fold, this screen's own page state.
-  const requestLens = useUiStore((s) => s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
+  const requestLens = useUiStore((s) => s.overviewOpen ? s.overviewRequests : s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
   const onRequestLens = useCallback((patch: Partial<RequestLens>) => useUiStore.getState().setMainRequestLens(patch), []);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
