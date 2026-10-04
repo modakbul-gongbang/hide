@@ -1365,15 +1365,16 @@ pub struct Runtime {
     /// project counter; equal generations reuse the cached answer indefinitely.
     github_generations: HashMap<String, u64>,
     worktree_project_generations: HashMap<String, u64>,
-    /// Where each local project is in the five-minute re-read cycle
-    /// (`reread_stale_github`).
+    /// Where each local project is in the re-read cycle: five minutes after a
+    /// good answer, sooner after a failed read (`reread_stale_github`).
     github_clock: HashMap<String, projects::GithubClock>,
     /// Projects a screen named with `github_request` or `overview_refresh`;
     /// they are read before the others when the count passes the limit.
     github_wanted: HashSet<String>,
-    /// Projects an answer arrived for since the clock last looked; the next
-    /// wake starts their five minutes.
-    github_answered: HashSet<String>,
+    /// Projects an answer arrived for since the clock last looked, each with
+    /// whether that read failed to get its pull requests; the next wake starts
+    /// their wait.
+    github_answered: HashMap<String, bool>,
     /// Local projects whose first read has been answered, with or without a
     /// result; until then a project without an answer is loading.
     github_settled: HashSet<String>,
@@ -1769,7 +1770,7 @@ impl Runtime {
             worktree_project_generations: HashMap::new(),
             github_clock: HashMap::new(),
             github_wanted: HashSet::new(),
-            github_answered: HashSet::new(),
+            github_answered: HashMap::new(),
             github_settled: HashSet::new(),
             github_over_limit: 0,
             github_store: None,

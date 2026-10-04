@@ -5,15 +5,47 @@ const MINIMUM_PURPOSE_HERDR_VERSION: (u64, u64, u64) = (0, 9, 1);
 /// How long a project's pull requests are trusted before the core asks again.
 const GITHUB_REREAD: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
-/// A project's place in the re-read cycle. The five minutes run from the
-/// answer, not from the ask: counted from the ask, a pass over many projects
-/// that outlasts them would be overtaken by its own next ask and never land.
+/// How long a project waits after its first failed read; each further failure
+/// in a row doubles it, up to `GITHUB_REREAD`.
+const GITHUB_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A project's place in the re-read cycle. The wait runs from the answer, not
+/// from the ask: counted from the ask, a pass over many projects that
+/// outlasts it would be overtaken by its own next ask and never land.
+///
+/// `failures` is how many reads in a row ended without the project's pull
+/// requests (the answer's `pull_requests_read` was false), so a read that
+/// failed is asked again sooner than one that worked and a success starts the
+/// count over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum GithubClock {
     /// A read is asked for and has not answered.
-    Waiting,
+    Waiting { failures: u32 },
     /// The read answered at this instant.
-    Answered(std::time::Instant),
+    Answered {
+        at: std::time::Instant,
+        failures: u32,
+    },
+}
+
+impl GithubClock {
+    fn failures(self) -> u32 {
+        match self {
+            Self::Waiting { failures } | Self::Answered { failures, .. } => failures,
+        }
+    }
+}
+
+/// The wait after an answer that came after `failures` failed reads in a row:
+/// the full re-read for a success, else 30 s doubling per failure and stopping
+/// at the full re-read.
+fn github_wait(failures: u32) -> std::time::Duration {
+    match failures {
+        0 => GITHUB_REREAD,
+        failures => GITHUB_RETRY_FIRST
+            .saturating_mul(1u32.checked_shl(failures - 1).unwrap_or(u32::MAX))
+            .min(GITHUB_REREAD),
+    }
 }
 
 /// The most local Git projects the core reads GitHub for. Every registered one
@@ -903,7 +935,8 @@ impl Runtime {
         }
     }
 
-    /// Asks again for each project whose last answer is `GITHUB_REREAD` old,
+    /// Asks again for each project whose last answer is `github_wait` old (the full
+    /// re-read after a success, sooner after a failed read),
     /// by moving its generation; the reader re-reads exactly the projects
     /// whose generation moved. A project is not asked again while its last ask
     /// is unanswered, so a slow pass is never overtaken by the next one. A
@@ -939,19 +972,39 @@ impl Runtime {
             .retain(|path| registered.contains(path.as_str()));
         let known = |path: &String| paths.contains(path);
         self.github_clock.retain(|path, _| known(path));
-        self.github_answered.retain(known);
+        self.github_answered.retain(|path, _| known(path));
         self.github_settled.retain(known);
         for path in paths {
-            if self.github_answered.remove(&path) {
-                self.github_clock.insert(path, GithubClock::Answered(now));
+            let before = self.github_clock.get(&path).copied();
+            if let Some(failed) = self.github_answered.remove(&path) {
+                let failures = if failed {
+                    before.map_or(0, GithubClock::failures).saturating_add(1)
+                } else {
+                    0
+                };
+                self.github_clock
+                    .insert(path, GithubClock::Answered { at: now, failures });
                 continue;
             }
-            match self.github_clock.get(&path) {
+            match before {
                 None => {
-                    self.github_clock.insert(path, GithubClock::Waiting);
+                    self.github_clock
+                        .insert(path, GithubClock::Waiting { failures: 0 });
                 }
-                Some(GithubClock::Answered(at)) if now.duration_since(*at) >= GITHUB_REREAD => {
-                    self.github_clock.insert(path.clone(), GithubClock::Waiting);
+                Some(GithubClock::Answered { at, failures })
+                    if now.duration_since(at) >= github_wait(failures) =>
+                {
+                    if failures > 0 {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "github",
+                            "kind": "read.retry",
+                            "project": path,
+                            "attempt": failures,
+                            "delay_ms": github_wait(failures).as_millis(),
+                        }));
+                    }
+                    self.github_clock
+                        .insert(path.clone(), GithubClock::Waiting { failures });
                     self.bump_github_generation(&path);
                 }
                 Some(_) => {}
@@ -1008,7 +1061,12 @@ impl Runtime {
         let mut newly_settled = false;
         for project in requested.projects {
             let path = project.root.to_string_lossy().into_owned();
-            self.github_answered.insert(path.clone());
+            // The read's own provenance, taken before a failed one is filled
+            // in from the previous answer below.
+            let failed = github
+                .project(&path)
+                .is_some_and(|read| !read.pull_requests_read);
+            self.github_answered.insert(path.clone(), failed);
             newly_settled |= self.github_settled.insert(path);
         }
         // A failed lookup must not erase the answer it failed to replace: the
