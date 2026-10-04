@@ -11,6 +11,7 @@ A claim is verified by the check that observes what a caller of the behavior obs
 | The change claims | Check | Owner |
 | --- | --- | --- |
 | Core state, a runtime event, a Herdr fixture, the hided wire | `bash scripts/verify-cargo.sh test` | [CONTRIBUTING.md: CI gates](../CONTRIBUTING.md#ci-gates) |
+| Local mailbox intake, safe doorbells, durable watches and activity privacy | Named library checks plus actual isolated runtime observations | [delivery.md: Verification](delivery.md#verification) |
 | Web or desktop logic that needs no window | `bash scripts/verify-web.sh` | [CONTRIBUTING.md: CI gates](../CONTRIBUTING.md#ci-gates) |
 | A flow a user performs in the web shell | `pnpm --dir web e2e` | [Before an e2e run](#before-an-e2e-run) |
 | A desktop app behavior: window, menu, native view, relaunch, a daemon that goes away | `pnpm --dir desktop e2e` | [BUILD.md: The desktop app](BUILD.md#the-desktop-app) |
@@ -22,6 +23,15 @@ A claim is verified by the check that observes what a caller of the behavior obs
 | Anything the rows above cannot reach yet | Manual QA on an isolated candidate | [Manual native QA](#manual-native-qa) |
 
 Run the Rust lanes through `scripts/verify-cargo.sh`, never a bare `cargo test` from an agent's pane: the pane carries `HERDR_SOCKET_PATH` for the operator's Herdr, and on 2026-10-02 two daemon tests followed the operator's live Herdr with the real HOME, where the label worker reads the operator's conversations, because the core then took that variable over the socket a test handed it; the core no longer does, it takes its home from hided rather than from the process `HOME`, and the script clears every `HERDR_*` variable first.
+
+For a file-persistence claim, run the platform's public contract and OS fault regressions through `bash scripts/verify-cargo.sh test-scoped -p hide-platform` on each supported system.
+The durable writer's regressions observe returned phases and causes, installed bytes and identity, retained cleanup residue, and Windows's unsupported access modes; unit faults are scoped to the test thread at the OS boundary and exercise the public writer without replacing owned helpers.
+A readable file or legacy `sync_dir` success alone proves no durable acknowledgement, and a file-parent barrier does not prove persistence of a newly created ancestor chain or recovery of the caller's state after an uncertain replacement.
+The public bootstrap regressions check the 64-component bound, refusal of escape and untrusted paths, retained partial chains after real mkdir or barrier failure, and recovery that checks existing levels again; the supplied ancestor's established durability remains a caller precondition.
+The same scoped platform lane exercises guarded launches and captures against real children: stdin payload, both output streams, 64 KiB and 1 MiB limits, inherited-pipe timeout, abrupt owner death with a helper outside its group, and repeated work returning the descendant count to its baseline.
+Capture failures must preserve their primary outcome and report unconfirmed cleanup while retaining ownership; local platform timing checks alone do not prove a consumer's complete 1.85-second deadline or native behavior on another operating system.
+Existing-anchor regressions establish the canonical chain with real barriers before creating sibling home and state directories, reject links and untrusted leaves without mutation, and preserve identity through a reported barrier failure and explicit recovery that checks the existing chain again.
+Windows's pre-mutation `Unsupported` is fail-closed interim behavior, not cross-OS bootstrap completion, and callers must not become ready without an established parent-chain boundary.
 
 `python3 scripts/check-herdr-schema.py --herdr-bin <pinned binary>` compares the binary's own schema and version with the committed contract and manifest on macOS, Linux and Windows.
 It clears inherited `HERDR_*` and needs no server; the full zsh contract check delegates this same comparison before its live-server checks.

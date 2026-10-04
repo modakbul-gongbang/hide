@@ -210,6 +210,25 @@ pub fn request(path: &Path, query: &str) -> Result<Value, String> {
     )
 }
 
+/// Losing the final capability claim cannot turn durable success into retry.
+pub fn request_delivery(
+    path: &Path,
+    command: herdr_core::delivery::Command,
+    hint: Option<&str>,
+) -> Result<Value, String> {
+    let reference = read_reference(path)?;
+    let request_id = fresh_request_id()?;
+    run_exchange(
+        path,
+        &reference,
+        json!({
+            "type":"delivery", "request_id":request_id, "command":command, "caller_pane":hint
+        }),
+        &request_id,
+        true,
+    )
+}
+
 pub fn request_action(path: &Path, action: Action, request_id: &str) -> Result<Value, String> {
     let reference = read_reference(path)?;
     if !valid_request_id(request_id) {

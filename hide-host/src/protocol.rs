@@ -28,6 +28,8 @@ use crate::root::RootIdentity;
 /// 14: the kit carries `codex_per_pane` with its `off` state, and a
 /// `reinstall` names the parts the operator turned off (PRD
 /// overview-request-view D-21, D-24); a helper on 13 would not know them.
+/// 15: `session_activity` answers only a proven session's modification time
+/// and size, for the parent-owned inactivity watcher.
 /// 16: worktree facts carry lock reasons and measured ignored repositories;
 /// `worktree_removal_check` measures the exact accepted deletion before any
 /// pane closes. A helper without this preflight must never remove instead.
@@ -194,6 +196,10 @@ pub enum Call {
     /// next checkpoint, never a path.
     LabelTranscript {
         request: hide_session::label_transcript::LabelTranscriptRequest,
+    },
+    /// Metadata-only activity using the same native ownership proof as labels.
+    SessionActivity {
+        request: hide_session::session_activity::SessionActivityRequest,
     },
 }
 
