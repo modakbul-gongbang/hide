@@ -15,6 +15,7 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::analysis::LabelEnd;
 use super::store::PaneRecord;
 
 /// Where the plugin kept its display state under a home.
@@ -86,14 +87,19 @@ pub(crate) fn plugin_state(home: &Path) -> BTreeMap<String, PaneRecord> {
             let owner = pane
                 .session_owner
                 .filter(|owner| !owner.trim().is_empty())?;
+            let question = pane.semantic_attention.as_deref() == Some("question")
+                && !pane.expected_reply.trim().is_empty();
             Some((
                 pane_id,
                 PaneRecord {
                     owner: Some(owner),
-                    task: pane.task,
-                    progress: pane.progress,
-                    expected_reply: pane.expected_reply,
-                    question: pane.semantic_attention.as_deref() == Some("question"),
+                    goal: pane.task,
+                    line: if question {
+                        pane.expected_reply
+                    } else {
+                        pane.progress
+                    },
+                    end: question.then_some(LabelEnd::Question),
                     task_input_cursor: pane.task_input_cursor,
                     analysis_turn_start: pane.analysis_turn_start,
                     analysis_turn_end: pane.analysis_turn_end,
@@ -130,8 +136,9 @@ mod tests {
         let imported = plugin_state(home.path());
         assert_eq!(imported.len(), 1);
         let record = &imported["w1:p1"];
-        assert!(record.question);
-        assert_eq!(record.task.as_deref(), Some("기존 라벨 가져오기"));
+        assert_eq!(record.end, Some(LabelEnd::Question));
+        assert_eq!(record.line, "답하세요");
+        assert_eq!(record.goal.as_deref(), Some("기존 라벨 가져오기"));
         assert_eq!(record.analysis_turn_end, Some(7));
 
         let state_dir = tempfile::tempdir().unwrap();

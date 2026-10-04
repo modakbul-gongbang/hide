@@ -13,6 +13,7 @@ fn issue(number: u32) -> IssueSnapshot {
         project_status: None,
         updated_at_unix_ms: Some(1),
         created_at_unix_ms: None,
+        closed_at_unix_ms: None,
         blocked_by: Vec::new(),
     }
 }
@@ -248,6 +249,8 @@ fn a_linked_checkout_names_its_task_in_the_projects_task_list() {
             is_draft: false,
             merged_at_unix_ms: None,
             updated_at_unix_ms: None,
+            created_at_unix_ms: None,
+            closed_at_unix_ms: None,
         });
     runtime.sync_issues();
     assert!(runtime.sync_tasks());

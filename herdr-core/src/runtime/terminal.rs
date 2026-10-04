@@ -371,6 +371,24 @@ impl Runtime {
         };
         true
     }
+    /// Records that the operator submitted to an agent pane, for who sent
+    /// the message it writes next (PRD overview-request-view D-19). Only the
+    /// moment is kept. An Enter at an approval prompt answers Herdr's prompt,
+    /// not the conversation, and is not one.
+    pub(super) fn record_operator_submit(&self, pane_id: &str) {
+        let Some(services) = self.label_services.as_ref() else {
+            return;
+        };
+        let Some(row) = self.agent_row(pane_id) else {
+            return;
+        };
+        if row.blocked {
+            return;
+        }
+        services
+            .input
+            .record(pane_id, unix_milliseconds(), row.activity == "working");
+    }
     /// The agent row for a pane on this machine or on a device.
     fn agent_row(&self, pane_id: &str) -> Option<&SidebarAgentSnapshot> {
         let local = self.snapshot.navigator.agents.iter();

@@ -18,6 +18,18 @@ pub struct ConversationCheckpoint {
 }
 
 impl ConversationCheckpoint {
+    /// A position that is a count rather than a file offset: OpenCode's
+    /// messages read so far (`opencode`).
+    pub(crate) fn at_offset(offset: u64) -> Self {
+        Self {
+            cursor: crate::CursorCheckpoint {
+                offset,
+                ..crate::CursorCheckpoint::default()
+            },
+            ..Self::default()
+        }
+    }
+
     pub fn offset(&self) -> u64 {
         self.cursor.offset
     }
@@ -186,6 +198,10 @@ impl ConversationCursor {
             if line.title.is_some() {
                 parsed.title = line.title;
             }
+            if line.custom_title.is_some() {
+                parsed.custom_title = line.custom_title;
+            }
+            parsed.pr_sightings.extend(line.pr_sightings);
             pending.clear();
         }
         // Commit only a successful poll: a relevant capacity failure cannot
@@ -401,6 +417,7 @@ impl LargeRecord {
             return false;
         }
         match agent {
+            Agent::OpenCode => false,
             Agent::Codex => {
                 !self.root_kind.is_empty()
                     && (self.root_kind != "response_item"
