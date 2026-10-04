@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { herdrBinary, linkFixtureTranscripts, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { enterWorkspace } from "./wire";
-import { spawnFixtureProcess, fixtureProcessFailure, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv, stopFixtureProcess } from "./platform-fixture";
+import { spawnFixtureProcess, fixtureProcessFailure, releaseFixtureRoot, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv, stopFixtureProcess } from "./platform-fixture";
 import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
 
 type Daemon = {
@@ -26,8 +26,9 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
   const owned = ownUntilWorkerExit(() => {
     if (cleaned) return;
     if (spawnAttempted && !child) throw incomplete();
-    if (child && !(spawnFailed && child.pid === undefined)) stopFixtureProcess(child);
-    fs.rmSync(dir, { recursive: true, force: true });
+    releaseFixtureRoot(dir, () => {
+      if (child && !(spawnFailed && child.pid === undefined)) stopFixtureProcess(child);
+    }, [() => fs.rmSync(dir, { recursive: true, force: true })]);
     cleaned = true;
   });
   const stop = owned.stop;

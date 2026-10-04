@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
 import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
-import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, stopFixtureProcess, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv } from "./platform-fixture";
+import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, releaseFixtureRoot, stopFixtureProcess, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv } from "./platform-fixture";
 
 /**
  * `restart` stops the daemon and starts it again on the same state directory
@@ -85,10 +85,8 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     child.once("close", () => log.end());
   }
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  const { stop, disown } = ownUntilWorkerExit(() => {
-    stopFixtureProcess(child);
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
+  const { stop, disown } = ownUntilWorkerExit(() => releaseFixtureRoot(dir,
+    () => stopFixtureProcess(child), [() => fs.rmSync(dir, { recursive: true, force: true })]));
   for (let i = 0; i < 50; i += 1) {
     try { fixtureProcessFailure(child); } catch (error) { cleanupAfterFailure(error, stop); }
     if (spawnFailed) {

@@ -28,7 +28,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
-import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, assertFixtureRootReleased, stopFixtureProcess, compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
+import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, assertFixtureRootReleased, releaseFixtureRoot, stopFixtureProcess, compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 
 export type HerdrFixture = {
   /** The actual pinned server process, distinct from its native supervisor. */
@@ -548,35 +548,38 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   finally { fs.closeSync(log); }
   let spawnFailed: Error | null = null;
   server.once("error", (error) => { spawnFailed = error; });
-  const { stop } = ownUntilWorkerExit(() => {
+  const { stop } = ownUntilWorkerExit(() => releaseFixtureRoot(root, () => {
     stopFixtureProcess(server, () => {
       const stopped = spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
       if (stopped.error) throw new Error("private Herdr stop failed; preserve root", { cause: stopped.error });
+      if (stopped.status !== 0) throw new Error(`private Herdr stop failed: exit=${stopped.status}, signal=${stopped.signal}; ${stopped.stderr?.toString() ?? ""}`);
     });
-    for (const file of [socket, socket.replace(/\.sock$/, "-client.sock")]) {
-      fs.rmSync(file, { force: true });
-    }
-    // Run evidence for a reviewer, next to the screenshots: the server's log
-    // and what each agent pane's PTY received.
-    const keep = process.env.HIDE_E2E_SCREENSHOT_DIR;
-    if (keep) {
-      fs.mkdirSync(keep, { recursive: true });
-      for (const name of ["herdr-server.log", "input-one.log", "input-two.log"]) {
-        const file = path.join(root, name);
-        if (fs.existsSync(file)) fs.copyFileSync(file, path.join(keep, `${path.basename(root)}-${name}`));
-      }
-      // The server's own session log, where a pane whose shell never printed
-      // a prompt says what it ran and how that ended.
-      const sessions = path.join(root, "xdg-config", "herdr", "sessions");
-      if (fs.existsSync(sessions)) {
-        for (const session of fs.readdirSync(sessions)) {
-          const file = path.join(sessions, session, "herdr-server.log");
-          if (fs.existsSync(file)) fs.copyFileSync(file, path.join(keep, `${path.basename(root)}-session.log`));
+  }, [
+    ...[socket, socket.replace(/\.sock$/, "-client.sock")].map(file => () => fs.rmSync(file, { force: true })),
+    () => {
+      // Run evidence for a reviewer, next to the screenshots: the server's log
+      // and what each agent pane's PTY received.
+      const keep = process.env.HIDE_E2E_SCREENSHOT_DIR;
+      if (keep) {
+        fs.mkdirSync(keep, { recursive: true });
+        const copies = ["herdr-server.log", "input-one.log", "input-two.log"].map(name => () => {
+          const file = path.join(root, name);
+          if (fs.existsSync(file)) fs.copyFileSync(file, path.join(keep, `${path.basename(root)}-${name}`));
+        });
+        // The server's own session log, where a pane whose shell never printed
+        // a prompt says what it ran and how that ended.
+        const sessions = path.join(root, "xdg-config", "herdr", "sessions");
+        if (fs.existsSync(sessions)) {
+          for (const session of fs.readdirSync(sessions)) copies.push(() => {
+            const file = path.join(sessions, session, "herdr-server.log");
+            if (fs.existsSync(file)) fs.copyFileSync(file, path.join(keep, `${path.basename(root)}-session.log`));
+          });
         }
+        releaseFixtureRoot(root, () => {}, copies);
       }
-    }
-    fs.rmSync(root, { recursive: true, force: true });
-  });
+    },
+    () => fs.rmSync(root, { recursive: true, force: true }),
+  ]));
   try {
     await waitFor(() => {
       if (spawnFailed) throw spawnFailed;

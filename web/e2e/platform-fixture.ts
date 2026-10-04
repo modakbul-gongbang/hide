@@ -113,7 +113,15 @@ export function stopFixtureProcess(child: ChildProcess, graceful?: () => void): 
     // owner, and still attempts termination before we report the failure.
     child.stdin?.destroy();
     while (Date.now() < deadline) {
-      try { final = readReceipt(owner); if (final?.survivors === 0) { owner.released = true; activeOwners.delete(owner); break; } }
+      try {
+        final = readReceipt(owner);
+        if (final?.survivors === 0) {
+          owner.released = true;
+          activeOwners.delete(owner);
+          if (final.error && !failures.some(error => error instanceof Error && error.message === final!.error)) failures.push(new Error(final.error));
+          break;
+        }
+      }
       catch (secondary) { failures.push(secondary); break; }
       pause();
     }
@@ -125,6 +133,20 @@ export function stopFixtureProcess(child: ChildProcess, graceful?: () => void): 
 /** A failed compiler or setup must not remove a still-owned target's home. */
 export function assertFixtureRootReleased(root: string): void {
   if ([...activeOwners].some(owner => owner.root === root)) throw new Error("fixture child exit unconfirmed; preserve home");
+}
+
+/** A reported stop error does not skip independent releases after confirmed
+ * exit. Unknown exit gates every filesystem release and preserves the home. */
+export function releaseFixtureRoot(root: string, stop: () => void, releases: (() => void)[]): void {
+  const failures: unknown[] = releases.length > 256 ? [new Error("fixture release cap exceeded")] : [];
+  try { stop(); } catch (error) { failures.push(error); }
+  if (releases.length > 256) throwFixtureFailures(failures);
+  try { assertFixtureRootReleased(root); }
+  catch (error) { failures.push(error); throwFixtureFailures(failures); }
+  for (const release of releases) {
+    try { release(); } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throwFixtureFailures(failures);
 }
 
 /** A fixture compiler is an owned, bounded child, separate from test deadlines. */

@@ -324,6 +324,73 @@ else:
                         primary.add_note(f'Ordinary fixture cleanup also failed: {cleanup}')
                 for target in observations: target.close()
 
+    def test_actual_consumers_release_confirmed_homes_and_serialize_primary_errors(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=artifacts) as directory:
+            proof = Path(directory) / 'consumer-release.json'
+            filename = ROOT / 'web/e2e' / ('ci-owner-release-' + Path(directory).name + '.spec.ts')
+            report = artifacts / 'consumer-release.report.json'
+            normalized = artifacts / 'consumer-release.ledger.json'
+            filename.write_text("import { test, expect } from '@playwright/test';\n"
+                "import fs from 'node:fs'; import path from 'node:path';\n"
+                "import { startHerdr } from './herdr-fixture'; import { startHided } from './hided-fixture';\n"
+                "const proof=" + json.dumps(str(proof)) + ";\n"
+                "test('Herdr evidence failure still releases confirmed root', async()=>{\n"
+                " const herdr=await startHerdr({agents:false}); const saved=process.env.HIDE_E2E_SCREENSHOT_DIR;\n"
+                " const blocked=proof+'.blocked'; fs.writeFileSync(blocked,'original'); process.env.HIDE_E2E_SCREENSHOT_DIR=blocked;\n"
+                " let primary:unknown; try { herdr.stop(); } catch(error) {primary=error;} finally {if(saved===undefined)delete process.env.HIDE_E2E_SCREENSHOT_DIR;else process.env.HIDE_E2E_SCREENSHOT_DIR=saved;}\n"
+                " expect(primary).toBeInstanceOf(Error); expect((primary as Error).message).toContain('EEXIST');\n"
+                " expect(fs.existsSync(herdr.root)).toBe(false); fs.appendFileSync(proof,JSON.stringify({consumer:'herdr',rootRemoved:true,message:(primary as Error).message})+'\\n');\n"
+                " throw primary;\n});\n"
+                "test('Hided native stop failure still releases confirmed root', async()=>{\n"
+                " const herdr=await startHerdr({agents:false}); const daemon=await startHided(herdr);\n"
+                " const directory=path.resolve('../agents/runs/ci-fixture-owners');\n"
+                " const receipt=fs.readdirSync(directory).filter(f=>f.endsWith('.receipt')).map(f=>path.join(directory,f)).find(f=>fs.readFileSync(f,'utf8').split('\\t')[2]===String(daemon.pid));\n"
+                " expect(receipt).toBeDefined(); fs.mkdirSync(receipt!.replace(/\\.receipt$/,'.stop'));\n"
+                " await expect.poll(()=>fs.readFileSync(receipt!,'utf8').split('\\t')[1]).toBe('stop-request-read-failed');\n"
+                " let primary:unknown; try {daemon.stop();} catch(error){primary=error;}\n"
+                " expect(primary).toBeInstanceOf(Error); expect((primary as Error).message).toContain('stop-request-read-failed');\n"
+                " expect((primary as Error).message).toContain('stop-request-cleanup-failed');\n"
+                " expect(fs.readFileSync(receipt!,'utf8').split('\\t')[5]).toBe('0');\n"
+                " expect(fs.existsSync(path.dirname(daemon.stateDir))).toBe(false); herdr.stop();\n"
+                " fs.appendFileSync(proof,JSON.stringify({consumer:'hided',rootRemoved:true,message:(primary as Error).message})+'\\n'); throw primary;\n});\n")
+            if os.name != 'nt':
+                with filename.open('a') as source:
+                    source.write("test('unconfirmed native exit preserves a live consumer home',async()=>{\n"
+                        " const herdr=await startHerdr({agents:false});const daemon=await startHided(herdr);\n"
+                        " const directory=path.resolve('../agents/runs/ci-fixture-owners');\n"
+                        " const receipt=fs.readdirSync(directory).filter(f=>f.endsWith('.receipt')).map(f=>path.join(directory,f)).find(f=>fs.readFileSync(f,'utf8').split('\\t')[2]===String(daemon.pid))!;\n"
+                        " let primary:unknown;process.kill(daemon.supervisorPid,'SIGSTOP');\n"
+                        " try {try {daemon.stop();}catch(error){primary=error;}\n"
+                        " expect(primary).toBeInstanceOf(Error);expect((primary as Error).message).toContain('unconfirmed');\n"
+                        " expect(fs.existsSync(path.dirname(daemon.stateDir))).toBe(true);expect((await fetch(daemon.origin+'/health')).ok).toBe(true);\n"
+                        " fs.appendFileSync(proof,JSON.stringify({consumer:'unconfirmed',homePreservedWhileLive:true,message:(primary as Error).message})+'\\n');\n"
+                        " }finally {process.kill(daemon.supervisorPid,'SIGCONT');}\n"
+                        " await expect.poll(()=>fs.readFileSync(receipt,'utf8').split('\\t')[1]).toBe('owner-lost-exited');\n"
+                        " expect(fs.readFileSync(receipt,'utf8').split('\\t')[5]).toBe('0');herdr.stop();throw primary;\n});\n")
+            try:
+                result = subprocess.run(['bash', 'scripts/verify-web.sh', 'web', 'e2e', filename.name, '--retries=0', '--workers=1',
+                    '--reporter=list,'+str(ROOT/'scripts/ci-reporter.ts')+',json'], cwd=ROOT,
+                    env={**os.environ,'PLAYWRIGHT_JSON_OUTPUT_FILE':str(report),'CI_LEDGER_PATH':str(normalized)},
+                    capture_output=True, text=True, timeout=60)
+                (artifacts/'consumer-release.log').write_text(result.stdout+result.stderr)
+                self.assertNotEqual(result.returncode, 0)
+                facts=[json.loads(line) for line in proof.read_text().splitlines()]
+                expected={'herdr','hided'} if os.name=='nt' else {'herdr','hided','unconfirmed'}
+                self.assertEqual({row['consumer'] for row in facts},expected)
+                self.assertTrue(all(row['rootRemoved'] for row in facts if row['consumer']!='unconfirmed'))
+                self.assertTrue(all(row['homePreservedWhileLive'] for row in facts if row['consumer']=='unconfirmed'))
+                actual=json.loads(report.read_text())
+                self.assertEqual(actual['stats']['unexpected'],len(expected))
+                rows=[row for row in json.loads(normalized.read_text())['records'] if row['suite']==filename.relative_to(ROOT).as_posix()]
+                self.assertEqual(len(rows),len(expected))
+                self.assertTrue(all(row['status']=='failed' for row in rows))
+                self.assertTrue(any('EEXIST' in row['assertion'] for row in rows))
+                self.assertTrue(any('stop-request-read-failed' in row['assertion'] and 'stop-request-cleanup-failed' in row['assertion'] for row in rows))
+            finally:
+                filename.unlink(missing_ok=True)
+
 
 if __name__ == '__main__':
     unittest.main()
