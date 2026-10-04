@@ -1019,6 +1019,8 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
         updated_at_unix_ms: None,
         created_at_unix_ms: None,
         closed_at_unix_ms: None,
+        head_oid: None,
+        cross_repository: false,
     };
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {

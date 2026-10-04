@@ -3065,8 +3065,9 @@ pub enum PullRequestChecks {
     Passing,
 }
 
-/// One branch's pull request, already tie-broken against every other pull
-/// request on that branch.
+/// One pull request GitHub listed. Which checkout it belongs to is decided
+/// by `github::pull_request_for_checkout`, never by comparing branch names
+/// where a call site stands.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PullRequestSnapshot {
     pub closing_issues: Vec<crate::issues::IssueReference>,
@@ -3089,6 +3090,16 @@ pub struct PullRequestSnapshot {
     /// When it was closed or merged, for a row's chip after the request.
     #[serde(skip_serializing)]
     pub closed_at_unix_ms: Option<u64>,
+    /// The commit its head branch pointed at when GitHub last saw it. A
+    /// settled pull request belongs to a checkout only at exactly this
+    /// commit, because a branch name can be used again for new work. Core
+    /// only: no shell draws or compares it.
+    #[serde(skip_serializing)]
+    pub head_oid: Option<String>,
+    /// The head branch lives in another repository (a fork), so its name says
+    /// nothing about this repository's branch of the same name.
+    #[serde(skip_serializing)]
+    pub cross_repository: bool,
 }
 
 /// How a repository's `gh` lookup is doing, independent of what it found.
@@ -3140,6 +3151,16 @@ impl GithubSnapshot {
         self.projects
             .iter()
             .find(|project| project.root_path == root_path)
+    }
+}
+
+impl CheckoutSnapshot {
+    /// The commit this checkout is on, as the worktree reader last saw it:
+    /// the one fact that tells a branch's current work from an older one of
+    /// the same name. Absent until that reader has answered, and on a
+    /// checkout it never listed.
+    pub fn head_sha(&self) -> Option<&str> {
+        self.worktree.as_ref()?.head_sha.as_deref()
     }
 }
 

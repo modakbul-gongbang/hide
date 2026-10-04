@@ -251,6 +251,8 @@ fn a_linked_checkout_names_its_task_in_the_projects_task_list() {
             updated_at_unix_ms: None,
             created_at_unix_ms: None,
             closed_at_unix_ms: None,
+            head_oid: None,
+            cross_repository: false,
         });
     runtime.sync_issues();
     assert!(runtime.sync_tasks());

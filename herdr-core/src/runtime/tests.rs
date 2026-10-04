@@ -102,6 +102,8 @@ fn settled_worktree(badge: crate::model::PullRequestBadge) -> CheckoutSnapshot {
         updated_at_unix_ms: None,
         created_at_unix_ms: None,
         closed_at_unix_ms: None,
+        head_oid: None,
+        cross_repository: false,
     };
     CheckoutSnapshot {
         id: "checkout-feature".to_owned(),
