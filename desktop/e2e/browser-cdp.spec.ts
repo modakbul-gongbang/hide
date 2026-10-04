@@ -637,14 +637,20 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   // resolved request/navigation; the gateway never parses JavaScript.
   const encoded = [...fileUrl].map((letter) => letter.charCodeAt(0));
   const navigationRefusals = () => hostLog(run.env).filter((line) => line.event === "browser.navigation_refused" && line.reason === "cdp_file_boundary" && line.display_id === displayId);
-  await cdp.send("Runtime.evaluate", { expression: `location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
+  const navigation = await cdp.send("Runtime.evaluate", { expression: `location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'`, returnByValue: true });
+  expect(navigation.exceptionDetails).toBeUndefined();
+  expect(navigation.result.value).toBe("attempted");
   await expect(page.getByRole("heading")).toHaveText("Scoped browser fixture");
   expect(page.url()).toBe(`${origin}/protected`);
-  await cdp.send("Runtime.evaluate", { expression: `for(let attempt=0;attempt<20;attempt++) location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
+  const repeatedNavigation = await cdp.send("Runtime.evaluate", { expression: `for(let attempt=0;attempt<20;attempt++) location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'`, returnByValue: true });
+  expect(repeatedNavigation.exceptionDetails).toBeUndefined();
+  expect(repeatedNavigation.result.value).toBe("attempted");
   // Chromium can preempt an HTTP-to-file attempt before the app sees it.
   // Separate app-owned main-frame and iframe cases require guard causality.
   expect(navigationRefusals().length).toBeLessThanOrEqual(1);
-  await cdp.send("Runtime.evaluate", { expression: `for(let attempt=0;attempt<20;attempt++) window.open(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
+  const popups = await cdp.send("Runtime.evaluate", { expression: `for(let attempt=0;attempt<20;attempt++) window.open(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'`, returnByValue: true });
+  expect(popups.exceptionDetails).toBeUndefined();
+  expect(popups.result.value).toBe("attempted");
   const popupRefusals = hostLog(run.env).filter((line) => line.event === "browser.window_open_refused" && line.reason === "cdp_file_boundary" && line.display_id === displayId);
   // Chromium may reject a popup before Electron receives it. When the
   // native handler does run, repeated attempts still emit at most once.
