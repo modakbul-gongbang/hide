@@ -1,3 +1,4 @@
+import { useInterfaceTranslation } from "../i18n/client";
 import { ChevronDownIcon, LaptopIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { SIDEBAR_MODES, type SidebarMode } from "../ui";
@@ -5,7 +6,7 @@ import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
 
-const MODE_LABEL: Record<SidebarMode, string> = { projects: "Projects", agents: "Agents" };
+const MODE_LABEL: Record<SidebarMode, "overview.projects" | "overview.agents"> = { projects: "overview.projects", agents: "overview.agents" };
 
 /** A device the hidden rail's menu lists. */
 export type MenuDevice = { id: string; label: string; remote: boolean; connected: boolean };
@@ -63,16 +64,17 @@ export function SidebarHeader({
   /** Add project; null where the host cannot pick a folder (a browser tab). */
   onNewWorkspace: (() => void) | null;
 }) {
+  const { t } = useInterfaceTranslation();
   const add =
     addProject && onNewWorkspace ? (
-      <Hint label="Add project" shortcut={newWorkspaceChord}>
+      <Hint label={t("commands.new_workspace")} shortcut={newWorkspaceChord}>
         <Button variant="ghost" size="icon-sm" data-sidebar-new-workspace="true" onClick={onNewWorkspace}>
           <PlusIcon />
         </Button>
       </Hint>
     ) : null;
   const search = (
-    <Hint label="Search" shortcut={searchChord}>
+    <Hint label={t("common.search")} shortcut={searchChord}>
       <Button variant="ghost" size="icon-sm" data-sidebar-search="true" onClick={onSearch}>
         <SearchIcon />
       </Button>
@@ -101,7 +103,7 @@ export function SidebarHeader({
       {tabs ? (
         <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-xs pl-md text-caption" data-sidebar-strip="true">
           {SIDEBAR_MODES.map((candidate) => (
-            <ModeHint key={candidate} label={MODE_LABEL[candidate]} chord={switchChord}>
+            <ModeHint key={candidate} label={t(MODE_LABEL[candidate])} chord={switchChord}>
               <button
                 type="button"
                 data-sidebar-mode={candidate}
@@ -109,7 +111,7 @@ export function SidebarHeader({
                 className={mode === candidate ? "text-foreground" : "text-muted-foreground hover:text-subtle-foreground"}
                 onClick={() => onMode(candidate)}
               >
-                {MODE_LABEL[candidate]}
+                {t(MODE_LABEL[candidate])}
               </button>
             </ModeHint>
           ))}

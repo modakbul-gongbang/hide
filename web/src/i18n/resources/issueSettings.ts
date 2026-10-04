@@ -1,0 +1,83 @@
+import type { Catalog, Catalogs } from "../schema";
+
+export const issueSettingsEnglish = {
+  "issueSettings.sources": "Issue sources",
+  "issueSettings.githubAccess": "Read and write with gh",
+  "issueSettings.local": "Local",
+  "issueSettings.localDescription": "Stored on this Mac · Always available",
+  "issueSettings.projects": "Source per project",
+  "issueSettings.projectsDescription": "Each project uses one source. Changing it doesn't move existing issues or alter linked worktrees.",
+  "issueSettings.noProjects": "No projects on this Mac.",
+  "issueSettings.projectSource": "Issue source for {{name}}",
+  "issueSettings.startWork": "Start work",
+  "issueSettings.aiNames": "Let AI name worktrees",
+  "issueSettings.closesInstruction": "Ask for Closes in the pull request body",
+  "issueSettings.auto": "Automatic",
+  "issueSettings.autoResolved": "Automatic ({{source}})",
+  "issueSettings.githubRepository": "GitHub · {{repository}}",
+  "issueSettings.ghNotInstalled": "gh isn't installed",
+  "issueSettings.ghNotLoggedIn": "Not signed in to gh",
+  "issueSettings.readFailed": "Couldn't read",
+} as const;
+
+const ko = {
+  "issueSettings.sources": "이슈 출처",
+  "issueSettings.githubAccess": "gh로 읽고 씀",
+  "issueSettings.local": "로컬",
+  "issueSettings.localDescription": "이 Mac에 저장 · 언제나 사용 가능",
+  "issueSettings.projects": "프로젝트별 출처",
+  "issueSettings.projectsDescription": "한 프로젝트는 출처 하나입니다. 바꿔도 이미 있는 이슈는 옮기지 않고, 연결된 워크트리는 그대로 둡니다.",
+  "issueSettings.noProjects": "이 Mac의 프로젝트가 없습니다.",
+  "issueSettings.projectSource": "{{name}} 이슈 출처",
+  "issueSettings.startWork": "작업 시작",
+  "issueSettings.aiNames": "AI가 워크트리 이름 짓기",
+  "issueSettings.closesInstruction": "PR 본문에 Closes 넣도록 지시",
+  "issueSettings.auto": "자동",
+  "issueSettings.autoResolved": "자동 ({{source}})",
+  "issueSettings.githubRepository": "GitHub · {{repository}}",
+  "issueSettings.ghNotInstalled": "gh 설치 안 됨",
+  "issueSettings.ghNotLoggedIn": "gh 로그인 안 됨",
+  "issueSettings.readFailed": "읽기 실패",
+} satisfies Catalog<typeof issueSettingsEnglish>;
+
+const zhCN = {
+  "issueSettings.sources": "议题来源",
+  "issueSettings.githubAccess": "通过 gh 读写",
+  "issueSettings.local": "本地",
+  "issueSettings.localDescription": "保存在此 Mac · 始终可用",
+  "issueSettings.projects": "各项目的来源",
+  "issueSettings.projectsDescription": "每个项目使用一个来源。更改来源不会移动现有议题，也不会更改关联的工作树。",
+  "issueSettings.noProjects": "此 Mac 上没有项目。",
+  "issueSettings.projectSource": "{{name}} 的议题来源",
+  "issueSettings.startWork": "开始工作",
+  "issueSettings.aiNames": "让 AI 命名工作树",
+  "issueSettings.closesInstruction": "要求在拉取请求正文中加入 Closes",
+  "issueSettings.auto": "自动",
+  "issueSettings.autoResolved": "自动（{{source}}）",
+  "issueSettings.githubRepository": "GitHub · {{repository}}",
+  "issueSettings.ghNotInstalled": "未安装 gh",
+  "issueSettings.ghNotLoggedIn": "未登录 gh",
+  "issueSettings.readFailed": "读取失败",
+} satisfies Catalog<typeof issueSettingsEnglish>;
+
+const ja = {
+  "issueSettings.sources": "Issueの保存先",
+  "issueSettings.githubAccess": "ghで読み書き",
+  "issueSettings.local": "ローカル",
+  "issueSettings.localDescription": "このMacに保存 · 常に利用可能",
+  "issueSettings.projects": "プロジェクトごとの保存先",
+  "issueSettings.projectsDescription": "各プロジェクトは1つの保存先を使います。変更しても既存のIssueや関連するワークツリーは移動しません。",
+  "issueSettings.noProjects": "このMacにプロジェクトはありません。",
+  "issueSettings.projectSource": "{{name}}のIssueの保存先",
+  "issueSettings.startWork": "作業を開始",
+  "issueSettings.aiNames": "AIにワークツリー名を付けてもらう",
+  "issueSettings.closesInstruction": "PR本文にClosesを含めるよう指示",
+  "issueSettings.auto": "自動",
+  "issueSettings.autoResolved": "自動（{{source}}）",
+  "issueSettings.githubRepository": "GitHub · {{repository}}",
+  "issueSettings.ghNotInstalled": "ghが未インストール",
+  "issueSettings.ghNotLoggedIn": "ghに未ログイン",
+  "issueSettings.readFailed": "読み込み失敗",
+} satisfies Catalog<typeof issueSettingsEnglish>;
+
+export const issueSettingsCatalogs = { en: issueSettingsEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof issueSettingsEnglish>;

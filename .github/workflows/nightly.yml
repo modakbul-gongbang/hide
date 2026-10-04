@@ -1,14 +1,11 @@
 # Full web and desktop suites and package checks on all three OSes nightly.
 # Tracked flaky tests block this run; PR quarantine policy stays in pr.yml.
 # Runner windows and Linux Xvfb exercise automation, not physical IME/device QA.
-# The whole web end-to-end on macOS, once a night. A pull request runs the suite
-# on Linux and only the `@platform` tests on macOS (see pr.yml), so this run is
-# what keeps the rest of the suite proving itself on the platform hide ships on.
-# It never blocks a pull request; a failure opens one issue, or adds a comment
-# to the one already open, so reruns converge on a single thread.
-#
-# Four shards on macOS, in the small hours in Seoul, when the organization's five
-# macOS slots are free. Run it by hand from the Actions tab (workflow_dispatch).
+# PRs retain the Linux shards and macOS `@platform` lane (see pr.yml).
+# A main-branch nightly failure opens one issue or comments on the existing
+# thread once per run attempt. Candidate-branch runs never write an issue.
+# Run it by hand from the Actions tab (workflow_dispatch); actual queue load
+# and completed jobs must be measured separately from this configured matrix.
 #
 # This repository is public, so GitHub disables a scheduled workflow after 60
 # days with no repository activity. If this run stops appearing, re-enable it in
@@ -108,6 +105,9 @@ jobs:
       - name: Install dependencies
         timeout-minutes: 5
         run: bash scripts/verify-web.sh install
+      - name: Install the pinned Electron runtime
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh desktop electron-install
       - name: Build the web shell and hcoord
         timeout-minutes: 5
         run: |

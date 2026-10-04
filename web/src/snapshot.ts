@@ -1210,6 +1210,8 @@ export type SnapshotRest = {
     accent_hex?: string;
     /** `system`, `light` or `dark`; the page reads anything else as Dark. */
     theme?: string;
+    /** Core-confirmed explicit choice; null follows this client's system language. */
+    interface_language?: "en" | "ko" | "zh-CN" | "ja" | null;
     font_size?: number;
     /** The sidebar's width in CSS pixels, 220 to 440; the core refuses anything else (PRD sidebar-typography D-09). */
     sidebar_width?: number;

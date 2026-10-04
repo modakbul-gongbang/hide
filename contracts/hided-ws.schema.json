@@ -179,6 +179,17 @@
         "payload": { "type": "object" }
       }
     },
+    "interfaceLanguage": {
+      "description": "The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.",
+      "enum": [null, "en", "ko", "zh-CN", "ja"]
+    },
+    "interfaceLanguageSetPayload": {
+      "description": "Payload of interface_language_set. This event alone edits the core preference; ui_state_update never changes it.",
+      "type": "object",
+      "required": ["language"],
+      "additionalProperties": false,
+      "properties": { "language": { "$ref": "#/$defs/interfaceLanguage" } }
+    },
     "closeReason": {
       "type": "string",
       "enum": ["invalid_token", "origin_not_allowed", "schema_mismatch", "client_limit"]
