@@ -477,6 +477,141 @@ mod tests {
         drop(listener);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_listener_child() {
+        use std::io::{Read, Write};
+        if std::env::var_os("HIDE_TEST_CLEANUP_LISTENER").is_none() {
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        println!(
+            "READY {}\t{}",
+            listener.local_addr().unwrap(),
+            std::env::current_dir().unwrap().to_str().unwrap()
+        );
+        std::io::stdout().flush().unwrap();
+        let _ = std::io::stdin().read_exact(&mut [0]);
+        drop(listener);
+    }
+
+    #[cfg(windows)]
+    struct CleanupListener {
+        child: Option<hide_platform::process::OwnedChild>,
+        output: Option<std::thread::JoinHandle<()>>,
+    }
+
+    #[cfg(windows)]
+    impl Drop for CleanupListener {
+        fn drop(&mut self) {
+            drop(self.child.take());
+            if let Some(output) = self.output.take() {
+                let joined = output.join();
+                if !std::thread::panicking() {
+                    joined.unwrap();
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_keeps_a_checkout_in_use_when_a_listener_starts_through_another_spelling() {
+        use crate::worktree_cleanup::{CheckoutFacts, read_in_use};
+        use hide_platform::fs::{identity, link};
+        use std::io::{BufRead, BufReader};
+        use std::path::PathBuf;
+        use std::process::Stdio;
+
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("Checkout");
+        let cwd = checkout.join("native listener 한글");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let canonical_checkout = identity::canonical(&checkout).unwrap();
+        let canonical_cwd = identity::canonical(&cwd).unwrap();
+        let alias = root.path().join("ListenerAlias");
+        link::create_link(&checkout, &alias).unwrap();
+        let mut spellings = vec![
+            alias.join("native listener 한글"),
+            PathBuf::from(format!(r"\\?\{}", alias.display())).join("native listener 한글"),
+        ];
+        // Case sensitivity belongs to this folder, not to the OS. Junction
+        // and verbatim cases always run; alternate case applies where it is
+        // another spelling of the same existing directory.
+        if !identity::case_sensitive(root.path()).unwrap() {
+            spellings.push(root.path().join("listeneralias/native listener 한글"));
+        }
+        let facts = [CheckoutFacts {
+            path: checkout.clone(),
+            agent_working: 0,
+            terminal_panes: Vec::new(),
+        }];
+        for spelling in spellings {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "ports::tests::cleanup_listener_child",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env("HIDE_TEST_CLEANUP_LISTENER", "1")
+                .current_dir(&spelling)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit());
+            let mut child = hide_platform::process::OwnedChild::spawn(&mut command).unwrap();
+            let stdout = child.take_stdout().unwrap();
+            let (ready, heard) = std::sync::mpsc::channel();
+            let output = std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines() {
+                    let line = line.unwrap();
+                    if let Some((_, value)) = line.split_once("READY ") {
+                        let (endpoint, cwd) = value.split_once('\t').unwrap();
+                        let endpoint: std::net::SocketAddr = endpoint.parse().unwrap();
+                        let _ = ready.send((endpoint, PathBuf::from(cwd)));
+                    }
+                }
+            });
+            let fixture = CleanupListener {
+                child: Some(child),
+                output: Some(output),
+            };
+            let (endpoint, observed_by_child) = heard
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the owned listener announced its socket and actual cwd");
+            assert!(identity::same_file(&observed_by_child, &canonical_cwd).unwrap());
+            assert!(
+                !observed_by_child.starts_with(&canonical_checkout),
+                "the fixture must exercise the spelling that previously escaped cleanup"
+            );
+            drop(std::net::TcpStream::connect_timeout(&endpoint, Duration::from_secs(2)).unwrap());
+            // Review and the fresh destructive-action recheck both consume
+            // the real reader, not a handcrafted listening-port snapshot.
+            for _ in 0..2 {
+                let sample = read_now();
+                assert_eq!(sample.unavailable_reason, None);
+                let found = sample
+                    .entries
+                    .iter()
+                    .find(|entry| entry.port == endpoint.port())
+                    .unwrap();
+                assert_eq!(Path::new(&found.cwd), canonical_cwd);
+                let in_use = read_in_use(&facts, Ok(sample.entries), |_| {
+                    panic!("a checkout with no terminal panes has no process query")
+                })
+                .unwrap();
+                let exclusion = in_use
+                    .get(&checkout)
+                    .expect("cleanup must exclude the live listener's checkout");
+                assert_eq!(exclusion.code, "port");
+                assert_eq!(exclusion.port, Some(endpoint.port()));
+            }
+            drop(fixture);
+        }
+        link::remove_link(&alias).unwrap();
+    }
+
     #[test]
     fn the_first_read_is_due_and_the_next_one_inside_the_window_is_not() {
         let mut reader = PortsReader::new();

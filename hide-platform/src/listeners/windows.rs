@@ -394,12 +394,8 @@ fn observe_owner(
         }
         Ok(buffer)
     })?;
-    if !cwd.as_path().is_absolute() {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "observed cwd is not an absolute native path",
-        ));
-    }
+    check_budget(start)?;
+    let cwd = cwd.resolve()?;
     if identity(&owner)? != birth {
         return Err(io::Error::new(
             io::ErrorKind::WouldBlock,

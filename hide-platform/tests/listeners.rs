@@ -58,6 +58,7 @@ mod windows {
         let root = tempfile::tempdir().unwrap();
         let cwd = root.path().join("native listener 한글");
         std::fs::create_dir(&cwd).unwrap();
+        let expected_cwd = hide_platform::fs::identity::canonical(&cwd).unwrap();
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args([
@@ -108,7 +109,7 @@ mod windows {
                         && listener.address == *endpoint
                 })
                 .expect("the real foreign IPv4/IPv6 listener is reported");
-            assert_eq!(found.cwd.as_path(), cwd);
+            assert_eq!(found.cwd.as_path(), expected_cwd);
             assert_ne!(found.cwd.as_path(), std::env::current_dir().unwrap());
         }
         drop(fixture);

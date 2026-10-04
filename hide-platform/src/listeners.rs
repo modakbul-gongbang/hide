@@ -9,7 +9,8 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::Path;
 
-/// A cwd observed in process memory, not a kernel attestation or capability.
+/// A filesystem-resolved cwd observed in process memory, not a kernel
+/// attestation or capability. Its spelling supports native checkout ancestry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObservedWorkingDirectory(String);
 
@@ -20,6 +21,41 @@ impl ObservedWorkingDirectory {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    #[cfg(windows)]
+    fn resolve(self) -> io::Result<Self> {
+        if !self.as_path().is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "observed cwd is not an absolute native path",
+            ));
+        }
+        let path = crate::fs::identity::canonical(self.as_path())?;
+        // Cleanup compares against canonical checkout paths by ancestry.
+        // canonical() retains verbatim spellings where shortening changes
+        // meaning or crosses the classic length limit. A short ancestor and
+        // such a child would not compare by prefix: refuse that sample.
+        if matches!(
+            path.components().next(),
+            Some(std::path::Component::Prefix(prefix))
+                if !matches!(prefix.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::UNC(_, _))
+        ) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "observed cwd cannot support canonical checkout ancestry",
+            ));
+        }
+        let path = path.to_str().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "resolved cwd is not UTF-8")
+        })?;
+        if path.len() > MAX_SAMPLE_CWD_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "resolved cwd exceeds the sample text limit",
+            ));
+        }
+        Ok(Self(path.to_owned()))
     }
 }
 
