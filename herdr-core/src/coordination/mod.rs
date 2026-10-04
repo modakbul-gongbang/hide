@@ -77,6 +77,12 @@ pub struct SpawnRecord {
     pub path: Option<String>,
     pub pane: Option<String>,
     pub child: Option<String>,
+    // Completion and the initial watch are one durable store transaction.
+    // Later report/end/watch-stop events never invalidate this receipt.
+    #[serde(default)]
+    pub completed: bool,
+    #[serde(default)]
+    pub auto_watch_id: Option<String>,
 }
 
 pub(crate) enum Mutation {
@@ -98,9 +104,12 @@ pub(crate) enum Mutation {
         pane: Option<String>,
         child: Option<String>,
     },
-    Watch {
-        parent: String,
-        child: String,
+    BindChild {
+        id: String,
+        record: AgentRecord,
+    },
+    Complete {
+        id: String,
     },
 }
 
@@ -178,10 +187,18 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
                 .agents
                 .iter()
                 .any(|parent| parent.id == record.parent)
-            || record
-                .child
-                .as_ref()
-                .is_some_and(|id| !ledger.agents.iter().any(|child| &child.id == id))
+            || record.child.as_ref().is_some_and(|id| {
+                !ledger.agents.iter().any(|child| {
+                    &child.id == id
+                        && child.parent.as_ref() == Some(&record.parent)
+                        && record.pane.as_ref() == Some(&child.pane)
+                })
+            })
+            || (record.completed
+                && (record.path.is_none() || record.pane.is_none() || record.child.is_none()))
+            || record.auto_watch_id.as_ref().is_some_and(|id| {
+                !record.completed || record.no_watch || !key(id) || !id.starts_with("watch-")
+            })
             || record.args.len() > 128
             || record.args.iter().map(String::len).sum::<usize>() > 8192
         {
@@ -328,6 +345,8 @@ pub(crate) fn apply(
                 path: None,
                 pane: None,
                 child: None,
+                completed: false,
+                auto_watch_id: None,
             };
             ledger.spawns.push(record.clone());
             Ok(json!(record))
@@ -353,6 +372,19 @@ pub(crate) fn apply(
                 .iter_mut()
                 .find(|record| &record.id == id)
                 .ok_or("spawn_unavailable")?;
+            if [
+                (record.path.as_ref(), path.as_ref()),
+                (record.pane.as_ref(), pane.as_ref()),
+                (record.child.as_ref(), child.as_ref()),
+            ]
+            .into_iter()
+            .any(|(stored, next)| {
+                stored
+                    .zip(next)
+                    .is_some_and(|(stored, next)| stored != next)
+            }) {
+                return Err("intent_conflict".into());
+            }
             if path.is_some() {
                 record.path = path.clone()
             };
@@ -364,17 +396,125 @@ pub(crate) fn apply(
             };
             Ok(json!(record))
         }
-        Mutation::Watch { parent, child } => {
-            let parent = resolve_actor(ledger, parent)
+        Mutation::BindChild { id, record } => {
+            let spawn = ledger
+                .spawns
+                .iter()
+                .find(|spawn| &spawn.id == id)
+                .ok_or("spawn_unavailable")?
+                .clone();
+            if !resolve_actor(ledger, &spawn.parent)
+                .is_some_and(|parent| parent.same_identity(caller))
+            {
+                return Err("parent_authority_required".into());
+            }
+            if record.parent.as_ref() != Some(&spawn.parent)
+                || spawn.pane.as_ref() != Some(&record.pane)
+                || record.name != spawn.name
+                || record.actor.kind != spawn.kind
+                || record.project != spawn.path
+            {
+                return Err("child_identity_changed".into());
+            }
+            let existing = if let Some(child) = &spawn.child {
+                Some(
+                    ledger
+                        .agents
+                        .iter()
+                        .find(|record| &record.id == child)
+                        .ok_or("child_unavailable")?,
+                )
+            } else {
+                // Recovery may find a registration installed before an older
+                // interrupted binding. Its end state remains authoritative.
+                ledger
+                    .agents
+                    .iter()
+                    .find(|old| old.actor.same_identity(&record.actor))
+            };
+            let child = if let Some(existing) = existing {
+                if !existing.actor.same_identity(&record.actor)
+                    || existing.parent != record.parent
+                    || existing.name != record.name
+                {
+                    return Err("child_identity_changed".into());
+                }
+                existing.id.clone()
+            } else {
+                apply(
+                    ledger,
+                    caller,
+                    &Mutation::Register {
+                        record: record.clone(),
+                        check: false,
+                    },
+                    now,
+                )?["id"]
+                    .as_str()
+                    .ok_or("child_unavailable")?
+                    .to_owned()
+            };
+            // Registering and binding the child share the worker's one commit,
+            // so a retry cannot lose the ended child's identity between them.
+            let spawn = ledger
+                .spawns
+                .iter_mut()
+                .find(|spawn| &spawn.id == id)
+                .ok_or("spawn_unavailable")?;
+            spawn.child = Some(child);
+            Ok(json!(spawn))
+        }
+        Mutation::Complete { id } => {
+            let spawn = ledger
+                .spawns
+                .iter()
+                .find(|spawn| &spawn.id == id)
+                .ok_or("spawn_unavailable")?
+                .clone();
+            let parent = resolve_actor(ledger, &spawn.parent)
                 .ok_or("parent_unavailable")?
                 .clone();
             if !parent.same_identity(caller) {
                 return Err("parent_authority_required".into());
             }
-            let child = resolve_actor(ledger, child)
+            if spawn.completed {
+                return Ok(json!(spawn));
+            }
+            if spawn.path.is_none() || spawn.pane.is_none() {
+                return Err("spawn_incomplete".into());
+            }
+            let child = spawn
+                .child
+                .as_ref()
+                .and_then(|id| ledger.agents.iter().find(|child| &child.id == id))
                 .ok_or("child_unavailable")?
                 .clone();
-            Ok(json!(watch::start(ledger, &parent, &child, now)?))
+            // A child can finish while its immediate token write is still
+            // returning. Confirmed completion remains authoritative even
+            // when the initial watch has not been installed yet.
+            let reported_complete = ledger.letters.iter().any(|letter| {
+                letter.kind == "report"
+                    && letter.sender.same_identity(&child.actor)
+                    && letter.recipient.same_identity(&parent)
+                    && matches!(
+                        letter.state,
+                        crate::delivery::ledger::State::Delivered
+                            | crate::delivery::ledger::State::Acknowledged
+                    )
+            });
+            let auto_watch_id = if !spawn.no_watch && !child.ended && !reported_complete {
+                Some(watch::start(ledger, &parent, &child.actor, now)?.id)
+            } else {
+                None
+            };
+            let spawn = ledger
+                .spawns
+                .iter_mut()
+                .find(|spawn| &spawn.id == id)
+                .ok_or("spawn_unavailable")?;
+            spawn.completed = true;
+            spawn.auto_watch_id = auto_watch_id;
+            Ok(json!(spawn))
         }
     }
 }
@@ -548,16 +688,8 @@ mod tests {
         let id = register(&mut ledger, parent, &actor);
         let child = record("child", "native-child", Some(id.clone()));
         let child_id = register(&mut ledger, child, &actor);
-        apply(
-            &mut ledger,
-            &actor,
-            &Mutation::Watch {
-                parent: id.clone(),
-                child: child_id.clone(),
-            },
-            2,
-        )
-        .unwrap();
+        let target = resolve_actor(&ledger, &child_id).unwrap().clone();
+        watch::start(&mut ledger, &actor, &target, 2).unwrap();
         assert_eq!(ledger.watches.len(), 1);
         let stranger = record("stranger", "native-stranger", None).actor;
         assert!(
@@ -628,5 +760,223 @@ mod tests {
         );
         ledger.agents[0].session = "replaced".into();
         assert!(ledger.bytes().is_err());
+    }
+    fn pending_spawn() -> (Ledger, Actor, String, String, AgentRecord) {
+        let mut ledger = Ledger::default();
+        let parent = record("parent", "native-parent", None);
+        let actor = parent.actor.clone();
+        let parent_id = register(&mut ledger, parent, &actor);
+        let reserved = apply(
+            &mut ledger,
+            &actor,
+            &Mutation::Reserve {
+                parent: parent_id.clone(),
+                command: command("once"),
+            },
+            1,
+        )
+        .unwrap();
+        let id = reserved["id"].as_str().unwrap().to_owned();
+        apply(
+            &mut ledger,
+            &actor,
+            &Mutation::Advance {
+                id: id.clone(),
+                path: Some("/fixture/topic".into()),
+                pane: Some("worker".into()),
+                child: None,
+            },
+            2,
+        )
+        .unwrap();
+        let mut child = record("worker", "native-child", Some(parent_id.clone()));
+        child.project = Some("/fixture/topic".into());
+        (ledger, actor, parent_id, id, child)
+    }
+
+    #[test]
+    fn interrupted_child_binding_preserves_an_end_and_completion_receipt_after_reload() {
+        let (mut ledger, actor, parent, spawn, child) = pending_spawn();
+        let bind = Mutation::BindChild {
+            id: spawn.clone(),
+            record: child,
+        };
+        let bound = apply(&mut ledger, &actor, &bind, 3).unwrap();
+        let child = bound["child"].as_str().unwrap().to_owned();
+        apply(
+            &mut ledger,
+            &actor,
+            &Mutation::End {
+                id: child.clone(),
+                actor: Some(parent),
+            },
+            4,
+        )
+        .unwrap();
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        let next_id = restored.next_id;
+        assert_eq!(
+            apply(&mut restored, &actor, &bind, 5).unwrap()["child"],
+            child
+        );
+        let complete = Mutation::Complete { id: spawn };
+        let receipt = apply(&mut restored, &actor, &complete, 6).unwrap();
+        assert_eq!(receipt["completed"], true);
+        assert!(receipt["auto_watch_id"].is_null());
+        assert!(resolve_actor(&restored, &child).is_none());
+        assert!(restored.watches.is_empty());
+        assert_eq!(restored.agents.len(), 2);
+        assert_eq!(restored.next_id, next_id);
+        let mut restored: Ledger = serde_json::from_slice(&restored.bytes().unwrap()).unwrap();
+        let before = restored.clone();
+        assert_eq!(apply(&mut restored, &actor, &complete, 7).unwrap(), receipt);
+        assert_eq!(restored, before);
+    }
+
+    #[test]
+    fn completion_and_initial_watch_commit_together_and_failure_is_resumable() {
+        let (mut ledger, actor, _, spawn, child) = pending_spawn();
+        apply(
+            &mut ledger,
+            &actor,
+            &Mutation::BindChild {
+                id: spawn.clone(),
+                record: child,
+            },
+            3,
+        )
+        .unwrap();
+        for index in 0..crate::delivery::WATCH_LIMIT {
+            let target = record(&format!("other-{index}"), "session", None).actor;
+            watch::start(&mut ledger, &actor, &target, 4).unwrap();
+        }
+        let complete = Mutation::Complete { id: spawn };
+        let before = ledger.clone();
+        assert_eq!(
+            apply(&mut ledger, &actor, &complete, 5).unwrap_err(),
+            "capacity"
+        );
+        assert_eq!(ledger, before);
+        let released = ledger.watches[0].id.clone();
+        watch::stop(&mut ledger, &actor, &released).unwrap();
+        let receipt = apply(&mut ledger, &actor, &complete, 6).unwrap();
+        let id = receipt["auto_watch_id"].as_str().unwrap();
+        assert_eq!(receipt["completed"], true);
+        assert!(ledger.watches.iter().any(|watch| watch.id == id));
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        watch::stop(&mut restored, &actor, id).unwrap();
+        let before = restored.clone();
+        assert_eq!(apply(&mut restored, &actor, &complete, 7).unwrap(), receipt);
+        assert_eq!(restored, before);
+    }
+    #[test]
+    fn report_confirmed_before_spawn_completion_prevents_initial_watch_installation() {
+        use crate::delivery::mailbox;
+        for acknowledged in [false, true] {
+            let (mut ledger, actor, _, spawn, child) = pending_spawn();
+            let child_actor = child.actor.clone();
+            apply(
+                &mut ledger,
+                &actor,
+                &Mutation::BindChild {
+                    id: spawn.clone(),
+                    record: child,
+                },
+                3,
+            )
+            .unwrap();
+            let report = mailbox::send(
+                &mut ledger,
+                &child_actor,
+                &actor,
+                "done",
+                "completed",
+                "report",
+                None,
+                4,
+            )
+            .unwrap();
+            mailbox::apply(
+                &mut ledger,
+                &actor,
+                None,
+                &mailbox::Command::Confirm {
+                    ids: vec![report.id.clone()],
+                },
+                5,
+            )
+            .unwrap();
+            if acknowledged {
+                mailbox::apply(
+                    &mut ledger,
+                    &actor,
+                    None,
+                    &mailbox::Command::Ack { id: report.id },
+                    6,
+                )
+                .unwrap();
+            }
+            let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+            let complete = Mutation::Complete { id: spawn };
+            let receipt = apply(&mut restored, &actor, &complete, 7).unwrap();
+            assert!(restored.watches.is_empty());
+            assert_eq!(receipt["completed"], true);
+            assert!(receipt["auto_watch_id"].is_null());
+            let before = restored.clone();
+            assert_eq!(apply(&mut restored, &actor, &complete, 8).unwrap(), receipt);
+            assert_eq!(restored, before);
+            // Only an explicit watch start opens a fresh observation after a
+            // confirmed report; completing this intent does not remove it.
+            let watch = watch::start(&mut restored, &actor, &child_actor, 9).unwrap();
+            apply(&mut restored, &actor, &complete, 10).unwrap();
+            assert_eq!(restored.watches[0].id, watch.id);
+        }
+    }
+
+    #[test]
+    fn pending_report_installs_initial_watch_then_confirmation_closes_it() {
+        use crate::delivery::mailbox;
+        let (mut ledger, actor, _, spawn, child) = pending_spawn();
+        let child_actor = child.actor.clone();
+        apply(
+            &mut ledger,
+            &actor,
+            &Mutation::BindChild {
+                id: spawn.clone(),
+                record: child,
+            },
+            3,
+        )
+        .unwrap();
+        let report = mailbox::send(
+            &mut ledger,
+            &child_actor,
+            &actor,
+            "done",
+            "completed",
+            "report",
+            None,
+            4,
+        )
+        .unwrap();
+        let complete = Mutation::Complete { id: spawn };
+        let receipt = apply(&mut ledger, &actor, &complete, 5).unwrap();
+        assert_eq!(ledger.watches.len(), 1);
+        assert_eq!(receipt["auto_watch_id"], ledger.watches[0].id);
+        mailbox::apply(
+            &mut ledger,
+            &actor,
+            None,
+            &mailbox::Command::Confirm {
+                ids: vec![report.id],
+            },
+            6,
+        )
+        .unwrap();
+        assert!(ledger.watches.is_empty());
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        let before = restored.clone();
+        assert_eq!(apply(&mut restored, &actor, &complete, 7).unwrap(), receipt);
+        assert_eq!(restored, before);
     }
 }

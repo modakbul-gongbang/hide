@@ -299,7 +299,7 @@ fn spawn(
         repo,
         branch,
         path,
-        no_watch,
+        no_watch: _,
         args,
     } = &command
     else {
@@ -317,7 +317,6 @@ fn spawn(
     if !crate::fork::valid_agent_name(name) {
         return Err("invalid_agent_name".into());
     }
-    let (connector, host_scope, native_machine, codex_daemon) = context(client, &actor.device_id)?;
     let mut ledger = state(client)?;
     let parent_id = if parent == "here" {
         if let Some(parent) = ledger
@@ -327,6 +326,7 @@ fn spawn(
         {
             parent.id.clone()
         } else {
+            let (connector, host_scope, native_machine, _) = context(client, &actor.device_id)?;
             let observed = agents(connector.as_ref())?;
             let native = observed
                 .iter()
@@ -378,6 +378,18 @@ fn spawn(
     )?;
     let mut reserved: SpawnRecord =
         serde_json::from_value(reserved).map_err(|_| "spawn_unavailable")?;
+    if reserved.completed {
+        let ledger = state(client)?;
+        return Ok(view(
+            ledger
+                .agents
+                .iter()
+                .find(|record| Some(&record.id) == reserved.child.as_ref())
+                .ok_or("child_unavailable")?,
+            &ledger,
+        ));
+    }
+    let (connector, host_scope, native_machine, codex_daemon) = context(client, &actor.device_id)?;
     if reserved.pane.is_none() {
         // Reconcile a worktree whose creation reply was interrupted. The
         // existing local/device connector and checkout owner are shared with
@@ -519,39 +531,24 @@ fn spawn(
         Some(parent_id.clone()),
         reserved.path.clone(),
     )?;
-    let value = mutate(
+    reserved = serde_json::from_value(mutate(
         client,
         authority,
         actor,
-        Mutation::Register {
+        Mutation::BindChild {
+            id: reserved.id.clone(),
             record: child,
-            check: false,
         },
-    )?;
-    let child_id = value["id"].as_str().ok_or("child_unavailable")?.to_owned();
+    )?)
+    .map_err(|_| "spawn_unavailable")?;
+    let child_id = reserved.child.clone().ok_or("child_unavailable")?;
+    publish_tokens(client, connector.as_ref(), &child_id)?;
     mutate(
         client,
         authority,
         actor,
-        Mutation::Advance {
-            id: reserved.id,
-            path: None,
-            pane: None,
-            child: Some(child_id.clone()),
-        },
+        Mutation::Complete { id: reserved.id },
     )?;
-    publish_tokens(client, connector.as_ref(), &child_id)?;
-    if !no_watch {
-        mutate(
-            client,
-            authority,
-            actor,
-            Mutation::Watch {
-                parent: parent_id,
-                child: child_id.clone(),
-            },
-        )?;
-    }
     let ledger = state(client)?;
     Ok(view(
         ledger
@@ -677,5 +674,239 @@ mod tests {
         );
         assert_eq!(observations.load(Ordering::SeqCst), 2);
         assert_eq!(herdr.methods(), ["agent.list", "agent.list"]);
+    }
+    #[test]
+    fn completed_spawn_replay_after_restart_preserves_report_stop_end_and_explicit_watch() {
+        use crate::delivery::{ledger, mailbox, watch, worker::Worker};
+        use crate::handle::ChangeNotifier;
+        use crate::runtime::delivery::tests::{authority, fixture};
+        use crate::sidebar::SessionSnapshotPayload;
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("agents/runs/hcoord-retire/replay-tests");
+        hide_platform::fs::private::create_dir_all(&base).unwrap();
+        // The same public command is exercised through the resident store
+        // after reload. No native connector exists: replay must return its
+        // durable result before attempting another pane or worktree action.
+        for ending in ["report", "stop", "end", "explicit"] {
+            let root = tempfile::Builder::new()
+                .prefix("replay-")
+                .tempdir_in(&base)
+                .unwrap();
+            let (runtime, _, _, path) = fixture(root.path());
+            let parent = AgentRecord {
+                id: String::new(),
+                name: "sender".into(),
+                machine: "local".into(),
+                host_scope: "fixture".into(),
+                native_machine: "fixture-machine".into(),
+                session: "native-parent".into(),
+                instance: "parent-terminal".into(),
+                pane: "sender".into(),
+                parent: None,
+                project: None,
+                ended: false,
+                actor: Actor {
+                    pane_id: "sender".into(),
+                    name: "sender".into(),
+                    kind: "codex".into(),
+                    device_id: "local".into(),
+                    session: crate::wire::session_digest("native-parent"),
+                },
+            };
+            let actor = parent.actor.clone();
+            let child_actor = Actor {
+                pane_id: "recipient".into(),
+                name: "recipient".into(),
+                kind: "codex".into(),
+                device_id: "local".into(),
+                session: crate::wire::session_digest("native-child"),
+            };
+            let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+                {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working",
+                    "state_change_seq":1,"lineage_session":actor.session},
+                {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working",
+                    "state_change_seq":1,"lineage_session":child_actor.session},
+            ]}))
+            .unwrap();
+            runtime
+                .lock()
+                .unwrap()
+                .observe_delivery("local", &payload, None);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            let mut state = ledger::Ledger::default();
+            let parent_id = super::super::apply(
+                &mut state,
+                &actor,
+                &Mutation::Register {
+                    record: parent,
+                    check: false,
+                },
+                now,
+            )
+            .unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let command = Command::Spawn {
+                parent: "here".into(),
+                name: "recipient".into(),
+                intent: "one-child".into(),
+                kind: "codex".into(),
+                repo: "/fixture".into(),
+                branch: "topic".into(),
+                path: None,
+                no_watch: false,
+                args: Vec::new(),
+            };
+            let spawn = super::super::apply(
+                &mut state,
+                &actor,
+                &Mutation::Reserve {
+                    parent: parent_id.clone(),
+                    command: command.clone(),
+                },
+                now,
+            )
+            .unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            super::super::apply(
+                &mut state,
+                &actor,
+                &Mutation::Advance {
+                    id: spawn.clone(),
+                    path: Some("/fixture/topic".into()),
+                    pane: Some("recipient".into()),
+                    child: None,
+                },
+                now,
+            )
+            .unwrap();
+            let child = AgentRecord {
+                id: String::new(),
+                name: "recipient".into(),
+                machine: "local".into(),
+                host_scope: "fixture".into(),
+                native_machine: "fixture-machine".into(),
+                session: "native-child".into(),
+                instance: "child-terminal".into(),
+                pane: "recipient".into(),
+                parent: Some(parent_id.clone()),
+                project: Some("/fixture/topic".into()),
+                actor: child_actor.clone(),
+                ended: false,
+            };
+            let child_id = super::super::apply(
+                &mut state,
+                &actor,
+                &Mutation::BindChild {
+                    id: spawn.clone(),
+                    record: child,
+                },
+                now,
+            )
+            .unwrap()["child"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let receipt =
+                super::super::apply(&mut state, &actor, &Mutation::Complete { id: spawn }, now)
+                    .unwrap();
+            let initial_watch = receipt["auto_watch_id"].as_str().unwrap();
+            match ending {
+                "end" => {
+                    super::super::apply(
+                        &mut state,
+                        &actor,
+                        &Mutation::End {
+                            id: child_id.clone(),
+                            actor: Some(parent_id),
+                        },
+                        now,
+                    )
+                    .unwrap();
+                }
+                "stop" => watch::stop(&mut state, &actor, initial_watch).unwrap(),
+                _ => {
+                    let report = mailbox::send(
+                        &mut state,
+                        &child_actor,
+                        &actor,
+                        "done",
+                        "completed",
+                        "report",
+                        None,
+                        now,
+                    )
+                    .unwrap();
+                    mailbox::apply(
+                        &mut state,
+                        &actor,
+                        None,
+                        &mailbox::Command::Confirm {
+                            ids: vec![report.id],
+                        },
+                        now,
+                    )
+                    .unwrap();
+                    if ending == "explicit" {
+                        let watch = watch::start(&mut state, &actor, &child_actor, now).unwrap();
+                        assert_ne!(watch.id, initial_watch);
+                    }
+                }
+            }
+            ledger::save(&path, &state).unwrap();
+            let restored = ledger::load(&path).unwrap();
+            let expected_watch = restored.watches.first().map(|watch| watch.id.clone());
+            let next_id = restored.next_id;
+            runtime
+                .lock()
+                .unwrap()
+                .publish_delivery(Arc::new(restored), false);
+            let (worker, client) = Worker::spawn(
+                Arc::downgrade(&runtime),
+                ChangeNotifier::noop(),
+                path.clone(),
+            )
+            .unwrap();
+            let result = run(client, authority(&actor), actor, command).unwrap();
+            assert_eq!(result["id"], child_id, "{ending}");
+            assert_eq!(result["registered"], ending != "end", "{ending}");
+            assert_eq!(
+                result["watch"]["id"].as_str(),
+                expected_watch.as_deref(),
+                "{ending}"
+            );
+            drop(worker);
+            let after = ledger::load(&path).unwrap();
+            assert_eq!(after.agents.len(), 2, "{ending}");
+            assert_eq!(after.next_id, next_id, "{ending}");
+            assert!(after.spawns[0].completed);
+            assert_eq!(
+                after.spawns[0].auto_watch_id.as_deref(),
+                Some(initial_watch)
+            );
+            assert_eq!(
+                after
+                    .agents
+                    .iter()
+                    .find(|record| record.id == child_id)
+                    .unwrap()
+                    .ended,
+                ending == "end",
+                "{ending}"
+            );
+            assert_eq!(
+                after.watches.first().map(|watch| &watch.id),
+                expected_watch.as_ref(),
+                "{ending}"
+            );
+        }
     }
 }
