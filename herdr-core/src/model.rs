@@ -2200,9 +2200,7 @@ fn serialize_interface_language<S: serde::Serializer>(
 ) -> Result<S::Ok, S::Error> {
     value
         .as_ref()
-        .map(|value| {
-            InterfaceLanguage::deserialize(value).unwrap_or(InterfaceLanguage::English)
-        })
+        .map(|value| InterfaceLanguage::deserialize(value).unwrap_or(InterfaceLanguage::English))
         .serialize(serializer)
 }
 
