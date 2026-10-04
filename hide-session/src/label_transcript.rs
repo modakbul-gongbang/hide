@@ -12,7 +12,7 @@
 //! a path. Failures are stable reason codes.
 //!
 //! What every adapter answers, and nothing more: the session's own title,
-//! each person's message with its time, images and hcoord sender, each
+//! each person's message with its time, images and Hide letter sender, each
 //! assistant message, and the pull request addresses its tools printed
 //! (Claude Code's subagents' tools included). Status, pull requests and
 //! lineage do not depend on the agent and are not read here.
@@ -57,7 +57,7 @@ pub struct LabelEvent {
     /// Images attached to a person's message; their bytes are not in `text`.
     #[serde(default)]
     pub images: u32,
-    /// The sender an hcoord header names on a person's message (`envelope`).
+    /// The sender a Hide letter header names on a person's message (`envelope`).
     #[serde(default)]
     pub sender: Option<String>,
 }

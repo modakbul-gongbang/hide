@@ -34,6 +34,8 @@ Acknowledgement changes the receipt state, and a reply separately closes the ori
 Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery.
 Use a new intent for a new letter.
 The envelope identifies the sender and letter kind; it is not a session-level authority or anti-forgery proof.
+The current first-line format is `Hide letter <id> from <name> (<agent>) [<kind>]`, with independent writer and transcript-reader examples in [delivery-envelope.json](../contracts/delivery-envelope.json).
+A batch keeps the first letter's sender attribution in the request view; neither later headers nor older delivery formats select a sender.
 
 ## Safe intake and manual fallback
 
@@ -82,6 +84,7 @@ Capacity errors retain existing letters and watches.
 | Doorbell reservations per letter | Three total, persisted across restart |
 | First inactivity warning | 20 minutes without activity |
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
+| Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
 | Intent retention and finished-letter cleanup | 30 days; open letters remain |
 | Open / retained letters | 1024 / 5000 |
 | Watches | 32 |
@@ -138,8 +141,10 @@ There is no separate lineage timer, subprocess on the input path or blocking wor
 The token readers and digest contract remain unchanged.
 
 People receive notifications only for an unanswered parent inactivity warning and an overdue undelivered letter.
-The notification key is the watched target or letter ID plus the cause, shared across phone Web Push and Herdr notifications.
-Each key sends once across both channels, with at most two notifications per inactivity episode; new activity resets the episode.
+A first warning left unacknowledged, uncancelled and unreplied for 60 minutes triggers one human notification per native target and inactivity episode, shared across sibling watches and phone Web Push/Herdr channels.
+The receipt lives on the existing warning letters and survives daemon restart and watch stop/restart; new target activity starts a new episode.
+The second agent warning introduces no second human notification schedule.
+An overdue letter's notification key is its ID plus the cause and sends once across both channels.
 A failed first channel falls back to the other; two failures record a diagnostic without retry.
 These cases add no Inbox screen or automatic escalation chain.
 
