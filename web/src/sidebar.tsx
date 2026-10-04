@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, LayoutDashboardIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -17,7 +17,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, deviceListedAgents, groupCounts, overviewScreen, projectPaneIds, type ListedAgent } from "./navigation";
+import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, deviceListedAgents, groupCounts, projectPaneIds, type ListedAgent } from "./navigation";
 import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
@@ -27,7 +27,7 @@ import {
   checkoutPresentation,
   checkoutRowExpansion,
   projectRowExpansion,
-  overviewRowSelected,
+  projectCheckout,
   folderCheckout,
   inactiveCheckouts,
   projectMarks,
@@ -324,7 +324,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
   const deviceId = useShellStore((s) => frontDeviceId(s.rest));
   const count = useShellStore((s) => (s.rest === null ? null : homeProjectCount(s.rest, deviceId)));
   const selected = false;
-  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace");
+  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const home = useShellStore((s) => contextHome(s.rest));
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const localWorkspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
@@ -625,8 +625,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const lineageWorkspaces = useMemo(() => allLineageWorkspaces(localWorkspaces, remoteStatuses), [localWorkspaces, remoteStatuses]);
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  const screenKind = useUiStore((s) => s.screen?.kind ?? null);
-  const overviewProjectId = useUiStore((s) => (s.screen?.kind === "overview" ? s.screen.projectId : null));
+  const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const catalogState = useShellStore((s) => catalogLineOf(s.rest)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
@@ -654,8 +653,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
     numberOf: numberOfPane,
     focusedCheckoutId,
     focusedPaneId,
-    workspaceScreen: screenKind === "workspace",
-    overviewProjectId,
+    workspaceScreen: workspaceVisible,
     openCheckouts,
     disclosure: !remote,
     actions,
@@ -705,7 +703,6 @@ type ListContext = {
   /** A Workspace is in front, so the focused checkout and agent are the scope shown. */
   workspaceScreen: boolean;
   /** The project whose Overview is in front. */
-  overviewProjectId: string | null;
   /** Checkouts whose agent rows the operator opened; every other checkout names its agents on line two. */
   openCheckouts: string[];
   /** False over a selected SSH device, whose tree is drawn with nothing folded. */
@@ -894,14 +891,14 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         workspace={workspace}
         checkout={folder}
         agentRows={rowsByCheckout.get(folder.id) ?? NO_BOARD_ROWS}
-        focused={(context.workspaceScreen && folder.id === context.focusedCheckoutId) || context.overviewProjectId === workspace.id}
+        focused={context.workspaceScreen && folder.id === context.focusedCheckoutId}
         inset={inset}
         context={context}
       />
     );
   }
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
-  const selected = overviewRowSelected(workspace, context.overviewProjectId);
+  const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
   const marks = projectMarks(workspace);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
@@ -931,7 +928,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             data-project-row={workspace.id}
             aria-label={[workspace.label, badgeWords(marks)].filter(Boolean).join(", ")}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-            onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, context.overviewProjectId, disclosure))}
+            onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, target, context.workspaceScreen ? context.focusedCheckoutId : null, disclosure))}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
             <span data-row-name="true" className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">{workspace.label}</span>
@@ -952,7 +949,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       </EntryContextMenu>
       {expanded ? (
         <ul>
-          {workspace.is_git ? <OverviewRow workspace={workspace} selected={selected} /> : null}
           {active.map(checkoutRow)}
           {inactive.length > 0 ? (
             <li>
@@ -969,28 +965,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
           {workspace.inactive_checkouts.expanded ? inactive.map(checkoutRow) : null}
         </ul>
       ) : null}
-    </li>
-  );
-}
-
-function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: boolean }) {
-  return (
-    <li>
-      <button
-        type="button"
-        data-project-overview={workspace.id}
-        aria-current={selected ? "page" : undefined}
-        className={cn(
-          "flex min-h-(--size-checkout-row) w-full items-center gap-sm rounded-sm pr-xs text-left text-body text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-          selected ? "bg-secondary font-medium" : "hover:bg-accent",
-        )}
-        style={{ paddingLeft: CHECKOUT_COLUMN }}
-        onClick={() => useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id))}
-      >
-        <LayoutDashboardIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-        <span className="min-w-0 flex-1 truncate">Overview</span>
-        <FoldLane />
-      </button>
     </li>
   );
 }
@@ -1402,8 +1376,6 @@ function menuHost(): MenuHost {
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
   switch (item) {
-    case "open_overview":
-      return useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id));
     case "new_worktree":
       return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
     case "new_tab_primary": {

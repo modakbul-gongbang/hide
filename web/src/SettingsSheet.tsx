@@ -1173,7 +1173,7 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
     setSentAt(Date.now());
     actions.setPaneShortcuts(host, bindings);
   };
-  const current = (): Record<string, string> => ({ ...(diagnostic ? {} : (stored ?? {})) });
+  const current = (): Record<string, string> => Object.fromEntries(Object.entries(diagnostic && !diagnostic.includes("retired and was ignored") ? {} : stored ?? {}).filter(([key]) => !["project_home", "toggle_sidebar_view"].includes(key)));
   const rowsFor = (ids: readonly CommandId[]) =>
     ids.map((id) => (
       <ShortcutRow
@@ -1189,6 +1189,11 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
           const text = serializeStoredChord(chord, host, system);
           if ((fallback && chordEquals(fallback, chord)) || text === null) delete next[storedKey(id, host)];
           else next[storedKey(id, host)] = text;
+          apply(next);
+        }}
+        onClear={() => {
+          const next = current();
+          next[storedKey(id, host)] = "none";
           apply(next);
         }}
         onReset={() => {
@@ -1265,6 +1270,7 @@ function ShortcutRow({
   overridden,
   onApply,
   onReset,
+  onClear,
 }: {
   id: CommandId;
   host: HostKind;
@@ -1273,6 +1279,7 @@ function ShortcutRow({
   overridden: boolean;
   onApply: (chord: Chord) => void;
   onReset: () => void;
+  onClear: () => void;
 }) {
   const command = registry.find((row) => row.id === id);
   const [recording, setRecording] = useState(false);
@@ -1355,6 +1362,7 @@ function ShortcutRow({
           {recording ? "Press a chord…" : "Change"}
         </Button>
       )}
+      {effective && !draft && !recording ? <Button variant="ghost" onClick={onClear} data-shortcut-clear={id}>Clear</Button> : null}
       {overridden && !draft ? (
         <Button variant="ghost" onClick={onReset} data-shortcut-reset={id}>
           Default

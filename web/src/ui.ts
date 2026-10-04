@@ -53,7 +53,7 @@ export type PendingClose = {
  * (PRD home-device-rail D-13): `deviceId` names the device, and without one it
  * is the device in front.
  */
-export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
+export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "workspace" };
 
 /**
  * How All projects is looked at: every Project's tasks, every agent, or the
@@ -341,7 +341,7 @@ type UiStore = {
   setRecordingShortcut: (recording: boolean) => void;
   setHint: (hint: NumberedFamily | null) => void;
   /** Registers an Escape layer and returns its removal. */
-  pushEscape: (handler: () => void) => () => void;
+  pushEscape: (handler: () => void, base?: boolean) => () => void;
   /** Registers an open tooltip's close and returns its removal. */
   pushTooltip: (close: () => void) => () => void;
 };
@@ -409,9 +409,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
       set({ overviewLens: { ...get().overviewLens, ...patch }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
       return;
     }
-    const screen = get().screen;
-    if (screen?.kind !== "overview") return;
-    set({ screen: { ...screen, lens: { ...screen.lens, ...patch } }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
+
   },
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
@@ -456,8 +454,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setHint: (hint) => {
     if (get().hint !== hint) set({ hint });
   },
-  pushEscape: (handler) => {
-    set({ escapeLayers: [...get().escapeLayers, handler] });
+  pushEscape: (handler, base = false) => {
+    set({ escapeLayers: base ? [handler, ...get().escapeLayers] : [...get().escapeLayers, handler] });
     return () => set({ escapeLayers: get().escapeLayers.filter((layer) => layer !== handler) });
   },
   pushTooltip: (close) => {

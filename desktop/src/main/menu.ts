@@ -58,7 +58,6 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
   View: [
     "search",
     "open_file",
-    "project_home",
     null,
     "recent_area_tab", "previous_recent_area_tab",
     "recent_panel", "previous_recent_panel",

@@ -164,6 +164,9 @@ pub(super) struct FocusCheckoutPayload {
     /// Sidebar row disclosure, committed with checkout focus. Omitted by other open entrypoints.
     #[serde(default)]
     pub(super) expanded: Option<bool>,
+    /// A project row's fold belongs to the same admitted checkout intent.
+    #[serde(default)]
+    pub(super) project_expanded: Option<bool>,
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
     /// Also makes this machine the device in front when the checkout is
@@ -1919,6 +1922,18 @@ impl Runtime {
                 {
                     self.set_error(error.kind(), error.message(), false);
                     return true;
+                }
+                if let Some(expanded) = payload.project_expanded {
+                    let ids = &mut self.snapshot.ui_state.collapsed_workspace_ids;
+                    ids.retain(|id| id != &payload.workspace_id);
+                    if !expanded {
+                        ids.push(payload.workspace_id.clone());
+                        ids.sort();
+                    }
+                    Self::apply_workspace_expansion(
+                        &mut self.snapshot.navigator.workspaces,
+                        &self.snapshot.ui_state.collapsed_workspace_ids,
+                    );
                 }
                 if let Some(expanded) = payload.expanded {
                     let ids = &mut self.snapshot.ui_state.expanded_checkout_ids;

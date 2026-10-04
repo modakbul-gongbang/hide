@@ -41,7 +41,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const agents = useShellStore((s) => s.agents);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const sessions = useShellStore((s) => s.projectSessions);
-  const setScreen = useUiStore((s) => s.setScreen);
+  const setProject = useUiStore((s) => s.setOverviewProject);
   const setLens = useUiStore((s) => s.setLens);
   const onRequestLens = useCallback((requests: Partial<OverviewLens["requests"]>) => setLens({ requests: { ...lens.requests, ...requests } }), [setLens, lens.requests]);
   const lensActions = useMemo(() => lensHandlers(actions, {
@@ -98,7 +98,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     return (
       <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-overview-missing={projectId}>
         <p>This project is no longer in the catalog.</p>
-        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>Back to Home</Button>
+        <Button variant="secondary" onClick={() => setProject(null)}>Back to Home</Button>
       </section>
     );
   }
@@ -140,7 +140,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       <header className="flex shrink-0 flex-col gap-sm border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
           <nav aria-label="Location" className="flex min-w-0 items-center gap-xs">
-            <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main", deviceId: project.device_id })}>
+            <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setProject(null)}>
               Home
             </button>
             <span aria-hidden="true" className="text-caption text-muted-foreground">/</span>

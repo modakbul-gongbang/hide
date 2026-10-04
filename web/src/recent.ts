@@ -19,7 +19,7 @@
 import { frontDeviceId, localDeviceId } from "./devices";
 import { allProjectsCount } from "./navigation";
 import { remoteContext, remoteView } from "./remote";
-import { catalogWorkspaces, type AgentRow, type Checkout, type PaneRow, type SnapshotRest, type Tab, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
+import { type AgentRow, type Checkout, type PaneRow, type SnapshotRest, type Tab, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
 import type { Screen } from "./ui";
 import { activeDisplay, areasOf } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
@@ -66,11 +66,10 @@ export type RecentEntry = Surface | ScreenVisit;
 
 /** A Home Overview that names no device is the front device's; the visit names it, so it stays one place after the front moves. */
 function screenVisit(screen: PageScreen, frontId: string): ScreenVisit {
-  if (screen.kind === "main") {
+  {
     const deviceId = screen.deviceId ?? frontId;
     return { key: `main:${deviceId}`, screen: { ...screen, deviceId } };
   }
-  return { key: `overview:${screen.projectId}`, screen };
 }
 
 export function isScreenVisit(entry: RecentEntry): entry is ScreenVisit {
@@ -79,8 +78,7 @@ export function isScreenVisit(entry: RecentEntry): entry is ScreenVisit {
 
 /** A device's Home Overview while the device is registered; an Overview while its Project is in the catalog, on any device. */
 function screenExists(rest: SnapshotRest | null, screen: PageScreen): boolean {
-  if (screen.kind === "main") return (rest?.navigator?.devices ?? []).some((device) => device.id === (screen.deviceId ?? "local"));
-  return catalogWorkspaces(rest).some((workspace) => workspace.id === screen.projectId);
+  return (rest?.navigator?.devices ?? []).some((device) => device.id === (screen.deviceId ?? "local"));
 }
 
 /** This machine's checkouts, in the navigator's order. */
@@ -407,7 +405,7 @@ export function panelItem(rest: SnapshotRest | null, entry: RecentEntry): CycleI
 
 function screenItem(rest: SnapshotRest | null, visit: ScreenVisit): CycleItem | null {
   const { screen } = visit;
-  if (screen.kind === "main") {
+  {
     const deviceId = screen.deviceId ?? frontDeviceId(rest);
     const count = allProjectsCount(rest, deviceId);
     return {
@@ -420,17 +418,7 @@ function screenItem(rest: SnapshotRest | null, visit: ScreenVisit): CycleItem | 
       target: { kind: "screen", screen, deviceId },
     };
   }
-  const project = catalogWorkspaces(rest).find((workspace) => workspace.id === screen.projectId);
-  if (!project) return null;
-  return {
-    key: visit.key,
-    title: project.label,
-    detail: "Overview",
-    kind: screen.kind,
-    chip: deviceChip(rest, project.device_id),
-    agent: null,
-    target: { kind: "screen", screen, deviceId: project.device_id },
-  };
+
 }
 
 /** A Recent Projects row: the project, with the surface and checkout it would come back on. */

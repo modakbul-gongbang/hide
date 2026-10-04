@@ -241,8 +241,6 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.openSearch();
       case "open_file":
         return actions.openFilePalette();
-      case "project_home":
-        return actions.openProjectOverview();
       case "toggle_right_panel":
         return actions.toggleFileViews();
       case "toggle_left_sidebar":
@@ -426,7 +424,7 @@ export function installKeyboard(actions: Actions): () => void {
       // holding text answers it itself, so the Sessions search clears before a
       // second Escape leaves.
       const field = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement ? event.target : null;
-      if ((ui().screen?.kind === "overview" || ui().screen?.kind === "main") && !field?.value) {
+      if (ui().screen?.kind === "main" && !field?.value) {
         actions.closeOverview();
         consume();
       }

@@ -11,7 +11,6 @@ import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
 import { OverviewModal, OverviewPage } from "./Overview";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
-import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
 import { expectPane, expectSurface, focusSignature } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
@@ -333,7 +332,6 @@ function CenterScreen({ actions }: { actions: Actions }) {
       </div>
     );
   }
-  if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} lens={screen.lens} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
   return <OverviewPage actions={actions} />;
 }

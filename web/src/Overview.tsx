@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { LayoutDashboardIcon } from "lucide-react";
 import type { Actions } from "./actions";
 import { catalogWorkspaces, frontCheckout } from "./snapshot";
@@ -14,11 +15,14 @@ import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
 import { commandLabel } from "./shortcutLabels";
 import { restoreFocus } from "./terminals";
+import { projectEntryLens } from "./navigation";
 
 /** The same selected-device group that the Agents sidebar draws. */
 export function useOverviewCount() {
-  return useShellStore((s) => s.rest && sidebarBody(s.rest, "agents") !== "disconnected"
-    ? contextAgents(s.rest, s.agents).filter((agent) => agent.group === "needs_you").length : 0);
+  const rest = useShellStore((s) => s.rest);
+  const agents = useShellStore((s) => s.agents);
+  return useMemo(() => rest && sidebarBody(rest, "agents") !== "disconnected"
+    ? contextAgents(rest, agents).filter((agent) => agent.group === "needs_you").length : 0, [rest, agents]);
 }
 
 export function OverviewButton({ actions }: { actions: Actions }) {
@@ -29,7 +33,7 @@ export function OverviewButton({ actions }: { actions: Actions }) {
   return <Hint label={description ? `Overview · ${description}` : "Overview"} shortcut={chord}>
     <Button variant={open ? "secondary" : "ghost"} size="icon-sm" className="relative" aria-label="Overview" aria-description={description} aria-pressed={open} data-open-overview="true" onClick={actions.toggleOverview}>
       <LayoutDashboardIcon />
-      {count > 0 ? <span aria-hidden="true" className="absolute right-xxs top-xxs size-(--size-tab-status-dot) rounded-full bg-primary" data-overview-dot="true" /> : null}
+      {count > 0 ? <span aria-hidden="true" className="absolute right-xxs top-xxs size-(--size-tab-status-dot) rounded-full bg-warning" data-overview-dot="true" /> : null}
     </Button>
   </Hint>;
 }
@@ -47,7 +51,7 @@ export function OverviewPage({ actions }: { actions: Actions }) {
   return <div className="flex min-h-0 flex-1 flex-col" data-overview-page="true">
     <div className="flex shrink-0 items-center gap-md border-b border-border px-lg py-sm">
       <span className="text-title font-semibold">Overview</span>
-      <Tabs value={projectId ?? "all"} onValueChange={(value) => useUiStore.getState().setOverviewProject(value === "all" ? null : value)} className="min-w-0 flex-1">
+      <Tabs value={projectId ?? "all"} onValueChange={(value) => useUiStore.getState().setOverviewProject(value === "all" ? null : value, value === "all" ? undefined : projectEntryLens(useShellStore.getState().rest, value))} className="min-w-0 flex-1">
         <TabsList aria-label="Overview scope" className="min-w-0 max-w-full">
           <TabsTrigger value="all">All projects</TabsTrigger>
           {scope ? <Hint label={scope.label}><TabsTrigger value={scope.id} className="min-w-0"><span className="truncate">{scope.label}</span></TabsTrigger></Hint> : null}
@@ -63,10 +67,12 @@ export function OverviewPage({ actions }: { actions: Actions }) {
 
 export function OverviewModal({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overviewOpen);
-  return <Dialog open={open} onOpenChange={(next) => { if (!next) actions.closeOverview(); }}>
+  return <Dialog baseEscape open={open} onOpenChange={(next) => { if (!next) actions.closeOverview(); }}>
     {open ? <DialogContent initialFocus="container" aria-describedby={undefined} className="h-(--size-settings-sheet-h) w-(--size-settings-sheet-w)" data-overview-modal="true" onCloseAutoFocus={(event) => {
       event.preventDefault();
       const target = useUiStore.getState().overviewReturnFocus;
+      const current = document.activeElement;
+      if (current instanceof HTMLElement && current !== document.body && current.isConnected && !current.closest("[data-overview-modal]")) return;
       if (target) restoreFocus(target);
     }}>
       <DialogTitle className="sr-only">Overview</DialogTitle>

@@ -824,6 +824,12 @@ Registering or removing a device refreshes only the device rows (`rebuild_device
 
 ### Workspaces in the web shell
 
+The shared Overview (`web/src/Overview.tsx`) is window-local state in `ui.ts`, with All projects and current-project scopes and no persisted modal or project destination.
+It overlays a mounted Workspace or renders as its central fallback page; its modal is not a Recent Panels visit and Agent cycling uses the existing pane order without a Workspace origin.
+Project activation uses `projects.ts` to choose this device's recent usable checkout, then primary, then first usable checkout.
+The existing `focus_checkout` payload accepts `project_expanded` alongside checkout disclosure, so admission validates the target before either fold or focus changes and persistence keeps the existing collapsed-project state.
+
+
 The web shell has three screens, one per scope the sidebar picks (PRD S6 D-02, S8 D-08): the Overview (titled so by PRD sidebar-shell D-02) lists every registered Project on every device, a Project's Overview shows its Agents, Issues, PRs or Sessions under the tiles that count them (the session history, see Project sessions and Memory above), and a Workspace is one checkout's working space (`web/src/{MainScreen,ProjectOverview,ProjectSessions,WorkspaceScreen}.tsx`, rules in `web/src/navigation.ts`, `web/src/projectBoard.ts`, `web/src/overviewLens.ts`, `web/src/agentGraph.ts` and `web/src/sessions.ts`).
 The screen and the Overview's view are page state in `web/src/ui.ts`, never the core's, so two windows each keep their own; a Project's Overview carries its lens (tile, the Issues mode, the Agents graph's selected box, filter and opened folds, the PRs view's unfolded rows) on the screen value itself, so Recent Panels brings it back as it was left and every other entry starts from `entryLens`.
 Which screen is showing is the shell's own location (`ui.ts`), not core state: the page starts on the Workspace the core has in front only when the core marks it `resumed`, the Workspace the operator last chose, in this process or before a restart (D-11): a `focus_checkout`, `focus_pane` or `focus_tab` the core accepted, or a device `remote_control` focus or Workspace open once the device's front lands there, so a refusal chooses nothing and a front only Herdr's own focus moved is not resumed; a first run, a last Workspace that is gone, or any other front starts on Main once the device in front has settled (`startupScreen` in `navigation.ts`), and moving between screens creates or ends nothing.
@@ -1300,7 +1306,7 @@ The core asks Herdr off the lock whether it holds the pane's history: with none 
 Herdr's history is the only witness, because the pinned API does not say whether a pane is on the alternate screen: an inline agent whose output has not yet passed one screen has no history either and gets its own keys, which for Claude Code's default renderer opens its transcript without a search while the whole conversation is still on screen.
 Claude Code's transcript toggles on the key that opens it, so a screen that already shows its transcript footer gets only the search key; the footer is the one witness the agent offers, and a footer that changed sends the full keys as before.
 The answer names the request that asked (`find.opened`), so the shell acts on it once.
-Settings > Shortcuts rebinds the editable commands (`EDITABLE_PANE_COMMANDS`: split right and down, zoom, close pane, larger, smaller and reset text, the sidebar view and device rail toggles, the next/previous Agent pane or focused View tab and global next/previous Recent Panels cycles, and the eight chordless area focus and resize commands `AREA_COMMANDS`) in the running host's own set.
+Settings > Shortcuts rebinds the editable commands (`EDITABLE_PANE_COMMANDS`: split right and down, zoom, close pane, larger, smaller and reset text, Overview, the direct Projects and Agents sidebar commands and the device rail toggle, the next/previous Agent pane or focused View tab and global next/previous Recent Panels cycles, and the eight chordless area focus and resize commands `AREA_COMMANDS`) in the running host's own set.
 The core and the desktop menu refuse a stored or reported set past `BINDINGS_CAP` (32, in `herdr-core/src/runtime/events.rs` and `desktop/src/main/menu.ts`, changed together); `menu.test.ts` fails when the editable list outgrows it.
 The area commands have no default chord on any host, so they appear in Settings and the desktop Pane menu without an accelerator until the operator binds one.
 Each host keeps its set in the core apart from the other's, because the hosts reserve different keys: a browser's in `ui_state.browser_shortcut_bindings`, and the desktop app's in `ui_state.shortcut_bindings`, the macOS chord set, in the removed native app's text form (`command+shift+return`) and command names (`increase_text_size`), with `toggle_conversation` kept but never run here; a save that omits `browser_shortcut_bindings` keeps it.
@@ -1345,10 +1351,10 @@ The table below is written in macOS chords; Windows and Linux press each one thr
 | Next / previous global recent panel | none by default | none by default; bindable in Settings | none by default; the menu selects immediately |
 | Next / previous recent project (Recent Projects) | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
 | Search, Open file, Toggle File Views | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
-| Project home | ⌘⇧H | same chord; opens the front checkout's Project Overview | same chord |
+| Overview | ⌘⇧O | shared modal or page | same chord |
+| Sidebar Projects / Agents | ⌘⇧P / ⌘⇧A | direct list selection and keyboard focus | same chords |
 | Save file | ⌘S | ⌘S | ⌘S |
 | Toggle left sidebar, Toggle File Views, Find in pane, Keep open | ⌘B, ⌘⇧B, ⌘F, ⌘⇧K | same chords | same chords |
-| Toggle sidebar view | ⌘E | none by default; bindable in Settings | none by default; bindable in Settings, kept in the macOS set |
 | Toggle Tools | - | ⌘E | ⌘E |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |

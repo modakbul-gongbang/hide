@@ -158,4 +158,5 @@ export interface FocusCheckoutPayload {
   focus_device?: boolean;
   display_id?: string;
   expanded?: boolean;
+  project_expanded?: boolean;
 }

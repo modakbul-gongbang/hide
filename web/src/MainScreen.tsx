@@ -6,7 +6,7 @@ import { Kbd } from "./components/ui/kbd";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
-import { AGENT_GROUPS, boardProjects, mainSections, overviewScreen, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
+import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
 import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
@@ -350,8 +350,7 @@ export function UnavailableNotice({ device, availability, actions }: { device: D
   );
 }
 
-function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
-  const setScreen = useUiStore((s) => s.setScreen);
+function ProjectRow({ project, actions }: { project: ProjectEntry; actions: Actions }) {
   const reachable = project.workspace !== null;
   return (
     <li>
@@ -361,7 +360,7 @@ function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
         disabled={!reachable}
         data-main-project={project.id}
         className="flex w-full items-center gap-md rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
-        onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
+        onClick={() => actions.openProjectById(project.deviceId, project.id)}
       >
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-baseline gap-xs text-body text-foreground">

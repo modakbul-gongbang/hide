@@ -112,7 +112,7 @@ export function SidebarHeader({
             className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${overview.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
             <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
             <span className="min-w-0 flex-1 truncate text-left">Overview</span>
-            {overview.count > 0 ? <span data-overview-count="true" className="text-caption text-primary">{overview.count}</span> : null}
+            {overview.count > 0 ? <span data-overview-count="true" className="text-caption text-warning">{overview.count} asking</span> : null}
             {overview.chord && !compact ? <Kbd className="sidebar-command-keycap">{overview.chord}</Kbd> : null}
           </button>
         </Hint>

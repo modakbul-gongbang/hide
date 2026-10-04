@@ -5,7 +5,18 @@
 // age, merge or attention rule is repeated.
 
 import { AGENT_GROUPS, type ListedAgent } from "./navigation";
-import type { Checkout, InactiveProjectGroup, MarkCounts, PullRequest, Workspace } from "./snapshot";
+import type { Checkout, InactiveProjectGroup, MarkCounts, PullRequest, RecentCheckout, Workspace } from "./snapshot";
+
+/** Return to this device's last usable checkout, then its primary, then row order. */
+export function projectCheckout(workspace: Workspace, recent: readonly RecentCheckout[] = []): Checkout | null {
+  const usable = workspace.checkouts.filter((checkout) => checkout.exists);
+  for (const visit of recent) {
+    if (visit.device_id !== workspace.device_id) continue;
+    const checkout = usable.find((checkout) => checkout.id === visit.checkout_id);
+    if (checkout) return checkout;
+  }
+  return usable.find((checkout) => checkout.is_primary) ?? usable[0] ?? null;
+}
 
 export type ProjectRow =
   | { kind: "header"; title: string; count: number }
@@ -374,13 +385,8 @@ export function checkoutRowExpansion(foldable: boolean, workspaceSelected: boole
  * unfolds it, unless that Overview is already open and the project unfolded,
  * when it folds. A remote device's tree has no folds to change.
  */
-export function projectRowExpansion(workspace: Workspace, overviewProjectId: string | null, foldable: boolean): boolean | undefined {
-  return checkoutRowExpansion(foldable, workspace.id === overviewProjectId, workspace.expanded !== false);
-}
-
-/** Git project headings navigate too, but only their Overview child owns selection. */
-export function overviewRowSelected(workspace: Workspace, overviewProjectId: string | null): boolean {
-  return workspace.is_git === true && workspace.id === overviewProjectId;
+export function projectRowExpansion(workspace: Workspace, target: Checkout | null, focusedCheckoutId: string | null, foldable: boolean): boolean | undefined {
+  return checkoutRowExpansion(foldable, target !== null && target.id === focusedCheckoutId, workspace.expanded !== false);
 }
 
 /**

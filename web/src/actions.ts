@@ -1,3 +1,5 @@
+import { projectCheckout } from "./projects";
+import { deviceConnected } from "./devices";
 import { areaFrame } from "./areaFrames";
 import { AGENT_WORDS, agentAreaStepUnavailable, agentMenu, type AgentAreaStep, type AgentCommand } from "./agentLayout";
 import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
@@ -26,7 +28,7 @@ import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./setting
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { railShown } from "./devices";
-import { allAgents, overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
+import { allAgents, projectEntryLens, pullRequestLens, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
@@ -125,8 +127,7 @@ export function createActions(send: DispatchFn) {
 
   /** Remembers what was asked to come forward; `CenterScreen` shows it once it is in front. */
   const beginOpening = (target: OpenTarget) => {
-    useUiStore.setState({ overviewOpen: false, overviewReturnFocus: null });
-    ui().setOpening({ target, errorBefore: rest()?.status?.last_error?.occurred_at ?? null, failure: null });
+    useUiStore.setState({ overviewOpen: false, overviewReturnFocus: ui().overviewOpen ? document.querySelector<HTMLElement>('[data-pane-view][data-focused="true"] .xterm-helper-textarea') : null, opening: { target, errorBefore: rest()?.status?.last_error?.occurred_at ?? null, failure: null } });
   };
 
   const current = (): { checkout: Checkout; tab: Tab | null } | null => {
@@ -307,7 +308,7 @@ export function createActions(send: DispatchFn) {
    * A project or checkout row. On a selected SSH device a project can hold
    * several Herdr workspaces, and the checkout names the one to focus.
    */
-  const focusCheckout = (workspaceId: string, checkoutId: string, expanded?: FocusCheckoutPayload["expanded"]) => {
+  const focusCheckout = (workspaceId: string, checkoutId: string, expanded?: FocusCheckoutPayload["expanded"], projectExpanded?: boolean) => {
     const context = remoteContext(rest());
     if (context) {
       const host = remoteHost("Switching workspace");
@@ -320,7 +321,7 @@ export function createActions(send: DispatchFn) {
       sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId });
       return;
     }
-    dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, ...(expanded === undefined ? {} : { expanded }) } });
+    dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, ...(expanded === undefined ? {} : { expanded }), ...(projectExpanded === undefined ? {} : { project_expanded: projectExpanded }) } });
   };
 
   /**
@@ -1054,16 +1055,16 @@ export function createActions(send: DispatchFn) {
      * also brings its device forward, so a refusal moves neither. The screen
      * follows once the core has moved there (`opening`).
      */
-    openWorkspace(deviceId: string, workspaceId: string, checkoutId: string, expanded?: FocusCheckoutPayload["expanded"]) {
+    openWorkspace(deviceId: string, workspaceId: string, checkoutId: string, expanded?: FocusCheckoutPayload["expanded"], projectExpanded?: boolean) {
       const path =
         (deviceId === "local" ? rest()?.navigator?.workspaces : rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces)
           ?.flatMap((row) => row.checkouts)
           .find((row) => row.id === checkoutId)?.path ?? null;
       beginOpening({ checkoutId, deviceId, path, workspaceId, expanded });
       const front = rest()?.navigator?.focused_device_id ?? "local";
-      if (front === deviceId) return focusCheckout(workspaceId, checkoutId, expanded);
+      if (front === deviceId) return focusCheckout(workspaceId, checkoutId, expanded, projectExpanded);
       if (deviceId === "local") {
-        dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, focus_device: true, ...(expanded === undefined ? {} : { expanded }) } });
+        dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, focus_device: true, ...(expanded === undefined ? {} : { expanded }), ...(projectExpanded === undefined ? {} : { project_expanded: projectExpanded }) } });
         return;
       }
       dispatch(withDeviceForward(remoteControl(deviceId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId })));
@@ -1212,7 +1213,8 @@ export function createActions(send: DispatchFn) {
 
     /** A pull request's row on its Project's PRs tab, unfolded (PRD overview-lenses-prs B21); ⌘-click stays GitHub's. */
     openPullRequestRow(projectId: string, number: number | null) {
-      ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, number));
+      const project = catalogWorkspaces(rest()).find((row) => row.id === projectId);
+      if (project) this.openOverview(project.device_id, projectId, { pullRequest: number });
     },
 
     /**
@@ -1221,11 +1223,14 @@ export function createActions(send: DispatchFn) {
      * Overview shows, as one action. The screen is this page's own state, so
      * the only event is the device's (PRD cmdk-navigation B20).
      */
-    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number }) {
+    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number | null }) {
+      const state = ui();
+      const next = state.overviewProjectId === projectId ? state.overviewLens : projectEntryLens(rest(), projectId);
+      const selected = lens && "pullRequest" in lens ? pullRequestLens(next, lens.pullRequest) : lens ? { ...next, tab: "issues" as const, focusTask: lens.issue, panel: lens.issue } : next;
+      const modal = state.screen?.kind === "workspace" && Boolean(frontCheckout(rest()) && rest()?.workspace_view);
+      const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      useUiStore.setState({ overviewProjectId: projectId, overviewLens: selected, overviewOpen: modal, overviewReturnFocus: target, overlay: "none", ...(!modal ? { screen: { kind: "main" as const, deviceId } } : {}) });
       if ((rest()?.navigator?.focused_device_id ?? "local") !== deviceId) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
-      if (lens && "pullRequest" in lens) return ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, lens.pullRequest));
-      const screen = overviewScreen(rest(), projectId);
-      ui().setScreen(lens ? { ...screen, lens: { ...screen.lens, tab: "issues", focusTask: lens.issue, panel: lens.issue } } : screen);
     },
 
     /** ⌘K's `GitHub에서 "…" 검색` row: one search of this Mac's GitHub projects, answered in `issue_work.search` by `requestId`. */
@@ -1691,8 +1696,15 @@ export function createActions(send: DispatchFn) {
      * sent only when the fold changes.
      */
     openProject(workspace: Workspace, expanded: boolean | undefined) {
-      ui().setScreen(overviewScreen(rest(), workspace.id));
-      if (expanded !== undefined && expanded !== (workspace.expanded !== false)) foldProject(workspace, expanded);
+      const checkout = deviceConnected(rest(), workspace.device_id) ? projectCheckout(workspace, rest()?.ui_state?.recent_checkouts) : null;
+      if (!checkout) return this.openOverview(workspace.device_id, workspace.id);
+      this.openWorkspace(workspace.device_id, workspace.id, checkout.id, undefined, expanded);
+    },
+
+    openProjectById(deviceId: string, projectId: string) {
+      const workspace = catalogWorkspaces(rest()).find((row) => row.id === projectId && row.device_id === deviceId);
+      if (workspace) return this.openProject(workspace, undefined);
+      this.openOverview(deviceId, projectId);
     },
 
     /** Opens or closes the agent rows under a checkout in the Projects list; they start closed and the core keeps the choice. */
@@ -1740,7 +1752,7 @@ export function createActions(send: DispatchFn) {
       const front = frontCheckout(rest());
       const project = front ? catalogWorkspaces(rest()).find((row) => !row.is_home && row.checkouts.some((checkout) => checkout.id === front.id)) : null;
       if (!project) state.setOverviewProject(null);
-      else if (state.overviewProjectId !== null && state.overviewProjectId !== project.id) state.setOverviewProject(project.id, overviewScreen(rest(), project.id).lens);
+      else if (state.overviewProjectId !== null && state.overviewProjectId !== project.id) state.setOverviewProject(project.id, projectEntryLens(rest(), project.id));
       const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
       useUiStore.setState({ overviewOpen: true, overviewReturnFocus: target, overlay: "none" });
     },
@@ -1815,23 +1827,6 @@ export function createActions(send: DispatchFn) {
     openAddProject() {
       if (!hostBridge()) return diagnostic("add project: this host has no folder picker");
       ui().openOverlay("add_project");
-    },
-
-    /**
-     * ⌘⇧H: the Overview of the Project the front checkout belongs to, on
-     * whichever device (web-project-overview B1). With nothing in front there
-     * is no Project to name, so nothing moves and the diagnostic says why.
-     */
-    openProjectOverview() {
-      const front = frontCheckout(rest());
-      const project = front ? catalogWorkspaces(rest()).find((row) => row.checkouts.some((checkout) => checkout.id === front.id)) : null;
-      if (!project) return diagnostic("project overview: no checkout is in front");
-      ui().setScreen(overviewScreen(rest(), project.id));
-    },
-
-    /** Back from an Overview to the pane grid in front, or to All projects when no Workspace is in front (B1). */
-    leaveProjectOverview() {
-      ui().setScreen(frontCheckout(rest()) && rest()?.workspace_view ? { kind: "workspace" } : { kind: "main" });
     },
 
     /** ⌘P: the file palette over hided's index of the focused checkout. */

@@ -122,7 +122,6 @@ export type CommandId =
   | "toggle_device_rail"
   | "toggle_explorer"
   | "toggle_right_panel"
-  | "project_home"
   | "keep_open"
   | "find_in_pane"
   | "save_file"
@@ -229,7 +228,6 @@ export const REGISTRY: readonly Command[] = [
   ...numberedEntries(NUMBERED_FAMILIES[1]!),
   { id: "search", title: "Search", group: "Navigate", browser: { code: "KeyK", meta: true }, electron: { code: "KeyK", meta: true }, moved: false },
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
-  { id: "project_home", title: "Project home", group: "Navigate", browser: { code: "KeyH", meta: true, shift: true }, electron: { code: "KeyH", meta: true, shift: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
   { id: "overview", title: "Overview", group: "Navigate", browser: { code: "KeyO", meta: true, shift: true }, electron: { code: "KeyO", meta: true, shift: true }, moved: false },
   { id: "sidebar_projects", title: "Projects sidebar", group: "Panels", browser: { code: "KeyP", meta: true, shift: true }, electron: { code: "KeyP", meta: true, shift: true }, moved: false },
@@ -556,7 +554,7 @@ export function storedBindings(uiState: StoredShortcutSets, host: HostKind): Rec
   return host === "electron" ? uiState?.shortcut_bindings : uiState?.browser_shortcut_bindings;
 }
 
-function withChord(command: Command, chord: Chord, host: HostKind): Command {
+function withChord(command: Command, chord: Chord | null, host: HostKind): Command {
   return host === "electron" ? { ...command, electron: chord } : { ...command, browser: chord, moved: false };
 }
 
@@ -607,15 +605,19 @@ export type EffectiveRegistry = { registry: readonly Command[]; diagnostic: stri
 export function effectiveRegistry(stored: Record<string, string> | null | undefined, host: HostKind, system: KeySystem): EffectiveRegistry {
   const which = host === "electron" ? "pane" : "browser";
   const defaults = systemRegistry(system);
-  const retired = Object.hasOwn(stored ?? {}, "toggle_sidebar_view");
-  const diagnostic = retired ? "Stored toggle_sidebar_view shortcut is retired and was ignored." : null;
-  const entries = Object.entries(stored ?? {}).filter(([key]) => key !== "toggle_sidebar_view" && !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
+  const retired = Object.keys(stored ?? {}).some((key) => ["toggle_sidebar_view", "project_home"].includes(key));
+  const diagnostic = retired ? "Stored project_home or toggle_sidebar_view shortcut is retired and was ignored." : null;
+  const entries = Object.entries(stored ?? {}).filter(([key]) => !["toggle_sidebar_view", "project_home"].includes(key) && !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
   if (entries.length === 0) return { registry: defaults, diagnostic };
   let registry: Command[] = [...defaults];
   const applied: [CommandId, Chord][] = [];
   for (const [key, text] of entries) {
     const id = EDITABLE_PANE_COMMANDS.find((command) => storedKey(command, host) === key);
     if (!id) return { registry: defaults, diagnostic: `Stored ${which} shortcuts name an unknown command (${key}); defaults are in use.` };
+    if (text === "none") {
+      registry = registry.map((command) => command.id === id ? withChord(command, null, host) : command);
+      continue;
+    }
     const chord = parseStoredChord(text, host, system);
     if (!chord) return { registry: defaults, diagnostic: `Stored ${which} shortcut for ${key} was not usable (unreadable chord); defaults are in use.` };
     registry = registry.map((command) => (command.id === id ? withChord(command, chord, host) : command));

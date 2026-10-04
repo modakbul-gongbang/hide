@@ -167,7 +167,8 @@
         "checkout_id": { "type": "string" },
         "focus_device": { "type": "boolean" },
         "display_id": { "type": "string" },
-        "expanded": { "type": "boolean" }
+        "expanded": { "type": "boolean" },
+        "project_expanded": { "type": "boolean" }
       }
     },
     "clientEvent": {

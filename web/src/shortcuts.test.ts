@@ -68,7 +68,6 @@ describe("shortcut registry", () => {
       previous_recent_project: "⌥⇧⇥",
       search: "⌘K",
       open_file: "⌘P",
-      project_home: "⇧⌘H",
       toggle_left_sidebar: "⌘B",
       // ⌘E shows the Explorer in both hosts (issue 170); the macOS set keeps
       // it on the sidebar switch, which has no chord here until one is bound.
@@ -377,7 +376,6 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       previous_recent_project: "Ctrl+Alt+Shift+`",
       search: "Ctrl+Shift+K",
       open_file: "Ctrl+Shift+P",
-      project_home: "Alt+Shift+H",
       toggle_left_sidebar: "Ctrl+Shift+B",
       overview: "Alt+Shift+O",
       sidebar_projects: "Alt+Shift+P",
@@ -510,3 +508,15 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   });
 });
 
+
+// Unbinding a navigation key preserves the rest of the host registry.
+describe("cleared navigation keys", () => {
+  it("keeps unrelated overrides while removing every new navigation chord", () => {
+    for (const host of ["browser", "electron"] as const) {
+      const result = effectiveRegistry({ overview: "none", sidebar_projects: "none", sidebar_agents: "none", split_right: host === "browser" ? "meta+alt+KeyR" : "command+option+r" }, host, "mac");
+      expect(result.diagnostic).toBeNull();
+      for (const id of ["overview", "sidebar_projects", "sidebar_agents"]) expect(result.registry.find(row => row.id === id)?.[host]).toBeNull();
+      expect(result.registry.find(row => row.id === "split_right")?.[host]?.code).toBe("KeyR");
+    }
+  });
+});

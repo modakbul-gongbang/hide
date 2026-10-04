@@ -9,7 +9,6 @@ import { remoteView } from "./remote";
 import { holdShellDrag } from "./shellDrag";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
-import { overviewScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { AgentAreas } from "./AgentAreas";
@@ -349,7 +348,6 @@ function DividerGrip({ className = "" }: { className?: string }) {
 function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: { checkout: Checkout; view: WorkspaceView; viewsShown: boolean; toolsShown: boolean; actions: Actions }) {
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
-  const setScreen = useUiStore((s) => s.setScreen);
   // The chords as bound, so a rebound one shows as bound (B7).
   const viewsChord = useShellStore((s) => commandLabel("toggle_right_panel", s.rest?.ui_state));
   const toolsChord = useShellStore((s) => commandLabel("toggle_explorer", s.rest?.ui_state));
@@ -360,13 +358,11 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
     { id: "views", label: viewsShown ? "Hide File Views" : "Show File Views", unavailable: null },
     { id: "tools", label: toolsShown ? "Hide Tools" : "Show Tools", unavailable: null },
     { id: "copy_path", label: "Copy Workspace path", unavailable: null, separated: true },
-    { id: "overview", label: "Open Project Overview", unavailable: project ? null : "This Workspace's Project is not in the catalog" },
   ];
   const select = (id: ToolbarMenuId) => {
     if (id === "views") return actions.toggleFileViews();
     if (id === "tools") return actions.toggleTools();
     if (id === "copy_path") return void navigator.clipboard?.writeText(checkout.path).catch(() => undefined);
-    if (id === "overview" && project) setScreen(overviewScreen(useShellStore.getState().rest, project.id));
   };
   const count = viewsShown ? 0 : (view.layout?.display_count ?? 0);
   const viewsOpen = count > 0 ? `${count} ${count === 1 ? "view" : "views"} open` : undefined;
@@ -388,14 +384,9 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
             <>
               <span aria-hidden="true" className="text-muted-foreground">/</span>
               <Hint label={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}>
-                <button
-                  type="button"
-                  className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-                  data-go-overview={project.id}
-                  onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
-                >
+                <span className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate px-xs text-subtle-foreground" data-workspace-project={project.id}>
                   {project.label}
-                </button>
+                </span>
               </Hint>
             </>
           ) : null}
@@ -441,7 +432,7 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
   );
 }
 
-type ToolbarMenuId = "views" | "tools" | "copy_path" | "overview";
+type ToolbarMenuId = "views" | "tools" | "copy_path";
 
 /** This machine's tabs, or the selected SSH device's own tabs and panes in their place (S5 B19). */
 function AgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
