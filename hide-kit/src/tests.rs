@@ -157,7 +157,13 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        // The private HOME must leave room for the legacy daemon's nested
+        // socket under SUN_LEN, even when the harness gives TMPDIR a long
+        // spelling. TempDir owns this unique private short-root fixture.
+        let dir = tempfile::Builder::new()
+            .prefix("hk")
+            .tempdir_in("/tmp")
+            .unwrap();
         // Resolved, so paths compare equal to what the fake Herdr records.
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let home = root.join("home");
