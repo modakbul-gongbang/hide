@@ -100,6 +100,31 @@ test('actual preparation CLI rejects effective profile, target and feature overr
     assert.doesNotMatch(result.stderr,/dirty|diff --quiet|ENOENT/);
   }
 });
+test('preparation CLI refuses publication when its producer changes tracked source during build', () => {
+  const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+  const directory=fs.mkdtempSync(path.resolve('agents/runs/ci-test-refactor/reporter-controls/preparation-race-'));
+  fs.mkdirSync(path.join(directory,'scripts')); fs.mkdirSync(path.join(directory,'contracts'));
+  fs.mkdirSync(path.join(directory,'target/debug/examples'),{recursive:true});
+  const artifacts=[['hided','bin'],['hide','bin'],['fixture-owner','example']].map(([name,kind])=>{
+    const executable=path.join(directory,'target/debug',kind==='example'?'examples':'',name);
+    fs.writeFileSync(executable,'controlled output');
+    return {reason:'compiler-artifact',target:{name,kind:[kind]},profile:{test:false},features:[],executable};
+  });
+  // This is a controlled external producer, not Cargo/native acceptance.
+  // It crosses the real CLI's clean-source boundary after lookup succeeds.
+  fs.writeFileSync(path.join(directory,'scripts/verify-cargo.sh'),"#!/usr/bin/env bash\nprintf changed > source.txt\ncat <<'ARTIFACTS'\n"+artifacts.map(v=>JSON.stringify(v)).join('\n')+'\nARTIFACTS\n');
+  for(const file of ['Cargo.lock','pnpm-lock.yaml','source.txt','contracts/herdr-bundle.json']) fs.writeFileSync(path.join(directory,file),'initial');
+  fs.writeFileSync(path.join(directory,'.gitignore'),'target/\nagents/\n');
+  const command=(args)=>{const result=spawnSync('git',args,{cwd:directory,encoding:'utf8'}); assert.equal(result.status,0,result.stderr);};
+  command(['init','--quiet']); command(['add','.']);
+  command(['-c','core.hooksPath=/dev/null','-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','Initial control']);
+  const env={...process.env}; delete env.GITHUB_SHA;
+  const result=spawnSync(process.execPath,[path.resolve('scripts/ci-preparation.cjs'),'build'],{cwd:directory,env,encoding:'utf8'});
+  assert.notEqual(result.status,0);
+  assert.match(result.stderr,/preparation source\/toolchain changed during operation/);
+  assert.equal(fs.readFileSync(path.join(directory,'source.txt'),'utf8'),'changed');
+  assert.equal(fs.existsSync(path.join(directory,'agents/runs/ci-preparation/build.json')),false);
+});
 test('a later pass cannot replace the first failure, and repeated upload deduplicates', () => {
   const ledger = merge([row,row,{...row,retry:1,status:'passed'}]);
   assert.equal(ledger.records.length,2);

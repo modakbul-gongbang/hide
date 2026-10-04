@@ -66,6 +66,7 @@ The sealed `test`, `lint`, `release` and `cli` invocations keep their existing b
 Multi-shard web lanes prepare the native debug binaries, web shell and hcoord output once and distribute them together.
 `scripts/ci-preparation.cjs build` owns the exact native command and records Cargo's actual binary profile/features alongside their digests.
 `create` requires that build receipt, and `verify` requires the same clean tested SHA, command, OS, architecture, Rust/Node/pnpm toolchains, flags, locks, runtime pin and output bytes.
+Each operation checks its source/toolchain identity again after building or reading the output, before publishing or accepting the receipt; a mid-operation change fails without publishing a new manifest.
 Unsupported profile, target and feature overrides fail before build, create or reuse; they cannot be described as a default build.
 Every output file is streamed through SHA-256 and checked against the bounded manifest before use; missing, changed, extra or symbolic-link output fails the lane.
 Release builds continue to use their worktree's fixed release paths.

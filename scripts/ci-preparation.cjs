@@ -55,6 +55,11 @@ function inventory(root) {
   }
   return files;
 }
+function confirmBoundary(root, before) {
+  try {
+    if(JSON.stringify(identity(root))!==JSON.stringify(before)) throw Error('identity mismatch');
+  } catch(cause) { throw new Error('preparation source/toolchain changed during operation',{cause}); }
+}
 function verify(value, expected, files) {
   if(value.version!==1 || JSON.stringify(value.identity)!==JSON.stringify(expected)) throw Error('preparation source/profile/features/OS/arch/toolchain mismatch');
   if(JSON.stringify(value.files)!==JSON.stringify(files)) throw Error('preparation output inventory or digest mismatch');
@@ -73,17 +78,21 @@ if(require.main===module) {
       const value=matches[0];
       return {name,profile:value.profile,features:value.features,executable:path.relative(root,value.executable).replace(/\\/g,'/'),digest:digest(value.executable)};
     });
+    confirmBoundary(root,boundary);
     ledger.write(buildFile,{version:1,identity:boundary,binaries});
   }
   else if(mode==='create') {
     const boundary=identity(root),build=JSON.parse(fs.readFileSync(buildFile));
     if(build.version!==1 || JSON.stringify(build.identity)!==JSON.stringify(boundary) || build.binaries?.length!==TARGETS.length || !TARGETS.every(([name],index)=>build.binaries[index].name===name)) throw Error('preparation build invocation mismatch');
     for(const binary of build.binaries) if(JSON.stringify(binary.digest)!==JSON.stringify(digest(path.join(root,binary.executable)))) throw Error('preparation compiled binary changed');
-    ledger.write(file,{version:1,identity:boundary,compiled:build.binaries,files:inventory(root)});
+    const files=inventory(root);
+    confirmBoundary(root,boundary);
+    ledger.write(file,{version:1,identity:boundary,compiled:build.binaries,files});
   }
   else if(mode==='verify') {
     const boundary=identity(root);
     if(fs.statSync(file).size>ledger.MAX_BYTES) throw Error('preparation manifest cap exceeded');
     verify(JSON.parse(fs.readFileSync(file)),boundary,inventory(root));
+    confirmBoundary(root,boundary);
   } else throw Error('usage: ci-preparation.cjs build|create|verify');
 }
