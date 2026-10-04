@@ -205,13 +205,13 @@ impl FixtureProcess {
 
 impl Drop for FixtureProcess {
     fn drop(&mut self) {
-        if start_time(self.pid).ok() == Some(self.started) {
-            if let Err(source) = kill_tree(self.pid) {
-                eprintln!(
-                    "process.fixture_cleanup_failed pid={} error={source}",
-                    self.pid
-                );
-            }
+        if start_time(self.pid).ok() == Some(self.started)
+            && let Err(source) = kill_tree(self.pid)
+        {
+            eprintln!(
+                "process.fixture_cleanup_failed pid={} error={source}",
+                self.pid
+            );
         }
     }
 }
