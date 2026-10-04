@@ -186,6 +186,191 @@ fn a_project_is_asked_for_again_five_minutes_after_its_last_answer() {
     assert_eq!(generations(&runtime)[0].1, 2, "one ask per answer");
 }
 
+/// An answer for the request as it stands: `failed` projects came back
+/// without their pull requests, the others read fine.
+fn answer_with(runtime: &mut Runtime, failed: &[&str]) {
+    let projects = runtime
+        .github_request()
+        .projects
+        .iter()
+        .map(|project| {
+            let root = project.root.to_string_lossy().into_owned();
+            if failed.contains(&root.as_str()) {
+                read_failed(&root)
+            } else {
+                read_ok(&root, Vec::new(), 10)
+            }
+        })
+        .collect();
+    runtime.ingest_github_answer(GithubSnapshot { projects }, true);
+}
+
+fn generation_of(runtime: &Runtime, path: &str) -> u64 {
+    generations(runtime)
+        .into_iter()
+        .find(|(project, _)| project == path)
+        .unwrap()
+        .1
+}
+
+/// Lets the clock see the answer at `at`, then asks at each second after it
+/// up to 400 and returns the first one at which `path` was asked again.
+fn seconds_until_asked_again(runtime: &mut Runtime, path: &str, at: Instant) -> Option<u64> {
+    let before = generation_of(runtime, path);
+    runtime.reread_stale_github(at);
+    (1..=400).find(|wait| {
+        runtime.reread_stale_github(at + Duration::from_secs(*wait));
+        generation_of(runtime, path) != before
+    })
+}
+
+#[test]
+fn a_project_whose_read_failed_is_asked_again_in_thirty_seconds_while_the_others_keep_their_clock()
+{
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+    ];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    let answered = start + Duration::from_secs(1);
+    runtime.reread_stale_github(answered);
+    runtime.reread_stale_github(answered + Duration::from_secs(29));
+    assert_eq!(
+        generations(&runtime),
+        vec![("/tmp/a".to_owned(), 0), ("/tmp/b".to_owned(), 0)]
+    );
+    runtime.reread_stale_github(answered + Duration::from_secs(30));
+    assert_eq!(
+        generations(&runtime),
+        vec![("/tmp/a".to_owned(), 1), ("/tmp/b".to_owned(), 0)],
+        "only the failed project is asked again"
+    );
+    runtime.reread_stale_github(answered + Duration::from_secs(299));
+    assert_eq!(
+        generation_of(&runtime, "/tmp/b"),
+        0,
+        "the one that worked waits its five minutes"
+    );
+    runtime.reread_stale_github(answered + Duration::from_secs(300));
+    assert_eq!(generation_of(&runtime, "/tmp/b"), 1);
+}
+
+#[test]
+fn failures_in_a_row_wait_longer_up_to_five_minutes_and_a_success_starts_the_count_over() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];
+    let mut now = Instant::now();
+    runtime.reread_stale_github(now);
+    let mut waits = Vec::new();
+    for _ in 0..7 {
+        answer_with(&mut runtime, &["/tmp/a"]);
+        now += Duration::from_secs(1);
+        let wait = seconds_until_asked_again(&mut runtime, "/tmp/a", now).unwrap();
+        waits.push(wait);
+        now += Duration::from_secs(wait);
+    }
+    assert_eq!(
+        waits,
+        vec![30, 60, 120, 240, 300, 300, 300],
+        "doubling from thirty seconds, stopping at the full re-read"
+    );
+
+    answer_with(&mut runtime, &[]);
+    now += Duration::from_secs(1);
+    let wait = seconds_until_asked_again(&mut runtime, "/tmp/a", now).unwrap();
+    assert_eq!(wait, 300, "a read that worked waits the full five minutes");
+    now += Duration::from_secs(wait);
+
+    answer_with(&mut runtime, &["/tmp/a"]);
+    now += Duration::from_secs(1);
+    let wait = seconds_until_asked_again(&mut runtime, "/tmp/a", now).unwrap();
+    assert_eq!(wait, 30, "the count started over after the success");
+}
+
+#[test]
+fn a_neighbours_retry_does_not_restart_a_healthy_projects_wait() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+    ];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start + Duration::from_secs(1));
+
+    // The retry of `a` is answered; the reader hands back its cached entry for `b`.
+    runtime.reread_stale_github(start + Duration::from_secs(31));
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 1);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start + Duration::from_secs(32));
+
+    runtime.reread_stale_github(start + Duration::from_secs(300));
+    assert_eq!(generation_of(&runtime, "/tmp/b"), 0);
+    runtime.reread_stale_github(start + Duration::from_secs(301));
+    assert_eq!(
+        generation_of(&runtime, "/tmp/b"),
+        1,
+        "five minutes from its own answer, not from the neighbour's retry"
+    );
+}
+
+#[test]
+fn a_refresh_of_one_project_does_not_climb_a_failed_neighbours_backoff() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+    ];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start);
+
+    // The operator refreshes `b`; the answer carries `a`'s cached failure again.
+    runtime.refresh_pull_requests("/tmp/b");
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start + Duration::from_secs(10));
+
+    runtime.reread_stale_github(start + Duration::from_secs(30));
+    assert_eq!(
+        generation_of(&runtime, "/tmp/a"),
+        1,
+        "still the first failure's thirty seconds, not a second failure"
+    );
+}
+
+#[test]
+fn a_failed_first_read_with_a_restored_answer_is_asked_again_soon() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];
+    runtime.github = GithubSnapshot {
+        projects: vec![read_ok(
+            "/tmp/a",
+            vec![pull_request(7, "main", PullRequestBadge::Open)],
+            5,
+        )],
+    };
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    let wait = seconds_until_asked_again(&mut runtime, "/tmp/a", start + Duration::from_secs(1));
+    assert_eq!(wait, Some(30));
+    assert_eq!(
+        runtime
+            .github
+            .project("/tmp/a")
+            .unwrap()
+            .pull_requests
+            .len(),
+        1,
+        "the previous answer stays shown while the retry waits"
+    );
+}
+
 #[test]
 fn a_project_that_leaves_the_request_forgets_its_first_read() {
     let mut runtime = runtime();
