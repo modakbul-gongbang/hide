@@ -17,7 +17,10 @@ function primarySteps(result: TestResult) {
     }
   }
   const found = locate(result.steps, 0), path: TestStep[] = [];
-  for (let step = found; step; step = step.parent) path.unshift(step);
+  for (let step = found; step; step = step.parent) {
+    if (path.length >= 32) throw new Error('reporter step parent depth cap exceeded');
+    path.unshift(step);
+  }
   return path.map(step => ({ title: step.title, location: step.location, params: step.category === 'test.step' ? step.params : undefined }));
 }
 export default class LedgerReporter implements Reporter {
@@ -26,6 +29,7 @@ export default class LedgerReporter implements Reporter {
   private filename = process.env.CI_LEDGER_PATH || '../agents/runs/ci-ledger/' + process.pid + '.json';
   private offset = Number(process.env.CI_REPEAT_OFFSET || 0);
   private globalErrors = 0;
+  private collectionErrors = 0;
   private selected = 0;
 
   private subject(test: TestCase, retry: number) {
@@ -42,7 +46,8 @@ export default class LedgerReporter implements Reporter {
   }
   private flush(outcome = 'unknown', complete = false) {
     ledger.write(this.filename, { ...ledger.merge([...this.rows.values()]), outcome,
-      collection: complete && this.rows.size && !this.globalErrors && outcome !== 'interrupted' && ![...this.rows.values()].some(row => row.status === 'unknown')
+      collectionErrors: this.collectionErrors,
+      collection: complete && this.rows.size && !this.globalErrors && !this.collectionErrors && outcome !== 'interrupted' && ![...this.rows.values()].some(row => row.status === 'unknown')
         ? 'observed' : 'partial-or-unknown' });
   }
   onError(error: TestError) {
@@ -72,7 +77,15 @@ export default class LedgerReporter implements Reporter {
   }
   onTestEnd(test: TestCase, result: TestResult) {
     const assertion = result.errors[0]?.message || '';
-    const steps = primarySteps(result);
+    let steps: ReturnType<typeof primarySteps> = [];
+    let collectionError: { phase: string; message: string; stack?: string } | undefined;
+    try { steps = primarySteps(result); }
+    catch (error) {
+      this.collectionErrors++;
+      collectionError = { phase: 'primary-steps',
+        message: String(error instanceof Error ? error.message : error).slice(0, 16000),
+        stack: error instanceof Error ? error.stack?.slice(0, 64000) : undefined };
+    }
     const contractPhase = steps.slice().reverse().find(step => step.title.startsWith('native:'))?.title || null;
     const row = { ...this.subject(test, result.retry), worker: result.workerIndex,
       status: result.status, phase: 'completed', durationMs: result.duration,
@@ -81,6 +94,7 @@ export default class LedgerReporter implements Reporter {
       assertion: assertion.slice(0, 16000), signature: assertion ? ledger.signature(assertion, contractPhase) : null,
       contractPhase,
       failure: { location: result.errors[0]?.location, stack: result.errors[0]?.stack?.slice(0, 64000), steps },
+      collectionErrors: collectionError ? [collectionError] : [],
       causes: [...result.errors.slice(1), ...result.errors.flatMap(error => error.cause ? [error.cause] : [])] };
     this.set(test, result.retry, { ...row, quarantine: ledger.quarantine(row, registry) });
     this.flush();
@@ -90,6 +104,6 @@ export default class LedgerReporter implements Reporter {
       test: 'empty selected inventory', repeat: 0, retry: 0, status: 'unknown', phase: 'empty-selection', category: 'collection',
       assertion: 'Playwright selected no scenarios', signature: ledger.signature('Playwright selected no scenarios') });
     this.flush(result.status, true);
-    if (this.globalErrors || !this.rows.size || [...this.rows.values()].some(row => row.status === 'unknown')) return { status: 'failed' as const };
+    if (this.globalErrors || this.collectionErrors || !this.rows.size || [...this.rows.values()].some(row => row.status === 'unknown')) return { status: 'failed' as const };
   }
 }

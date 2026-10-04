@@ -16,6 +16,66 @@ spec.loader.exec_module(quarantine)
 
 
 class PlaywrightContracts(unittest.TestCase):
+    def test_step_inventory_overflow_retains_actual_failure_and_timeout(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=artifacts) as directory:
+            root = Path(directory)
+            tests = root / 'web/e2e'
+            tests.mkdir(parents=True)
+            package = (ROOT / 'web/node_modules/@playwright/test').as_posix()
+            (tests / 'step-cap.spec.ts').write_text(f"""import {{test}} from {json.dumps(package)};
+test('independent completed result', () => {{}});
+test.afterEach(({{}}, info) => {{
+  if(info.title === 'timeout beyond step cap') throw new Error('secondary page-closed release');
+}});
+for(const title of ['failure beyond step cap','timeout beyond step cap']) test(title,async()=>{{
+  test.setTimeout(15000);
+  for(let i=0;i<10001;i++) await test.step('bounded observation '+i,()=>{{}});
+  if(title.startsWith('failure')) throw new Error('Expected: original assertion after observations');
+  await new Promise(()=>{{}});
+}});
+""")
+            config = root / 'playwright.config.ts'
+            config.write_text(f"""import {{defineConfig}} from {json.dumps(package)};
+export default defineConfig({{testDir:{json.dumps(str(tests))},workers:1,retries:0,
+reporter:[['json'],[{json.dumps(str(ROOT/'scripts/ci-reporter.ts'))}]]}});
+""")
+            filename = artifacts / 'step-cap.ledger.json'
+            report = artifacts / 'step-cap.report.json'
+            result = subprocess.run(['bash','scripts/verify-web.sh','web','e2e','--config',str(config)],cwd=ROOT,
+                env={**os.environ,'CI_LEDGER_PATH':str(filename),'PLAYWRIGHT_JSON_OUTPUT_FILE':str(report)},
+                capture_output=True,text=True,timeout=40)
+            (artifacts/'step-cap.log').write_text(result.stdout+result.stderr)
+            self.assertNotEqual(result.returncode,0)
+            value = json.loads(filename.read_text())
+            rows = {row['test']: row for row in value['records']}
+            self.assertEqual(len(rows),3)
+            self.assertEqual(rows['independent completed result']['status'],'passed')
+            self.assertEqual(value['collection'],'partial-or-unknown')
+            self.assertEqual(value['collectionErrors'],2)
+            self.assertFalse(any(row['phase'] in ('in-flight','global-error') for row in rows.values()))
+            actual = json.loads(report.read_text())['suites'][0]['specs']
+            for scenario in actual[1:]:
+                observed = scenario['tests'][0]['results'][0]
+                row = rows[scenario['title']]
+                self.assertEqual(row['status'],observed['status'])
+                self.assertEqual(row['durationMs'],observed['duration'])
+                # JSON's `errors` includes formatted source snippets, while
+                # `error` retains Playwright's original serialized identity.
+                self.assertEqual(row['assertion'],observed['error']['message'])
+                self.assertEqual(row['failure'].get('stack'),observed['error'].get('stack'))
+                self.assertIn('inventory cap exceeded',row['collectionErrors'][0]['message'])
+                checked = subprocess.run(['node','-e',
+                    "const c=require('./scripts/ci-ledger.cjs');process.stdout.write(c.signature(process.argv[1]));",
+                    row['assertion']],cwd=ROOT,capture_output=True,text=True,timeout=5)
+                self.assertEqual(checked.returncode,0,checked.stderr)
+                self.assertEqual(row['signature'],checked.stdout)
+            timeout = rows['timeout beyond step cap']
+            self.assertEqual(timeout['status'],'timedOut')
+            self.assertIn('15000ms exceeded',timeout['assertion'])
+            self.assertIn('secondary page-closed release',json.dumps(timeout['causes']))
+
     def test_actual_reporter_keeps_primary_native_phase_and_refuses_same_message_in_other_phases(self):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
         artifacts.mkdir(parents=True, exist_ok=True)

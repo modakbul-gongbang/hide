@@ -159,6 +159,7 @@ The first Windows runs of the web e2e fixtures found three differences the helpe
 Completed results keep their original error and signature; an interrupted in-flight test or an unstarted identity cannot count as passed.
 A hard process death leaves `partial-or-unknown` with the last completed results and the in-flight/scheduled identities, even when Playwright never reaches `onEnd`.
 Global Playwright discovery/setup/runner errors retain their own message, stack and phase and make collection partial even when other rows passed.
+The failed-step walk remains bounded at 10,000 steps and depth thirty-two; exceeding it retains the original test status, error, duration and signature together with the collection error on that exact attempt and fails partial collection.
 Execution identity includes the actual Actions job, consumer lane and invocation, because reusable workflows can share a local `GITHUB_JOB` id.
 Only identical observations of the same attempt are deduplicated; contradictory observations fail collection and retain both original rows and an unknown conflict outcome.
 An interrupted or malformed producer fails collection after the bounded input inventory is read, preserving other producers' completed rows and each available actual job identity.
