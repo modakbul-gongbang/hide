@@ -1153,14 +1153,14 @@ fn open_legacy_requests_and_active_watches_leave_the_entire_home_unchanged() {
 
 #[test]
 fn supervisor_revision_head_and_unreadable_referenced_runs_block_before_mutation() {
-    for unreadable in [false, true] {
+    for (unreadable, owner) in [(false, "hcoord"), (true, "hcoord"), (false, "hide")] {
         let fixture = Fixture::new();
         old_coordination(&fixture, json!({}), json!({}));
         let registry = fixture.home().join(".sasu/supervisor");
         std::fs::create_dir_all(&registry).unwrap();
         let state_path = fixture.root.join("run-state.json");
         if !unreadable {
-            std::fs::write(&state_path, json!({"status":"active","supervision":{"runInstanceId":"run-1","coordinationOwner":"hcoord"}}).to_string()).unwrap();
+            std::fs::write(&state_path, json!({"status":"active","supervision":{"runInstanceId":"run-1","coordinationOwner":owner}}).to_string()).unwrap();
         }
         std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1","entries":[],"coordinated":[],"tickExecutor":null}).to_string()).unwrap();
         std::fs::write(registry.join("index.json.revision-000000000002"), json!({"schema":"sasu.supervisor.index.v1","entries":[],"coordinated":[{"statePath":state_path,"runInstanceId":"run-1"}],"tickExecutor":null}).to_string()).unwrap();

@@ -34,10 +34,10 @@ fn homes(target: &KitTarget) -> Vec<PathBuf> {
         target.home.join(".hide/hcoord"),
         target.home.join(".hcoord"),
     ];
-    if let Some(home) = &target.legacy_coordination_home {
-        if !paths.contains(home) {
-            paths.push(home.clone());
-        }
+    if let Some(home) = &target.legacy_coordination_home
+        && !paths.contains(home)
+    {
+        paths.push(home.clone());
     }
     paths
 }
@@ -158,6 +158,24 @@ pub fn preflight(target: &KitTarget) -> Result<(), String> {
         let watches = ledger["watches"]
             .as_array()
             .ok_or("Hide watches cannot be inspected; retirement has not begun")?;
+        for letter in letters {
+            if !matches!(
+                letter["state"].as_str(),
+                Some(
+                    "pending"
+                        | "delivered"
+                        | "acknowledged"
+                        | "cancelled"
+                        | "expired"
+                        | "undelivered"
+                )
+            ) || !letter["waiting_answer"].is_boolean()
+            {
+                return Err(
+                    "Hide request status cannot be inspected; retirement has not begun".into(),
+                );
+            }
+        }
         if letters
             .iter()
             .any(|value| value["state"] == "pending" || value["waiting_answer"] == true)
@@ -269,7 +287,7 @@ fn sasu_preflight(home: &Path) -> Result<(), String> {
         let state = entry["statePath"]
             .as_str()
             .ok_or("sasu run has no state path; inspect its registry before retirement")?;
-        let run = entry["runInstanceId"]
+        entry["runInstanceId"]
             .as_str()
             .ok_or("sasu run has no identity; inspect its registry before retirement")?;
         let state = read_json(Path::new(state), MAX_STATE_BYTES)?
@@ -277,14 +295,8 @@ fn sasu_preflight(home: &Path) -> Result<(), String> {
         if !matches!(state["status"].as_str(), Some("active" | "retired")) {
             return Err("sasu run status cannot be inspected; retirement has not begun".into());
         }
-        if state["status"] == "active"
-            && state["supervision"]["runInstanceId"] == run
-            && state["supervision"]["coordinationOwner"] == "hcoord"
-        {
-            return Err(
-                "an active sasu run still uses legacy coordination; retire it and retry retirement"
-                    .into(),
-            );
+        if state["status"] == "active" {
+            return Err("a sasu run is active; retire it and retry retirement".into());
         }
     }
     Ok(())
@@ -313,13 +325,13 @@ fn project_preflight(project: &Path) -> Result<(), String> {
         {
             continue;
         }
-        if let Some(state) = read_json(&entry.path().join("state.json"), MAX_STATE_BYTES)? {
-            if state["status"] == "active" {
-                return Err(
-                    "a registered checkout has an active sasu run; retire it and retry retirement"
-                        .into(),
-                );
-            }
+        if let Some(state) = read_json(&entry.path().join("state.json"), MAX_STATE_BYTES)?
+            && state["status"] == "active"
+        {
+            return Err(
+                "a registered checkout has an active sasu run; retire it and retry retirement"
+                    .into(),
+            );
         }
     }
     Ok(())
@@ -333,9 +345,12 @@ pub(crate) fn observe(target: &KitTarget) -> Observed {
             Observed::Blocked(progress.failure.unwrap())
         }
         Ok(Some(progress)) => Observed::Stale(format!("retirement resumes at {}", progress.step)),
-        Ok(None) => {
-            Observed::Stale("legacy coordination retirement has not run on this machine".into())
-        }
+        Ok(None) => match preflight(target) {
+            Err(reason) => Observed::Blocked(reason),
+            Ok(()) => {
+                Observed::Stale("legacy coordination retirement has not run on this machine".into())
+            }
+        },
     }
 }
 

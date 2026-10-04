@@ -339,6 +339,46 @@ mod tests {
     }
 
     #[test]
+    fn blocked_retirement_does_not_repoint_current_or_remove_a_build() {
+        let directory = tempfile::tempdir().unwrap();
+        let older = placed(directory.path(), "aaaaaaaaaaaaaaaa");
+        let placement = placed(directory.path(), "bbbbbbbbbbbbbbbb");
+        hide_platform::fs::link::create_link(
+            Path::new(&older.version),
+            &placement.root.join("current"),
+        )
+        .unwrap();
+        let ledger = placement.home.join(".hide/hcoord/ledger.json");
+        std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+        let bytes = serde_json::json!({"schema":"hcoord.ledger.v1","requests":{"open":{"status":"open"}},"watches":{}}).to_string();
+        std::fs::write(&ledger, &bytes).unwrap();
+        let report = run(
+            &placement,
+            KitAction::Apply,
+            "~/.local/bin",
+            Some("~/private-herdr.sock"),
+            Arc::default(),
+        )
+        .unwrap();
+        let report: hide_kit::KitReport = serde_json::from_value(report).unwrap();
+        assert_eq!(
+            report
+                .component(hide_kit::ComponentId::CoordinationRetirement)
+                .unwrap()
+                .state,
+            hide_kit::ComponentState::Failed
+        );
+        assert!(hide_platform::fs::link::is_link_to(
+            &placement.root.join("current"),
+            Path::new(&older.version)
+        ));
+        assert!(placement.root.join(&older.version).is_dir());
+        assert_eq!(std::fs::read_to_string(ledger).unwrap(), bytes);
+        assert!(!placement.home.join(".hide/kit").exists());
+        assert!(!placement.home.join(".local/bin").exists());
+    }
+
+    #[test]
     fn removal_takes_the_root_only_when_nothing_else_is_in_it() {
         let dir = tempfile::tempdir().unwrap();
         let placement = placed(dir.path(), "bbbbbbbbbbbbbbbb");
