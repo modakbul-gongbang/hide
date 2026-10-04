@@ -157,9 +157,11 @@ A failure on a different SHA is not evidence of flakiness by itself, and the sam
 
 - Record each failure in the issue that tracks the test: the run, job and attempt link, the tested SHA, the system, the failing assertion and its message, and the result of the first run and of each rerun.
   Group failures by assertion signature, not by title, so two causes under one name are not read as one.
-- A web or desktop e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that is the only way a test leaves a required gate.
+- A web or desktop e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that, with the Rust form below, is the only way a test leaves a required gate.
   Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required web shards and the required desktop step skip it with `--grep-invert @flaky`, and web shard 1 and the desktop job each still run every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
   Pull-request quarantined web tests run only in shard 1 of the Linux lane, never in the macOS or Windows `@platform` jobs; nightly runs `@flaky` tests in their normal shards and blocking suites.
+- A Rust OS contract test that fails intermittently on one system is quarantined there alone with `#[cfg_attr(target_os = "<system>", ignore = "<issue URL>")]`, so the other systems keep it in their required lanes.
+  Today only macOS `hide-platform` tests are run back: the desktop job's quarantine step runs them with `--ignored` where they cannot turn `verify` red (the plan includes `desktop-e2e` for every `hide-platform` change), and nightly's macOS OS contract step runs them blocking.
 - Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
 - Quarantine does not decide the cause.
   A failure that shows lost or misrouted input, a broken OS contract, or a missing tab the user asked for is a product defect candidate, and is investigated as one rather than tagged and left.

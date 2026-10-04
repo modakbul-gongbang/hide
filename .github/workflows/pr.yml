@@ -445,10 +445,12 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
-      - name: Quarantined end-to-end (does not block verify)
+      - name: Quarantined tests (does not block verify)
         # A test tagged @flaky carries the issue that tracks its cause. It still
         # runs here, once, so a fix shows up as a pass and a regression of the
         # product it covers still shows up in the log; it cannot turn verify red.
+        # A Rust test quarantined on macOS (`ignore = "<issue>"` under
+        # `cfg_attr(target_os = "macos")`) runs here the same way.
         # The build is the required step's. `--no-deps` matters: a project
         # dependency runs whole whatever `--grep` says, so a `@needs-focus`
         # quarantined test would otherwise bring the entire background suite
@@ -464,8 +466,11 @@ jobs:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
+          status=0
+          bash scripts/verify-cargo.sh test-scoped -p hide-platform -- --ignored || status=$?
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e --no-deps --grep @flaky --output=test-results-quarantine
+          bash scripts/verify-web.sh desktop e2e --no-deps --grep @flaky --output=test-results-quarantine || status=$?
+          exit "$status"
       - name: Keep the e2e run's logs
         if: failure() || steps.quarantine.outcome == 'failure'
         uses: actions/upload-artifact@v7

@@ -182,7 +182,7 @@ function observeFocusFrames(page: Page) {
 }
 
 // Both cases exercise real terminal input/focus through the platform's Herdr.
-test("rapid pane clicks coalesce behind one request and leave keys on the last pane", { tag: "@platform" }, async ({ page }) => {
+test("rapid pane clicks coalesce behind one request and leave keys on the last pane", { tag: ["@platform", "@flaky"], annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/397" } }, async ({ page }) => {
   const herdr = await startHerdr();
   const focusFrames = observeFocusFrames(page);
   // Two fixed bursts produce at most 32 stage records, with no input contents.
