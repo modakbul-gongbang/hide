@@ -42,14 +42,14 @@ type Options = {
 };
 type Capability = { path: string; scope: CdpScope; incarnation: number; generations: Map<string, number> };
 type Command = { id: number; method: string; params: Json; sessionId?: string };
-type Session = { id: string; targetId: string; kind: "page" | "tab" | "iframe"; lease: Lease; nativeId?: string; parent?: Session; flattened: boolean };
+type Session = { id: string; targetId: string; kind: "page" | "tab" | "iframe"; lease: Lease; nativeId?: string; parent?: Session; browserParent?: string; flattened: boolean };
 type Lease = {
   page: CdpPage;
   client: Client;
   root: Session;
   message: DebuggerMessage;
   detach: DebuggerDetach;
-  pageAttaches: { targetId: string; flattened: boolean }[];
+  pageAttaches: { targetId: string; flattened: boolean; browserParent?: string }[];
   ready: Promise<void>;
   mainFrameId: string;
 };
@@ -66,6 +66,9 @@ type Client = {
   socket: WebSocket;
   capability: Capability;
   sessions: Map<string, Session>;
+  // Protocol-only parents. They have the capability's authority, never a
+  // Chromium browser debugger or an additional native browser context.
+  browserSessions: Set<string>;
   leases: Map<number, Lease>;
   abort: AbortController;
   direct?: Session;
@@ -94,9 +97,10 @@ const MAX_REQUESTS_PER_MINUTE = 600;
 const MAX_INTENTS = 128;
 // Core accepts an intent for ten minutes; leave a margin at the boundary.
 const MAX_INTENT_AGE_MS = 9 * 60_000;
-const MUTATIONS = new Set(["Target.createTarget", "Target.closeTarget", "Target.activateTarget", "Target.attachToTarget", "Target.detachFromTarget", "Page.close", "Page.bringToFront"]);
+const MUTATIONS = new Set(["Target.createTarget", "Target.closeTarget", "Target.activateTarget", "Target.attachToTarget", "Target.attachToBrowserTarget", "Target.detachFromTarget", "Page.close", "Page.bringToFront"]);
 const REQUEST_TIMEOUT_MS = 10_000;
 const PAGE_DOMAINS = new Set(["Accessibility", "Animation", "Audits", "CSS", "DOM", "DOMSnapshot", "Debugger", "Emulation", "Fetch", "Input", "Inspector", "Log", "Network", "Overlay", "Page", "Performance", "PerformanceTimeline", "Profiler", "Runtime", "Schema", "Security"]);
+const SCOPED_BROWSER_METHODS = new Set(["Browser.getVersion", "Target.getTargets", "Target.getTargetInfo", "Target.getBrowserContexts", "Target.attachToTarget", "Target.detachFromTarget"]);
 // These act on the shared Chromium session or the host filesystem, even when
 // sent through a page debugger. They never reach Electron.
 const DENIED_PAGE_METHODS = new Set([
@@ -353,7 +357,7 @@ export class BrowserCdpGateway {
     // Node's HTTP idle timeout must not kill a healthy upgraded CDP socket.
     socket.setTimeout(0);
     this.ws.handleUpgrade(request, socket, head, (ws) => {
-      const client: Client = { intents: new Map(), closingPages: new Set(), draining: false, socket: ws, capability, sessions: new Map(), leases: new Map(), abort: new AbortController(), discover: false, autoAttach: false, autoKind: "page", autoFlattened: true, known: new Map(), pending: 0, minute: Date.now(), requests: 0 };
+      const client: Client = { intents: new Map(), closingPages: new Set(), draining: false, socket: ws, capability, sessions: new Map(), browserSessions: new Set(), leases: new Map(), abort: new AbortController(), discover: false, autoAttach: false, autoKind: "page", autoFlattened: true, known: new Map(), pending: 0, minute: Date.now(), requests: 0 };
       this.clients.add(client);
       ws.on("close", () => this.end(client));
       ws.on("error", () => this.end(client));
@@ -371,8 +375,9 @@ export class BrowserCdpGateway {
     if (Buffer.byteLength(data) > MAX_MESSAGE_BYTES || client.socket.bufferedAmount + Buffer.byteLength(data) > MAX_BUFFER_BYTES) { this.limit(client, "outbound_bytes"); return; }
     client.socket.send(data, (error) => { if (error) this.end(client); });
   }
-  private event(client: Client, method: string, params: Json, session?: Session): void {
-    if (!session || session === client.direct) this.send(client, { method, params });
+  private event(client: Client, method: string, params: Json, session?: Session | string): void {
+    if (typeof session === "string") this.send(client, { method, params, sessionId: session });
+    else if (!session || session === client.direct) this.send(client, { method, params });
     else if (session.flattened) this.send(client, { method, params, sessionId: session.id });
     else this.send(client, { method: "Target.receivedMessageFromTarget", params: { sessionId: session.id, targetId: session.targetId, message: JSON.stringify({ method, params }) } });
   }
@@ -389,7 +394,7 @@ export class BrowserCdpGateway {
       const execute = (requestId?: string) => {
         const nested = this.nestedReceipt(client, command, command.sessionId ?? client.direct?.id ?? "browser");
         if (nested) return nested;
-        const session = command.sessionId ? this.getSession(client, command.sessionId) : client.direct;
+        const session = command.sessionId ? client.browserSessions.has(command.sessionId) ? undefined : this.getSession(client, command.sessionId) : client.direct;
         return this.dispatch(client, command, session, 0, requestId);
       };
       const result = await (MUTATIONS.has(command.method) ? this.intent(client, command, command.sessionId ?? client.direct?.id ?? "browser", execute) : execute());
@@ -469,17 +474,18 @@ export class BrowserCdpGateway {
     this.page(client.capability, targetId(session.lease.page));
     return session;
   }
-  private attach(client: Client, page: CdpPage, flattened: boolean, kind: "page" | "tab" = "page"): Session {
+  private sessionCount(client: Client): number { return client.sessions.size + client.browserSessions.size; }
+  private attach(client: Client, page: CdpPage, flattened: boolean, kind: "page" | "tab" = "page", browserParent?: string): Session {
     const existing = client.leases.get(page.contents.id);
     if (existing) {
       if (existing.root.kind === kind) return existing.root;
       if (kind === "page") return this.attachPageChild(existing.root);
       throw new ProtocolError("Reconnect to change the attachment profile");
     }
-    if (client.sessions.size >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
+    if (this.sessionCount(client) >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
     if (this.owners.has(page.contents.id) || page.contents.debugger.isAttached()) throw new ProtocolError("Target already has a debugger");
     page.contents.debugger.attach("1.3");
-    const root = { id: secret(), targetId: `${kind}-${page.contents.id}`, kind, flattened } as Session;
+    const root = { id: secret(), targetId: `${kind}-${page.contents.id}`, kind, flattened, browserParent } as Session;
     const lease: Lease = { page, client, root, pageAttaches: [], ready: Promise.resolve(), mainFrameId: "", message: (_event, method, params, sessionId) => this.nativeEvent(lease, method, params, sessionId), detach: () => this.release(lease, false) };
     root.lease = lease;
     page.contents.debugger.on("message", lease.message);
@@ -510,7 +516,7 @@ export class BrowserCdpGateway {
     const { client, page } = tab.lease;
     const existing = [...client.sessions.values()].find((session) => session.parent === tab && session.kind === "page");
     if (existing) return existing;
-    if (client.sessions.size >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
+    if (this.sessionCount(client) >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
     const child: Session = { id: secret(), targetId: targetId(page), kind: "page", lease: tab.lease, parent: tab, flattened: tab.flattened };
     client.sessions.set(child.id, child);
     this.event(client, "Target.attachedToTarget", { sessionId: child.id, targetInfo: this.info(page), waitingForDebugger: false }, tab);
@@ -518,30 +524,31 @@ export class BrowserCdpGateway {
   }
   /** A second standard CDP session attaches only to the exact native target
    * this WebContents debugger attests, never a target ID from the client. */
-  private async attachAdditionalPage(lease: Lease, flattened: boolean): Promise<Session> {
+  private async attachAdditionalPage(lease: Lease, flattened: boolean, browserParent?: string): Promise<Session> {
     const { client } = lease;
-    if (client.sessions.size + lease.pageAttaches.length >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
+    if (this.sessionCount(client) + lease.pageAttaches.length >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
     const answer: unknown = await this.native(lease.root, "Target.getTargetInfo", {});
     if (!object(answer) || !object(answer.targetInfo) || answer.targetInfo.type !== "page" || typeof answer.targetInfo.targetId !== "string") throw new ProtocolError("The native page cannot create an additional session");
-    const intent = { targetId: answer.targetInfo.targetId, flattened };
+    const intent = { targetId: answer.targetInfo.targetId, flattened, browserParent };
     lease.pageAttaches.push(intent);
     try {
       const result: unknown = await this.native(lease.root, "Target.attachToTarget", { targetId: intent.targetId, flatten: true });
       if (!object(result) || typeof result.sessionId !== "string") throw new ProtocolError("The native page could not create an additional session");
       const existing = [...client.sessions.values()].find((session) => session.lease === lease && session.nativeId === result.sessionId);
       if (existing) return existing;
-      return this.additionalPageSession(lease, result.sessionId, flattened);
+      return this.additionalPageSession(lease, result.sessionId, flattened, browserParent);
     } finally {
       const index = lease.pageAttaches.indexOf(intent);
       if (index >= 0) lease.pageAttaches.splice(index, 1);
     }
   }
-  private additionalPageSession(lease: Lease, nativeId: string, flattened: boolean): Session {
+  private additionalPageSession(lease: Lease, nativeId: string, flattened: boolean, browserParent?: string): Session {
     const { client, page } = lease;
-    if (client.abort.signal.aborted || this.owners.get(page.contents.id) !== lease || client.sessions.size >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded or connection closed");
-    const session: Session = { id: secret(), targetId: targetId(page), kind: "page", lease, nativeId, flattened };
+    if (client.abort.signal.aborted || this.owners.get(page.contents.id) !== lease || this.sessionCount(client) >= MAX_SESSIONS
+      || browserParent !== undefined && !client.browserSessions.has(browserParent)) throw new ProtocolError("Session limit exceeded or connection closed");
+    const session: Session = { id: secret(), targetId: targetId(page), kind: "page", lease, nativeId, flattened, browserParent };
     client.sessions.set(session.id, session);
-    this.event(client, "Target.attachedToTarget", { sessionId: session.id, targetInfo: this.info(page), waitingForDebugger: false });
+    this.event(client, "Target.attachedToTarget", { sessionId: session.id, targetInfo: this.info(page), waitingForDebugger: false }, browserParent);
     return session;
   }
   private release(lease: Lease, detach = true): void {
@@ -557,7 +564,7 @@ export class BrowserCdpGateway {
     for (const session of [...client.sessions.values()]) {
       if (session.lease !== lease) continue;
       client.sessions.delete(session.id);
-      this.event(client, "Target.detachedFromTarget", { sessionId: session.id, targetId: session.targetId }, session.parent);
+      this.event(client, "Target.detachedFromTarget", { sessionId: session.id, targetId: session.targetId }, session.parent ?? session.browserParent);
     }
     this.options.attached(page, false);
     if (client.direct?.lease === lease) {
@@ -579,6 +586,7 @@ export class BrowserCdpGateway {
     client.abort.abort();
     this.clients.delete(client);
     for (const lease of [...client.leases.values()]) this.release(lease);
+    client.browserSessions.clear();
     if (code && client.socket.readyState === WebSocket.OPEN || client.socket.readyState === WebSocket.CLOSING) {
       if (client.socket.readyState === WebSocket.OPEN) client.socket.close(code, reason);
       const timer = setTimeout(() => client.socket.terminate(), 1000);
@@ -630,19 +638,23 @@ export class BrowserCdpGateway {
   }
   private async native(session: Session, method: string, params: Json): Promise<unknown> {
     const { client, page } = session.lease;
-    await session.lease.ready;
-    this.page(client.capability, targetId(page));
-    if (this.owners.get(page.contents.id) !== session.lease) throw new ProtocolError("Debugger session was released");
-    const result = await this.bounded(client, page.contents.debugger.sendCommand(method, this.frameFields(session.lease, params, false), session.nativeId), session.lease);
-    return object(result) ? this.nativePayload(session.lease, method, result) : result;
+    return this.bounded(client, (async () => {
+      await session.lease.ready;
+      this.page(client.capability, targetId(page));
+      if (this.owners.get(page.contents.id) !== session.lease) throw new ProtocolError("Debugger session was released");
+      const result = await page.contents.debugger.sendCommand(method, this.frameFields(session.lease, params, false), session.nativeId);
+      return object(result) ? this.nativePayload(session.lease, method, result) : result;
+    })(), session.lease);
   }
   private async dispatch(client: Client, command: Command, session: Session | undefined, depth: number, intentId?: string): Promise<unknown> {
     if (client.abort.signal.aborted || client.draining || !this.available) throw new ProtocolError("CDP connection closed");
     if (depth > 4) throw new ProtocolError("Nested CDP request limit exceeded");
     const { method, params } = command;
     if (session) this.getSession(client, session.id);
+    if (command.sessionId && client.browserSessions.has(command.sessionId) && !SCOPED_BROWSER_METHODS.has(method)) throw new ProtocolError("Command is outside the scoped browser session boundary");
     const requestId = intentId ?? `${Date.now()}-${secret().slice(0, 32)}`;
-    if (method.startsWith("Target.")) return this.target(client, method, params, session, depth, requestId);
+    if (method.startsWith("Target.")) return this.target(client, method, params, session, depth, requestId,
+      command.sessionId && client.browserSessions.has(command.sessionId) ? command.sessionId : undefined);
     if (method === "Browser.getVersion") return { protocolVersion: "1.3", product: `Chrome/${this.options.chromeVersion}`, revision: "", userAgent: `Chrome/${this.options.chromeVersion}`, jsVersion: "" };
     if (method.startsWith("Browser.")) throw new ProtocolError("Browser-wide command is not available in a scoped connection");
     if (!session) throw new ProtocolError("A scoped page session is required");
@@ -674,14 +686,21 @@ export class BrowserCdpGateway {
     if (intent) intent.action ??= action;
     const closing = action.action === "close" ? this.eligible(client.capability).find((page) => page.id === action.display_id)?.contents.id : undefined;
     if (closing !== undefined) client.closingPages.add(closing);
-    let result: CdpActionResult;
-    try { result = await this.bounded(client, this.options.action(client.capability.scope, action, client.abort.signal), undefined, true); }
-    finally { if (closing !== undefined) client.closingPages.delete(closing); }
-    if ((result.area_id !== client.capability.scope.area_id && !(action.action === "close" && result.area_id === null)) || !identifier(result.view_id)
-      || action.display_id !== undefined && result.view_id !== action.display_id || action.action === "open" && result.load === null) throw new ProtocolError("Workspace action returned an invalid target");
-    return result;
+    try {
+      const result = await this.bounded(client, this.options.action(client.capability.scope, action, client.abort.signal), undefined, true);
+      if ((result.area_id !== client.capability.scope.area_id && !(action.action === "close" && result.area_id === null)) || !identifier(result.view_id)
+        || action.display_id !== undefined && result.view_id !== action.display_id || action.action === "open" && result.load === null) throw new ProtocolError("Workspace action returned an invalid target");
+      // A committed core close can precede the host's native retirement. End
+      // its authority now, but let receive deliver the successful receipt
+      // before the normal close handshake; no timing grace is involved.
+      if (closing !== undefined) {
+        if (client.capability.scope.display_id) this.revoke(client.capability, closing);
+        else if (client.direct?.lease.page.contents.id === closing) this.drain(client);
+      }
+      return result;
+    } finally { if (closing !== undefined) client.closingPages.delete(closing); }
   }
-  private async target(client: Client, method: string, params: Json, parent: Session | undefined, depth: number, requestId: string): Promise<unknown> {
+  private async target(client: Client, method: string, params: Json, parent: Session | undefined, depth: number, requestId: string, browserParent?: string): Promise<unknown> {
     if (method === "Target.getTargets") return { targetInfos: this.eligible(client.capability).flatMap((page) => [this.info(page), this.info(page, "tab")]) };
     if (method === "Target.getTargetInfo") {
       if (params.targetId === undefined) return { targetInfo: parent
@@ -691,7 +710,16 @@ export class BrowserCdpGateway {
       return { targetInfo: this.info(this.page(client.capability, id), id.startsWith("tab-") ? "tab" : "page") };
     }
     if (method === "Target.getBrowserContexts") return { browserContextIds: [] };
-    if (["Target.createBrowserContext", "Target.disposeBrowserContext", "Target.attachToBrowserTarget", "Target.exposeDevToolsProtocol", "Target.openDevTools"].includes(method)) throw new ProtocolError("Additional browser contexts are not supported");
+    if (["Target.createBrowserContext", "Target.disposeBrowserContext", "Target.exposeDevToolsProtocol", "Target.openDevTools"].includes(method)) throw new ProtocolError("Additional browser contexts are not supported");
+    if (method === "Target.attachToBrowserTarget") {
+      if (parent || browserParent) throw new ProtocolError("A scoped browser session requires the root connection");
+      this.eligible(client.capability);
+      if (!this.capabilities.has(client.capability.path)) throw new ProtocolError("Intent no longer has workspace authority");
+      if (this.sessionCount(client) >= MAX_SESSIONS) throw new ProtocolError("Session limit exceeded");
+      const id = secret();
+      client.browserSessions.add(id);
+      return { sessionId: id };
+    }
     if (method === "Target.setDiscoverTargets") {
       if (params.discover === true && !client.discover) client.known.clear();
       client.discover = params.discover === true;
@@ -722,17 +750,25 @@ export class BrowserCdpGateway {
       const existed = client.leases.has(page.contents.id);
       const kind = id.startsWith("tab-") ? "tab" : "page";
       const lease = client.leases.get(page.contents.id);
-      const session = lease && kind === "page" ? await this.attachAdditionalPage(lease, params.flatten === true) : this.attach(client, page, params.flatten === true, kind);
-      if (!existed) this.event(client, "Target.attachedToTarget", { sessionId: session.id, targetInfo: this.info(page, kind), waitingForDebugger: false });
+      const session = lease && kind === "page" ? await this.attachAdditionalPage(lease, params.flatten === true, browserParent) : this.attach(client, page, params.flatten === true, kind, browserParent);
+      if (!existed) this.event(client, "Target.attachedToTarget", { sessionId: session.id, targetInfo: this.info(page, kind), waitingForDebugger: false }, browserParent);
       return { sessionId: session.id };
     }
     if (method === "Target.detachFromTarget") {
-      const session = this.getSession(client, text(params, "sessionId"));
+      const id = text(params, "sessionId");
+      if (client.browserSessions.has(id)) {
+        if (parent || browserParent && browserParent !== id) throw new ProtocolError("Session is not a child of this target");
+        for (const session of [...client.sessions.values()]) {
+          if (session.browserParent === id && client.sessions.has(session.id)) await this.detachSession(session);
+        }
+        client.browserSessions.delete(id);
+        this.event(client, "Target.detachedFromTarget", { sessionId: id, targetId: "scoped-browser" });
+        return {};
+      }
+      const session = this.getSession(client, id);
       if (parent && session.parent !== parent) throw new ProtocolError("Session is not a child of this target");
-      if (session.nativeId) {
-        await this.native(session.parent ?? session.lease.root, method, { sessionId: session.nativeId });
-        client.sessions.delete(session.id);
-      } else this.release(session.lease);
+      if (browserParent && session.browserParent !== browserParent) throw new ProtocolError("Session is not a child of this target");
+      await this.detachSession(session);
       return {};
     }
     if (method === "Target.sendMessageToTarget") {
@@ -740,6 +776,7 @@ export class BrowserCdpGateway {
       if (receipt) return receipt;
       const session = this.getSession(client, text(params, "sessionId"));
       if (parent && session.parent !== parent && session !== parent) throw new ProtocolError("Session is not a child of this target");
+      if (browserParent) throw new ProtocolError("Scoped browser sessions require flattened child commands");
       let nested: Command;
       try { nested = commandOf(JSON.parse(text(params, "message")) as unknown); } catch { throw new ProtocolError("Invalid nested CDP request", -32602); }
       if (nested.sessionId) throw new ProtocolError("Nested session override is forbidden");
@@ -764,6 +801,26 @@ export class BrowserCdpGateway {
       return method === "Target.closeTarget" ? { success: true } : {};
     }
     throw new ProtocolError("Target command is not available in a scoped connection", -32601);
+  }
+  private async detachSession(session: Session): Promise<void> {
+    if (session.nativeId) {
+      await this.native(session.parent ?? session.lease.root, "Target.detachFromTarget", { sessionId: session.nativeId });
+      // Native detach events can arrive after the command reply. Retire the
+      // admitted subtree exactly once before granting another command.
+      this.retireSession(session);
+    } else this.release(session.lease);
+  }
+  private retireSession(child: Session): void {
+    const { client } = child.lease;
+    for (const session of [...client.sessions.values()]) {
+      for (let ancestor: Session | undefined = session; ancestor; ancestor = ancestor.parent) {
+        if (ancestor === child) {
+          client.sessions.delete(session.id);
+          this.event(client, "Target.detachedFromTarget", { sessionId: session.id, targetId: session.targetId }, session.parent ?? session.browserParent);
+          break;
+        }
+      }
+    }
   }
   private filterAllows(value: unknown, type: string): boolean {
     if (value === undefined) return type !== "tab";
@@ -844,14 +901,14 @@ export class BrowserCdpGateway {
         const index = lease.pageAttaches.findIndex((intent) => intent.targetId === info.targetId);
         if (index >= 0) {
           const intent = lease.pageAttaches.splice(index, 1)[0]!;
-          try { this.additionalPageSession(lease, params.sessionId, intent.flattened); }
+          try { this.additionalPageSession(lease, params.sessionId, intent.flattened, intent.browserParent); }
           catch { this.release(lease); }
           return;
         }
       }
       let depth = 0;
       for (let ancestor: Session | undefined = parent; ancestor; ancestor = ancestor.parent) depth++;
-      if (info.type !== "iframe" || client.sessions.size >= MAX_SESSIONS || depth >= 8) {
+      if (info.type !== "iframe" || this.sessionCount(client) >= MAX_SESSIONS || depth >= 8) {
         void this.native(parent, "Target.detachFromTarget", { sessionId: params.sessionId }).catch(() => this.release(lease));
         return;
       }
@@ -861,13 +918,7 @@ export class BrowserCdpGateway {
       this.event(client, method, { sessionId: child.id, targetInfo: this.frameFields(lease, { targetId: child.targetId, type: "iframe", title: typeof info.title === "string" ? info.title : "", url: typeof info.url === "string" ? info.url : "", attached: true, canAccessOpener: false, browserContextId: this.browserContextId, ...(identifier(info.parentFrameId) ? { parentFrameId: info.parentFrameId } : {}) }, true), waitingForDebugger: params.waitingForDebugger === true }, parent);
     } else if (method === "Target.detachedFromTarget") {
       const child = [...client.sessions.values()].find((session) => session.lease === lease && session.nativeId === params.sessionId);
-      if (child) {
-        for (const session of [...client.sessions.values()]) {
-          for (let ancestor: Session | undefined = session; ancestor; ancestor = ancestor.parent) {
-            if (ancestor === child) { client.sessions.delete(session.id); this.event(client, method, { sessionId: session.id, targetId: session.targetId }, session.parent); break; }
-          }
-        }
-      }
+      if (child) this.retireSession(child);
     } else if (!method.startsWith("Target.") && !method.startsWith("Browser.")) this.event(client, method, this.nativePayload(lease, method, params), parent);
   }
 }

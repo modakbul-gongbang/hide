@@ -128,6 +128,9 @@ try {
 ```
 
 Playwright uses the existing context with `noDefaults: true`; creating another context or applying its default global download configuration is unsupported.
+`Target.attachToBrowserTarget` supplies an opaque protocol parent for Playwright's independent page sessions, with only scoped discovery, version, and explicit child attach/detach commands.
+It never attaches a native browser debugger or creates a context; virtual parents count toward the same 64-session limit and release their admitted children when detached.
+Once the core confirms a selected-display or direct-page close, the gateway revokes that authority and drains the successful reply before the normal WebSocket close handshake, even when native retirement arrives later.
 Page, tab and iframe target metadata carries one opaque context identifier per launch so clients can associate those targets with the existing context; it does not grant native context authority.
 The gateway attests each leased debugger's native main frame before forwarding client commands and translates protocol frame references to that display's public page target ID.
 Iframe target IDs retain their native frame identity only after attachment from that owned debugger; their session IDs remain opaque, and parent-frame references use the public page identity.

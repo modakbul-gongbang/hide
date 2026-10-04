@@ -387,8 +387,8 @@ test("browser CDP: creation stays in its originating area while another area is 
   const launched = await launch(run.env);
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
-  await expandViews(launched.page);
   const first = await fromPane(["browser", "open", `${origin}/first`, "--reveal", "--wait"]);
+  await expandViews(launched.page);
   const firstId = (first.result as { view_id: string }).view_id;
   const originalArea = (await coreViews()).find((view) => view.view_id === firstId)!.area_id;
   const connected = await fromPane(["browser", "connect"]);

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { request } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpPage, type CdpRetirement, type CdpScope } from "./browserCdp";
 
@@ -57,9 +57,9 @@ class CdpClient {
     });
   }
   ready(): Promise<void> { return new Promise((resolve, reject) => { this.socket.once("open", resolve); this.socket.once("error", reject); }); }
-  call(method: string, params: Json = {}, sessionId?: string, id = ++this.sequence): Promise<Json> {
+  call(method: string, params: Json = {}, sessionId?: string, id = ++this.sequence, timeoutMs = 2000): Promise<Json> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`No reply: ${method}`)), 2000);
+      const timeout = setTimeout(() => reject(new Error(`No reply: ${method}`)), timeoutMs);
       this.pending.set(id, (reply) => { clearTimeout(timeout); this.pending.delete(id); resolve(reply); });
       this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
@@ -68,7 +68,7 @@ class CdpClient {
 
 const shutdown: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of shutdown.splice(0).reverse()) await close(); });
-async function fixture(options: { loseFirstOpenResponse?: boolean; alwaysLoseResponse?: boolean; refuseOpen?: boolean } = {}) {
+async function fixture(options: { loseFirstOpenResponse?: boolean; alwaysLoseResponse?: boolean; refuseOpen?: boolean; deferCloseRetirement?: boolean } = {}) {
   const first = electronPage(11, "d1");
   const second = electronPage(12, "d2");
   const foreign = electronPage(13, "d3", "a2");
@@ -109,11 +109,11 @@ async function fixture(options: { loseFirstOpenResponse?: boolean; alwaysLoseRes
         const index = pages.findIndex((page) => page.id === view_id && page.workspace === scope.workspace && page.area_id === scope.area_id);
         if (index < 0) throw new Error("Not owned by this area");
         const [page] = pages.splice(index, 1);
-        changed({ contentsId: page!.contents.id, reason: "closed" });
+        if (!options.deferCloseRetirement) changed({ contentsId: page!.contents.id, reason: "closed" });
       }
       const result = { view_id, area_id: scope.area_id, load: 1 };
       intents.set(action.request_id, result);
-      changed();
+      if (action.action !== "close" || !options.deferCloseRetirement) changed();
       if (options.alwaysLoseResponse || options.loseFirstOpenResponse && action.action === "open") throw new CdpActionUncertain();
       return result;
     },
@@ -228,6 +228,84 @@ describe("scoped desktop CDP public boundary", () => {
     const other = await client(cap.browser_ws_url);
     expect((await other.call("Runtime.evaluate", { expression: "1" }, session)).error).toBeDefined();
     expect((await other.call("Target.sendMessageToTarget", { sessionId: session, message: JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1" } }) })).error).toBeDefined();
+  });
+
+  it("provides a scoped browser session for independent page sessions without native browser authority", async () => {
+    const { first, capability, client } = await fixture();
+    const cap = await capability();
+    const browser = await client(cap.browser_ws_url);
+    const rootPage = await attach(browser);
+    const aliasReply = await browser.call("Target.attachToBrowserTarget");
+    expect(aliasReply.error).toBeUndefined();
+    const alias = (aliasReply.result as Json).sessionId as string;
+    const other = await client(cap.browser_ws_url);
+    expect((await other.call("Target.getTargets", {}, alias)).error).toBeDefined();
+    for (const method of ["Browser.close", "Browser.setDownloadBehavior", "Target.createBrowserContext", "Target.disposeBrowserContext", "Storage.getCookies"]) {
+      expect((await browser.call(method, {}, alias)).error, method).toBeDefined();
+    }
+    expect((await browser.call("Target.attachToTarget", { targetId: "page-13", flatten: true }, alias)).error).toBeDefined();
+    const pageReply = await browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, alias);
+    expect(pageReply.error).toBeUndefined();
+    const page = (pageReply.result as Json).sessionId as string;
+    expect(page).not.toBe(rootPage);
+    expect(browser.events).toContainEqual(expect.objectContaining({ method: "Target.attachedToTarget", sessionId: alias, params: expect.objectContaining({ sessionId: page }) }));
+    expect((await browser.call("Runtime.evaluate", { expression: "'page'" }, page)).result).toEqual({ result: { type: "string", value: "native-alias-1" } });
+    expect((await browser.call("Page.navigate", { url: "file:///outside/private.txt" }, page)).error).toBeDefined();
+    expect((await browser.call("Target.detachFromTarget", { sessionId: rootPage }, alias)).error).toBeDefined();
+    expect((await browser.call("Target.detachFromTarget", { sessionId: alias })).error).toBeUndefined();
+    expect(browser.events).toContainEqual(expect.objectContaining({ method: "Target.detachedFromTarget", sessionId: alias, params: expect.objectContaining({ sessionId: page }) }));
+    expect((await browser.call("Runtime.evaluate", {}, page)).error).toBeDefined();
+    expect((await browser.call("Target.getTargets", {}, alias)).error).toBeDefined();
+    expect((await browser.call("Runtime.evaluate", {}, rootPage)).error).toBeUndefined();
+    expect(first.contents.debugger.isAttached()).toBe(true);
+  });
+
+  it("counts virtual browser sessions in the same attachment cap and releases their native children", async () => {
+    const { first, capability, client } = await fixture();
+    const browser = await client((await capability()).browser_ws_url);
+    const aliases: string[] = [];
+    for (let count = 0; count < 64; count++) {
+      const reply = await browser.call("Target.attachToBrowserTarget");
+      expect(reply.error).toBeUndefined();
+      aliases.push((reply.result as Json).sessionId as string);
+    }
+    expect(new Set(aliases).size).toBe(64);
+    expect((await browser.call("Target.attachToBrowserTarget")).error).toBeDefined();
+    expect((await browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, aliases[0])).error).toBeDefined();
+    expect(first.contents.debugger.isAttached()).toBe(false);
+    expect((await browser.call("Target.detachFromTarget", { sessionId: aliases.pop() })).error).toBeUndefined();
+    const pageReply = await browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, aliases[0]);
+    expect(pageReply.error).toBeUndefined();
+    const page = (pageReply.result as Json).sessionId as string;
+    expect((await browser.call("Target.detachFromTarget", { sessionId: aliases[0] })).error).toBeUndefined();
+    expect(first.contents.debugger.isAttached()).toBe(false);
+    expect((await browser.call("Runtime.evaluate", {}, page)).error).toBeDefined();
+  });
+
+  it("includes main-frame preparation in the native command deadline and releases the lease", async () => {
+    const { first, capability, client } = await fixture();
+    const browser = await client((await capability()).browser_ws_url);
+    const original = first.contents.debugger.sendCommand.bind(first.contents.debugger);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const boundary = vi.spyOn(first.contents.debugger, "sendCommand").mockImplementation(async (method, params, nativeId) => {
+      if (method === "Page.getFrameTree" || method === "Runtime.evaluate") await new Promise((resolve) => setTimeout(resolve, 9000));
+      return original(method, params, nativeId);
+    });
+    try {
+      const session = await attach(browser);
+      const reply = browser.call("Runtime.evaluate", { expression: "'page'" }, session, 500, 25_000);
+      // A following protocol reply attests that the real socket delivered
+      // the command before advancing only platform timers. Two nine-second operations must
+      // still fail at the documented ten-second command deadline.
+      expect((await browser.call("Browser.getVersion")).error).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(boundary.mock.calls.filter(([method]) => method === "Runtime.evaluate")).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await reply).toMatchObject({ error: { message: "CDP request timed out" } });
+      expect(first.contents.debugger.isAttached()).toBe(false);
+      await vi.advanceTimersByTimeAsync(8000);
+      expect((await browser.call("Runtime.evaluate", {}, session)).error).toBeDefined();
+    } finally { boundary.mockRestore(); vi.useRealTimers(); }
   });
 
   it("forwards page commands while rejecting browser shutdown, cookie and filesystem mutation", async () => {
@@ -432,6 +510,22 @@ describe("scoped desktop CDP public boundary", () => {
     expect(await closed).toBe(1000);
     expect(first.contents.debugger.isAttached()).toBe(false);
     expect((await (await fetch(`${cap.cdp_http_url}/json/list`)).json() as Json[]).map((page) => page.id)).toEqual(["page-12"]);
+  });
+
+  it("delivers successful selected-display and direct-page closes before a late native retirement", async () => {
+    for (const mode of ["browser", "page"] as const) {
+      const { first, capability, client, changed } = await fixture({ deferCloseRetirement: true });
+      const cap = await capability({ workspace: first.workspace, area_id: "a1", display_id: first.id });
+      const browser = await client(mode === "browser" ? cap.browser_ws_url : `${cap.browser_ws_url.replace("/browser", "/page/page-11")}`);
+      const closed = new Promise<number>((resolve) => browser.socket.once("close", (code) => resolve(code)));
+      const reply = mode === "browser" ? await browser.call("Target.closeTarget", { targetId: "page-11" }) : await browser.call("Page.close");
+      expect(reply.error).toBeUndefined();
+      expect(reply.result).toEqual(mode === "browser" ? { success: true } : {});
+      expect(await closed).toBe(1000);
+      expect(first.contents.debugger.isAttached()).toBe(false);
+      changed({ contentsId: first.contents.id, reason: "closed" });
+      expect((await fetch(`${cap.cdp_http_url}/json/list`)).status).toBe(404);
+    }
   });
 
   it("replays a nested close receipt after its session retires without accepting a changed intent", async () => {
