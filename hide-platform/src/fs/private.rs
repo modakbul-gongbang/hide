@@ -82,6 +82,92 @@ impl std::error::Error for DirectoryDurabilityError {
     }
 }
 
+/// Establishes an existing directory's ancestor barriers, returning its
+/// canonical spelling for use as a [`create_dir_all_durable`] anchor.
+/// The leaf must be a real directory owned by this account that other
+/// accounts cannot modify. The caller must trust and keep its ancestor
+/// namespace stable; system aliases in that namespace are canonicalized.
+/// Shared system ancestors are not made private or treated as account-owned.
+///
+/// Unix syncs the existing chain from the filesystem root, with at most 64
+/// components. No directory is created or removed, including on failure.
+/// Windows currently reports `Unsupported`, never the legacy sync no-op.
+pub fn establish_dir_durability(path: &Path) -> Result<PathBuf, DirectoryDurabilityError> {
+    let before = |source| DirectoryDurabilityError::BeforeCreate { source };
+    #[cfg(windows)]
+    {
+        let _ = path;
+        Err(before(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "directory-chain persistence is not established on Windows",
+        )))
+    }
+    #[cfg(unix)]
+    {
+        let leaf = trusted_dir(path).map_err(before)?;
+        let canonical = fs::canonicalize(path).map_err(before)?;
+        if canonical.components().count() > 65 {
+            return Err(before(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "durable directory chain exceeds 64 components",
+            )));
+        }
+        let canonical_leaf = trusted_dir(&canonical).map_err(before)?;
+        if super::identity::file_id_of(&leaf).map_err(before)?
+            != super::identity::file_id_of(&canonical_leaf).map_err(before)?
+        {
+            return Err(before(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "directory identity changed during validation",
+            )));
+        }
+        let mut completed = PathBuf::from("/");
+        let mut parent = super::open_dir(&completed).map_err(before)?;
+        super::atomic::sync_dir(&parent).map_err(|source| DirectoryDurabilityError::Uncertain {
+            completed: completed.clone(),
+            path: completed.clone(),
+            source,
+        })?;
+        for part in canonical.components().skip(1) {
+            let child_path = completed.join(part.as_os_str());
+            let step: io::Result<fs::File> = (|| {
+                let child = super::open_dir(&child_path)?;
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::ChildSync)?;
+                super::atomic::sync_dir(&child)?;
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::ParentSync)?;
+                super::atomic::sync_dir(&parent)?;
+                Ok(child)
+            })();
+            parent = step.map_err(|source| DirectoryDurabilityError::Uncertain {
+                completed: completed.clone(),
+                path: child_path.clone(),
+                source,
+            })?;
+            completed = child_path;
+        }
+        let changed = |source| DirectoryDurabilityError::Uncertain {
+            completed: completed.clone(),
+            path: canonical.clone(),
+            source,
+        };
+        if super::identity::file_id_of(&parent).map_err(changed)?
+            != super::identity::file_id_of(&leaf).map_err(changed)?
+        {
+            return Err(DirectoryDurabilityError::Uncertain {
+                completed,
+                path: canonical,
+                source: io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "directory identity changed during barriers",
+                ),
+            });
+        }
+        Ok(canonical)
+    }
+}
+
 /// Creates at most 64 private descendant directories and checks their
 /// persistence barriers. `durable_ancestor` must be an absolute, existing,
 /// trusted directory whose ancestor durability the caller already knows.
@@ -235,6 +321,34 @@ mod bootstrap_faults {
 mod bootstrap_tests {
     use super::bootstrap_faults::{self, Point};
     use super::*;
+
+    #[test]
+    fn an_existing_anchor_failure_retains_the_chain_and_recovery_rechecks_it() {
+        for point in [Point::ChildSync, Point::ParentSync] {
+            let root = tempfile::tempdir().unwrap();
+            let anchor = root.path().join("anchor");
+            create_dir(&anchor).unwrap();
+            let identity = super::super::identity::file_id(&anchor).unwrap();
+            let fault = bootstrap_faults::install(point, 0);
+            assert!(matches!(
+                establish_dir_durability(&anchor),
+                Err(DirectoryDurabilityError::Uncertain { source, .. })
+                    if source.raw_os_error() == Some(libc::EIO)
+            ));
+            assert_eq!(super::super::identity::file_id(&anchor).unwrap(), identity);
+            drop(fault);
+            let established = establish_dir_durability(&anchor).unwrap();
+            assert_eq!(established, fs::canonicalize(&anchor).unwrap());
+            let fault = bootstrap_faults::install(point, 0);
+            assert!(matches!(
+                establish_dir_durability(&anchor),
+                Err(DirectoryDurabilityError::Uncertain { source, .. })
+                    if source.raw_os_error() == Some(libc::EIO)
+            ));
+            drop(fault);
+            establish_dir_durability(&anchor).unwrap();
+        }
+    }
 
     #[test]
     fn failed_creation_retains_the_completed_chain_and_reports_the_os_cause() {

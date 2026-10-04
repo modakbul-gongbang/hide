@@ -27,6 +27,7 @@ For a file-persistence claim, run the platform's public contract and OS fault re
 The durable writer's regressions observe returned phases and causes, installed bytes and identity, retained cleanup residue, and Windows's unsupported access modes; unit faults are scoped to the test thread at the OS boundary and exercise the public writer without replacing owned helpers.
 A readable file or legacy `sync_dir` success alone proves no durable acknowledgement, and a file-parent barrier does not prove persistence of a newly created ancestor chain or recovery of the caller's state after an uncertain replacement.
 The public bootstrap regressions check the 64-component bound, refusal of escape and untrusted paths, retained partial chains after real mkdir or barrier failure, and recovery that checks existing levels again; the supplied ancestor's established durability remains a caller precondition.
+Existing-anchor regressions establish the canonical chain with real barriers before creating sibling home and state directories, reject links and untrusted leaves without mutation, and preserve identity through a reported barrier failure and explicit recovery that checks the existing chain again.
 Windows's pre-mutation `Unsupported` is fail-closed interim behavior, not cross-OS bootstrap completion, and callers must not become ready without an established parent-chain boundary.
 
 `python3 scripts/check-herdr-schema.py --herdr-bin <pinned binary>` compares the binary's own schema and version with the committed contract and manifest on macOS, Linux and Windows.
