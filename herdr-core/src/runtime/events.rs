@@ -3131,22 +3131,15 @@ impl Runtime {
                     );
                     return true;
                 };
-                let first = self.sidebar_github_projects.insert(project.clone());
+                // Every local Git project is read without being asked, so a
+                // plain request only matters past the limit, where it puts the
+                // project among the first read; a refresh reads it again.
+                let named = self.github_wanted.insert(project.clone());
                 if payload.refresh {
                     self.refresh_pull_requests(&project);
-                    if let Some(cached) = self
-                        .github
-                        .projects
-                        .iter_mut()
-                        .find(|cached| cached.root_path == project)
-                    {
-                        cached.status.loading = true;
-                    }
                 }
-                if first || payload.refresh {
-                    self.apply_pull_requests();
-                }
-                first || payload.refresh
+                let changed = (named || payload.refresh) && self.apply_pull_requests();
+                changed || payload.refresh
             }
             Event::OverviewOpenResult(payload) => self.open_result(&payload.pane_id),
             Event::RequestView(payload) => {
@@ -3172,7 +3165,7 @@ impl Runtime {
                     }));
                     return false;
                 };
-                self.sidebar_github_projects.insert(project.clone());
+                self.github_wanted.insert(project.clone());
                 self.refresh_pull_requests(&project);
                 self.refresh_project_worktrees(&project);
                 self.apply_pull_requests();

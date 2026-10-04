@@ -78,7 +78,7 @@ impl IssueReference {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ProjectIssuesSnapshot {
     pub repository: Option<String>,
     pub issues: Vec<IssueSnapshot>,
@@ -90,7 +90,7 @@ pub struct ProjectIssuesSnapshot {
     pub dependencies_failure: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct IssueSnapshot {
     pub reference: IssueReference,
     pub title: String,

@@ -342,14 +342,20 @@ A count Hide cannot read is reported as unknown and never as zero, because a zer
 ## GitHub status in the Workspace row
 
 The PR icon is independent of agent status and Workspace disclosure.
-It appears for a known pull request, an in-progress lookup, or a GitHub lookup failure; a successful lookup with no matching PR leaves it absent.
+It appears for a known pull request, an in-progress first lookup, or a GitHub lookup failure; a successful lookup with no matching PR leaves it absent.
+A pull request restored from the previous run draws as soon as its checkout row exists.
 Clicking opens details without selecting a pane, marking agents read, or folding the Workspace.
 The popover shows the PR number, title, Open/Draft/Merged/Closed state, head and base branches, and CI rollup.
 Its refresh action reloads one repository; its external action opens the PR URL through the existing external browser route.
 
-The first appearance of a local Git project requests its GitHub status once for the runtime session.
-Repeated appearances are no-ops; explicit refresh advances that repository's generation.
-The selected Overview project and explicit sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
+The core reads GitHub for every registered local Git project from the moment a window attaches to the daemon (the reader sits in the coordinator's UI-attached block, so a daemon with no window reads nothing), whether or not Overview, the palette or any other screen was opened; a device's project and a plain folder are not read.
+A project's status is read once when a window first attaches, again five minutes after its last answer (`Runtime::reread_stale_github`, with the clock passed in so a test advances it without sleeping; a project whose ask is unanswered is not asked again, so a slow pass is never overtaken by the next), and on an explicit refresh, which advances that repository's generation.
+At most 64 local Git projects are read: the project in front first, then the ones a screen named with `github_request` or `overview_refresh`, then the rest in path order; a count past that is stated in the diagnostic log as `projects.over_limit` each time it changes and the ones left out show no PR icon.
+Every project shares `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
+The last successful answer of every project is kept in `github-snapshot.json` in the state folder (`hide_kit::layout::github_snapshot`, written by `github_store.rs`) and restored when the daemon starts, so the first frame already draws it; the file also keeps what the wire leaves out of a pull request (its head commit, its repository and its created and closed times), because a settled pull request reconnects to its worktree only at that commit.
+A restored answer is stale until a read replaces it: `stale` is set and `last_success_at_unix_ms` stays the time of the read that produced it, so the icon is muted and the popover says how old it is.
+A file that cannot be read, decoded or is of another schema version is not used and is named in the diagnostic log as `snapshot.discarded`; the next answer replaces it.
+`loading` is true only for a project with no answer to show whose first read has not yet answered; a project the reader answers nothing for is not loading either, and a project with a restored or earlier answer is loading only while an explicit refresh of it is in flight.
 A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid` and `isCrossRepository`), and the open ones with `number,statusCheckRollup` only.
 Asking for the checks of every merged and closed pull request made one read take 11 - 14 seconds, so a settled pull request's checks are not asked for again: the checks read for the same number and head commit while it was open stay in the reader's cache, and without them its checks are `Unknown`, drawn as no mark.
 Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
@@ -361,7 +367,7 @@ The same generation also reads open issues, their Project Status, and PR closing
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
 Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
 A failed component read retains that component's last successful answer, including a successfully empty answer, while a successful PR read still advances if issue reading fails.
-Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
+Hide stores no new credentials and runs no subprocess or file write under the runtime mutex; the five-minute ask is a comparison on the coordinator's existing wake, and the file is written by its own thread from an owned copy.
 The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
 
 | GitHub checks | UI |

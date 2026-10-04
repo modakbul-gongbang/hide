@@ -27,6 +27,7 @@ pub mod fixture;
 mod fork;
 mod git_dir;
 mod github;
+mod github_store;
 mod handle;
 pub mod herdr_contract;
 pub mod host_access;
