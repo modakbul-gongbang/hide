@@ -5,9 +5,11 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
+import os from "node:os";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { countSent, registerFolder, screenshot, sendEvent } from "./wire";
@@ -72,7 +74,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // Checkout owner D-11/B13: this existing plain-folder workspace owns
     // the tabs this flow adds. An unmarked workspace would correctly make
     // Hide open a new owner instead (covered by checkout-owner.spec.ts).
-    const folder = fs.realpathSync(path.join(herdr.root, "fixture"));
+    // Owner identity uses the core's wire path, including on Windows.
+    const folder = toPage(fs.realpathSync(path.join(herdr.root, "fixture")));
     const owner = crypto.createHash("sha256").update(`local\0${folder}`).digest("hex").slice(0, 32);
     execFileSync(herdr.bin, ["workspace", "report-metadata", herdr.workspace, "--source", "e2e-owner", "--token", `hide_owner=${owner}`], { env: herdr.env, timeout: 30_000 });
     daemon = await startHided(herdr);
@@ -287,7 +290,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     expect(sent.get("terminal_click") ?? 0).toBe(clicksBeforeDrag);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await copy(page);
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${wrapped}\nshort\n`);
+    // The Windows text clipboard represents line endings as CRLF.
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${wrapped}${os.EOL}short${os.EOL}`);
     // Lines that share a margin lose it and keep their relative indentation.
     const indentFrom = shellCell(shellGrid.cols - 2, 5);
     const indentTo = shellCell(0, 4);
@@ -297,7 +301,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.mouse.up();
     await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, shellPaneId)).toBe("in\n  deeper");
     await copy(page);
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("in\n  deeper");
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`in${os.EOL}  deeper`);
 
     // Of three panes, the one holding the keyboard is outlined, and only it.
     await expect(page.locator("[data-pane-focus-outline]")).toHaveCount(1);

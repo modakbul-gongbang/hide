@@ -1,6 +1,7 @@
 import { ArrowDownIcon, FolderGit2Icon, GitMergeIcon, HardDriveIcon, PlusIcon, RefreshCwIcon, SquareTerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
+import { useInterfaceTranslation } from "./i18n/client";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Kbd } from "./components/ui/kbd";
@@ -37,6 +38,7 @@ import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 // the boards are `TaskBoards.tsx`'s and the lenses `OverviewLenses.tsx`'s.
 
 export function ProjectOverview({ projectId, lens, actions }: { projectId: string; lens: OverviewLens; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
@@ -97,8 +99,8 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   if (!found || !tasks || !stats || !pullRequests) {
     return (
       <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-overview-missing={projectId}>
-        <p>This project is no longer in the catalog.</p>
-        <Button variant="secondary" onClick={() => setProject(null)}>Back to Home</Button>
+        <p>{t("overview.projectMissing")}</p>
+        <Button variant="secondary" onClick={() => setProject(null)}>{t("overview.allProjects")}</Button>
       </section>
     );
   }
@@ -139,9 +141,9 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     >
       <header className="flex shrink-0 flex-col gap-sm border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
-          <nav aria-label="Location" className="flex min-w-0 items-center gap-xs">
+          <nav aria-label={t("overview.location")} className="flex min-w-0 items-center gap-xs">
             <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setProject(null)}>
-              Home
+              {t("overview.allProjects")}
             </button>
             <span aria-hidden="true" className="text-caption text-muted-foreground">/</span>
             <Hint label={project.path} reveals>

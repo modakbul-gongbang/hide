@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, kitConsentTerms, kitRemovalLine, herdrLine, hostLine, kitHookMachines, kitPartLine, kitPartNeedsReinstall, kitPartSwitch, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
+import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, kitConsentTerms, kitRemovalLine, herdrLine, hostLine, kitHookMachines, kitPartLine, kitPartNeedsReinstall, kitPartSwitch, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
 import type { AiProvider, Device, DeviceHost, KitComponent } from "./snapshot";
 
 const device = (patch: Partial<Device>): Device => ({
@@ -16,29 +16,6 @@ const device = (patch: Partial<Device>): Device => ({
 });
 
 describe("where settings live and what a device reported", () => {
-  const daemon = {
-    version: "0.1.0",
-    host_id: "host-00000000000000000000000000000000",
-    host_name: "mini",
-    schema_version: 2,
-    pid: 42,
-    started_at_unix: "1",
-    state_dir: "/s",
-    core_state_path: "/s/core-state.json",
-    herdr_bin_path: null,
-    herdr_socket_path: null,
-    keep_alive: false,
-    idle_secs: 600,
-  };
-
-  it("names the daemon's machine as the owner whichever device is selected", () => {
-    expect(ownerLine(daemon, null)).toContain("kept by hided on mini.");
-    const selected = ownerLine(daemon, device({ label: "Studio" }));
-    expect(selected).toContain("kept by hided on mini.");
-    expect(selected).toContain("Studio is selected");
-    expect(ownerLine({ ...daemon, host_name: null }, null)).toContain("the daemon's machine");
-  });
-
   it("shows only facts the device reported", () => {
     expect(deviceFacts(device({}), undefined)).toEqual([]);
     const host = { state: "ready", platform: "macos aarch64" } as DeviceHost;

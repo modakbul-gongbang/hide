@@ -3,7 +3,7 @@
 #
 # Usage: verify-web.sh [install [--ignore-scripts] | PACKAGE ACTION [args...]]
 # PACKAGE: web, desktop, hcoord. ACTION: typecheck, lint, test, build, e2e,
-# playwright-install, package (desktop only), test:e2e (hcoord only).
+# playwright-install, package and electron-install (desktop only), test:e2e (hcoord only).
 #
 # Runs what the `hcoord`, `web shell` and `desktop app` CI lanes run short of
 # the Playwright flows: hcoord typecheck, unit and e2e tests and build, then
@@ -53,6 +53,10 @@ if (( $# > 0 )); then
         playwright-install)
             [[ "$package" != hcoord && $# == 0 ]] || { printf 'invalid playwright-install arguments\n' >&2; exit 2; }
             exec pnpm --dir "$directory" exec playwright install chromium
+            ;;
+        electron-install)
+            [[ "$package" == desktop && $# == 0 ]] || { printf 'electron-install requires desktop and no arguments\n' >&2; exit 2; }
+            exec pnpm --dir desktop exec install-electron --no
             ;;
         package)
             [[ "$package" == desktop && $# == 0 ]] || { printf 'package requires desktop and no arguments\n' >&2; exit 2; }

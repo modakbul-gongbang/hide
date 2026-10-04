@@ -674,6 +674,8 @@ Started, the agent works in that checkout and the screen goes to its pane; while
 ### Scopes
 
 Overview is one page-local surface, entered from the sidebar's Overview row, the Workspace toolbar icon or ⌘⇧O.
+Its title, scope labels, close control, sidebar navigation and attention tooltip follow the confirmed interface language; project names and shortcut keycaps stay unchanged.
+The project scope's path back and missing-project action both select All projects within the same surface.
 It opens as a centered modal over a mounted Workspace, preserving terminal geometry and output, and otherwise as a central page.
 All projects shows the device in front; the other scope shows the front Workspace's project.
 The scope choice lasts for the window's session, starts at All projects, follows a changed current project and resets to All projects for Home or no Workspace.
@@ -1248,6 +1250,13 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
 
+General includes Language, using the existing Settings row and selector pattern.
+Its options name English, 한국어, 简体中文 and 日本語 in their own scripts, plus Use system language.
+The selected value comes from the core snapshot; an edit keeps the confirmed value visible until the next snapshot.
+The selector remains available while connected, so a concurrent choice from another client cannot strand a local pending edit.
+An explicit choice is shared by connected shell windows; Use system language resolves separately in each client, with English for unsupported languages.
+[LOCALIZATION.md](LOCALIZATION.md) owns the policy and the remaining integration surfaces.
+
 Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, hcoord, `Codex를 pane마다 실행`), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
 hcoord's place is `~/.hide/hcoord/bin/hcoord`; an `hcoord` on `PATH` that is not Hide's, and an old `~/.hcoord` left beside `~/.hide/hcoord`, are named in a dimmed line under the installed hcoord row's location, and a move from the old `~/.hcoord` that failed reads failed with the reason and that the next launch or Reinstall tries again (PRD hide-home-layout B12, B14).
 A `~/.hide/hcoord` that holds a ledger but no `bin/hcoord` reads outdated, not removed, and is finished on the next launch: it is a move whose install did not complete, and hcoord's home is never taken by removal.
@@ -1406,6 +1415,7 @@ A command marked none has no chord until the operator binds one in Settings, Sho
 
 Every icon-only control has a tooltip and an accessible name carrying the same words as the tooltip.
 A chorded tooltip reads the label followed by the shortcut chord; a chordless control shows only the label.
+The sidebar Settings tooltip and accessible name append the host's current shortcut in parentheses to the translated label.
 There is no native platform tooltip layered underneath the shared one; the shared tooltip is the only tooltip in the main shell.
 Tooltip hover has a short reveal delay, and an exact modifier hold reveals shortcut hints faster than a hover tooltip does.
 In the desktop app, holding ⌘ alone (Ctrl+Shift on Windows and Linux) floats each tab's number at its top right in the agent tab strip in front, and holding ⌥ alone floats each Agents-list row's number at its top right: a keycap in the popover colors with a border, a small shadow and one mono digit, positioned over the tab or row rather than in it, so a title, an inline Rename field, a row's time, and its fold slot never move.

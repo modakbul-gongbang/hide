@@ -1,3 +1,4 @@
+import { useInterfaceTranslation } from "../i18n/client";
 import { ChevronDownIcon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Kbd } from "./ui/kbd";
@@ -7,7 +8,7 @@ import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
 
-const MODE_LABEL: Record<SidebarMode, string> = { projects: "Projects", agents: "Agents" };
+const MODE_LABEL: Record<SidebarMode, "overview.projects" | "overview.agents"> = { projects: "overview.projects", agents: "overview.agents" };
 
 /** A device the hidden rail's menu lists. */
 export type MenuDevice = { id: string; label: string; remote: boolean; connected: boolean };
@@ -71,16 +72,17 @@ export function SidebarHeader({
   /** Add project; null where the host cannot pick a folder (a browser tab). */
   onNewWorkspace: (() => void) | null;
 }) {
+  const { t } = useInterfaceTranslation();
   const add =
     addProject && onNewWorkspace ? (
-      <Hint label="Add project" shortcut={newWorkspaceChord}>
+      <Hint label={t("commands.new_workspace")} shortcut={newWorkspaceChord}>
         <Button variant="ghost" size="icon-sm" data-sidebar-new-workspace="true" onClick={onNewWorkspace}>
           <PlusIcon />
         </Button>
       </Hint>
     ) : null;
   const search = (
-    <Hint label="Search" shortcut={searchChord}>
+    <Hint label={t("common.search")} shortcut={searchChord}>
       <Button variant="ghost" size="icon-sm" data-sidebar-search="true" onClick={onSearch}>
         <SearchIcon />
       </Button>
@@ -107,24 +109,24 @@ export function SidebarHeader({
         {search}
       </div>
       {overview ? (
-        <Hint label={overview.count > 0 ? `Overview · ${overview.count} Needs You` : "Overview"} shortcut={overview.chord}>
+        <Hint label={overview.count > 0 ? t("overview.needsYouHint", { count: overview.count }) : t("overview.title")} shortcut={overview.chord}>
           <button type="button" aria-current={overview.selected ? "page" : undefined} data-sidebar-overview="true" onClick={overview.onOpen}
             className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${overview.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
             <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
-            <span className="min-w-0 flex-1 truncate text-left">Overview</span>
-            {overview.count > 0 ? <span data-overview-count="true" className="text-caption text-warning">{overview.count} asking</span> : null}
+            <span className="min-w-0 flex-1 truncate text-left">{t("overview.title")}</span>
+            {overview.count > 0 ? <span data-overview-count="true" className="text-caption text-warning">{t("overview.askingCount", { count: overview.count })}</span> : null}
             {overview.chord && !compact ? <Kbd className="sidebar-command-keycap">{overview.chord}</Kbd> : null}
           </button>
         </Hint>
       ) : null}
       {tabs ? (
         <Tabs value={mode} onValueChange={(value) => onMode(value as SidebarMode)} className="shrink-0 border-b border-border px-xs py-xxs" data-sidebar-strip="true">
-          <TabsList aria-label="Sidebar view" className="w-full bg-transparent">
+          <TabsList aria-label={t("overview.sidebarView")} className="w-full bg-transparent">
             {SIDEBAR_MODES.map((candidate) => {
               const chord = candidate === "projects" ? projectChord : agentChord;
-              return <ModeHint key={candidate} label={MODE_LABEL[candidate]} chord={chord ?? null}>
+              return <ModeHint key={candidate} label={t(MODE_LABEL[candidate])} chord={chord ?? null}>
                 <TabsTrigger value={candidate} data-sidebar-mode={candidate} className="min-w-0 flex-1 gap-xs px-xs text-caption">
-                  <span className="truncate">{MODE_LABEL[candidate]}</span>
+                  <span className="truncate">{t(MODE_LABEL[candidate])}</span>
                   {chord && !compact ? <Kbd className="sidebar-command-keycap">{chord}</Kbd> : null}
                 </TabsTrigger>
               </ModeHint>;
