@@ -227,6 +227,85 @@ while time.monotonic() < deadline:
     def test_worker_only_hard_kill_confirms_zero_owned_survivors(self):
         self.exercise('worker-hard-kill')
 
+    def test_preparation_shell_output_does_not_substitute_for_owned_exit(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        facts = []
+        for mode in ['complete', 'timeout', 'worker-hard-kill']:
+            with OwnedControlRoot(artifacts) as owned:
+                root = owned.path
+                proof, launch, outcome = [root / name for name in ['targets.json', 'owner.json', 'outcome.json']]
+                target = root / 'target.cjs'
+                target.write_text("const fs=require('node:fs'),{spawn}=require('node:child_process');\n"
+                    "const [mode,file]=process.argv.slice(2);\n"
+                    "if(mode==='leaf')setInterval(()=>{},1000);\n"
+                    "else if(mode==='complete'){process.stdout.write('version-output-before-exit\\n');}\n"
+                    "else {const child=spawn(process.execPath,[__filename,'leaf'],{stdio:'ignore'});\n"
+                    "fs.writeFileSync(file+'.tmp',JSON.stringify({target:process.pid,child:child.pid}));fs.renameSync(file+'.tmp',file);\n"
+                    "process.stdout.write('version-output-before-exit\\n');setInterval(()=>{},1000);}\n")
+                worker = root / 'worker.cjs'
+                worker.write_text("const fs=require('node:fs'); const owned=require(" + json.dumps(str(ROOT/'scripts/ci-owned-command.cjs')) + ");\n"
+                    "const [root,target,mode,proof,launch,outcome]=process.argv.slice(2);\n"
+                    "const publish=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value));fs.renameSync(file+'.tmp',file);};\n"
+                    "owned.run(root,owned.shell(),['-c','exec \"$@\"','preparation-control',process.execPath,target,mode,proof],{\n"
+                    "subject:'actual-tool-probe',onOwner:owner=>publish(launch,{worker:process.pid,...owner})}).then(\n"
+                    "value=>publish(outcome,{status:'passed',...value}),\n"
+                    "error=>{publish(outcome,{status:'failed',message:error.message,code:error.code,stdout:error.stdout,stderr:error.stderr,owner:error.owner,secondary:error.secondary||[]});process.exitCode=1;});\n")
+                observations = []
+                process = subprocess.Popen([shutil.which('node'),str(worker),str(ROOT),str(target),mode,str(proof),str(launch),str(outcome)],
+                    cwd=ROOT,env={**os.environ,'CI_FIXTURE_BASH':self.shell},stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+                data = None
+                try:
+                    data = until(lambda: json.loads(launch.read_text()) if launch.exists() else None)
+                    if mode != 'complete':
+                        ids = until(lambda: json.loads(proof.read_text()) if proof.exists() else None)
+                        running = until(lambda: value if (value:=receipt(Path(data['receipt']))) and value['phase']=='running' else None)
+                        # On Windows, Git Bash can retain its own native PID
+                        # while the tool is its child. Observe both identities.
+                        original = list(dict.fromkeys([running['pid'],ids['target'],ids['child'],data['supervisorPid']]))
+                        observations = [ProcessObservation(pid) for pid in original]
+                        self.assertGreater(running['pid'],0)
+                        self.assertGreater(int(running['birth']),0)
+                        self.assertTrue(all(not target.exited() for target in observations))
+                    if mode == 'worker-hard-kill':
+                        process.kill()  # End only the Node caller; no /T or group signal.
+                        process.wait(timeout=5)
+                        final = until(lambda: value if (value:=receipt(Path(data['receipt']))) and value['phase']=='owner-lost-exited' else None)
+                        self.assertEqual(final['survivors'],0)
+                        self.assertFalse(Path(data['home']).exists())
+                        self.assertFalse(outcome.exists())
+                        facts.append({'mode':mode,'launch':data,'targets':ids,'finished':final,'ownedSurvivors':0})
+                    else:
+                        code = process.wait(timeout=10)
+                        result = json.loads(outcome.read_text())
+                        self.assertEqual(result['status'],'passed' if mode=='complete' else 'failed')
+                        self.assertEqual(code,0 if mode=='complete' else 1)
+                        self.assertIn('version-output-before-exit',result['stdout'])
+                        self.assertTrue(result['owner']['supervisorExited'])
+                        self.assertEqual(result['owner']['observed']['survivors'],0)
+                        self.assertFalse(Path(data['home']).exists())
+                        if mode=='timeout':
+                            self.assertEqual(result['code'],'ETIMEDOUT')
+                            self.assertIn('5000ms',result['message'])
+                            self.assertEqual(result['secondary'],[])
+                        facts.append({'mode':mode,'launch':data,'outcome':result,'ownedSurvivors':0})
+                    until(lambda: all(target.exited() for target in observations))
+                    owned.confirmed = True
+                finally:
+                    primary = sys.exc_info()[1]
+                    if process.poll() is None: process.kill(); process.wait(timeout=5)
+                    if data:
+                        try:
+                            final = until(lambda: value if (value:=receipt(Path(data['receipt']))) and value['survivors']==0 else None)
+                            until(lambda: all(target.exited() for target in observations))
+                            owned.confirmed = True
+                        except BaseException as cleanup:
+                            if primary is None: raise
+                            primary.add_note(f'Preparation control cleanup also failed: {cleanup}')
+                    for observed in observations: observed.close()
+                    process.stdout.close(); process.stderr.close()
+        (artifacts/'preparation-command.json').write_text(json.dumps(facts,indent=2)+'\n')
+
     def test_wrong_launch_identity_refuses_a_real_live_target(self):
         self.exercise('identity-refusal')
 

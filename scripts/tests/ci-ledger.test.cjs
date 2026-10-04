@@ -107,7 +107,8 @@ test('preparation CLI refuses publication when its producer changes tracked sour
   fs.mkdirSync(path.join(directory,'target/debug/examples'),{recursive:true});
   const artifacts=[['hided','bin'],['hide','bin'],['fixture-owner','example']].map(([name,kind])=>{
     const executable=path.join(directory,'target/debug',kind==='example'?'examples':'',name);
-    fs.writeFileSync(executable,'controlled output');
+    if(name==='fixture-owner') fs.copyFileSync(path.resolve('target/debug/examples/fixture-owner'),executable);
+    else fs.writeFileSync(executable,'controlled output');
     return {reason:'compiler-artifact',target:{name,kind:[kind]},profile:{test:false},features:[],executable};
   });
   // This is a controlled external producer, not Cargo/native acceptance.
@@ -124,6 +125,9 @@ test('preparation CLI refuses publication when its producer changes tracked sour
   assert.match(result.stderr,/preparation source\/toolchain changed during operation/);
   assert.equal(fs.readFileSync(path.join(directory,'source.txt'),'utf8'),'changed');
   assert.equal(fs.existsSync(path.join(directory,'agents/runs/ci-preparation/build.json')),false);
+  const attempt=JSON.parse(fs.readFileSync(path.join(directory,'agents/runs/ci-preparation/ledger-build.json')));
+  assert.equal(attempt.records[0].status,'failed');
+  assert.match(attempt.records[0].failure.cause.message,/git.*exited/);
 });
 test('a later pass cannot replace the first failure, and repeated upload deduplicates', () => {
   const ledger = merge([row,row,{...row,retry:1,status:'passed'}]);

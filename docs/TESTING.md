@@ -164,6 +164,16 @@ The complete repetition receipt reads all six five-result batch artifacts throug
 Missing or malformed input leaves a failing incomplete receipt with the collection stage; a passing prefix of the workload is not thirty successful fixtures.
 Collection runs even after an artifact download action fails, retains that download outcome, and refuses acceptance even if other downloaded results are complete.
 
+Preparation has its own atomic ledger before Playwright starts, with the build/create/verify invocation, command phase, actual shell, original error and separately bounded stdout/stderr diagnostics.
+`CI_FIXTURE_BASH` names the absolute verification shell; Actions supplies its current `$BASH` in native Windows spelling, and Windows refuses a missing value instead of searching for another Bash.
+The command identity also records that shell's digest and version, and Windows requires Git Bash's `pc-msys` build.
+Each tool probe retains its five-second bound and runs through `scripts/ci-owned-command.cjs` and the existing native `fixture-owner` group/job supervisor.
+Output alone does not establish success: the original target receipt and supervisor exit must confirm zero owned survivors, including descendants, before release.
+Timeout or caller loss closes the caller-only owner pipe, retaining the original tool failure and every secondary termination error; unconfirmed exit preserves the command home and an unknown partial outcome.
+The workflow bootstraps that supervisor through the existing Cargo entrypoint before owned preparation commands; that runner-owned bootstrap is a separate boundary.
+Consumers check the downloaded supervisor's source/OS/arch/digest before executing it, then verify the complete toolchain, effective build recipe and output inventory as before.
+The real preparation controls compare completed output, output followed by timeout, and worker-only hard loss on each OS; a local result does not establish another OS's acceptance.
+
 The link-replacement reader test admits each of forty replacements only after a native file read has consumed its prefix.
 It keeps that file open until publication is observed, reads the suffix afterwards and asserts forty read phases straddled their replacements, alongside concurrent path lookups, old/new-only content, no `NotFound` and no temporary entry.
 The baseline read is excluded from overlap, and all phases share the existing five-second bound.

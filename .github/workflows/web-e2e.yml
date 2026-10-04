@@ -135,6 +135,9 @@ jobs:
     if: ${{ inputs.shards > 1 }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
+    env:
+      CI_LANE: web-preparation
+      CI_JOB_LABEL: build hided ${{ inputs.lane }}
     defaults:
       run:
         shell: bash
@@ -157,6 +160,13 @@ jobs:
           workspaces: ". -> target"
           shared-key: web-e2e
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Bind preparation to the actual verification shell
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then value=$(cygpath -w "$BASH"); else value="$BASH"; fi
+          echo "CI_FIXTURE_BASH=$value" >> "$GITHUB_ENV"
+      - name: Bootstrap the native command owner
+        timeout-minutes: 20
+        run: bash scripts/verify-cargo.sh build -p hide-platform --example fixture-owner
       - name: Build hided for Playwright
         timeout-minutes: 20
         run: node scripts/ci-preparation.cjs build
@@ -182,6 +192,22 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+      - name: Keep preparation outcomes even before Playwright starts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-ledger-preparation-${{ inputs.lane }}-build
+          path: agents/runs/ci-preparation/ledger-*.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Keep the actual native preparation ownership observations
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: preparation-ownership-${{ inputs.lane }}-build
+          path: agents/runs/ci-preparation/owners
+          if-no-files-found: error
+          retention-days: 14
 
   e2e:
     name: web e2e ${{ inputs.lane }} ${{ matrix.shard }}/${{ inputs.shards }}
@@ -191,6 +217,10 @@ jobs:
     if: ${{ !cancelled() && needs.plan.result == 'success' && ((inputs.shards > 1 && needs.build.result == 'success') || (inputs.shards == 1 && needs.build.result == 'skipped')) && ((startsWith(inputs.runner, 'ubuntu') && needs.zsh.result == 'success') || (!startsWith(inputs.runner, 'ubuntu') && needs.zsh.result == 'skipped')) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 40
+    env:
+      CI_LANE: web-preparation
+      CI_JOB_LABEL: web e2e ${{ inputs.lane }} ${{ matrix.shard }}/${{ inputs.shards }}
+      CI_SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
     defaults:
       run:
         shell: bash
@@ -232,13 +262,33 @@ jobs:
         with:
           name: prepared-debug-${{ inputs.lane }}
           path: .
-      - name: Verify the exact native preparation boundary
-        if: ${{ inputs.shards > 1 }}
-        run: node scripts/ci-preparation.cjs verify
       - name: Mark the binaries executable
         if: ${{ inputs.shards > 1 && runner.os != 'Windows' }}
         # An artifact does not keep the executable bit.
         run: chmod +x target/debug/hided target/debug/hide target/debug/examples/fixture-owner
+      - name: Bind preparation to the actual verification shell
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then value=$(cygpath -w "$BASH"); else value="$BASH"; fi
+          echo "CI_FIXTURE_BASH=$value" >> "$GITHUB_ENV"
+      - name: Verify the exact native preparation boundary
+        if: ${{ inputs.shards > 1 }}
+        run: node scripts/ci-preparation.cjs verify
+      - name: Keep preparation outcomes even before Playwright starts
+        uses: actions/upload-artifact@v7
+        if: ${{ always() && inputs.shards > 1 }}
+        with:
+          name: ci-ledger-preparation-${{ inputs.lane }}-${{ matrix.shard }}
+          path: agents/runs/ci-preparation/ledger-*.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Keep the actual native preparation ownership observations
+        uses: actions/upload-artifact@v7
+        if: ${{ always() && inputs.shards > 1 }}
+        with:
+          name: preparation-ownership-${{ inputs.lane }}-${{ matrix.shard }}
+          path: agents/runs/ci-preparation/owners
+          if-no-files-found: error
+          retention-days: 14
       - name: Install web dependencies
         timeout-minutes: 5
         run: bash scripts/verify-web.sh install
