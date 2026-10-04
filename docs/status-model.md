@@ -350,7 +350,13 @@ Its refresh action reloads one repository; its external action opens the PR URL 
 The first appearance of a local Git project requests its GitHub status once for the runtime session.
 Repeated appearances are no-ops; explicit refresh advances that repository's generation.
 The selected Overview project and explicit sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
-The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request additionally asks for `title` and `statusCheckRollup`; it retains the 200-PR limit and existing branch tie-breaking policy.
+A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid` and `isCrossRepository`), and the open ones with `number,statusCheckRollup` only.
+Asking for the checks of every merged and closed pull request made one read take 11 - 14 seconds, so a settled pull request's checks are not asked for again: the checks read for the same number and head commit while it was open stay in the reader's cache, and without them its checks are `Unknown`, drawn as no mark.
+Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
+Which pull request belongs to a checkout is one rule (`github::belongs_to_checkout`, chosen by `pull_request_for_checkout`), because a branch name is used again for new work: a pull request from a fork never belongs to a local branch of the same name, an open one belongs to the checkout on its head branch, and a merged or closed one only while the checkout's commit (the worktree reader's `head_sha`) is exactly the pull request's head commit on that branch; a checkout that was amended, rebased or left behind after the last push therefore loses its merged pull request.
+Several candidates resolve open, then merged, then closed, the most recently updated first among equals, and a checkout whose commit is not read yet takes no settled pull request.
+The sidebar row, the worktree catalog, the agent rows' pull request chip and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
+The PRs view and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
 The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
 Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
@@ -364,7 +370,7 @@ The project request event, result status and PR fields travel through revisioned
 | Any failure, error, cancellation, timeout, or required action | Failing, red |
 | At least one running, queued, waiting, pending, or requested check, with no failure | Running, yellow |
 | An explicitly empty check list | No checks, gray |
-| Absent check data, an unknown check kind, or an unrecognized terminal result | Unknown, gray |
+| Absent check data, an unknown check kind, an unrecognized terminal result, or a merged or closed pull request whose checks were never read while it was open | Unknown, no mark |
 
 Failure takes precedence over pending, then unknown, then passing.
 A failed refresh preserves the last known PR and reports the lookup failure and last successful read time.
@@ -384,7 +390,7 @@ CI colors remain separate from PR lifecycle, so Merged does not imply Passing.
 
 ### Project Overview summary
 
-Overview reuses this cached per-branch PR answer, including failure and stale status.
+Overview reuses this cached PR answer, including failure and stale status.
 Its active-branch and draft counts describe the selected results, not every PR in the repository's history.
 The details state the reader's lookup window and offer the existing PR URL and scoped refresh actions.
 A failed or unrequested lookup never becomes a zero count.

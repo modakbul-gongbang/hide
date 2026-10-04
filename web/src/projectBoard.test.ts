@@ -380,7 +380,9 @@ describe("the PRs tab", () => {
   }
   function repo(checkouts: Checkout[], pullRequests: PullRequest[], options: { tasks?: Task[]; github?: Checkout["github"] } = {}): Workspace {
     const main = { ...checkout("main", { worktree: false }), github: options.github ?? answered };
-    return { ...workspace([main, ...checkouts], { tasks: options.tasks ?? [] }), pull_requests: pullRequests };
+    // The core connects a pull request to the checkout on its branch (a settled one only at its commit).
+    const held = (row: Checkout) => ({ ...row, pull_request: row.pull_request ?? pullRequests.find((pull) => pull.head_branch === row.branch) ?? null });
+    return { ...workspace([main, ...checkouts].map(held), { tasks: options.tasks ?? [] }), pull_requests: pullRequests };
   }
   const groups = (board: ReturnType<typeof buildPullRequests>) => board.groups.map((entry) => [entry.group, entry.rows.map((row) => row.number)]);
 
@@ -449,6 +451,21 @@ describe("the PRs tab", () => {
       [12, null],
       [10, "worktree"],
     ]);
+  });
+
+  it("ties a pull request to the checkout the core connected it to, so a branch name used again does not offer 정리 for the new worktree", () => {
+    const reused = checkout("reused");
+    const old = listed(30, "reused", { badge: "merged", merged_at_unix_ms: NOW - 86_400_000 });
+    // The core left the old merge off the new worktree: it is not on the merged pull request's commit.
+    const project = { ...repo([reused], [old]), checkouts: [checkout("main", { worktree: false }), reused] };
+    const row = buildPullRequests({ workspace: project, agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows)[0]!;
+    expect(row).toMatchObject({ number: 30, checkout: null, cleanup: null });
+  });
+
+  it("draws a merged pull request whose checks were never read with no CI mark", () => {
+    const merged = listed(31, "gone", { badge: "merged", merged_at_unix_ms: NOW - 60_000, checks: "unknown" });
+    const row = buildPullRequests({ workspace: repo([], [merged]), agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows)[0]!;
+    expect(row.checks).toBeNull();
   });
 
   it("fills the issue cell from the branch's link, else the issue the body closes, and offers 이슈 잇기 only on an open one without (B3, B7, D-34)", () => {

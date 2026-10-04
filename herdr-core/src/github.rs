@@ -28,6 +28,16 @@ use crate::reader::BackgroundRead;
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// What the list of every pull request asks for. `statusCheckRollup` is
+/// left out: asking GitHub for the checks of all 200 pull requests, merged
+/// and closed ones included, is what made one read take 11 - 14 seconds
+/// against the 15-second limit, and nothing draws a settled pull request's
+/// checks as news.
+const PULL_REQUEST_FIELDS: &str = "number,title,headRefName,headRefOid,isCrossRepository,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,createdAt,closedAt,closingIssuesReferences";
+
+/// The second list: only the open pull requests, only their checks.
+const OPEN_CHECK_FIELDS: &str = "number,statusCheckRollup";
+
 /// Every pull request `gh` will return in one call. Past this, older pull
 /// requests are simply absent and their branches read as having none; the
 /// limit is stated here so the risk is findable from the code that takes it.
@@ -78,9 +88,17 @@ fn read_reason(cached: Option<u64>, generation: u64) -> Option<ReadReason> {
     }
 }
 
+/// A pull request's check rollup as it was last read, by number and head
+/// commit. A settled pull request's checks are not asked for again, so this
+/// is where one that was read while it was open is still found.
+type KnownChecks = HashMap<(u32, String), PullRequestChecks>;
+
 struct CachedProject {
     generation: u64,
     answer: GithubProjectSnapshot,
+    /// Kept across a failed read, so a pull request that merged while GitHub
+    /// was unreachable still has the checks it was last seen with.
+    checks: KnownChecks,
 }
 
 /// The last answer per requested root, kept on the worker's side so a pass
@@ -155,17 +173,24 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
         // half of an unauthenticated machine's cost.
         let authentication = authentication();
         for (project, _) in due {
+            let known = cache
+                .get(&project.root)
+                .map(|cached| cached.checks.clone())
+                .unwrap_or_default();
             let answer = read_root(
                 &authentication,
                 &project.root,
                 project.generation,
                 &project.links,
+                &known,
             );
+            let checks = carried_checks(&answer, known);
             cache.insert(
                 project.root.clone(),
                 CachedProject {
                     generation: project.generation,
                     answer,
+                    checks,
                 },
             );
         }
@@ -195,7 +220,9 @@ fn read_root(
     root: &Path,
     generation: u64,
     links: &[crate::issues::IssueReference],
+    known: &KnownChecks,
 ) -> GithubProjectSnapshot {
+    let started = Instant::now();
     let Some(main) = main_worktree(root) else {
         return GithubProjectSnapshot::default();
     };
@@ -211,7 +238,7 @@ fn read_root(
             },
             ..GithubProjectSnapshot::default()
         },
-        Ok(()) => read_project(&main, root_path, links),
+        Ok(()) => read_project(&main, root_path, links, known),
     };
     // A failure and an empty answer are both stated, separately: an empty
     // list with no reason is a repository with no pull requests.
@@ -228,6 +255,7 @@ fn read_root(
         "project": project.root_path,
         "available": project.status.available,
         "pull_requests": project.pull_requests.len(),
+        "duration_ms": started.elapsed().as_millis() as u64,
         "message": project.status.unavailable_reason,
     }));
     project
@@ -242,37 +270,15 @@ fn read_project(
     root: &Path,
     root_path: String,
     links: &[crate::issues::IssueReference],
+    known: &KnownChecks,
 ) -> GithubProjectSnapshot {
-    let listed = match gh(
-        Some(root),
-        &[
-            "pr",
-            "list",
-            "--state",
-            "all",
-            "--limit",
-            PULL_REQUEST_LIMIT,
-            "--json",
-            "number,title,statusCheckRollup,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,createdAt,closedAt,closingIssuesReferences",
-        ],
-    ) {
-        Ok(listed) => listed,
+    let pull_requests = match list_pull_requests(&|arguments| gh(Some(root), arguments), known) {
+        Ok(value) => value,
         Err(reason) => {
             return GithubProjectSnapshot {
                 root_path,
                 status: failed(reason),
                 ..GithubProjectSnapshot::default()
-            };
-        }
-    };
-
-    let pull_requests = match parse_pull_requests(&listed) {
-        Ok(value) => value,
-        Err(reason) => {
-            return GithubProjectSnapshot {
-                root_path,
-                status: failed(GhFailure::network(reason)),
-                ..Default::default()
             };
         }
     };
@@ -302,6 +308,80 @@ fn read_project(
             ..Default::default()
         },
     }
+}
+
+/// Every pull request, with the checks of the open ones.
+///
+/// Two lists, asked for at the same time under their own 15-second limits:
+/// the 200 newest pull requests of any state without their checks, and the
+/// open ones with nothing but their checks. A settled pull request's checks
+/// are not asked for again: the ones read while it was open (`known`, by
+/// number and head commit) stay, and without them its checks are `Unknown`,
+/// never a guess. Either list failing fails the read, so half an answer is
+/// never taken for a repository with no pull requests.
+fn list_pull_requests(
+    run: &(impl Fn(&[&str]) -> Result<String, GhFailure> + Sync),
+    known: &KnownChecks,
+) -> Result<Vec<PullRequestSnapshot>, GhFailure> {
+    let list = |state: &str, fields: &str| {
+        run(&[
+            "pr",
+            "list",
+            "--state",
+            state,
+            "--limit",
+            PULL_REQUEST_LIMIT,
+            "--json",
+            fields,
+        ])
+    };
+    let (every, open) = std::thread::scope(|scope| {
+        let open = scope.spawn(|| list("open", OPEN_CHECK_FIELDS));
+        let every = list("all", PULL_REQUEST_FIELDS);
+        (every, open.join())
+    });
+    let every = every?;
+    let open = open.map_err(|_| {
+        GhFailure::network("gh open pull request checks reader failed".to_owned())
+    })??;
+    let mut pull_requests = parse_pull_requests(&every).map_err(GhFailure::network)?;
+    let mut open_checks = parse_open_checks(&open).map_err(GhFailure::network)?;
+    for pull_request in &mut pull_requests {
+        // An open pull request's checks are the open list's or nothing: a
+        // remembered value could be of a commit it has since moved past.
+        pull_request.checks = if is_open(pull_request) {
+            open_checks.remove(&pull_request.number)
+        } else {
+            let head = pull_request.head_oid.clone();
+            head.and_then(|head| known.get(&(pull_request.number, head)).copied())
+        }
+        .unwrap_or(PullRequestChecks::Unknown);
+    }
+    Ok(pull_requests)
+}
+
+/// The checks to keep for the next read: this answer's, or, when it never
+/// got as far as a pull request list, the ones kept before it.
+fn carried_checks(answer: &GithubProjectSnapshot, previous: KnownChecks) -> KnownChecks {
+    if answer.pull_requests_read {
+        remembered_checks(&answer.pull_requests)
+    } else {
+        previous
+    }
+}
+
+/// Every check that was actually read, by number and head commit.
+fn remembered_checks(pull_requests: &[PullRequestSnapshot]) -> KnownChecks {
+    pull_requests
+        .iter()
+        .filter(|pull_request| pull_request.checks != PullRequestChecks::Unknown)
+        .filter_map(|pull_request| {
+            Some((
+                (pull_request.number, pull_request.head_oid.clone()?),
+                pull_request.checks,
+            ))
+        })
+        .collect()
 }
 
 /// Optional Project fields may be inaccessible with otherwise valid issue
@@ -1197,9 +1277,12 @@ fn failed(reason: GhFailure) -> GithubStatusSnapshot {
 #[serde(rename_all = "camelCase")]
 struct GhPullRequest {
     title: String,
-    status_check_rollup: Option<Vec<GhCheck>>,
     number: u32,
     head_ref_name: String,
+    #[serde(default)]
+    head_ref_oid: Option<String>,
+    #[serde(default)]
+    is_cross_repository: bool,
     base_ref_name: String,
     state: String,
     review_decision: Option<String>,
@@ -1213,6 +1296,14 @@ struct GhPullRequest {
     closed_at: Option<String>,
     #[serde(default)]
     closing_issues_references: Vec<GhIssueReference>,
+}
+
+/// One row of the open list: a number and its checks, nothing else.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhOpenChecks {
+    number: u32,
+    status_check_rollup: Option<Vec<GhCheck>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1393,16 +1484,31 @@ fn rollup_checks(checks: Option<&[GhCheck]>) -> PullRequestChecks {
     }
 }
 
-/// Reduces `gh pr list --json` to at most one pull request per branch.
+/// Every pull request `gh pr list --json` named, checks not read yet.
+///
+/// None is dropped: which one belongs to a checkout depends on the checkout's
+/// commit, so a branch's older pull requests are candidates too
+/// (`pull_request_for_checkout`).
 pub fn parse_pull_requests(output: &str) -> Result<Vec<PullRequestSnapshot>, String> {
     let listed: Vec<GhPullRequest> = serde_json::from_str(output)
         .map_err(|error| format!("gh pr list returned output Hide could not read: {error}"))?;
-    Ok(select_per_branch(
-        listed
-            .into_iter()
-            .map(project)
-            .collect::<Result<Vec<_>, _>>()?,
-    ))
+    listed.into_iter().map(project).collect()
+}
+
+/// The open list's rows as checks by pull request number. A row whose rollup
+/// is absent is `Unknown`, as it always was.
+fn parse_open_checks(output: &str) -> Result<HashMap<u32, PullRequestChecks>, String> {
+    let listed: Vec<GhOpenChecks> = serde_json::from_str(output)
+        .map_err(|error| format!("gh pr list returned checks Hide could not read: {error}"))?;
+    Ok(listed
+        .into_iter()
+        .map(|row| {
+            (
+                row.number,
+                rollup_checks(row.status_check_rollup.as_deref()),
+            )
+        })
+        .collect())
 }
 
 fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {
@@ -1414,7 +1520,7 @@ fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {
             .map(|issue| crate::issues::IssueReference::parse(&issue.url, None))
             .collect::<Result<_, _>>()?,
         title: listed.title,
-        checks: rollup_checks(listed.status_check_rollup.as_deref()),
+        checks: PullRequestChecks::Unknown,
         badge: badge(&listed.state, listed.is_draft, review),
         number: listed.number,
         head_branch: listed.head_ref_name,
@@ -1426,6 +1532,8 @@ fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {
         updated_at_unix_ms: listed.updated_at.as_deref().and_then(parse_rfc3339_ms),
         created_at_unix_ms: listed.created_at.as_deref().and_then(parse_rfc3339_ms),
         closed_at_unix_ms: listed.closed_at.as_deref().and_then(parse_rfc3339_ms),
+        head_oid: listed.head_ref_oid.filter(|oid| !oid.is_empty()),
+        cross_repository: listed.is_cross_repository,
     })
 }
 
@@ -1459,13 +1567,72 @@ pub fn review_decision(value: Option<&str>) -> Option<ReviewDecision> {
     }
 }
 
-/// One pull request per branch: an open one beats a settled one, and among
-/// equals the most recently updated wins.
+/// Whether `pull_request` is the work of a checkout on `branch` at commit
+/// `head`. Every place a pull request is tied to a checkout asks this and
+/// nothing else, because a branch name is not an identity: it is used again.
 ///
-/// A branch that was merged and then reopened for more work must show the work
-/// in flight, not the merge behind it - that is the whole reason open comes
-/// first rather than latest-wins alone.
-pub fn select_per_branch(mut candidates: Vec<PullRequestSnapshot>) -> Vec<PullRequestSnapshot> {
+/// - A pull request from a fork never belongs to a local branch of the same
+///   name.
+/// - An open pull request belongs to the checkout on its head branch.
+/// - A merged or closed one belongs only while the checkout's commit is
+///   exactly the pull request's head. A branch name reused for new work has
+///   a new commit, and the old merge must not follow it.
+///
+/// A checkout whose commit is not known yet (`head` absent) takes no settled
+/// pull request, since it cannot be told from the reused name.
+pub(crate) fn belongs_to_checkout(
+    pull_request: &PullRequestSnapshot,
+    branch: Option<&str>,
+    head: Option<&str>,
+) -> bool {
+    // A fork's branch name says nothing about this repository's branch of
+    // the same name, whether the pull request is open or long merged.
+    if pull_request.cross_repository || branch != Some(pull_request.head_branch.as_str()) {
+        return false;
+    }
+    if is_open(pull_request) {
+        return true;
+    }
+    matches!((pull_request.head_oid.as_deref(), head), (Some(pull), Some(head)) if pull == head)
+}
+
+/// The pull request a checkout shows when several qualify: an open one, then
+/// a merged one, then a closed one, the most recently updated first among
+/// equals. A branch merged and then reopened for more work shows the work in
+/// flight, not the merge behind it.
+pub(crate) fn pull_request_for_checkout<'a>(
+    pull_requests: &'a [PullRequestSnapshot],
+    branch: Option<&str>,
+    head: Option<&str>,
+) -> Option<&'a PullRequestSnapshot> {
+    pull_requests
+        .iter()
+        .filter(|pull_request| belongs_to_checkout(pull_request, branch, head))
+        .min_by(|left, right| precedence(left, right))
+}
+
+fn precedence(left: &PullRequestSnapshot, right: &PullRequestSnapshot) -> std::cmp::Ordering {
+    let rank = |pull_request: &PullRequestSnapshot| match pull_request.badge {
+        PullRequestBadge::Merged => 1,
+        PullRequestBadge::Closed => 2,
+        PullRequestBadge::Open | PullRequestBadge::Review => 0,
+    };
+    rank(left)
+        .cmp(&rank(right))
+        .then_with(|| right.updated_at_unix_ms.cmp(&left.updated_at_unix_ms))
+        .then_with(|| right.number.cmp(&left.number))
+}
+
+/// One pull request per head branch, for the views that list a branch once
+/// (the PRs view, a worktree's base): the one `precedence` puts first,
+/// whatever the checkout's commit. Which pull request a checkout holds is
+/// `pull_request_for_checkout`'s answer, never this one.
+pub(crate) fn preferred_per_branch(
+    pull_requests: &[PullRequestSnapshot],
+) -> Vec<&PullRequestSnapshot> {
+    let mut candidates: Vec<&PullRequestSnapshot> = pull_requests.iter().collect();
+    // Open first, then the most recently updated whether merged or closed:
+    // the order these lists have always kept, so what they show is unchanged.
     candidates.sort_by(|left, right| {
         left.head_branch
             .cmp(&right.head_branch)
@@ -2192,60 +2359,201 @@ esac"#,
         assert_eq!(review_decision(None), None);
     }
 
+    fn candidate(
+        number: u32,
+        branch: &str,
+        badge: PullRequestBadge,
+        head: Option<&str>,
+        updated: u64,
+    ) -> PullRequestSnapshot {
+        let mut pull_request = parse_pull_requests(&format!(
+            "[{}]",
+            listed(number, branch, "OPEN", None, false, "2026-09-01T10:00:00Z")
+        ))
+        .expect("gh output parses")
+        .remove(0);
+        pull_request.badge = badge;
+        pull_request.head_oid = head.map(str::to_owned);
+        pull_request.updated_at_unix_ms = Some(updated);
+        pull_request
+    }
+
+    fn picked(
+        pull_requests: &[PullRequestSnapshot],
+        branch: &str,
+        head: Option<&str>,
+    ) -> Option<u32> {
+        pull_request_for_checkout(pull_requests, Some(branch), head)
+            .map(|pull_request| pull_request.number)
+    }
+
     #[test]
-    fn an_open_pull_request_beats_a_merged_one_on_the_same_branch() {
+    fn a_listed_pull_request_keeps_its_head_commit_and_whether_it_came_from_a_fork() {
+        let output = r#"[{"title":"t","number":7,"headRefName":"feature","headRefOid":"abc123","isCrossRepository":true,"baseRefName":"main","state":"OPEN","reviewDecision":"","isDraft":false,"url":"https://example.invalid/7","mergedAt":null,"updatedAt":"2026-09-01T10:00:00Z"},{"title":"t","number":8,"headRefName":"other","baseRefName":"main","state":"OPEN","reviewDecision":"","isDraft":false,"url":"https://example.invalid/8","mergedAt":null,"updatedAt":"2026-09-01T10:00:00Z"}]"#;
+        let listed = parse_pull_requests(output).expect("gh output parses");
+        assert_eq!(listed[0].head_oid.as_deref(), Some("abc123"));
+        assert!(listed[0].cross_repository);
+        assert_eq!(listed[1].head_oid, None);
+        assert!(!listed[1].cross_repository);
+    }
+
+    #[test]
+    fn every_pull_request_of_a_branch_is_kept_for_the_checkout_to_choose_from() {
         let output = format!(
             "[{},{}]",
             listed(9, "feature", "MERGED", None, false, "2026-09-03T10:00:00Z"),
             listed(4, "feature", "OPEN", None, false, "2026-09-01T10:00:00Z"),
         );
-        let selected = parse_pull_requests(&output).expect("gh output parses");
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].number, 4);
-        assert_eq!(selected[0].badge, PullRequestBadge::Open);
+        let listed = parse_pull_requests(&output).expect("gh output parses");
+        assert_eq!(
+            listed.iter().map(|pr| pr.number).collect::<Vec<_>>(),
+            vec![9, 4]
+        );
+    }
+
+    #[test]
+    fn an_open_pull_request_beats_a_merged_one_beats_a_closed_one_for_the_same_checkout() {
+        let pull_requests = [
+            candidate(1, "feature", PullRequestBadge::Closed, Some("head"), 90),
+            candidate(2, "feature", PullRequestBadge::Merged, Some("head"), 80),
+            candidate(3, "feature", PullRequestBadge::Open, Some("head"), 10),
+        ];
+        assert_eq!(picked(&pull_requests, "feature", Some("head")), Some(3));
+        assert_eq!(
+            picked(&pull_requests[..2], "feature", Some("head")),
+            Some(2)
+        );
+        assert_eq!(
+            picked(&pull_requests[..1], "feature", Some("head")),
+            Some(1)
+        );
     }
 
     #[test]
     fn among_equals_the_most_recently_updated_wins() {
-        let output = format!(
-            "[{},{}]",
-            listed(1, "feature", "CLOSED", None, false, "2026-08-01T10:00:00Z"),
-            listed(2, "feature", "MERGED", None, false, "2026-09-01T10:00:00Z"),
+        let pull_requests = [
+            candidate(1, "feature", PullRequestBadge::Merged, Some("head"), 10),
+            candidate(2, "feature", PullRequestBadge::Merged, Some("head"), 20),
+            candidate(3, "feature", PullRequestBadge::Merged, Some("head"), 20),
+        ];
+        assert_eq!(picked(&pull_requests, "feature", Some("head")), Some(3));
+        assert_eq!(
+            picked(&pull_requests[..2], "feature", Some("head")),
+            Some(2)
         );
-        let selected = parse_pull_requests(&output).expect("gh output parses");
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].number, 2);
-        assert_eq!(selected[0].badge, PullRequestBadge::Merged);
     }
 
     #[test]
-    fn each_branch_keeps_its_own_pull_request() {
-        let output = format!(
-            "[{},{}]",
-            listed(
-                1,
-                "alpha",
-                "OPEN",
-                Some("APPROVED"),
-                false,
-                "2026-09-01T10:00:00Z"
-            ),
-            listed(2, "beta", "MERGED", None, false, "2026-09-02T10:00:00Z"),
+    fn an_old_merged_pull_request_does_not_follow_a_branch_name_used_again() {
+        let pull_requests = [candidate(
+            1,
+            "feature",
+            PullRequestBadge::Merged,
+            Some("old-work"),
+            10,
+        )];
+        assert_eq!(picked(&pull_requests, "feature", Some("new-work")), None);
+        assert_eq!(picked(&pull_requests, "feature", Some("old-work")), Some(1));
+    }
+
+    #[test]
+    fn a_settled_pull_request_needs_a_known_commit_on_both_sides() {
+        let closed = candidate(1, "feature", PullRequestBadge::Closed, Some("head"), 10);
+        let unread = candidate(2, "feature", PullRequestBadge::Merged, None, 10);
+        assert_eq!(picked(std::slice::from_ref(&closed), "feature", None), None);
+        assert_eq!(
+            picked(std::slice::from_ref(&unread), "feature", Some("head")),
+            None
         );
-        let selected = parse_pull_requests(&output).expect("gh output parses");
-        assert_eq!(selected.len(), 2);
-        let alpha = selected
-            .iter()
-            .find(|pr| pr.head_branch == "alpha")
-            .expect("alpha");
-        assert_eq!(alpha.badge, PullRequestBadge::Review);
-        assert_eq!(alpha.review, Some(ReviewDecision::Approved));
-        let beta = selected
-            .iter()
-            .find(|pr| pr.head_branch == "beta")
-            .expect("beta");
-        assert_eq!(beta.badge, PullRequestBadge::Merged);
-        assert_eq!(beta.review, None);
+        assert_eq!(
+            picked(std::slice::from_ref(&closed), "feature", Some("head")),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_settled_pull_request_names_its_branch_as_well_as_its_commit() {
+        // A fast-forward merge leaves main on the pull request's head commit;
+        // a new branch cut from main there is not that pull request's work.
+        let merged = [candidate(
+            1,
+            "old-feature",
+            PullRequestBadge::Merged,
+            Some("head"),
+            10,
+        )];
+        assert_eq!(picked(&merged, "new-feature", Some("head")), None);
+        assert_eq!(pull_request_for_checkout(&merged, None, Some("head")), None);
+    }
+
+    #[test]
+    fn an_open_pull_request_belongs_by_branch_whatever_the_checkout_commit_is() {
+        let pull_requests = [candidate(
+            1,
+            "feature",
+            PullRequestBadge::Open,
+            Some("pushed"),
+            10,
+        )];
+        assert_eq!(
+            picked(&pull_requests, "feature", Some("unpushed-commit")),
+            Some(1)
+        );
+        assert_eq!(picked(&pull_requests, "feature", None), Some(1));
+        assert_eq!(picked(&pull_requests, "other", Some("pushed")), None);
+    }
+
+    #[test]
+    fn an_open_pull_request_from_a_fork_never_belongs_to_a_branch_of_the_same_name() {
+        let mut from_fork = candidate(1, "main", PullRequestBadge::Open, Some("head"), 10);
+        from_fork.cross_repository = true;
+        assert_eq!(
+            picked(std::slice::from_ref(&from_fork), "main", Some("head")),
+            None
+        );
+        from_fork.cross_repository = false;
+        assert_eq!(
+            picked(std::slice::from_ref(&from_fork), "main", Some("head")),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_settled_pull_request_from_a_fork_never_belongs_either() {
+        // A fork's `main` merged by fast-forward leaves local main on its head.
+        let mut from_fork = candidate(1, "main", PullRequestBadge::Merged, Some("head"), 10);
+        from_fork.cross_repository = true;
+        assert_eq!(
+            picked(std::slice::from_ref(&from_fork), "main", Some("head")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_list_shows_the_newer_closed_pull_request_over_an_older_merged_one() {
+        let pull_requests = [
+            candidate(1, "alpha", PullRequestBadge::Merged, Some("a"), 10),
+            candidate(2, "alpha", PullRequestBadge::Closed, Some("b"), 20),
+        ];
+        let numbers: Vec<u32> = preferred_per_branch(&pull_requests)
+            .into_iter()
+            .map(|pull_request| pull_request.number)
+            .collect();
+        assert_eq!(numbers, vec![2]);
+    }
+
+    #[test]
+    fn each_branch_lists_its_preferred_pull_request_once() {
+        let pull_requests = [
+            candidate(1, "alpha", PullRequestBadge::Merged, Some("a"), 10),
+            candidate(2, "alpha", PullRequestBadge::Open, Some("b"), 5),
+            candidate(3, "beta", PullRequestBadge::Merged, Some("c"), 20),
+        ];
+        let numbers: Vec<u32> = preferred_per_branch(&pull_requests)
+            .into_iter()
+            .map(|pull_request| pull_request.number)
+            .collect();
+        assert_eq!(numbers, vec![2, 3]);
     }
 
     /// A response Hide cannot read is a stated failure, never an empty list
@@ -2259,6 +2567,203 @@ esac"#,
     #[test]
     fn an_empty_list_is_a_real_answer() {
         assert_eq!(parse_pull_requests("[]").expect("empty list"), Vec::new());
+    }
+
+    /// A `gh` that answers the two lists from fixtures and records what it
+    /// was asked, so the read can be judged by what it returns and asks for.
+    struct TwoLists {
+        every: Result<String, GhFailure>,
+        open: Result<String, GhFailure>,
+        asked: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl TwoLists {
+        fn new(every: &str, open: &str) -> Self {
+            Self {
+                every: Ok(every.to_owned()),
+                open: Ok(open.to_owned()),
+                asked: Mutex::default(),
+            }
+        }
+
+        fn run(&self, arguments: &[&str]) -> Result<String, GhFailure> {
+            self.asked.lock().unwrap().push(
+                arguments
+                    .iter()
+                    .map(|argument| (*argument).to_owned())
+                    .collect(),
+            );
+            let state = arguments[arguments.iter().position(|a| *a == "--state").unwrap() + 1];
+            match state {
+                "all" => self.every.clone(),
+                "open" => self.open.clone(),
+                other => panic!("unexpected state {other}"),
+            }
+        }
+
+        fn read(&self, known: &KnownChecks) -> Result<Vec<PullRequestSnapshot>, GhFailure> {
+            list_pull_requests(&|arguments| self.run(arguments), known)
+        }
+    }
+
+    fn listed_at(number: u32, branch: &str, state: &str, head: &str) -> String {
+        format!(
+            r#"{{"title":"t","number":{number},"headRefName":"{branch}","headRefOid":"{head}","isCrossRepository":false,"baseRefName":"main","state":"{state}","reviewDecision":"","isDraft":false,"url":"https://example.invalid/{number}","mergedAt":null,"updatedAt":"2026-09-01T10:00:00Z"}}"#
+        )
+    }
+
+    fn rollup(number: u32, conclusion: &str) -> String {
+        format!(
+            r#"{{"number":{number},"statusCheckRollup":[{{"__typename":"CheckRun","status":"COMPLETED","conclusion":"{conclusion}"}}]}}"#
+        )
+    }
+
+    fn checks_of(pull_requests: &[PullRequestSnapshot], number: u32) -> PullRequestChecks {
+        pull_requests
+            .iter()
+            .find(|pull_request| pull_request.number == number)
+            .expect("pull request listed")
+            .checks
+    }
+
+    #[test]
+    fn open_pull_requests_take_their_checks_from_the_open_list_and_settled_ones_read_unknown() {
+        let gh = TwoLists::new(
+            &format!(
+                "[{},{},{}]",
+                listed_at(1, "a", "OPEN", "h1"),
+                listed_at(2, "b", "MERGED", "h2"),
+                listed_at(3, "c", "CLOSED", "h3"),
+            ),
+            &format!("[{}]", rollup(1, "FAILURE")),
+        );
+        let read = gh.read(&KnownChecks::new()).expect("both lists answer");
+        assert_eq!(checks_of(&read, 1), PullRequestChecks::Failed);
+        assert_eq!(checks_of(&read, 2), PullRequestChecks::Unknown);
+        assert_eq!(checks_of(&read, 3), PullRequestChecks::Unknown);
+    }
+
+    #[test]
+    fn a_settled_pull_request_keeps_the_checks_read_for_its_number_and_head_commit() {
+        let gh = TwoLists::new(
+            &format!(
+                "[{},{}]",
+                listed_at(2, "b", "MERGED", "h2"),
+                listed_at(3, "c", "MERGED", "moved-on"),
+            ),
+            "[]",
+        );
+        let known: KnownChecks = [
+            ((2, "h2".to_owned()), PullRequestChecks::Passing),
+            ((3, "h3".to_owned()), PullRequestChecks::Failed),
+        ]
+        .into_iter()
+        .collect();
+        let read = gh.read(&known).expect("both lists answer");
+        assert_eq!(checks_of(&read, 2), PullRequestChecks::Passing);
+        assert_eq!(
+            checks_of(&read, 3),
+            PullRequestChecks::Unknown,
+            "checks read at another head commit are not this commit's"
+        );
+    }
+
+    #[test]
+    fn an_open_pull_request_never_borrows_remembered_checks() {
+        let gh = TwoLists::new(&format!("[{}]", listed_at(1, "a", "OPEN", "h1")), "[]");
+        let known: KnownChecks = [((1, "h1".to_owned()), PullRequestChecks::Passing)]
+            .into_iter()
+            .collect();
+        let read = gh.read(&known).expect("both lists answer");
+        assert_eq!(checks_of(&read, 1), PullRequestChecks::Unknown);
+    }
+
+    #[test]
+    fn what_was_read_is_kept_for_the_next_read_and_survives_a_failed_one() {
+        let gh = TwoLists::new(
+            &format!("[{}]", listed_at(1, "a", "OPEN", "h1")),
+            &format!("[{}]", rollup(1, "SUCCESS")),
+        );
+        let read = gh.read(&KnownChecks::new()).expect("both lists answer");
+        let answer = GithubProjectSnapshot {
+            pull_requests: read,
+            pull_requests_read: true,
+            ..GithubProjectSnapshot::default()
+        };
+        let kept = carried_checks(&answer, KnownChecks::new());
+        assert_eq!(
+            kept.get(&(1, "h1".to_owned())),
+            Some(&PullRequestChecks::Passing)
+        );
+        let failed = GithubProjectSnapshot::default();
+        assert_eq!(carried_checks(&failed, kept.clone()), kept);
+    }
+
+    #[test]
+    fn the_two_lists_ask_for_what_each_is_for() {
+        let gh = TwoLists::new("[]", "[]");
+        gh.read(&KnownChecks::new()).expect("both lists answer");
+        let asked = gh.asked.lock().unwrap();
+        let fields = |state: &str| -> String {
+            let call = asked
+                .iter()
+                .find(|call| call.iter().any(|argument| argument == state))
+                .expect("the list was asked for");
+            call[call.iter().position(|a| a == "--json").unwrap() + 1].clone()
+        };
+        assert_eq!(asked.len(), 2);
+        assert!(
+            !fields("all").contains("statusCheckRollup"),
+            "settled pull requests' checks are not asked for"
+        );
+        assert!(
+            fields("all").contains("headRefOid") && fields("all").contains("isCrossRepository")
+        );
+        assert_eq!(fields("open"), "number,statusCheckRollup");
+    }
+
+    #[test]
+    fn either_list_failing_fails_the_read_instead_of_reading_as_no_pull_requests() {
+        let mut gh = TwoLists::new("[]", "[]");
+        gh.open = Err(GhFailure::network("open list down".to_owned()));
+        let failure = gh.read(&KnownChecks::new()).expect_err("open list failed");
+        assert_eq!(failure.reason, "open list down");
+
+        let mut gh = TwoLists::new("[]", "[]");
+        gh.every = Err(GhFailure::network("all list down".to_owned()));
+        let failure = gh.read(&KnownChecks::new()).expect_err("all list failed");
+        assert_eq!(failure.reason, "all list down");
+
+        let gh = TwoLists::new("[]", "{\"unexpected\":true}");
+        let failure = gh.read(&KnownChecks::new()).expect_err("unreadable checks");
+        assert!(
+            failure.reason.contains("could not read"),
+            "{}",
+            failure.reason
+        );
+    }
+
+    /// The two reads have to overlap or the saving is gone: each waits for
+    /// the other to have started, and a read that runs them one after the
+    /// other gives up after the deadline instead of hanging.
+    #[test]
+    fn the_two_lists_are_asked_for_at_the_same_time() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let started = AtomicUsize::new(0);
+        let run = |_: &[&str]| -> Result<String, GhFailure> {
+            started.fetch_add(1, Ordering::SeqCst);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while started.load(Ordering::SeqCst) < 2 {
+                if Instant::now() > deadline {
+                    return Err(GhFailure::network(
+                        "the other list was never asked".to_owned(),
+                    ));
+                }
+                std::thread::yield_now();
+            }
+            Ok("[]".to_owned())
+        };
+        list_pull_requests(&run, &KnownChecks::new()).expect("both lists were in flight together");
     }
 
     #[test]

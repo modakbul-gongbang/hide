@@ -265,6 +265,8 @@ fn running_checks_are_read_again_once_a_minute_only_while_the_view_is_shown() {
         updated_at_unix_ms: Some(10),
         created_at_unix_ms: Some(5),
         closed_at_unix_ms: None,
+        head_oid: None,
+        cross_repository: false,
     };
     let github = |pull_request: &crate::model::PullRequestSnapshot| crate::model::GithubSnapshot {
         projects: vec![crate::model::GithubProjectSnapshot {

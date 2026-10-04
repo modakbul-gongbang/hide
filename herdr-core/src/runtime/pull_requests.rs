@@ -26,7 +26,8 @@ pub(super) fn shown_pull_requests(
         .filter(|checkout| checkout.is_worktree)
         .filter_map(|checkout| checkout.branch.as_deref())
         .collect();
-    all.iter()
+    crate::github::preferred_per_branch(all)
+        .into_iter()
         .filter(|pull_request| match pull_request.badge {
             PullRequestBadge::Closed => false,
             PullRequestBadge::Merged => {
@@ -41,14 +42,23 @@ pub(super) fn shown_pull_requests(
         .collect()
 }
 
-/// The worktree checked out on `branch`, the one Hide's issue link lives on.
+/// The worktree that holds `pull_request`'s work, the one Hide's issue link
+/// lives on.
 fn branch_worktree<'a>(
     workspace: &'a WorkspaceSnapshot,
-    branch: &str,
+    pull_request: &PullRequestSnapshot,
 ) -> Option<&'a CheckoutSnapshot> {
     workspace.checkouts.iter().find(|checkout| {
-        checkout.is_worktree && checkout.exists && checkout.branch.as_deref() == Some(branch)
+        checkout.is_worktree && checkout.exists && holds_pull_request(checkout, pull_request)
     })
+}
+
+fn holds_pull_request(checkout: &CheckoutSnapshot, pull_request: &PullRequestSnapshot) -> bool {
+    crate::github::belongs_to_checkout(
+        pull_request,
+        checkout.branch.as_deref(),
+        checkout.head_sha(),
+    )
 }
 
 impl Runtime {
@@ -208,7 +218,7 @@ impl Runtime {
         let id = crate::local_issues::display_id(number);
         link.issue_key = Some(key);
         link.issue_id = Some(id.clone());
-        let Some(checkout) = branch_worktree(workspace, &pull_request.head_branch) else {
+        let Some(checkout) = branch_worktree(workspace, pull_request) else {
             return self.fail_pr_link(
                 link,
                 "link",
@@ -299,7 +309,7 @@ impl Runtime {
         pull_request: &PullRequestSnapshot,
         reference: &crate::issues::IssueReference,
     ) {
-        let Some(checkout) = branch_worktree(workspace, &pull_request.head_branch) else {
+        let Some(checkout) = branch_worktree(workspace, pull_request) else {
             return;
         };
         let checkout_id = checkout.id.clone();
@@ -487,9 +497,10 @@ impl Runtime {
                 }
             };
         let prompt = Some(payload.prompt.trim().to_owned()).filter(|prompt| !prompt.is_empty());
-        let checkout = workspace.checkouts.iter().find(|checkout| {
-            checkout.exists && checkout.branch.as_deref() == Some(pull_request.head_branch.as_str())
-        });
+        let checkout = workspace
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.exists && holds_pull_request(checkout, &pull_request));
         crate::diagnostic!(serde_json::json!({
             "component": "pull_requests", "kind": "pr_delegate.requested",
             "project": workspace.path, "pr": pull_request.number,
