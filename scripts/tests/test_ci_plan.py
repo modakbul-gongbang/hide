@@ -54,7 +54,7 @@ class SelectionContract(unittest.TestCase):
         shared = self.plan([("M", "web/src/store.ts")])
         self.assertTrue(shared["lanes"]["desktop-e2e"])
         self.assertTrue(shared["lanes"]["windows-e2e"])
-        for path in ("web/src/host.ts", "web/src/snapshot.ts", "web/src/shortcuts.ts"):
+        for path in ("web/src/host.ts", "web/src/snapshot.ts", "web/src/shortcuts.ts", "web/src/areaCycle.ts", "web/src/keys.ts", "web/src/viewFocus.ts"):
             plan = self.plan([("M", path)])
             for consumer in ("web-checks", "web-e2e", "desktop-checks", "desktop-e2e", "windows-check", "windows-e2e"):
                 self.assertTrue(plan["lanes"][consumer], f"omitted {consumer} for {path}")
@@ -63,11 +63,33 @@ class SelectionContract(unittest.TestCase):
             ci.aggregate(plan, reports)
             with self.assertRaises(ValueError):
                 ci.aggregate(plan, {**reports, "desktop-e2e": {"result": "skipped"}})
+        for path in ("web/src/shortcuts.ts", "web/src/keys.ts", "web/src/viewFocus.ts", "web/src/areaCycle.ts"):
+            self.assertIn("issue-311", self.plan([("M", path)])["quarantine_required"])
+
+    def test_platform_package_consumers_are_selected_and_required_by_the_aggregate(self):
+        for path in ("hide-platform/src/fs/link.rs", "hide-platform/src/process.rs", "hide-platform/src/path.rs", "hide-kit/src/layout.rs", "hide-agent-hooks/src/lib.rs"):
+            plan = self.plan([("M", path)])
+            self.assertTrue(plan["lanes"]["package"])
+            reports = {k: {"result": "success" if v else "skipped"} for k, v in plan["lanes"].items()}
+            reports["plan"] = {"result": "success"}
+            ci.aggregate(plan, reports)
+            for outcome in ("skipped", "cancelled", "failure", "unknown"):
+                with self.assertRaises(ValueError):
+                    ci.aggregate(plan, {**reports, "package": {"result": outcome}})
+            with self.assertRaises(ValueError):
+                ci.aggregate(plan, {k:v for k,v in reports.items() if k != "package"})
 
     def test_any_full_reason_overrides_a_partial_rust_package_set(self):
         expected = sorted(m["package"]["name"] for m in ci.cargo_graph(ROOT)[0].values())
         for entries in ([('M', 'hide-ai/src/lib.rs'), ('M', '.github/workflows/pr.yml')], [('M', 'hide-ai/src/lib.rs'), ('D', 'docs/BUILD.md')], [('M', 'herdr-core/src/lib.rs')]):
             self.assertEqual(self.plan(entries)["rust_packages"], expected)
+
+    def test_main_requires_full_os_inventories(self):
+        plan = ci.select(ROOT, [], {"event": "push"}, "merged main")
+        self.assertTrue(all(value for lane, value in plan["lanes"].items() if lane != "quarantine-fixes"))
+        self.assertFalse(plan["lanes"]["quarantine-fixes"])
+        for lane in ("windows-e2e", "web-e2e-platform"):
+            self.assertEqual(plan["inventory"][lane], ["1/4", "2/4", "3/4", "4/4"])
 
     def test_reverse_dependencies_come_from_manifests(self):
         with tempfile.TemporaryDirectory() as directory:

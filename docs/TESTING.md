@@ -139,6 +139,9 @@ The first Windows runs of the web e2e fixtures found three differences the helpe
 `scripts/ci-reporter.ts` records scheduled identities at suite start and atomically replaces its bounded ledger at every test start and completion.
 Completed results keep their original error and signature; an interrupted in-flight test or an unstarted identity cannot count as passed.
 A hard process death leaves `partial-or-unknown` with the last completed results and the in-flight/scheduled identities, even when Playwright never reaches `onEnd`.
+Global Playwright discovery/setup/runner errors retain their own message, stack and phase and make collection partial even when other rows passed.
+Execution identity includes the actual Actions job, consumer lane and invocation, because reusable workflows can share a local `GITHUB_JOB` id.
+Only identical observations of the same attempt are deduplicated; contradictory observations fail collection and retain both original rows and an unknown conflict outcome.
 The real-process controls in `scripts/tests/test_playwright_contracts.py` terminate Playwright with SIGKILL and SIGINT after one completed test and during the next test.
 The ledger caps remain 20,000 rows and 16 MiB; overflow fails the caller and retains the previous complete JSON.
 The complete repetition receipt reads all six five-result batch artifacts through `scripts/ci-controls.cjs collect` and requires every registered test/OS/repeat identity.

@@ -10,8 +10,10 @@ Use [docs/README.md](docs/README.md) to find current guides and distinguish hist
 
 Run the same required lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
-CI runs the Rust suite, the unit suites, the invariant checks and the whole web end-to-end (six shards) on Linux, where the Herdr schema comparison and the web end-to-end use the pinned release's Linux asset, and keeps two jobs on macOS, the platform hide ships on: the Electron end-to-end and the web end-to-end's `@platform` tests.
-`.github/workflows/pr.yml` says why; `nightly.yml` configures full web and desktop suites and package checks on Linux, macOS and Windows, with tracked flaky tests blocking the nightly result.
+CI records each pull request's affected packages and consumers before execution.
+Selected web coverage uses six Linux shards and independent macOS/Windows `@platform` lanes; selected Rust, unit, invariant, desktop, OS and package/install contracts have required aggregate outcomes.
+Merged main runs every selected lane and the full three-OS web suites, including registered scenarios.
+`nightly.yml` adds full three-OS desktop suites and retains blocking contracts and package checks.
 Read the executed jobs and their skips before claiming an OS is verified; a configured matrix is not execution evidence.
 
 ```sh
@@ -162,7 +164,9 @@ The writer adds only missing assets to its exact verified draft and never delete
 A maintainer publishes only after reviewing separate installation, native first-launch and terminal input/output evidence on every supported system.
 A package checksum or headless daemon smoke check does not provide that native evidence.
 The macOS archive is ad-hoc signed, not notarized, so the first launch needs the Gatekeeper step [docs/INSTALL.md](docs/INSTALL.md) describes; the Windows and Linux packages are not signed, and the same guide gives the SmartScreen and sandbox steps.
-`package.yml` also runs on a pull request that changes what goes into a package (`desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows) and keeps the packages for a week as the run's artifacts; it is not part of `verify`, because a check that runs on some pull requests only cannot be required.
+`verify` records package/install consumers in its versioned selection and calls `package.yml` when selected, including platform, kit, hooks, shared execution boundaries and packaged desktop scripts/resources.
+Selected macOS, Windows and Linux package/install results must succeed before the aggregate succeeds; missing, skipped, cancelled or failed selected results fail `verify`.
+Merged main runs the full selection, including the three packages, and package artifacts remain available for one week.
 
 ## Bundled Herdr runtime
 

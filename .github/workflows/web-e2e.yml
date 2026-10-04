@@ -61,7 +61,7 @@ on:
         required: false
         default: ""
       full-suite:
-        description: Include @flaky tests in the blocking suite (nightly only).
+        description: Include registered tests in the blocking suite (main and nightly).
         type: boolean
         required: false
         default: false

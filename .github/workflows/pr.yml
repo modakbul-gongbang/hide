@@ -53,6 +53,7 @@ jobs:
       web-e2e-platform: ${{ steps.plan.outputs.web-e2e-platform }}
       desktop-e2e: ${{ steps.plan.outputs.desktop-e2e }}
       os-contract: ${{ steps.plan.outputs.os-contract }}
+      package: ${{ steps.plan.outputs.package }}
       quarantine-fixes: ${{ steps.plan.outputs.quarantine-fixes }}
     steps:
       - uses: actions/checkout@v7
@@ -231,10 +232,10 @@ jobs:
   # beside it (what the desktop app does first), the agent hook entries run
   # through PowerShell as Claude Code and Codex run them, hided drives the
   # pinned Herdr for Windows (a pane opened through `/ws` and a typed line
-  # echoed back), the web and desktop unit suites and the same browser
-  # `@platform` smoke used on macOS. Before that browser step was added,
-  # warm-cache jobs took 4-8 minutes on 2026-10-03; the new job's runtime
-  # must be measured, and a cold run compiles the workspace from nothing.
+  # echoed back), and the web and desktop unit suites.
+  # The browser platform smoke is the independent windows-e2e lane;
+  # provisioning it cannot delay this compile/unit contract.
+  # Queue and execution costs are measured separately.
   windows-check:
     needs: plan
     if: needs.plan.outputs.windows-check == 'true'
@@ -329,14 +330,14 @@ jobs:
       ledger-lane: windows-e2e
       runner: windows-latest
       herdr-platform: windows-x86_64
-      shards: 1
-      grep: "@platform"
+      shards: ${{ github.event_name == 'pull_request' && 1 || 4 }}
+      grep: ${{ github.event_name == 'pull_request' && '@platform' || '' }}
+      full-suite: ${{ github.event_name != 'pull_request' }}
 
 
-  # The web shell is the same code on every operating system, so the whole
-  # suite runs once, on Linux, where runners are plentiful. What differs by
-  # system is the daemon and Herdr under it, and the `@platform` tests cover
-  # that on macOS.
+  # PRs select the Linux suite and macOS/Windows platform consumers.
+  # Merged main runs every web scenario, including registered scenarios,
+  # on all three systems; its platform consumers use four full shards.
   web-e2e:
     needs: plan
     if: needs.plan.outputs.web-e2e == 'true'
@@ -369,8 +370,9 @@ jobs:
       ledger-lane: web-e2e-platform
       runner: macos-15
       herdr-platform: macos-aarch64
-      shards: 1
-      grep: "@platform"
+      shards: ${{ github.event_name == 'pull_request' && 1 || 4 }}
+      grep: ${{ github.event_name == 'pull_request' && '@platform' || '' }}
+      full-suite: ${{ github.event_name != 'pull_request' }}
 
   # The OS contract's Linux and Windows legs (see os-contract.yml). Its macOS
   # leg runs in `desktop-e2e` below, on the runner that job already holds.
@@ -379,6 +381,15 @@ jobs:
     if: needs.plan.outputs.os-contract == 'true'
     name: os contract
     uses: ./.github/workflows/os-contract.yml
+
+  package:
+    name: Package and isolated install contracts
+    needs: plan
+    if: needs.plan.outputs.package == 'true'
+    uses: ./.github/workflows/package.yml
+    with:
+      version: 0.0.0-ci.${{ github.run_number }}
+      include-macos: true
 
   desktop-e2e:
     needs: plan
@@ -484,7 +495,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [plan, docs, rust, checks, web-checks, desktop-checks, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e, os-contract, windows-check, quarantine-fixes]
+    needs: [plan, docs, rust, checks, web-checks, desktop-checks, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e, os-contract, package, windows-check, quarantine-fixes]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -30,6 +30,9 @@
         "desktop/src/main/browser.ts",
         "web/src/areaCycle.ts",
         "web/src/keyboard.ts",
+        "web/src/keys.ts",
+        "web/src/viewFocus.ts",
+        "web/src/shortcuts.ts",
         "desktop/e2e/browser.spec.ts"
       ],
       "alternative": [

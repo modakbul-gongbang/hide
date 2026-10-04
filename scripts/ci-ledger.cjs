@@ -26,7 +26,8 @@ function identity(env = process.env) {
     runAttempt: Number(env.GITHUB_RUN_ATTEMPT || 1), job: env.GITHUB_JOB || 'local',
     toolchain: { node: process.version, rust: env.CI_RUST_VERSION || 'unknown', image: env.ImageVersion || 'unknown' },
     runtime: JSON.parse(fs.readFileSync(require('node:path').join(__dirname,'../contracts/herdr-bundle.json'),'utf8')).version,
-    shard: env.CI_SHARD || '1/1', lane: env.CI_LANE || env.GITHUB_JOB || 'local', jobLabel: env.CI_JOB_LABEL || env.GITHUB_JOB || 'local' };
+    shard: env.CI_SHARD || '1/1', lane: env.CI_LANE || env.GITHUB_JOB || 'local', jobLabel: env.CI_JOB_LABEL || env.GITHUB_JOB || 'local',
+    invocation: env.CI_INVOCATION || 'tests' };
 }
 function quarantine(row, registry) {
   const entry = registry.entries.find(e => e.title === row.test && e.file === row.suite && e.oses.includes(row.os));
@@ -35,19 +36,38 @@ function quarantine(row, registry) {
   const known = row.category === entry.signature.category && entry.signature.any_of.some(pattern => pattern.every(token => row.assertion.includes(token)));
   return {id:entry.id, classification:known?'known-signature':'outside-registered-signature'};
 }
-function merge(rows) {
+function attemptKey(row) {
+  // GITHUB_JOB is the reusable workflow's local id, not an Actions execution.
+  // The producer supplies its exact job label; collection resolves that label
+  // to the actual job id. Lane/invocation retain independent consumer runs.
+  return JSON.stringify([row.sha,row.os,row.run,row.runAttempt,row.jobId ?? row.jobLabel ?? row.job,
+    row.lane,row.invocation || 'tests',row.shard,row.project,row.suite,row.test,row.repeat,row.retry]);
+}
+function merge(rows, {allowConflicts=false}={}) {
   if (rows.length > MAX_ROWS) throw new Error('ledger row cap exceeded');
   const seen = new Map();
   for (const row of rows) {
-    const key = JSON.stringify([row.sha,row.os,row.run,row.runAttempt,row.job,row.shard,row.project,row.suite,row.test,row.repeat,row.retry]);
-    const previous = seen.get(key);
-    if (previous && JSON.stringify(previous) !== JSON.stringify(row)) throw new Error('conflicting duplicate attempt');
-    seen.set(key, row);
+    const key = attemptKey(row);
+    const observations = seen.get(key) || [];
+    if (!observations.some(previous=>JSON.stringify(previous)===JSON.stringify(row))) observations.push(row);
+    seen.set(key, observations);
   }
-  const records = [...seen.values()];
-  const first = records.filter(row => row.retry === 0 && row.runAttempt === 1 && !['skipped','interrupted','unknown'].includes(row.status));
-  return { version: 1, records, summary: { firstAttempts: first.length, firstPass: first.filter(row => row.status === 'passed').length,
-    excluded: records.length - first.length, unknown: records.filter(row => row.status === 'unknown').length } };
+  const records = [...seen.values()].flat();
+  const conflicts = [...seen].filter(([,observations])=>observations.length>1).map(([identity,observations])=>({identity,observations}));
+  const unambiguous = [...seen.values()].filter(observations=>observations.length===1).flat();
+  const first = unambiguous.filter(row => row.retry === 0 && row.runAttempt === 1 && !['skipped','interrupted','unknown'].includes(row.status));
+  const result = { version: 1, records, summary: { firstAttempts: first.length, firstPass: first.filter(row => row.status === 'passed').length,
+    excluded: records.length - first.length, unknown: unambiguous.filter(row => row.status === 'unknown').length + conflicts.length } };
+  if (conflicts.length) {
+    result.conflicts=conflicts;
+    result.collection='partial-or-unknown';
+    if (!allowConflicts) {
+      const error=new Error('conflicting duplicate attempt');
+      error.partial=result;
+      throw error;
+    }
+  }
+  return result;
 }
 function write(filename, value) {
   const bytes = JSON.stringify(value, null, 2) + '\n';
@@ -86,7 +106,7 @@ async function jobs(github, context) {
   }
   throw new Error('Actions job inventory overflow');
 }
-module.exports = { signature, category, identity, merge, write, jobs, quarantine, MAX_ROWS, MAX_BYTES };
+module.exports = { signature, category, identity, attemptKey, merge, write, jobs, quarantine, MAX_ROWS, MAX_BYTES };
 function rust(text, metadata) {
   if (Buffer.byteLength(text) > MAX_BYTES) throw new Error('Rust log cap exceeded');
   // Cargo's artifacts give package/target identity even for identically named

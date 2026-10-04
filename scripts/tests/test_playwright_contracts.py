@@ -16,6 +16,28 @@ spec.loader.exec_module(quarantine)
 
 
 class PlaywrightContracts(unittest.TestCase):
+    def test_full_web_inventory_includes_registered_macos_scenarios(self):
+        entries = json.loads((ROOT / 'contracts/ci-quarantine.json').read_text())['entries']
+        selected = quarantine.selection(entries, 'web', 'macOS', 'exclude')
+        with tempfile.TemporaryDirectory(dir=ROOT / 'agents/runs/ci-test-refactor') as directory:
+            listing = Path(directory) / 'excluded.txt'
+            listing.write_text(quarantine.test_list(selected))
+            def inventory(*args):
+                result = subprocess.run(['bash', 'scripts/verify-web.sh', 'web', 'e2e', '--list', '--reporter=json', *args],
+                    cwd=ROOT, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                # The wrapper emits pnpm's command before Playwright's JSON.
+                report = json.loads(result.stdout[result.stdout.index('{'):])
+                def identities(suites):
+                    return {(s['file'].replace('\\', '/'), s['title']) for suite in suites for s in suite.get('specs', [])} | set().union(*(identities(suite.get('suites', [])) for suite in suites))
+                return identities(report['suites'])
+            full = inventory()
+            pr = inventory('--test-list-invert', str(listing))
+            for entry in selected:
+                exact = (Path(entry['file']).name, entry['title'])
+                self.assertTrue(exact in full, f'missing full-suite identity: {exact}')
+                self.assertTrue(exact not in pr, f'registered identity leaked into ordinary PR: {exact}')
+
     def test_killed_reporter_preserves_completed_and_in_flight_results(self):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
         artifacts.mkdir(parents=True, exist_ok=True)
@@ -200,6 +222,18 @@ test.describe('separate caller phases', () => {{
             self.assertEqual(separate['assertion'], 'Error: Expected: separate primary assertion')
             self.assertIn('secondary teardown exit unconfirmed', json.dumps(separate['causes']))
             self.assertIn('secondary teardown exit unconfirmed', json.dumps(actual_results[4]['errors']))
+
+            setup = root / 'global-setup.ts'
+            setup.write_text("export default () => { throw new Error('global setup native preparation denied'); };\n")
+            global_config = root / 'global.config.ts'
+            global_config.write_text(config.read_text().replace('testDir:', f'globalSetup:{json.dumps(str(setup))},testDir:'))
+            global_result, _ = run('global-error', '--config', str(global_config), 'registered.spec.ts', expected=1)
+            failures = [row for row in global_result['records'] if row['phase'] == 'global-error']
+            self.assertEqual(len(failures), 1)
+            self.assertIn('global setup native preparation denied', failures[0]['assertion'])
+            self.assertIn('global-setup.ts', failures[0]['failure']['stack'])
+            self.assertEqual(global_result['summary']['firstPass'], 0)
+            self.assertEqual(global_result['collection'], 'partial-or-unknown')
 
 
 if __name__ == '__main__':

@@ -84,6 +84,34 @@ test('a later pass cannot replace the first failure, and repeated upload dedupli
   assert.throws(()=>merge([row,{...row,status:'passed'}]),/conflicting/);
   assert.equal(merge([row,{...row,runAttempt:2,status:'passed'}]).summary.firstPass,0);
 });
+test('reusable consumers preserve distinct execution identity and contradictory observations fail with both rows', async () => {
+  const fs=require('node:fs'),path=require('node:path'),collect=require('../ci-history.cjs');
+  const bytes={...row,sha:'tested',run:'7',os:'macOS',job:'desktop',lane:'desktop-controls',jobLabel:'Desktop boundary controls (bytes)',status:'passed'};
+  const native={...bytes,jobLabel:'Desktop boundary controls (native)',durationMs:2};
+  assert.equal(merge([bytes,bytes,native]).records.length,2);
+  const contrary={...bytes,status:'failed',assertion:'Expected: native contract'};
+  assert.throws(()=>merge([bytes,contrary]),error=>{
+    assert.equal(error.partial.records.length,2);
+    assert.equal(error.partial.summary.firstPass,0);
+    assert.equal(error.partial.summary.unknown,1);
+    assert.equal(error.partial.conflicts.length,1);
+    return /conflicting/.test(error.message);
+  });
+  const root=path.resolve('agents/runs/ci-test-refactor/history-controls'); fs.mkdirSync(root,{recursive:true});
+  const directory=fs.mkdtempSync(path.join(root,'conflict-')); const input=path.join(directory,'input'); fs.mkdirSync(input);
+  fs.writeFileSync(path.join(input,'actual.json'),JSON.stringify({version:1,records:[bytes,bytes,native,contrary]}));
+  const github={rest:{actions:{listJobsForWorkflowRunAttempt:async()=>({data:{jobs:[bytes,native].map((r,i)=>({id:70+i,name:r.jobLabel,conclusion:'failure',steps:[]}))}}),
+    listArtifactsForRepo:async()=>({data:{artifacts:[]}})}}};
+  await assert.rejects(collect({github,context:{repo:{},runId:7,sha:'tested'},core:{summary:{addRaw:()=>({write:async()=>{}})}},directory:input,outputDirectory:directory}),/conflicting/);
+  const attempt=JSON.parse(fs.readFileSync(path.join(directory,'ci-history.json')));
+  assert.equal(attempt.collection.status,'partial-or-unknown');
+  assert.equal(attempt.records.filter(r=>r.jobId===70).length,2);
+  assert.equal(attempt.records.filter(r=>r.jobId===71).length,1);
+  assert.equal(attempt.records.filter(r=>r.status==='failed').length,1);
+  assert.equal(attempt.conflicts.length,1);
+  assert.equal(attempt.summary.firstPass,1);
+  assert.equal(attempt.summary.unknown,2);
+});
 test('provisioning, assertion, unknown and cancellation retain distinct outcomes', () => {
   assert.equal(category('electron.launch: timeout'),'provisioning');
   assert.equal(category('expect(locator).toHaveCount Expected: 3 Received: 2'),'assertion');
@@ -104,7 +132,7 @@ test('registered identity and signature cannot hide a different failure', () => 
 });
 test('a successful aggregate still fails when a shard has no observed suite', () => {
   const {confirmInventory,suiteSummaries}=require('../ci-history.cjs');
-  const plan={lanes:{'web-e2e':true}};
+  const plan={lanes:{'web-e2e':true},inventory:{'web-e2e':['1/6','2/6','3/6','4/6','5/6','6/6']}};
   const rows=Array.from({length:6},(_,i)=>({...row,lane:'web-e2e',shard:`${i+1}/6`,suite:'real-suite'}));
   confirmInventory(plan,rows);
   assert.throws(()=>confirmInventory(plan,rows.slice(0,5)),/missing observed/);
@@ -150,7 +178,7 @@ test('collection API and inventory errors persist a failing partial attempt for 
       listArtifactsForRepo:async()=>{throw Error('history permission denied');}
     }}};
     const options={github,context:{repo:{},runId:7,sha:'tested'},core:{summary:{addRaw:()=>({write:async()=>{}})}},directory:input,outputDirectory:output,
-      plan:kind==='inventory'?{version:1,lanes:{'web-e2e':true}}:undefined};
+      plan:kind==='inventory'?{version:2,lanes:{'web-e2e':true},inventory:{'web-e2e':['1/6','2/6','3/6','4/6','5/6','6/6']}}:undefined};
     await assert.rejects(collect(options),kind==='inventory'?/missing observed/:/permission denied/);
     const attempt=JSON.parse(fs.readFileSync(path.join(output,'ci-history.json')));
     const window=JSON.parse(fs.readFileSync(path.join(output,'ci-history-window.json')));

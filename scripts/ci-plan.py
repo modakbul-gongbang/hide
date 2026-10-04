@@ -11,8 +11,8 @@ import fnmatch
 import importlib.util
 import signal
 
-VERSION = 1
-LANES = ("docs", "rust", "checks", "web-checks", "desktop-checks", "windows-check", "windows-e2e", "web-e2e", "web-e2e-platform", "desktop-e2e", "os-contract", "quarantine-fixes")
+VERSION = 2
+LANES = ("docs", "rust", "checks", "web-checks", "desktop-checks", "windows-check", "windows-e2e", "web-e2e", "web-e2e-platform", "desktop-e2e", "os-contract", "package", "quarantine-fixes")
 INTEGRATION = {"herdr-core", "hided", "hide-host", "hide-herdr-client"}
 
 
@@ -98,12 +98,14 @@ def select(root, entries, source, full_reason=None):
                 lanes(("web-checks", "web-e2e"), f"web package: {filename}")
                 # These are shared input/state boundaries consumed by the
                 # desktop shell and all three native transports.
-                shared = filename.startswith(("web/src/terminal", "web/src/store", "web/src/keyboard", "web/src/shortcuts", "web/src/host", "web/src/snapshot", "web/src/wire")) or path.name in ("Terminal.tsx", "TerminalArea.tsx", "AreaTree.tsx", "AgentTabGroups.tsx", "BrowserDisplay.tsx")
+                shared = filename.startswith(("web/src/terminal", "web/src/store", "web/src/keyboard", "web/src/shortcuts", "web/src/host", "web/src/snapshot", "web/src/wire")) or path.name in ("areaCycle.ts", "keys.ts", "viewFocus.ts", "Terminal.tsx", "TerminalArea.tsx", "AreaTree.tsx", "AgentTabGroups.tsx", "BrowserDisplay.tsx")
                 platform_spec = filename.endswith(".spec.ts") and "@platform" in (root / filename).read_text()
                 if shared or platform_spec:
                     lanes(("desktop-checks", "desktop-e2e", "web-e2e-platform", "windows-e2e", "windows-check"), f"shared input/OS consumer: {filename}")
             else:
                 lanes(("desktop-checks", "desktop-e2e"), f"desktop package: {filename}")
+                if filename.startswith(("desktop/scripts/", "desktop/resources/")):
+                    lanes(("package",), f"packaged host consumer: {filename}")
                 # Main-process code owns native paths/process/input and the
                 # host-daemon bridge; keep Windows compile and browser proof.
                 if filename.startswith("desktop/src/main/"):
@@ -121,7 +123,11 @@ def select(root, entries, source, full_reason=None):
     if source.get("event") and source["event"] != "pull_request":
         # Full main integration already includes every scenario once.
         reasons["quarantine-fixes"] = []
-    return {"version": VERSION, "source": source, "lanes": {k: bool(v) for k, v in reasons.items()}, "reasons": reasons, "excluded": {k: "outside changed package and its declared consumers" for k, v in reasons.items() if not v}, "full": full, "rust_packages": sorted(packages), "quarantine_required": sorted(required), "quarantine_observe": sorted(observed)}
+    platform_shards = 4 if source.get("event") and source["event"] != "pull_request" else 1
+    inventory = {"rust": ["1/1"], "web-e2e": [f"{number}/6" for number in range(1, 7)],
+                 "web-e2e-platform": [f"{number}/{platform_shards}" for number in range(1, platform_shards + 1)],
+                 "windows-e2e": [f"{number}/{platform_shards}" for number in range(1, platform_shards + 1)], "desktop-e2e": ["1/1"]}
+    return {"version": VERSION, "source": source, "lanes": {k: bool(v) for k, v in reasons.items()}, "inventory": inventory, "reasons": reasons, "excluded": {k: "outside changed package and its declared consumers" for k, v in reasons.items() if not v}, "full": full, "rust_packages": sorted(packages), "quarantine_required": sorted(required), "quarantine_observe": sorted(observed)}
 
 
 def aggregate(plan, results):

@@ -18,6 +18,7 @@ function readRecords(directory, records=[]) {
         if (value.version!==1 || !Array.isArray(value.records) || !value.records.length) throw new Error(`unknown/empty ledger: ${item.name}`);
         records.push(...value.records);
         if (records.length>ledger.MAX_ROWS) throw new Error('ledger row cap exceeded');
+        if (value.collection==='partial-or-unknown' || value.collection?.status==='partial-or-unknown') throw new Error(`partial producer ledger: ${item.name}`);
       }
     }
   }
@@ -26,7 +27,8 @@ function readRecords(directory, records=[]) {
 }
 
 function confirmInventory(plan, rows) {
-  const expected={rust:['1/1'], 'web-e2e':['1/6','2/6','3/6','4/6','5/6','6/6'], 'web-e2e-platform':['1/1'], 'windows-e2e':['1/1'], 'desktop-e2e':['1/1']};
+  const expected=plan.inventory;
+  if (!expected || typeof expected!=='object') throw Error('missing planned suite inventory');
   for (const [lane, shards] of Object.entries(expected)) {
     if (!plan.lanes[lane]) continue;
     for (const shard of shards) {
@@ -36,13 +38,13 @@ function confirmInventory(plan, rows) {
   }
 }
 
-function suiteSummaries(rows) {
+function suiteSummaries(rows, options) {
   const suites=new Map();
   for (const row of rows) {
     const key=`${row.os} / ${row.suite}`;
     const list=suites.get(key)||[]; list.push(row); suites.set(key,list);
   }
-  return Object.fromEntries([...suites].map(([key,records])=>[key,ledger.merge(records).summary]));
+  return Object.fromEntries([...suites].map(([key,records])=>[key,ledger.merge(records,options).summary]));
 }
 
 function summary(suites, inventory) {
@@ -63,7 +65,7 @@ async function collectInto(options, state) {
   const {github,context,directory,planPath}=options;
   state.stage='plan';
   const plan=planPath?JSON.parse(fs.readFileSync(planPath,'utf8')):options.plan;
-  if (plan && (plan.version!==1 || !plan.lanes)) throw new Error('unknown CI plan');
+  if (plan && (plan.version!==2 || !plan.lanes)) throw new Error('unknown CI plan');
   state.stage='input';
   const current=readRecords(directory,state.records);
   state.stage='jobs-api';
@@ -90,6 +92,7 @@ async function collectInto(options, state) {
     if (batch.length<100 || batch.every(a=>Date.parse(a.created_at)<cutoff)) break;
     if (page===10) throw new Error('history artifact inventory overflow');
   }
+  state.stage='suite-summary';
   const suites=suiteSummaries(current);
   state.suites=suites;
   // A ci-history artifact contains only its run, never recursively merged history.
@@ -111,7 +114,7 @@ async function collectInto(options, state) {
     const parsed=JSON.parse(value);
     if (parsed.version!==1 || !Array.isArray(parsed.records)) throw new Error('unknown history artifact schema');
     if (parsed.records.length>ledger.MAX_ROWS) throw new Error('history attempt row cap exceeded');
-    for (const [suite, value] of Object.entries(suiteSummaries(parsed.records))) {
+    for (const [suite, value] of Object.entries(suiteSummaries(parsed.records,{allowConflicts:parsed.collection?.status==='partial-or-unknown'}))) {
       const total=suites[suite]||{firstAttempts:0,firstPass:0,excluded:0,unknown:0};
       for (const field of Object.keys(total)) total[field]+=value[field];
       suites[suite]=total;
@@ -133,11 +136,11 @@ module.exports=async function collect(options) {
   }
   function save() {
     const collection={status:state.errors.length?'partial-or-unknown':'complete',errors:state.errors};
-    const current=ledger.merge(state.records);
+    const current=ledger.merge(state.records,{allowConflicts:Boolean(failure)});
     // The current attempt is saved even when a remote API or required
     // inventory fails. Its unknown result remains visible to later windows.
     ledger.write(path.join(outputDirectory,'ci-history.json'),{...current,jobs:state.jobs,source:{sha:context.sha,run:String(context.runId),attempt:Number(process.env.GITHUB_RUN_ATTEMPT||1)},collection,windowDays:HISTORY_DAYS});
-    const currentSuites=suiteSummaries(state.records);
+    const currentSuites=suiteSummaries(state.records,{allowConflicts:Boolean(failure)});
     const suites={...state.suites};
     // Prior summaries already contain current test rows; add only collection
     // errors after a partial history read, otherwise summarize all retained rows.
