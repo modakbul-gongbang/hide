@@ -802,20 +802,32 @@ impl Mobile {
         let mut stopping = self.stopping.subscribe();
         let mut since_background = Duration::ZERO;
         let mut since_delivery = BACKGROUND_INTERVAL;
+        let mut pending_delivery: Option<tokio::task::JoinHandle<()>> = None;
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(OBSERVE_INTERVAL) => {}
-                _ = stopping.changed() => return,
+                _ = stopping.changed() => break,
+            }
+            if pending_delivery
+                .as_ref()
+                .is_some_and(tokio::task::JoinHandle::is_finished)
+                && let Some(pending) = pending_delivery.take()
+            {
+                let _ = pending.await;
             }
             since_background += OBSERVE_INTERVAL;
             since_delivery += OBSERVE_INTERVAL;
             if since_delivery >= BACKGROUND_INTERVAL {
                 since_delivery = Duration::ZERO;
-                let mobile = Arc::clone(&self);
-                // Reuse this resident owner: one awaited pass, eight claims at
-                // most, and the existing bounded ledger writer. No timer/task
-                // is added to pane input or the one-second agent refresh.
-                let _ = tokio::task::spawn_blocking(move || mobile.deliver_delivery()).await;
+                if pending_delivery.is_none() {
+                    let mobile = Arc::clone(&self);
+                    // This resident owner retains one pass until it finishes.
+                    // A slow Push never delays the existing settings checks.
+                    // No timer/queue joins pane input or agent refresh.
+                    pending_delivery = Some(tokio::task::spawn_blocking(move || {
+                        mobile.deliver_delivery()
+                    }));
+                }
             }
             let (observed, owed) = {
                 let inner = self.lock();
@@ -829,6 +841,11 @@ impl Mobile {
                 since_background = Duration::ZERO;
                 self.reconcile().await;
             }
+        }
+        if let Some(pending) = pending_delivery {
+            // The stop flag prevents another channel call, and this owner
+            // joins the one already started before releasing its resources.
+            let _ = pending.await;
         }
     }
 
