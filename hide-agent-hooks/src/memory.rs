@@ -1063,7 +1063,9 @@ mod tests {
             serde_json::to_vec(&serde_json::json!({"cwd":project_root,"prompt":"keep going"}))
                 .unwrap();
         let started = Instant::now();
-        let result = project_memory_output(
+        // Lock refusal determines the outcome; invocation expiry is tested separately.
+        // Keep the real elapsed-time bound below to catch waiting for the writer.
+        let result = project_memory_output_with_frozen_time(
             AgentRuntime::Codex,
             HookEvent::UserPromptSubmit,
             &payload,
