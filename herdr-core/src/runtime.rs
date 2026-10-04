@@ -365,6 +365,11 @@ const CLOSE_STAGE_TIMEOUT_MS: u64 = 5_000;
 /// waiting stops.
 const VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS: u64 = 3_000;
 
+/// How many replaced, unanswered tab notifications Hide remembers at once.
+/// Each lives at most `VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS`; a burst of tab
+/// switches faster than that evicts the oldest and reports it.
+const SUPERSEDED_TAB_FOCUS_LIMIT: usize = 16;
+
 /// A view-state change Hide has already made and told Herdr about.
 ///
 /// Hide owns the visible tab and the focused pane, so the value in the
@@ -1223,6 +1228,12 @@ pub struct Runtime {
     /// confirmed. Latest request wins; a second switch replaces the first
     /// rather than queueing behind it.
     pending_tab_focus: Option<PendingViewFocus>,
+    /// Tab notifications a later switch replaced before Herdr answered them,
+    /// oldest first. Herdr still applies each one, and the pinned stream has
+    /// no cursor to say which request an event answers, so a session naming
+    /// one of these tabs is Hide's own late answer, not an operator focusing
+    /// that tab outside Hide.
+    superseded_tab_focus: Vec<PendingViewFocus>,
     /// The tab Herdr had focused at the last session update. A follow needs
     /// Herdr's focus to have moved; a focused tab that merely differs from
     /// Hide's, as it does after a notification Herdr never answered, is not
@@ -1721,6 +1732,7 @@ impl Runtime {
             pending_read_record_reconciliation: HashSet::new(),
             visible_tab_ids: BTreeMap::new(),
             pending_tab_focus: None,
+            superseded_tab_focus: Vec::new(),
             herdr_focused_tab_seen: None,
             herdr_tab_focus_seen: None,
             pending_pane_focus: None,

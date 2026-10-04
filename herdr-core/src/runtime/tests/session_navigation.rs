@@ -1001,6 +1001,55 @@ fn view_authority_a_stale_herdr_tab_does_not_undo_an_unconfirmed_switch() {
     assert!(runtime.pending_tab_focus.is_none());
 }
 
+/// Issue #303. The operator drops a tab into a new area (t2) and clicks back
+/// into the first area (t1) before Herdr has answered the drop. Herdr's
+/// session still names t1 from before the drop, which looks like the answer
+/// to the click, and only then does Herdr's answer to the drop arrive. That
+/// late t2 is Hide's own superseded request, not an outside focus: following
+/// it moved the keyboard to t2's pane in the middle of typing into t1.
+#[test]
+fn view_authority_a_late_answer_to_a_superseded_switch_is_not_followed() {
+    let checkout_path = "/private/tmp/hide-view-authority-superseded-tab";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+
+    for answer in ["w-order:t1", "w-order:t2", "w-order:t1"] {
+        runtime.ingest_session(Ok(tab_order_payload(checkout_path, &tabs, &tabs, answer)));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t1"),
+            "Herdr naming {answer} does not move the tab the operator chose"
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t1:p"),
+            "the keyboard stays in the operator's pane while Herdr names {answer}"
+        );
+    }
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+
+    // Once Herdr has answered both, a move it makes on its own is followed.
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t2",
+    )));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t2")
+    );
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+}
+
 /// AC1, R1. With nothing in flight, a Herdr session naming another tab is
 /// somebody focusing that tab outside Hide. Hide follows it and says so.
 #[test]
