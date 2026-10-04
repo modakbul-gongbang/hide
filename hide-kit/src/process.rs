@@ -3,7 +3,7 @@
 //! the caller stops waiting (engineering rule 14; practice `process.md`).
 //!
 //! Every child the kit starts (`herdr plugin uninstall`, `node --version`,
-//! `hcoord daemon ensure`) is short-lived, so none outlives the call that
+//! `herdr plugin uninstall`) is short-lived, so none outlives the call that
 //! started it, and a raised stop flag ends it at once, so the daemon that owns
 //! the kit can quit without waiting out a deadline. The waiting, the output cap
 //! and the tree's end are `hide_platform::process::run_to_end`'s; this module

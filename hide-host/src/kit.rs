@@ -136,6 +136,10 @@ pub fn run(
     };
     match action {
         KitAction::Apply | KitAction::Reinstall { .. } => {
+            let preflight_target = target();
+            if let Err(reason) = hide_kit::retirement_preflight(&preflight_target) {
+                return to_value(hide_kit::retirement_blocked(&preflight_target, reason));
+            }
             point_current(&placement.root, &placement.version)?;
             remove_other_builds(&placement.root, &placement.version);
             let scope = match action {

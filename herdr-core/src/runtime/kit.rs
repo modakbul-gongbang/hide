@@ -719,13 +719,16 @@ mod tests {
             KitJob::Apply(Scope::automatic())
         );
         assert_eq!(
-            reinstall(&[ComponentId::Hcoord]).merge(KitJob::Apply(Scope::automatic())),
-            reinstall(&[ComponentId::Hcoord])
+            reinstall(&[ComponentId::CoordinationRetirement])
+                .merge(KitJob::Apply(Scope::automatic())),
+            reinstall(&[ComponentId::CoordinationRetirement])
         );
         assert_eq!(
-            reinstall(&[ComponentId::Hcoord])
-                .merge(reinstall(&[ComponentId::Cli, ComponentId::Hcoord])),
-            reinstall(&[ComponentId::Cli, ComponentId::Hcoord])
+            reinstall(&[ComponentId::CoordinationRetirement]).merge(reinstall(&[
+                ComponentId::Cli,
+                ComponentId::CoordinationRetirement
+            ])),
+            reinstall(&[ComponentId::Cli, ComponentId::CoordinationRetirement])
         );
         assert_eq!(KitJob::Status.merge(KitJob::Status), KitJob::Status);
         // The operator's later switch wins for the part it names.

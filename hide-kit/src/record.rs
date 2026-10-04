@@ -67,8 +67,7 @@ impl Record {
     }
 }
 
-/// The folders under HOME that hold the kit's state and its copy of
-/// hcoord.
+/// The folders under HOME that hold the kit's state and retirement receipt.
 pub(crate) const STATE_PARTS: [&str; 2] = [crate::layout::HIDE_HOME, "kit"];
 
 pub fn kit_state_dir(home: &Path) -> PathBuf {

@@ -29,9 +29,8 @@ use crate::workspace::LOCAL_DEVICE_ID;
 
 const PUMP_TICK: Duration = Duration::from_millis(250);
 
-/// The longest a device's kit call may take: a plugin uninstall and
-/// hcoord's daemon check are each bounded at twenty seconds on the device,
-/// and Node is probed with five, so this outlasts a whole install.
+/// The longest a device's kit call may take: bounded daemon retirement,
+/// login-agent removal, plugin uninstall and the remaining kit components.
 const DEVICE_KIT_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub(crate) struct KitPump {

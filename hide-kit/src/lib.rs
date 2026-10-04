@@ -20,14 +20,13 @@
 
 mod cli;
 mod codex_per_pane;
+mod coordination_retirement;
 mod device;
-mod hcoord;
 mod hooks;
 mod labels;
 pub mod layout;
 pub mod legacy;
 mod local;
-mod payload;
 pub mod process;
 mod record;
 
@@ -39,8 +38,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub use coordination_retirement::preflight as retirement_preflight;
 pub use device::{CURRENT, device_target};
-pub use hcoord::{HcoordRuntime, NODE_MINIMUM, find_node};
 pub use labels::{HCOORD_PLUGIN_ID, LABELS_PLUGIN_ID, Retirement, labels_home, plugin_state_dir};
 pub use legacy::is_build_name;
 pub use local::{STANDALONE_REASON, bundled_kit_dir, local_target};
@@ -56,8 +55,8 @@ pub enum ComponentId {
     ClaudeCodeHook,
     /// Hide's entries in `~/.codex/hooks.json`.
     CodexHook,
-    /// The `hcoord` command and its daemon.
-    Hcoord,
+    /// One-release retirement of the old coordination installation.
+    CoordinationRetirement,
     /// Codex's shared daemon turned off, so each Codex runs in its own pane
     /// (PRD overview-request-view D-21).
     CodexPerPane,
@@ -68,7 +67,7 @@ impl ComponentId {
         Self::Cli,
         Self::ClaudeCodeHook,
         Self::CodexHook,
-        Self::Hcoord,
+        Self::CoordinationRetirement,
         Self::CodexPerPane,
     ];
 
@@ -78,7 +77,7 @@ impl ComponentId {
             Self::Cli => "cli",
             Self::ClaudeCodeHook => "claude_code_hook",
             Self::CodexHook => "codex_hook",
-            Self::Hcoord => "hcoord",
+            Self::CoordinationRetirement => "coordination_retirement",
             Self::CodexPerPane => "codex_per_pane",
         }
     }
@@ -89,7 +88,7 @@ impl ComponentId {
             Self::Cli => "hide command",
             Self::ClaudeCodeHook => "Claude Code hook",
             Self::CodexHook => "Codex hook",
-            Self::Hcoord => "hcoord",
+            Self::CoordinationRetirement => "Coordination retirement",
             Self::CodexPerPane => "Codex를 pane마다 실행",
         }
     }
@@ -202,9 +201,8 @@ impl KitReport {
 pub struct KitTarget {
     /// The account's home, whose configuration files the hooks go into.
     pub home: PathBuf,
-    /// The folder holding this build's parts: `hide`, `hide-agent-hooks`
-    /// and `hcoord/dist/`. It is the path the hooks,
-    /// the `hide` link and the hcoord shim name, so it must outlive the
+    /// The folder holding `hide` and `hide-agent-hooks`. The hooks and
+    /// command link name this folder, so it must outlive the
     /// process: the desktop package's resources on this machine, the helper
     /// root's `current` link on a device (D-11).
     pub kit_dir: PathBuf,
@@ -221,13 +219,14 @@ pub struct KitTarget {
     /// The `herdr` CLI, needed only to take out a GitHub install of the
     /// retired labels plugin; `None` when the machine has none Hide can find.
     pub herdr_bin: Option<PathBuf>,
-    /// What runs hcoord on this machine, or why nothing can.
-    pub hcoord: Result<HcoordRuntime, String>,
     /// The machine's `codex`, `None` when Hide finds none.
     pub codex: Option<PathBuf>,
-    /// hcoord's relocated home (HCOORD_HOME), `None` for its default
-    /// `~/.hide/hcoord`. A relocated hcoord is never moved (D-08).
-    pub hcoord_home: Option<PathBuf>,
+    /// Legacy relocation, inspected only by the one-release retirement.
+    pub legacy_coordination_home: Option<PathBuf>,
+    /// Account login-agent boundary. Fixtures inject a stand-in command.
+    pub user_agents: hide_platform::user_agents::UserAgents,
+    /// Registered checkout roots included in retirement preflight.
+    pub retirement_projects: Vec<PathBuf>,
     /// Folders of older layouts the pass takes off this machine (D-13).
     pub legacy: Vec<legacy::Legacy>,
     /// Raised by the kit's owner when it is going away: a child the kit is
@@ -315,7 +314,7 @@ fn observe(id: ComponentId, target: &KitTarget) -> Observed {
             hooks::observe(target, hide_agent_hooks::AgentRuntime::ClaudeCode)
         }
         ComponentId::CodexHook => hooks::observe(target, hide_agent_hooks::AgentRuntime::Codex),
-        ComponentId::Hcoord => hcoord::observe(target),
+        ComponentId::CoordinationRetirement => coordination_retirement::observe(target),
         ComponentId::CodexPerPane => codex_per_pane::observe(target),
     }
 }
@@ -327,7 +326,7 @@ fn install(id: ComponentId, target: &KitTarget) -> Result<(), String> {
             hooks::install(target, hide_agent_hooks::AgentRuntime::ClaudeCode)
         }
         ComponentId::CodexHook => hooks::install(target, hide_agent_hooks::AgentRuntime::Codex),
-        ComponentId::Hcoord => hcoord::install(target),
+        ComponentId::CoordinationRetirement => coordination_retirement::install(target).map(|_| ()),
         ComponentId::CodexPerPane => codex_per_pane::install(target),
     }
 }
@@ -340,7 +339,9 @@ fn turn_off(id: ComponentId, target: &KitTarget) -> Result<(), String> {
         ComponentId::Cli
         | ComponentId::ClaudeCodeHook
         | ComponentId::CodexHook
-        | ComponentId::Hcoord => Err(format!("{} cannot be turned off", id.label())),
+        | ComponentId::CoordinationRetirement => {
+            Err(format!("{} cannot be turned off", id.label()))
+        }
     }
 }
 
@@ -355,7 +356,9 @@ fn location(id: ComponentId, target: &KitTarget) -> String {
             .config_path(&target.home)
             .display()
             .to_string(),
-        ComponentId::Hcoord => hcoord::shim_path(target).display().to_string(),
+        ComponentId::CoordinationRetirement => coordination_retirement::location(target)
+            .display()
+            .to_string(),
         ComponentId::CodexPerPane => codex_per_pane::location(target).display().to_string(),
     }
 }
@@ -376,9 +379,6 @@ fn report(
         .flatten();
     let (state, reason) = match (failure, observed) {
         (Some(failure), _) => (ComponentState::Failed, Some(failure)),
-        (None, Observed::Current) if id == ComponentId::Hcoord => {
-            (ComponentState::Installed, hcoord::note(target))
-        }
         (None, Observed::Current) if id == ComponentId::CodexPerPane => {
             (ComponentState::Installed, codex_per_pane::note(target))
         }
@@ -415,7 +415,7 @@ const LOCK_DEADLINE: Duration = Duration::from_secs(90);
 /// One kit at a time changes an account's files. Two registrations of one
 /// machine connect together at launch, and a Mac that is also another Mac's
 /// device runs its own kit beside the device's; their copies, hook files and
-/// hcoord daemon would otherwise interleave. The lock is an advisory lock on a
+/// retirement would otherwise interleave. The lock is an advisory lock on a
 /// file in the kit's private folder, so it ends with the process that held it.
 pub(crate) struct AccountLock {
     _lock: hide_platform::fs::lock::Lock,
@@ -456,10 +456,12 @@ pub fn status(target: &KitTarget) -> KitReport {
 /// Installs what `scope` allows and answers what every part is afterwards.
 ///
 /// Every part is tried whatever happened to the ones before it. A second
-/// apply of the same build changes nothing (engineering rule 11), except that
-/// hcoord's daemon is asked to converge each time, as the desktop host did on
-/// every launch.
+/// apply of the same build changes nothing (engineering rule 11).
+/// Retirement preflight precedes even creation of the account lock.
 pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
+    if let Err(reason) = retirement_preflight(target) {
+        return retirement_blocked(target, reason);
+    }
     let _lock = match lock_account(target) {
         Ok(lock) => lock,
         Err(reason) => return KitReport::unavailable(&reason),
@@ -469,19 +471,16 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         Ok(record) => (record, None),
         Err(reason) => (record::Record::default(), Some(reason)),
     };
-    // Before any part, so a watcher left running stops analyzing as soon as
-    // possible; on this Mac the core has already imported its labels.
+    let (mut legacy_retirement, retirement_failure) = match coordination_retirement::install(target)
+    {
+        Ok(report) => (report, None),
+        Err(reason) => (Retirement::default(), Some(reason)),
+    };
     let labels_retirement = labels::retire(target);
     let mut changed = false;
-    // Asked once per machine: nothing on disk says whether the standalone
-    // plugin was ever linked, and a pass Herdr did not answer asks again.
-    let mut legacy_retirement = Retirement::default();
-    if !record.has_retired(HCOORD_PLUGIN_ID) {
-        legacy_retirement = labels::retire_hcoord_plugin(target);
-        if legacy_retirement.failures.is_empty() {
-            record.mark_retired(HCOORD_PLUGIN_ID);
-            changed = true;
-        }
+    if retirement_failure.is_none() && !record.has_retired(HCOORD_PLUGIN_ID) {
+        record.mark_retired(HCOORD_PLUGIN_ID);
+        changed = true;
     }
     let mut components = Vec::with_capacity(ComponentId::ALL.len());
     for id in ComponentId::ALL {
@@ -491,6 +490,20 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
             break;
         }
         let observed = observe(id, target);
+        if id == ComponentId::CoordinationRetirement {
+            if matches!(observed, Observed::Current) && !record.contains(id) {
+                record.insert(id);
+                changed = true;
+            }
+            components.push(report(
+                id,
+                target,
+                observed,
+                record.contains(id),
+                retirement_failure.clone(),
+            ));
+            continue;
+        }
         let recorded = record.contains(id);
         let turning_off = scope.turn_off.contains(&id);
         let install_now = !turning_off
@@ -525,9 +538,6 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         } else {
             observed
         };
-        if failure.is_none() && matches!(after, Observed::Current) && id == ComponentId::Hcoord {
-            failure = hcoord::ensure(target).err();
-        }
         // A part the operator turned off is recorded too, so the next pass
         // reads it as theirs rather than as never installed.
         let applied = matches!(after, Observed::Current)
@@ -567,6 +577,20 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     }
 }
 
+/// The unchanged machine report with the reason retirement cannot proceed.
+pub fn retirement_blocked(target: &KitTarget, reason: String) -> KitReport {
+    let mut report = status(target);
+    if let Some(component) = report
+        .components
+        .iter_mut()
+        .find(|component| component.id == ComponentId::CoordinationRetirement)
+    {
+        component.state = ComponentState::Failed;
+        component.reason = Some(reason);
+    }
+    report
+}
+
 /// What removing the kit did to one part.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
@@ -590,8 +614,7 @@ pub struct RemoveReport {
 
 /// Takes Hide's parts off a machine that is being removed from Hide: the
 /// hook entries carrying Hide's marker, the `hide` link when it is Hide's,
-/// and the record. hcoord stays, because other
-/// tools on that machine drive agents through it (D-16).
+/// and the record. Preserved retirement folders stay in place.
 pub fn remove(target: &KitTarget) -> RemoveReport {
     let _lock = match lock_account(target) {
         Ok(lock) => lock,
@@ -615,8 +638,8 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
                 hooks::remove(target, hide_agent_hooks::AgentRuntime::ClaudeCode)
             }
             ComponentId::CodexHook => hooks::remove(target, hide_agent_hooks::AgentRuntime::Codex),
-            ComponentId::Hcoord => RemoveOutcome::Kept {
-                reason: "hcoord stays, because other tools on this machine use it".to_owned(),
+            ComponentId::CoordinationRetirement => RemoveOutcome::Kept {
+                reason: "retirement preserves the old ledger folder".to_owned(),
             },
             // Hide cannot tell its own switch from the operator's choice, and
             // a Codex left per pane harms nothing.
