@@ -19,6 +19,8 @@ use hide_platform::process::{
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
+// Test-only handoff: arm recovery before the short-lived parent exits.
+const PIPE_OWNER: &str = "HIDE_PLATFORM_PROC_PIPE_OWNER";
 
 /// Windows hands a freed pid to the next process that starts, so a test that
 /// asks about a pid it has finished with must not run beside one that starts
@@ -82,6 +84,34 @@ fn child_role() {
             }
             println!("READY {}", child.id());
             let _ = child.wait();
+        }
+        // An ordinary supervisor leaves both inherited pipes in its child.
+        "exit_with_pipes" | "exit_with_escaped_pipes" => {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            #[cfg(unix)]
+            if role == "exit_with_escaped_pipes" {
+                std::os::unix::process::CommandExt::process_group(&mut command, 0);
+            }
+            #[allow(clippy::zombie_processes)]
+            let helper = command
+                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .env(ROLE, "sleep")
+                .spawn()
+                .unwrap();
+            let path = PathBuf::from(std::env::var_os(PIPE_OWNER).unwrap());
+            std::fs::write(
+                &path,
+                format!("{} {}", helper.id(), start_time(helper.id()).unwrap()),
+            )
+            .unwrap();
+            let started = Instant::now();
+            while !path.with_extension("armed").exists() {
+                assert!(started.elapsed() < Duration::from_secs(5));
+                thread::sleep(Duration::from_millis(10));
+            }
+            println!("SPOKE out");
+            eprintln!("SPOKE err");
+            std::process::exit(0);
         }
         // Says something on both outputs and exits with a code of its own.
         "speak" => {
@@ -538,4 +568,118 @@ fn a_raised_stop_ends_the_child_before_its_deadline() {
     raiser.join().unwrap();
     assert!(matches!(failure, RunFailure::Stopped), "{failure:?}");
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+/// Recovery is armed before the parent exits, so a hanging public call fails
+/// within a bound and only its known helper is ended.
+fn inherited_pipe_run(
+    role: &str,
+    deadline: Duration,
+) -> (
+    Result<hide_platform::process::Finished, RunFailure>,
+    bool,
+    Duration,
+    bool,
+) {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("owner");
+    let mut command = role_command(role);
+    command.env(PIPE_OWNER, &path);
+    let (answered, result) = mpsc::channel();
+    let started = Instant::now();
+    let runner = thread::spawn(move || {
+        let answer = run_to_end(
+            &mut command,
+            deadline,
+            &std::sync::atomic::AtomicBool::new(false),
+        );
+        answered.send(answer).unwrap();
+    });
+    let reported = loop {
+        match std::fs::read_to_string(&path) {
+            Ok(value) => {
+                let fields: Vec<_> = value.split_whitespace().collect();
+                if fields.len() == 2 {
+                    break (
+                        fields[0].parse::<u32>().unwrap(),
+                        fields[1].parse::<u64>().unwrap(),
+                    );
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => panic!("cannot read helper ownership: {error}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "helper not reported"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    struct Recovery(u32, u64);
+    impl Drop for Recovery {
+        fn drop(&mut self) {
+            if start_time(self.0).is_ok_and(|birth| birth == self.1) {
+                terminate(self.0).expect("end only the reported helper");
+                assert!(
+                    gone_within(self.0, Duration::from_secs(5)),
+                    "helper recovery failed"
+                );
+            }
+        }
+    }
+    let recovery = Recovery(reported.0, reported.1);
+    assert_eq!(start_time(reported.0).unwrap(), reported.1);
+    std::fs::write(path.with_extension("armed"), b"ready").unwrap();
+    let answer = result.recv_timeout(Duration::from_secs(5));
+    let within_deadline = answer.is_ok();
+    let elapsed = started.elapsed();
+    let absent_on_return = !is_alive(reported.0);
+    drop(recovery);
+    let answer = answer.unwrap_or_else(|_| {
+        result
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the recovered pipe reader must finish")
+    });
+    runner.join().unwrap();
+    (answer, within_deadline, elapsed, absent_on_return)
+}
+
+/// An exit-0 parent must not wait for its sleeping descendant's pipes.
+#[test]
+fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
+    let _serial = serial();
+    let (answer, within_deadline, elapsed, absent_on_return) =
+        inherited_pipe_run("exit_with_pipes", Duration::from_secs(5));
+    assert!(
+        within_deadline,
+        "run_to_end hung after exit 0 while inherited pipes remained open; elapsed {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "the original deadline was exceeded"
+    );
+    let finished = answer.unwrap();
+    assert_eq!(finished.code, Some(0));
+    assert!(finished.stdout.contains("SPOKE out"));
+    assert!(finished.stderr.contains("SPOKE err"));
+    assert!(
+        absent_on_return,
+        "the inherited-pipe helper outlived the call"
+    );
+}
+
+/// Unix cannot attribute a helper that escaped and was reparented before its
+/// walk, but that helper's inherited pipes must not make a deadline unlimited.
+#[cfg(unix)]
+#[test]
+fn an_escaped_pipe_holder_cannot_extend_the_run_deadline() {
+    let _serial = serial();
+    let (answer, completed, elapsed, _) =
+        inherited_pipe_run("exit_with_escaped_pipes", Duration::from_millis(500));
+    assert!(
+        completed,
+        "pipe draining blocked even after the run deadline"
+    );
+    assert!(matches!(answer, Err(RunFailure::TimedOut)), "{answer:?}");
+    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
 }
