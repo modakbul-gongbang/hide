@@ -6,16 +6,19 @@
 //! below that reads the variable plays the role; without the variable it does
 //! nothing.
 
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use hide_platform::process::GuardedSpawnError;
 use hide_platform::process::{
-    OwnedChild, cwd_of, descends_from, detach, is_alive, kill_tree, measure_tree, parent_of,
-    start_time, terminate, terminate_group,
+    CaptureFailureKind, MAX_CAPTURE_BYTES, OWNER_LAUNCH_KEYS, OwnedChild, OwnerWatch, cwd_of,
+    descends_from, detach, is_alive, kill_tree, measure_tree, parent_of, start_time, terminate,
+    terminate_group,
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
@@ -36,7 +39,39 @@ fn child_role() {
     let Ok(role) = std::env::var(ROLE) else {
         return;
     };
+    let _watch = OwnerWatch::from_launch().unwrap();
     match role.as_str() {
+        "echo" => {
+            let mut input = Vec::new();
+            std::io::stdin().read_to_end(&mut input).unwrap();
+            std::io::stdout().write_all(&input).unwrap();
+            std::io::stderr().write_all(b"ERROR-MARKER").unwrap();
+        }
+        "overflow" => {
+            std::io::stdout()
+                .write_all(&vec![b'x'; MAX_CAPTURE_BYTES + 1])
+                .unwrap();
+        }
+        "held_pipe" => {
+            // The parent exits while its own group keeps the stdout pipe
+            // open. Capture must time out without joining a blocked reader.
+            #[allow(clippy::zombie_processes)]
+            let helper = role_command("sleep")
+                .stdout(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            println!("READY {}", helper.id());
+        }
+        "guarded_owner" => {
+            let mut child = OwnedChild::spawn_guarded(
+                role_command("tree_own_group"),
+                Instant::now() + Duration::from_millis(1850),
+            )
+            .unwrap();
+            let helper = ready_number(child.take_stdout().unwrap());
+            println!("OWNED {} {helper}", child.id());
+            thread::sleep(Duration::from_secs(60));
+        }
         "sleep" => {
             println!("READY {}", std::process::id());
             thread::sleep(Duration::from_secs(60));
@@ -46,6 +81,7 @@ fn child_role() {
             let mut grandchild = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
+                .env_remove(OWNER_LAUNCH_KEYS[0])
                 .stdout(Stdio::null())
                 .spawn()
                 .unwrap();
@@ -59,6 +95,7 @@ fn child_role() {
             command
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
+                .env_remove(OWNER_LAUNCH_KEYS[0])
                 .stdout(Stdio::null());
             #[cfg(unix)]
             std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -71,6 +108,7 @@ fn child_role() {
             let mut child = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "tree")
+                .env_remove(OWNER_LAUNCH_KEYS[0])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -90,6 +128,7 @@ fn child_role() {
             command
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
+                .env_remove(OWNER_LAUNCH_KEYS[0])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
@@ -109,6 +148,7 @@ fn role_command(role: &str) -> Command {
     command
         .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
         .env(ROLE, role)
+        .env_remove(OWNER_LAUNCH_KEYS[0])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     command
@@ -139,6 +179,170 @@ fn gone_within(pid: u32, bound: Duration) -> bool {
         thread::sleep(Duration::from_millis(20));
     }
     true
+}
+
+#[test]
+fn guarded_capture_keeps_stdin_payload_and_both_output_streams() {
+    let _serial = serial();
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(1850);
+    let mut command = role_command("echo");
+    command.stdin(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
+    child
+        .take_stdin()
+        .unwrap()
+        .write_all(b"PAYLOAD-MARKER")
+        .unwrap();
+    let output = child.capture_until(deadline, 64 * 1024).unwrap();
+    assert!(output.status.success());
+    assert!(
+        output
+            .stdout
+            .windows(14)
+            .any(|part| part == b"PAYLOAD-MARKER")
+    );
+    assert_eq!(output.stderr, b"ERROR-MARKER");
+    assert!(started.elapsed() < Duration::from_millis(1850));
+    assert!(child.try_wait().unwrap().is_some(), "success confirms exit");
+}
+
+#[test]
+fn capture_reports_the_callers_byte_limit_without_losing_cleanup() {
+    let _serial = serial();
+    for limit in [64 * 1024, MAX_CAPTURE_BYTES] {
+        let deadline = Instant::now() + Duration::from_millis(1850);
+        let mut child = OwnedChild::spawn_guarded(role_command("overflow"), deadline).unwrap();
+        let error = child.capture_until(deadline, limit).unwrap_err();
+        assert!(
+            matches!(error.kind, CaptureFailureKind::OutputLimit { limit: found } if found == limit)
+        );
+        assert_eq!(error.stdout.len() + error.stderr.len(), limit);
+        assert!(error.cleanup.is_none(), "{error}");
+        assert!(child.try_wait().unwrap().is_some());
+    }
+}
+
+#[test]
+fn inherited_output_cannot_extend_capture_deadline() {
+    let _serial = serial();
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(300);
+    let mut child = OwnedChild::spawn(&mut role_command("held_pipe")).unwrap();
+    let error = child.capture_until(deadline, 64 * 1024).unwrap_err();
+    assert!(matches!(error.kind, CaptureFailureKind::Deadline));
+    assert!(
+        started.elapsed() < Duration::from_millis(1850),
+        "a pipe reader extended the deadline"
+    );
+    let output = String::from_utf8(error.stdout).unwrap();
+    let helper = output
+        .lines()
+        .find_map(|line| {
+            line.split_once("READY ")
+                .and_then(|(_, number)| number.trim().parse::<u32>().ok())
+        })
+        .expect("helper announced its pid");
+    if error.cleanup.is_some() {
+        // A timeout never asserts an exit it has not observed. The same
+        // retained owner can reap after the prompt capture outcome.
+        child.kill_tree().unwrap();
+        child.wait().unwrap();
+    }
+    assert!(
+        gone_within(helper, Duration::from_secs(5)),
+        "owned inherited-pipe helper survived"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_uncooperative_guarded_launch_returns_its_cleanup_state() {
+    let _serial = serial();
+    let started = Instant::now();
+    // An uncooperative Unix executable never acknowledges the watch.
+    let mut command = Command::new("/bin/sleep");
+    command
+        .arg("60")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let error =
+        OwnedChild::spawn_guarded(command, started + Duration::from_millis(200)).unwrap_err();
+    assert!(started.elapsed() < Duration::from_millis(1850));
+    let mut failure = error
+        .into_inner()
+        .unwrap()
+        .downcast::<GuardedSpawnError>()
+        .unwrap();
+    if let Some(mut child) = failure.child.take() {
+        assert!(
+            failure.cleanup.is_some(),
+            "unconfirmed cleanup retains ownership"
+        );
+        child.kill_tree().unwrap();
+        child.wait().unwrap();
+    } else {
+        assert!(failure.cleanup.is_none());
+    }
+}
+
+#[test]
+fn abrupt_owner_death_ends_guarded_child_and_helper_outside_its_group() {
+    let _serial = serial();
+    // A raw owner is intentional: killing only its own Child handle skips
+    // all destructors and cannot make its child's cleanup pass by proxy.
+    let mut owner = role_command("guarded_owner").spawn().unwrap();
+    let stdout = owner.stdout.take().unwrap();
+    let (send, recv) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some((_, pair)) = line.split_once("OWNED ") {
+                let pids: Vec<u32> = pair
+                    .split_whitespace()
+                    .map(|pid| pid.parse().unwrap())
+                    .collect();
+                send.send((pids[0], pids[1])).unwrap();
+                return;
+            }
+        }
+    });
+    let ready = recv.recv_timeout(Duration::from_secs(5));
+    owner.kill().unwrap();
+    owner.wait().unwrap();
+    reader.join().unwrap();
+    let (child, helper) = ready.expect("guarded owner did not announce its child");
+    assert!(
+        gone_within(child, Duration::from_secs(5)),
+        "guarded child survived owner SIGKILL"
+    );
+    assert!(
+        gone_within(helper, Duration::from_secs(5)),
+        "helper outside child group survived"
+    );
+}
+
+#[test]
+fn repeated_guarded_work_releases_children_and_capture_resources() {
+    let _serial = serial();
+    let baseline = measure_tree(std::process::id()).unwrap().descendants;
+    for _ in 0..10 {
+        let deadline = Instant::now() + Duration::from_millis(1850);
+        let mut command = role_command("echo");
+        command.stdin(Stdio::null());
+        let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
+        assert!(
+            child
+                .capture_until(deadline, 64 * 1024)
+                .unwrap()
+                .status
+                .success()
+        );
+        drop(child);
+        assert_eq!(
+            measure_tree(std::process::id()).unwrap().descendants,
+            baseline
+        );
+    }
 }
 
 /// A detached child holds none of its parent's standard handles: whoever reads

@@ -5,9 +5,9 @@
 //! so ending it ends everything it started, and dropping the owner ends it
 //! too (engineering rule 14; practice `process.md`). On Windows the job also
 //! ends the child when the owner dies without running a destructor
-//! (`KILL_ON_JOB_CLOSE`); no Unix system offers that for a whole group, so a
-//! Unix owner that must outlive its own crash watches over a channel the child
-//! holds (the codex app-server's stdin is one).
+//! (`KILL_ON_JOB_CLOSE`). [`OwnedChild::spawn_guarded`] adds an acknowledged
+//! independent Unix owner channel for cooperative children that retain an
+//! [`OwnerWatch`], without using or replacing stdin.
 //!
 //! What a caller can rely on, on all three systems (`tests/process.rs` checks
 //! each line):
@@ -31,13 +31,178 @@
 //! a Windows process has no working directory a caller can read, no process
 //! group to signal, and no polite termination.
 
-use std::io;
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
+use std::time::{Duration, Instant};
 
 /// How deep the walk down a process tree goes. A real tree is a handful deep;
 /// the bound only stops a pid-reuse cycle in a corrupt reading from looping.
 const MAX_DEPTH: usize = 32;
+
+/// Hard allocation ceiling for one capture, across stdout and stderr.
+/// A caller's smaller limit remains binding (hooks use 64 KiB).
+pub const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+
+/// Runtime-injected launch metadata, never an operator setting: optional for
+/// standalone commands, required by a guarded Unix launch. The value names
+/// one inherited stream-socket descriptor >= 3; malformed values fail before
+/// work starts. Missing metadata means no Unix watch (the parent then cannot
+/// acknowledge a guarded launch). Windows uses its job, with no such key.
+pub const OWNER_LAUNCH_KEYS: &[&str] = &["HIDE_PROCESS_OWNER_FD"];
+
+/// A cooperative Unix child's independent watch of its owning process.
+/// Hold it until all work and output are finished. It uses its own channel,
+/// not stdin; after startup the descriptor is close-on-exec. Only one watch
+/// may live in a process. Windows's job supplies the lifetime boundary.
+pub struct OwnerWatch {
+    #[cfg(unix)]
+    channel: std::os::unix::net::UnixStream,
+    #[cfg(unix)]
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(unix)]
+    reader: Option<std::thread::JoinHandle<()>>,
+}
+
+impl OwnerWatch {
+    pub fn from_launch() -> io::Result<Option<Self>> {
+        match std::env::var_os(OWNER_LAUNCH_KEYS[0]) {
+            None => Ok(None),
+            Some(value) => sys::watch_owner(value).map(Some),
+        }
+    }
+
+    /// Cancels and joins the watch on a normal child exit. The explicit form
+    /// reports failures; drop also cancels so an early return keeps no reader.
+    pub fn close(mut self) -> io::Result<()> {
+        self.close_inner()
+    }
+
+    fn close_inner(&mut self) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::sync::atomic::Ordering;
+            let Some(reader) = self.reader.take() else {
+                return Ok(());
+            };
+            self.cancelled.store(true, Ordering::SeqCst);
+            let shutdown = self.channel.shutdown(std::net::Shutdown::Both);
+            // The watch's bounded read timeout also wakes it if shutdown
+            // fails. Join and return the admission slot on every path.
+            let joined = reader
+                .join()
+                .map_err(|_| io::Error::other("owner watch panicked"));
+            sys::watch_closed();
+            shutdown?;
+            joined?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for OwnerWatch {
+    fn drop(&mut self) {
+        if let Err(error) = self.close_inner() {
+            eprintln!("process.owner_watch_cleanup_failed error={error}");
+        }
+    }
+}
+
+/// Complete output from a child whose exit and owned cleanup were observed.
+#[derive(Debug)]
+pub struct CapturedOutput {
+    pub status: ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub enum CaptureFailureKind {
+    Deadline,
+    OutputLimit { limit: usize },
+    Io(io::Error),
+    Cleanup,
+}
+
+/// A failed capture retains bounded partial bytes and the primary failure.
+/// A separate cleanup error means the caller still owns an unconfirmed
+/// child and must explicitly finish or report its cleanup; it is not gone.
+#[derive(Debug)]
+pub struct CaptureError {
+    pub kind: CaptureFailureKind,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub cleanup: Option<io::Error>,
+}
+
+impl std::fmt::Display for CaptureError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.kind {
+            CaptureFailureKind::Deadline => {
+                formatter.write_str("child capture deadline reached")?
+            }
+            CaptureFailureKind::OutputLimit { limit } => {
+                write!(formatter, "child output exceeds {limit} bytes")?
+            }
+            CaptureFailureKind::Io(source) => write!(formatter, "child capture failed: {source}")?,
+            CaptureFailureKind::Cleanup => formatter.write_str("child cleanup unconfirmed")?,
+        }
+        if let Some(source) = &self.cleanup {
+            write!(formatter, "; cleanup: {source}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for CaptureError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            CaptureFailureKind::Io(source) => Some(source),
+            _ => self.cleanup.as_ref().map(|error| error as _),
+        }
+    }
+}
+
+/// A failed guarded launch keeps its primary error. If cleanup could not be
+/// confirmed within the launch deadline, its child handle stays in the error
+/// for explicit recovery rather than being declared gone. Obtain this value
+/// by downcasting the returned `io::Error`'s inner error.
+#[derive(Debug)]
+pub struct GuardedSpawnError {
+    pub source: io::Error,
+    pub cleanup: Option<io::Error>,
+    pub child: Option<OwnedChild>,
+}
+
+impl std::fmt::Display for GuardedSpawnError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "guarded child launch failed: {}", self.source)?;
+        if let Some(source) = &self.cleanup {
+            write!(formatter, "; cleanup unconfirmed: {source}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for GuardedSpawnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+fn failed_guarded_spawn(source: io::Error, mut child: OwnedChild, deadline: Instant) -> io::Error {
+    let cleanup = child.finish_capture(deadline).err();
+    let kind = source.kind();
+    let child = cleanup.as_ref().map(|_| child);
+    io::Error::new(
+        kind,
+        GuardedSpawnError {
+            source,
+            cleanup,
+            child,
+        },
+    )
+}
 
 /// A child this process started and answers for: it leads its own group, and
 /// dropping the owner ends the child and everything it started that is still
@@ -51,6 +216,8 @@ pub struct OwnedChild {
     reaped: bool,
     /// Ownership was given up: the drop ends nothing.
     released: bool,
+    /// Deadline capture never adds an unbounded wait in its destructor.
+    bounded_reap: bool,
 }
 
 impl OwnedChild {
@@ -59,14 +226,119 @@ impl OwnedChild {
     /// The caller sets the program, arguments, environment and stdio first; on
     /// Windows the creation flags are replaced by the ones the job needs.
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
-        let (child, tie) = sys::spawn(command)?;
+        let (child, tie) = sys::spawn(command, None)?;
         Ok(Self {
             child,
             tie,
             ended: false,
             reaped: false,
             released: false,
+            bounded_reap: false,
         })
+    }
+
+    /// Starts a cooperative child with an abrupt-owner-death boundary.
+    /// Unix children call [`OwnerWatch::from_launch`] before other work and
+    /// hold the watch for their full lifetime; the constructor waits for its
+    /// acknowledgement using the same absolute deadline. Windows uses the
+    /// existing non-inherited kill-on-close job. Runtime stdin is untouched.
+    /// An uncooperative Unix program cannot return guarded success.
+    pub fn spawn_guarded(mut command: Command, deadline: Instant) -> io::Result<Self> {
+        let (child, tie) = sys::spawn(&mut command, Some(deadline))?;
+        Ok(Self {
+            child,
+            tie,
+            ended: false,
+            reaped: false,
+            released: false,
+            bounded_reap: true,
+        })
+    }
+
+    /// Captures piped stdout/stderr until both close and the child exits.
+    /// Reads are nonblocking on Unix and peek only available pipe bytes on
+    /// Windows; there are no reader threads or joins. An inherited pipe
+    /// cannot extend the absolute deadline, and neither pipe can exceed the
+    /// caller's combined limit or [`MAX_CAPTURE_BYTES`]. Stdin stays owned
+    /// by the caller and is neither read nor replaced here.
+    ///
+    /// Every error attempts owned tree cleanup within that same deadline.
+    /// When cleanup cannot be confirmed, the returned error reports it and
+    /// this handle remains the caller's responsibility for explicit reaping.
+    /// Kernel calls themselves have no universal cancellation guarantee.
+    pub fn capture_until(
+        &mut self,
+        deadline: Instant,
+        output_limit: usize,
+    ) -> Result<CapturedOutput, CaptureError> {
+        self.bounded_reap = true;
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let captured = (|| {
+            if output_limit == 0 || output_limit > MAX_CAPTURE_BYTES {
+                return Err(CaptureFailureKind::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "capture limit must be between 1 byte and 1 MiB",
+                )));
+            }
+            let mut out = self.child.stdout.take();
+            let mut err = self.child.stderr.take();
+            if let Some(pipe) = &out {
+                sys::nonblocking(pipe).map_err(CaptureFailureKind::Io)?;
+            }
+            if let Some(pipe) = &err {
+                sys::nonblocking(pipe).map_err(CaptureFailureKind::Io)?;
+            }
+            loop {
+                if Instant::now() >= deadline {
+                    return Err(CaptureFailureKind::Deadline);
+                }
+                let out_progress = read_capture(&mut out, &mut stdout, stderr.len(), output_limit)?;
+                let err_progress = read_capture(&mut err, &mut stderr, stdout.len(), output_limit)?;
+                if out.is_none()
+                    && err.is_none()
+                    && sys::has_exited(&self.child).map_err(CaptureFailureKind::Io)?
+                {
+                    break;
+                }
+                if !out_progress && !err_progress {
+                    pause_until(deadline);
+                }
+            }
+            Ok(())
+        })();
+        let cleanup = self.finish_capture(deadline);
+        match (captured, cleanup) {
+            (Ok(()), Ok(status)) => Ok(CapturedOutput {
+                status,
+                stdout,
+                stderr,
+            }),
+            (captured, cleanup) => Err(CaptureError {
+                kind: captured.err().unwrap_or(CaptureFailureKind::Cleanup),
+                stdout,
+                stderr,
+                cleanup: cleanup.err(),
+            }),
+        }
+    }
+
+    fn finish_capture(&mut self, deadline: Instant) -> io::Result<ExitStatus> {
+        // Keep the leader unreaped until the tree is walked: a waited-for
+        // leader no longer proves ancestry or owns its pid.
+        self.kill_tree()?;
+        loop {
+            if let Some(status) = self.try_wait()? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "owned child exit unconfirmed",
+                ));
+            }
+            pause_until(deadline);
+        }
     }
 
     pub fn id(&self) -> u32 {
@@ -102,6 +374,9 @@ impl OwnedChild {
     /// stays running (a daemon a finished command left on purpose). The child
     /// should have been waited for first, so none is left unreaped.
     pub fn release(mut self) {
+        // A cooperative watch requires its owner until the guarded child
+        // finishes. Releasing a still-live guarded child closes that channel,
+        // and it exits; detached daemons must use the legacy spawn path.
         sys::release(&self.tie);
         self.released = true;
     }
@@ -141,11 +416,50 @@ impl Drop for OwnedChild {
         if self.ended || self.reaped {
             // The kill is a signal away from the child exiting; reaping here
             // leaves no zombie and costs microseconds.
-            let _ = self.child.wait();
+            if self.bounded_reap {
+                let _ = self.child.try_wait();
+            } else {
+                let _ = self.child.wait();
+            }
         } else {
             // The kill failed: waiting would block on a live child.
             let _ = self.child.try_wait();
         }
+    }
+}
+
+fn pause_until(deadline: Instant) {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if !remaining.is_zero() {
+        std::thread::sleep(remaining.min(Duration::from_millis(2)));
+    }
+}
+
+fn read_capture<P: Read + sys::PipeHandle>(
+    pipe: &mut Option<P>,
+    bytes: &mut Vec<u8>,
+    other_len: usize,
+    limit: usize,
+) -> Result<bool, CaptureFailureKind> {
+    let Some(reader) = pipe else { return Ok(false) };
+    let remaining = limit - bytes.len() - other_len;
+    let mut buffer = [0u8; 4096];
+    let capacity = buffer.len().min(remaining + 1);
+    match sys::read_available(reader, &mut buffer[..capacity]) {
+        Ok(Some(0)) => {
+            *pipe = None;
+            Ok(true)
+        }
+        Ok(Some(count)) => {
+            bytes.extend_from_slice(&buffer[..count.min(remaining)]);
+            if count > remaining {
+                Err(CaptureFailureKind::OutputLimit { limit })
+            } else {
+                Ok(true)
+            }
+        }
+        Ok(None) => Ok(false),
+        Err(source) => Err(CaptureFailureKind::Io(source)),
     }
 }
 
@@ -303,16 +617,246 @@ fn descendants(root: u32) -> io::Result<Vec<u32>> {
 
 #[cfg(unix)]
 mod sys {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::net::UnixStream;
     use std::os::unix::process::CommandExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
 
     /// A group needs no handle: its id is the leader's pid.
-    pub(super) struct Tie;
+    pub(super) struct Tie {
+        // The child's dedicated reader gets EOF if the owner crashes.
+        _owner: Option<UnixStream>,
+    }
 
-    pub(super) fn spawn(command: &mut Command) -> io::Result<(Child, Tie)> {
+    pub(super) fn spawn(
+        command: &mut Command,
+        deadline: Option<Instant>,
+    ) -> io::Result<(Child, Tie)> {
+        command.env_remove(OWNER_LAUNCH_KEYS[0]);
         command.process_group(0);
-        command.spawn().map(|child| (child, Tie))
+        let Some(deadline) = deadline else {
+            return command.spawn().map(|child| (child, Tie { _owner: None }));
+        };
+        deadline
+            .checked_duration_since(Instant::now())
+            .filter(|value| !value.is_zero())
+            .ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))?;
+        let (reader, mut owner) = UnixStream::pair()?;
+        let descriptor = reader.as_raw_fd();
+        command.env(OWNER_LAUNCH_KEYS[0], descriptor.to_string());
+        // SAFETY: only async-signal-safe fcntl runs after fork. The descriptor
+        // lives through spawn; guarded spawn consumes Command, so the closure
+        // cannot later act on a recycled descriptor in a reused Command.
+        unsafe {
+            command.pre_exec(move || {
+                let flags = libc::fcntl(descriptor, libc::F_GETFD);
+                if flags < 0
+                    || libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn()?;
+        drop(reader);
+        let mut ready = [0u8; 1];
+        let acknowledged = (|| {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|value| !value.is_zero())
+                .ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))?;
+            owner.set_read_timeout(Some(remaining))?;
+            owner.read_exact(&mut ready)
+        })()
+        .and_then(|()| {
+            if ready == [b'R'] && Instant::now() < deadline {
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "owner watch not acknowledged",
+                ))
+            }
+        });
+        if let Err(source) = acknowledged {
+            let tie = Tie {
+                _owner: Some(owner),
+            };
+            let owned = OwnedChild {
+                child,
+                tie,
+                ended: false,
+                reaped: false,
+                released: false,
+                bounded_reap: true,
+            };
+            return Err(failed_guarded_spawn(source, owned, deadline));
+        }
+        Ok((
+            child,
+            Tie {
+                _owner: Some(owner),
+            },
+        ))
+    }
+
+    static WATCH_OPEN: AtomicBool = AtomicBool::new(false);
+
+    pub(super) fn watch_closed() {
+        WATCH_OPEN.store(false, Ordering::SeqCst);
+    }
+
+    pub(super) fn watch_owner(value: std::ffi::OsString) -> io::Result<OwnerWatch> {
+        use std::io::Write;
+        let descriptor = value
+            .to_str()
+            .and_then(|v| v.parse::<libc::c_int>().ok())
+            .filter(|v| *v >= 3)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid owner launch descriptor",
+                )
+            })?;
+        let mut kind = 0;
+        let mut length = std::mem::size_of_val(&kind) as libc::socklen_t;
+        // SAFETY: output pointers refer to live locals, and descriptor is
+        // checked as a stream socket before ownership is taken.
+        if unsafe {
+            libc::getsockopt(
+                descriptor,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                (&mut kind as *mut libc::c_int).cast(),
+                &mut length,
+            )
+        } < 0
+            || kind != libc::SOCK_STREAM
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "owner descriptor is not a stream socket",
+            ));
+        }
+        // SAFETY: fcntl acts only on the validated inherited descriptor.
+        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+        if flags < 0
+            || unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if WATCH_OPEN
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "one owner watch is already active",
+            ));
+        }
+        // SAFETY: guarded launch reserved this descriptor for this receiver.
+        // This is the only owner; downstream execs do not inherit it.
+        let channel = unsafe { UnixStream::from_raw_fd(descriptor) };
+        let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+        let mut stream = match channel.try_clone() {
+            Ok(stream) => stream,
+            Err(source) => {
+                watch_closed();
+                return Err(source);
+            }
+        };
+        // A failed socket shutdown must not make normal watch teardown wait
+        // forever. This timeout is cancellation polling, not a launch delay.
+        if let Err(source) = stream.set_read_timeout(Some(Duration::from_millis(25))) {
+            watch_closed();
+            return Err(source);
+        }
+        let stopping = cancelled.clone();
+        let reader = match std::thread::Builder::new().name("owned-child-watch".into()).spawn(move || {
+            let mut byte = [0u8; 1];
+            loop {
+                let result = stream.read(&mut byte);
+                if stopping.load(Ordering::SeqCst) { return; }
+                if matches!(&result, Err(source) if matches!(source.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)) {
+                    continue;
+                }
+                // EOF or a channel failure cannot leave a live unguarded child.
+                if let Err(source) = super::kill_tree(std::process::id()) {
+                    eprintln!("process.owner_lost_cleanup_failed error={source}");
+                }
+                // SAFETY: this process's owner is gone; a failed kill must
+                // still stop this cooperative child rather than continue.
+                unsafe { libc::_exit(125) };
+            }
+        }) {
+            Ok(reader) => reader,
+            Err(source) => { watch_closed(); return Err(source); }
+        };
+        let mut watch = OwnerWatch {
+            channel,
+            cancelled,
+            reader: Some(reader),
+        };
+        watch.channel.write_all(b"R")?;
+        Ok(watch)
+    }
+
+    pub(super) use std::os::fd::AsRawFd as PipeHandle;
+
+    pub(super) fn nonblocking(pipe: &impl PipeHandle) -> io::Result<()> {
+        let descriptor = pipe.as_raw_fd();
+        // SAFETY: the descriptor is borrowed and open for the operation.
+        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+        if flags < 0
+            || unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn read_available<P: Read + PipeHandle>(
+        pipe: &mut P,
+        bytes: &mut [u8],
+    ) -> io::Result<Option<usize>> {
+        match pipe.read(bytes) {
+            Err(source)
+                if matches!(
+                    source.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(None)
+            }
+            read => read.map(Some),
+        }
+    }
+
+    pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
+        // SAFETY: a zeroed siginfo_t is valid writable storage. WNOWAIT keeps
+        // the leader unreaped so cleanup can still identify its descendants.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        #[cfg(target_os = "macos")]
+        return Ok(info.si_pid != 0);
+        #[cfg(target_os = "linux")]
+        // SAFETY: waitid initialized siginfo_t above.
+        return Ok(unsafe { info.si_pid() } != 0);
     }
 
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
@@ -378,10 +922,6 @@ mod sys {
         // Read the tree before the first kill: ending a parent hands its
         // children to init, out of the walk's reach.
         let members = descendants(pid).unwrap_or_default();
-        // The group `pid` leads, if it leads one, reaches members the walk
-        // cannot: those whose parent has already exited. A group that is not
-        // there is not an error.
-        let _ = signal(-(pid as libc::pid_t), libc::SIGKILL);
         let mut first_error = None;
         let mut end = |target: u32| match signal(target as libc::pid_t, libc::SIGKILL) {
             Ok(()) => {}
@@ -394,6 +934,10 @@ mod sys {
         for member in members {
             end(member);
         }
+        // Signal descendants before the group: when pid is this process,
+        // killing its group first would prevent it from ending helpers that
+        // left that group. The group also reaches reparented members.
+        let _ = signal(-(pid as libc::pid_t), libc::SIGKILL);
         end(pid);
         first_error.map_or(Ok(()), Err)
     }
@@ -672,7 +1216,7 @@ mod sys {
 
     use windows_sys::Win32::Foundation::{
         CloseHandle, FILETIME, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, STILL_ACTIVE,
-        SetHandleInformation,
+        SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::System::Console::{
         GetConsoleCP, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
@@ -687,6 +1231,7 @@ mod sys {
         JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
         QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
     };
+    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
     use windows_sys::Win32::System::ProcessStatus::{
         K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
     };
@@ -694,7 +1239,7 @@ mod sys {
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, DETACHED_PROCESS,
         GetExitCodeProcess, GetProcessTimes, OpenProcess, OpenThread,
         PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
-        TerminateProcess,
+        TerminateProcess, WaitForSingleObject,
     };
 
     use super::*;
@@ -744,9 +1289,16 @@ mod sys {
     }
 
     /// The job a child lives in. Closing it ends everything still in it.
-    pub(super) struct Tie(Owned);
+    pub(super) struct Tie(Owned, bool);
 
-    pub(super) fn spawn(command: &mut Command) -> io::Result<(Child, Tie)> {
+    pub(super) fn spawn(
+        command: &mut Command,
+        deadline: Option<Instant>,
+    ) -> io::Result<(Child, Tie)> {
+        command.env_remove(OWNER_LAUNCH_KEYS[0]);
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
         // SAFETY: an all-zero limit structure is a valid value.
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -786,16 +1338,111 @@ mod sys {
         let assigned = unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) };
         if assigned == 0 {
             let error = io::Error::last_os_error();
+            if let Some(deadline) = deadline {
+                let owned = OwnedChild {
+                    child,
+                    tie: Tie(job, false),
+                    ended: false,
+                    reaped: false,
+                    released: false,
+                    bounded_reap: true,
+                };
+                return Err(failed_guarded_spawn(error, owned, deadline));
+            }
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
         }
         if let Err(error) = resume(child.id()) {
+            if let Some(deadline) = deadline {
+                let owned = OwnedChild {
+                    child,
+                    tie: Tie(job, true),
+                    ended: false,
+                    reaped: false,
+                    released: false,
+                    bounded_reap: true,
+                };
+                return Err(failed_guarded_spawn(error, owned, deadline));
+            }
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
         }
-        Ok((child, Tie(job)))
+        let tie = Tie(job, true);
+        if let Some(deadline) = deadline.filter(|deadline| Instant::now() >= *deadline) {
+            let owned = OwnedChild {
+                child,
+                tie,
+                ended: false,
+                reaped: false,
+                released: false,
+                bounded_reap: true,
+            };
+            return Err(failed_guarded_spawn(
+                io::ErrorKind::TimedOut.into(),
+                owned,
+                deadline,
+            ));
+        }
+        Ok((child, tie))
+    }
+
+    pub(super) fn watch_owner(_: std::ffi::OsString) -> io::Result<OwnerWatch> {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Unix owner launch metadata is not valid on Windows",
+        ))
+    }
+
+    pub(super) use std::os::windows::io::AsRawHandle as PipeHandle;
+
+    // Windows anonymous pipes cannot use Unix O_NONBLOCK. The owned reader
+    // peeks first and reads no more than the bytes already in the pipe.
+    pub(super) fn nonblocking(_: &impl PipeHandle) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub(super) fn read_available<P: Read + PipeHandle>(
+        pipe: &mut P,
+        bytes: &mut [u8],
+    ) -> io::Result<Option<usize>> {
+        let mut available = 0;
+        // SAFETY: the pipe handle is borrowed and the only output is live.
+        let peeked = unsafe {
+            PeekNamedPipe(
+                pipe.as_raw_handle(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        };
+        if peeked == 0 {
+            let source = io::Error::last_os_error();
+            // ERROR_BROKEN_PIPE / NO_DATA / PIPE_NOT_CONNECTED mark EOF.
+            return if matches!(source.raw_os_error(), Some(109 | 232 | 233)) {
+                Ok(Some(0))
+            } else {
+                Err(source)
+            };
+        }
+        if available == 0 {
+            return Ok(None);
+        }
+        let count = bytes.len().min(available as usize);
+        pipe.read(&mut bytes[..count]).map(Some)
+    }
+
+    pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
+        // SAFETY: the process handle is owned by child. A zero wait observes
+        // exit without blocking or releasing the process's identity.
+        match unsafe { WaitForSingleObject(child.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            _ => Err(io::Error::last_os_error()),
+        }
     }
 
     /// Starts the one thread a suspended process was created with.
@@ -862,7 +1509,16 @@ mod sys {
         };
     }
 
-    pub(super) fn kill_tree_of(_: &mut Child, tie: &Tie, _: bool) -> io::Result<bool> {
+    pub(super) fn kill_tree_of(child: &mut Child, tie: &Tie, reaped: bool) -> io::Result<bool> {
+        if !tie.1 {
+            // Assignment failed before the suspended child could run. Its
+            // process handle is still ours, but the empty job cannot end it.
+            if reaped || has_exited(child)? {
+                return Ok(false);
+            }
+            child.kill()?;
+            return Ok(true);
+        }
         // SAFETY: an all-zero accounting structure is a valid value.
         let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
         // SAFETY: the job handle is open for as long as `tie` lives and
