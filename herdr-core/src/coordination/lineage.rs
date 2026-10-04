@@ -6,7 +6,7 @@ use crate::runtime::Runtime;
 use crate::session_sync::ProjectedAgent;
 use hide_herdr_client::{ApiConnector, request_with_connector};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread::{self, JoinHandle};
@@ -30,7 +30,9 @@ pub(crate) struct Writer {
     device: String,
     queued: HashSet<String>,
     completed: mpsc::Receiver<(String, bool)>,
-    observed: Option<Arc<Ledger>>,
+    // Registration identities are append-only. Ending one changes no token
+    // identity, so unrelated delivery writes cannot trigger reconciliation.
+    observed_registrations: Option<usize>,
     stopping: Arc<AtomicBool>,
     pending_retry: bool,
 }
@@ -70,7 +72,7 @@ impl Writer {
             device,
             queued: HashSet::new(),
             completed,
-            observed: None,
+            observed_registrations: None,
             stopping,
             pending_retry: false,
         })
@@ -92,15 +94,12 @@ impl Writer {
         if !changed
             && !failed
             && !self.pending_retry
-            && self
-                .observed
-                .as_ref()
-                .is_some_and(|previous| Arc::ptr_eq(previous, ledger))
+            && self.observed_registrations == Some(ledger.agents.len())
         {
             return;
         }
         self.pending_retry = false;
-        self.observed = Some(ledger.clone());
+        self.observed_registrations = Some(ledger.agents.len());
         let patches = plan(ledger, &self.device, agents);
         let current = patches
             .iter()
@@ -179,12 +178,17 @@ fn plan(ledger: &Ledger, device: &str, agents: &[ProjectedAgent]) -> Vec<Patch> 
     if ledger.agents.is_empty() {
         return Vec::new();
     }
+    let parents = ledger
+        .agents
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect::<HashMap<_, _>>();
     let records = ledger
         .agents
         .iter()
         .filter(|record| record.machine == device && record.parent.is_some())
         .map(|record| (record.pane.as_str(), record))
-        .collect::<BTreeMap<_, _>>();
+        .collect::<HashMap<_, _>>();
     let mut patches = Vec::new();
     for agent in agents.iter().take(super::AGENT_LIMIT) {
         let Some(record) = records.get(agent.pane_id.as_str()) else {
@@ -196,7 +200,7 @@ fn plan(ledger: &Ledger, device: &str, agents: &[ProjectedAgent]) -> Vec<Patch> 
         let parent = record
             .parent
             .as_ref()
-            .and_then(|id| ledger.agents.iter().find(|record| &record.id == id));
+            .and_then(|id| parents.get(id.as_str()).copied());
         let tokens = desired(record, parent, agent.lineage_session.as_deref());
         if tokens.iter().any(|(key, value)| {
             if value.is_null() {
