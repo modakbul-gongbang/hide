@@ -324,7 +324,6 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
       const childAttachment = () => events.find((event) => event.method === "Target.attachedToTarget" && event.parentSessionId === parentSessionId && event.type === "iframe");
       await expect.poll(() => childAttachment() !== undefined, { timeout: 10_000 }).toBe(true);
       const child = childAttachment()!;
-      expect(child.targetId).toMatch(/^iframe-/);
       expect(child.sessionId).not.toBe(parentSessionId);
       proof.childAttachment = child;
       const expression = "({href:location.href,name:window.name,isTop:window===window.top,heading:document.querySelector('h1')?.textContent})";
@@ -355,6 +354,7 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
       expect(owned).toHaveLength(1);
       const childFrame = (childTree.result as { frameTree: FrameTree }).frameTree.frame;
       expect(childFrame).toMatchObject({ id: owned![0]!.frame.id, name: childName, url: childUrl });
+      expect(child.targetId).toBe(owned![0]!.frame.id);
       proof.frameMapping = { parentFrameId: (parentTree.result as { frameTree: FrameTree }).frameTree.frame.id, childFrameId: childFrame.id, childTargetId: child.targetId, childSessionId: child.sessionId, parentSessionId };
       record();
       const removed = await send("Runtime.evaluate", { expression: "document.querySelector('#cross-site').remove(); 'removed'", returnByValue: true }, parentSessionId);

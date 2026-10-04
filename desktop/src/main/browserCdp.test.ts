@@ -333,7 +333,7 @@ describe("scoped desktop CDP public boundary", () => {
     const { first, capability, client } = await fixture();
     const browser = await client((await capability()).browser_ws_url);
     const original = first.contents.debugger.sendCommand.bind(first.contents.debugger);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const boundary = vi.spyOn(first.contents.debugger, "sendCommand").mockImplementation(async (method, params, nativeId) => {
       if (method === "Page.getFrameTree" || method === "Runtime.evaluate") await new Promise((resolve) => setTimeout(resolve, 9000));
       return original(method, params, nativeId);
@@ -352,6 +352,31 @@ describe("scoped desktop CDP public boundary", () => {
       expect(first.contents.debugger.isAttached()).toBe(false);
       await vi.advanceTimersByTimeAsync(8000);
       expect((await browser.call("Runtime.evaluate", {}, session)).error).toBeDefined();
+    } finally { boundary.mockRestore(); vi.useRealTimers(); }
+  });
+
+  it("shares one command deadline across every child of a virtual parent and retires them on timeout", async () => {
+    const { first, capability, client } = await fixture();
+    const browser = await client((await capability()).browser_ws_url);
+    const parent = ((await browser.call("Target.attachToBrowserTarget")).result as Json).sessionId as string;
+    const pages: string[] = [];
+    for (let count = 0; count < 2; count++) pages.push(((await browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, parent)).result as Json).sessionId as string);
+    const original = first.contents.debugger.sendCommand.bind(first.contents.debugger);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const boundary = vi.spyOn(first.contents.debugger, "sendCommand").mockImplementation(async (method, params, nativeId) => {
+      if (method === "Target.detachFromTarget") await new Promise((resolve) => setTimeout(resolve, 9000));
+      return original(method, params, nativeId);
+    });
+    try {
+      const reply = browser.call("Target.detachFromTarget", { sessionId: parent }, undefined, 500, 25_000);
+      expect((await browser.call("Browser.getVersion")).error).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(9000);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await reply).toMatchObject({ error: { message: "CDP request timed out" } });
+      expect(first.contents.debugger.isAttached()).toBe(false);
+      for (const page of pages) expect((await browser.call("Runtime.evaluate", {}, page)).error).toBeDefined();
+      expect((await browser.call("Target.getTargets", {}, parent)).error).toBeDefined();
+      await vi.advanceTimersByTimeAsync(8000);
     } finally { boundary.mockRestore(); vi.useRealTimers(); }
   });
 
