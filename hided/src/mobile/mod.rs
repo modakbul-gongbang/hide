@@ -833,6 +833,9 @@ impl Mobile {
     }
 
     fn deliver_delivery(&self) {
+        if *self.stopping.borrow() {
+            return;
+        }
         let notices = match self
             .config
             .core
@@ -848,8 +851,14 @@ impl Mobile {
             }
         };
         for notice in notices {
+            if *self.stopping.borrow() {
+                return;
+            }
             if self.push_delivery(&notice) {
                 continue;
+            }
+            if *self.stopping.borrow() {
+                return;
             }
             let shown = self
                 .herdr_api(projection::LOCAL_DEVICE)
@@ -913,6 +922,9 @@ impl Mobile {
         );
         let mut delivered = false;
         for (phone_id, subscription) in targets {
+            if *self.stopping.borrow() {
+                return delivered;
+            }
             match push::send(vapid, &subject, &subscription, &payload, now_ms() / 1000) {
                 push::SendOutcome::Delivered => delivered = true,
                 push::SendOutcome::Gone(_) => {
