@@ -505,11 +505,13 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
         if !is_worktree {
             projects[index].default_branch = branch.clone();
         }
+        let head_oid = repository.as_ref().and_then(Repository::head_oid);
         projects[index].checkouts.push(checkout(
             &workspace_id,
             &root,
             &label,
             branch,
+            head_oid,
             is_worktree,
             false,
         ));
@@ -566,6 +568,9 @@ pub(crate) fn apply_worktrees(
                     &path,
                     &label,
                     worktree.branch.clone(),
+                    // The catalog's own commit: this runs under the runtime
+                    // lock, where Git's files are not read.
+                    worktree.head_sha.clone(),
                     !worktree.is_main,
                     project.temporary,
                 ));
@@ -783,6 +788,7 @@ fn inspect(
             root,
             &checkout_row_label(branch.as_deref(), root),
             branch.clone(),
+            repository.as_ref().and_then(Repository::head_oid),
             false,
             temporary,
         )],
@@ -790,6 +796,7 @@ fn inspect(
             id,
             &normalized,
             &checkout_row_label(None, &normalized),
+            None,
             None,
             false,
             temporary,
@@ -834,6 +841,7 @@ fn checkout(
     path: &Path,
     label: &str,
     branch: Option<String>,
+    head_oid: Option<String>,
     is_worktree: bool,
     temporary: bool,
 ) -> CheckoutSnapshot {
@@ -855,6 +863,7 @@ fn checkout(
     };
     CheckoutSnapshot {
         branch_issue,
+        head_oid,
         // A checkout with no Herdr tabs yet: the first one the operator makes
         // here is Tab 1. Reconcile overwrites this the moment Herdr reports any.
         next_tab_label: crate::model::next_tab_label(std::iter::empty()),
