@@ -116,6 +116,9 @@ That belongs in one shared fixture helper under `web/e2e/`, which the specs and 
 Herdr, hided, shell fixtures and the C compiler launch through its native `fixture-owner` supervisor, built in this worktree by the CLI preparation and included in the checked shard artifact.
 For a direct local browser gate, first run `bash scripts/verify-cargo.sh build -p hided --bins -p hide-platform --example fixture-owner`; the desktop gate also needs `-p hide-agent-hooks` in that build.
 Its dedicated stdin pipe belongs only to the Playwright worker; worker loss ends the original native process group/job, records confirmed or unconfirmed exit outside the private home, and removes that same home only after confirmed exit.
+Herdr setup observes the native running identity, endpoint and an admitted initial snapshot within its existing ten-second readiness bound before creating a workspace.
+That read-only query uses the same owned command boundary; only a live target's explicit `server_not_running` response is a pending endpoint state.
+Refusal, malformed inventory, command timeout and unconfirmed query exit fail setup with the original error and cleanup outcome; an absent workspace inventory is never treated as empty.
 Target PID and birth identity come from launch, while measurements use the target PID rather than the supervisor PID.
 Normal stop uses that launch identity and keeps the existing two-second termination bound; callback, native observation and cleanup failures remain failures with their original phase and secondary cause chain.
 `releaseFixtureRoot` reports the stop failure first, then gates all remaining socket, evidence and home releases on `assertFixtureRootReleased`.

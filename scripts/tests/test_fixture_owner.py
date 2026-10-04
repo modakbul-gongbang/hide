@@ -1,5 +1,6 @@
 """Native supervisor controls; kill only the worker, never its process group."""
 import ctypes
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -417,6 +418,78 @@ while time.monotonic() < deadline:
 
     def test_native_stop_request_error_preserves_primary_cleanup_and_home(self):
         self.exercise('stop-directory')
+
+    @unittest.skipUnless(os.name != 'nt', 'Unix exec wrapper controls API admission; Windows ordinary consumers run separately')
+    def test_ordinary_fixture_observes_initial_api_admission_and_retains_refusal(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        invocation = Path(tempfile.mkdtemp(dir=artifacts, prefix='api-admission-result-'))
+        (invocation/'source.json').write_text(json.dumps({name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest()
+            for name in ['scripts/ci-owned-command.cjs', 'web/e2e/herdr-fixture.ts', 'scripts/tests/test_fixture_owner.py']}, indent=2)+'\n')
+        actual = os.environ.get('HIDE_E2E_HERDR_BIN') or os.environ.get('HERDR_BIN_PATH') or shutil.which('herdr')
+        self.assertTrue(actual)
+        with tempfile.TemporaryDirectory(dir=artifacts) as directory:
+            root = Path(directory)
+            proof = root / 'api-admission.jsonl'
+            wrappers = {}
+            for mode in ['pending', 'refused', 'malformed']:
+                executable = root / ('herdr-'+mode)
+                executable.write_text('#!'+sys.executable+'\n'+
+                    'import json, os, pathlib, sys\n'+
+                    'real='+repr(str(Path(actual).resolve()))+'\n'+
+                    'mode='+repr(mode)+'\n'+
+                    'counter=pathlib.Path('+repr(str(root/(mode+'.count')))+')\n'+
+                    'if sys.argv[1:]==["server"]:\n'+
+                    ' with pathlib.Path('+repr(str(proof))+').open("a") as out: out.write(json.dumps({"mode":mode,"serverPid":os.getpid(),"root":str(pathlib.Path(os.environ["HERDR_CONFIG_PATH"]).parent)})+"\\n")\n'+
+                    'if sys.argv[1:]==["api","snapshot"]:\n'+
+                    ' n=int(counter.read_text()) if counter.exists() else 0; counter.write_text(str(n+1))\n'+
+                    ' with pathlib.Path('+repr(str(proof))+').open("a") as out: out.write(json.dumps({"mode":mode,"query":n,"pid":os.getpid()})+"\\n")\n'+
+                    ' if mode=="malformed": print(json.dumps({"result":{}}));sys.exit(0)\n'+
+                    ' if mode=="refused" or n==0:\n'+
+                    '  print(json.dumps({"id":"cli:api:snapshot","error":{"code":"server_not_running" if mode=="pending" else "refused","message":"controlled API admission "+mode}}),file=sys.stderr);sys.exit(1)\n'+
+                    'os.execv(real,[real,*sys.argv[1:]])\n')
+                executable.chmod(0o755)
+                wrappers[mode] = str(executable)
+            filename = ROOT/'web/e2e'/('ci-api-admission-'+root.name+'.spec.ts')
+            report = invocation/'report.json'
+            ledger = invocation/'ledger.json'
+            fixture_facts = invocation/'fixtures.jsonl'
+            fixture_facts.write_text('')
+            filename.write_text("import {test,expect} from '@playwright/test';import fs from 'node:fs';\n"
+                "import {startHerdr} from './herdr-fixture';import {finishFixture} from './worker-owned';\n"
+                "const wrappers="+json.dumps(wrappers)+";\n"
+                "for(const mode of ['pending','refused','malformed'] as const)test('initial API '+mode,async()=>{\n"
+                " process.env.HIDE_E2E_HERDR_BIN=wrappers[mode];let herdr:Awaited<ReturnType<typeof startHerdr>>|undefined;let failure:unknown;let primary:unknown;\n"
+                " try {try{herdr=await startHerdr({agents:false});}catch(error){failure=error;}\n"
+                " if(mode==='pending'){expect(failure).toBeUndefined();expect(herdr!.panes).toHaveLength(2);}\n"
+                " else {expect(herdr).toBeUndefined();expect((failure as Error).message).toContain(mode==='refused'?'controlled API admission refused':'initial snapshot has no workspace inventory');}\n"
+                " fs.appendFileSync("+json.dumps(str(fixture_facts))+",JSON.stringify({mode,pid:herdr?.pid,root:herdr?.root,message:(failure as Error)?.message,stack:(failure as Error)?.stack})+'\\n');\n"
+                " }catch(error){primary=error;}finally{await finishFixture(primary,[()=>herdr?.stop()]);}\n});\n")
+            try:
+                result = subprocess.run([self.shell, 'scripts/verify-web.sh', 'web', 'e2e', filename.name,
+                    '--retries=0', '--workers=1', '--reporter=list,'+str(ROOT/'scripts/ci-reporter.ts')+',json'], cwd=ROOT,
+                    env={**os.environ,'PLAYWRIGHT_JSON_OUTPUT_FILE':str(report),'CI_LEDGER_PATH':str(ledger)},
+                    capture_output=True, text=True, timeout=60)
+                (invocation/'run.log').write_text(result.stdout+result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+                rows = [row for row in json.loads(ledger.read_text())['records'] if row['suite']==filename.relative_to(ROOT).as_posix()]
+                self.assertEqual(len(rows), 3)
+                self.assertTrue(all(row['status']=='passed' and row['retry']==0 for row in rows))
+                evidence = [json.loads(line) for line in proof.read_text().splitlines()]
+                queries = [row for row in evidence if 'query' in row]
+                self.assertEqual([row['query'] for row in queries if row['mode']=='pending'], [0, 1])
+                self.assertEqual([row['query'] for row in queries if row['mode']=='refused'], [0])
+                self.assertEqual([row['query'] for row in queries if row['mode']=='malformed'], [0])
+                servers = [row for row in evidence if 'serverPid' in row]
+                self.assertEqual(len(servers), 3)
+                self.assertTrue(all(ProcessObservation(row['serverPid']).exited() and not Path(row['root']).exists() for row in servers))
+                (invocation/'queries.json').write_text(json.dumps(evidence, indent=2)+'\n')
+                facts = [json.loads(line) for line in fixture_facts.read_text().splitlines()]
+                self.assertEqual(len(facts), 3)
+                self.assertFalse(Path(facts[0]['root']).exists())
+                self.assertTrue(ProcessObservation(facts[0]['pid']).exited())
+            finally:
+                filename.unlink(missing_ok=True)
 
     @unittest.skipUnless(os.name != 'nt', 'Unix ancestry-failure termination boundary')
     def test_native_ancestry_overflow_still_ends_the_original_private_group(self):

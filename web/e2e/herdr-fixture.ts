@@ -27,6 +27,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { run as runOwnedCommand, type NativeCommandOwner } from "../../scripts/ci-owned-command.cjs";
 import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
 import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, assertFixtureRootReleased, releaseFixtureRoot, stopFixtureProcess, compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 
@@ -395,13 +396,14 @@ function paneText(env: NodeJS.ProcessEnv, bin: string, pane: string): string {
  * predicate last saw; a bare "timed out" cannot say whether the shell
  * printed something else or nothing at all.
  */
-async function waitFor(predicate: () => boolean, what: string, ms = 10_000, detail?: () => string): Promise<void> {
+class FixtureReadinessTimeout extends Error {}
+async function waitFor(predicate: () => boolean | Promise<boolean>, what: string, ms = 10_000, detail?: () => string): Promise<void> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`timed out waiting for ${what}${detail ? `; last seen: ${detail()}` : ""}`);
+  throw new FixtureReadinessTimeout(`timed out waiting for ${what}${detail ? `; last seen: ${detail()}` : ""}`);
 }
 
 /** What the fixture provider answers for one transcript. */
@@ -683,15 +685,43 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     () => fs.rmSync(root, { recursive: true, force: true }),
   ]));
   try {
-    await waitFor(() => {
-      if (spawnFailed) throw spawnFailed;
-      return fixtureProcessFailure(server) && fs.existsSync(socket);
-    }, `herdr native running receipt and socket ${socket}`);
-    const snapshot = herdr(env, bin, ["api", "snapshot"]) as {
-      result?: { snapshot?: { workspaces?: unknown[] } };
-    };
-    const workspaces = snapshot.result?.snapshot?.workspaces ?? [];
-    if (workspaces.length !== 0) throw new Error("private herdr server already has workspaces");
+    const readinessDeadline = Date.now() + 10_000;
+    let pending: Error | undefined;
+    try {
+      await waitFor(async () => {
+        if (spawnFailed) throw spawnFailed;
+        if (!fixtureProcessFailure(server) || !fs.existsSync(socket)) return false;
+        const remaining = readinessDeadline - Date.now();
+        if (remaining <= 0) return false;
+        let output: string;
+        try {
+          output = (await runOwnedCommand(path.resolve(".."), bin, ["api", "snapshot"], {
+            env, timeout: remaining, subject: "herdr-initial-snapshot",
+          })).stdout;
+        } catch (failure) {
+          const error = failure as Error & { code?: string; stderr?: string; owner?: NativeCommandOwner };
+          // Socket publication precedes API admission. Only the pinned CLI's
+          // explicit pending endpoint state is observable again; a timeout,
+          // malformed/refused API, ended target or unknown exit fails setup.
+          if (error.code !== "COMMAND_FAILED" || !error.stderr || !error.owner?.supervisorExited
+            || error.owner.observed?.survivors !== 0) throw error;
+          let answer: { error?: { code?: string } };
+          try { answer = JSON.parse(error.stderr) as typeof answer; }
+          catch (cause) { error.cause = cause; throw error; }
+          if (answer.error?.code !== "server_not_running" || !fixtureProcessFailure(server)) throw error;
+          pending = error;
+          return false;
+        }
+        const snapshot = JSON.parse(output) as { result?: { snapshot?: { workspaces?: unknown } } };
+        const workspaces = snapshot.result?.snapshot?.workspaces;
+        if (!Array.isArray(workspaces)) throw new Error("private Herdr initial snapshot has no workspace inventory");
+        if (workspaces.length !== 0) throw new Error("private herdr server already has workspaces");
+        return true;
+      }, "private Herdr native identity, endpoint and initial snapshot", 10_000);
+    } catch (error) {
+      if (pending && error instanceof FixtureReadinessTimeout) throw pending;
+      throw error;
+    }
 
     const inputLogs: [string, string] = [path.join(root, "input-one.log"), path.join(root, "input-two.log")];
     const created = herdr(env, bin, [

@@ -35,7 +35,7 @@ function readReceipt(file) {
   return {phase, pid: Number(pid), birth, code: Number(code), survivors: Number(survivors), error: Buffer.from(detail, 'hex').toString('utf8')};
 }
 
-async function run(root, executable, args, {timeout = 5000, maxBuffer = 64 * 1024, subject = path.basename(executable), onOwner, onStderr} = {}) {
+async function run(root, executable, args, {timeout = 5000, maxBuffer = 64 * 1024, subject = path.basename(executable), env, onOwner, onStderr} = {}) {
   if (!Number.isSafeInteger(timeout) || timeout <= 0 || !Number.isSafeInteger(maxBuffer) || maxBuffer <= 0) throw new Error('invalid preparation command bound');
   if (active.size >= MAX_OWNERS) throw new Error('preparation native owner cap exceeded');
   const helper = path.join(root, 'target/debug/examples/fixture-owner' + (process.platform === 'win32' ? '.exe' : ''));
@@ -51,7 +51,7 @@ async function run(root, executable, args, {timeout = 5000, maxBuffer = 64 * 102
   let child;
   try {
     child = spawn(helper, [owner.receipt, owner.home, executable, ...args], {
-      cwd: root, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe']
+      cwd: root, env, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe']
     });
   } catch (error) {
     active.delete(owner);
