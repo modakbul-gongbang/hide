@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use hide_platform::ipc::{LocalListener, LocalStream};
+use hide_platform::ipc::{ListenerCloser, LocalListener, LocalStream};
 use tempfile::TempDir;
 
 /// A folder and an endpoint path inside it. Kept short: a Unix socket path
@@ -203,8 +203,12 @@ fn bind_keeps_a_regular_file_at_the_path() {
 
 /// Serves `listener` until it is closed: answers each line in capitals, and
 /// passes over a stream whose client already left.
-fn serve_lines(listener: LocalListener) -> thread::JoinHandle<()> {
+fn serve_lines(
+    listener: LocalListener,
+    accepted: Option<mpsc::SyncSender<usize>>,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
+        let mut count = 0;
         loop {
             let mut stream = match listener.accept() {
                 Ok(stream) => stream,
@@ -216,12 +220,21 @@ fn serve_lines(listener: LocalListener) -> thread::JoinHandle<()> {
                         error.kind(),
                         error.raw_os_error()
                     );
+                    assert_eq!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionAborted,
+                        "accept loop ended unexpectedly: {error}"
+                    );
                     break;
                 }
             };
             let line = read_line(&mut stream);
             if !line.is_empty() {
                 stream.write_all(line.to_uppercase().as_bytes()).unwrap();
+            }
+            count += 1;
+            if let Some(accepted) = &accepted {
+                accepted.send(count).unwrap();
             }
         }
     })
@@ -252,7 +265,7 @@ fn clients_that_leave_before_accept_never_hold_up_the_next_connect() {
     for attempt in 0..40 {
         drop(connect_promptly(&path, attempt));
     }
-    let server = serve_lines(listener);
+    let server = serve_lines(listener, None);
     let mut client = connect_promptly(&path, 40);
     client.write_all(b"stayed\n").unwrap();
     assert_eq!(read_line(&mut client), "STAYED\n");
@@ -269,8 +282,26 @@ fn a_burst_of_clients_that_connect_and_leave_loses_no_connect() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
     let closer = listener.closer();
-    let server = serve_lines(listener);
+    // A closed client still occupies a Unix backlog slot until accept drains
+    // it. The contract includes 40 pre-accept leavers, not an unlimited queue.
+    // Keep all 200 intents while bounding outstanding, unaccepted clients to
+    // that independently tested capacity. No connect is retried or replayed.
+    let (accepted, arrivals) = mpsc::sync_channel(40);
+    struct CloseOnDrop(ListenerCloser);
+    impl Drop for CloseOnDrop {
+        fn drop(&mut self) {
+            self.0.close();
+        }
+    }
+    let guard = CloseOnDrop(closer);
+    let server = serve_lines(listener, Some(accepted));
     for attempt in 0..200 {
+        if attempt >= 40 {
+            assert_eq!(
+                arrivals.recv_timeout(Duration::from_secs(1)).unwrap(),
+                attempt - 39
+            );
+        }
         let mut client = connect_promptly(&path, attempt);
         let handle = client.shutdown_handle();
         handle.shutdown();
@@ -281,10 +312,17 @@ fn a_burst_of_clients_that_connect_and_leave_loses_no_connect() {
             std::io::ErrorKind::BrokenPipe
         );
     }
+    for count in 161..=200 {
+        assert_eq!(
+            arrivals.recv_timeout(Duration::from_secs(1)).unwrap(),
+            count
+        );
+    }
     let mut client = connect_promptly(&path, 200);
     client.write_all(b"after\n").unwrap();
     assert_eq!(read_line(&mut client), "AFTER\n");
-    closer.close();
+    assert_eq!(arrivals.recv_timeout(Duration::from_secs(1)).unwrap(), 201);
+    guard.0.close();
     server.join().unwrap();
 }
 

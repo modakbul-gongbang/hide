@@ -15,6 +15,30 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+/// Publication succeeded, but the displaced link could not be removed.
+/// The caller must not interpret this error as an unchanged destination.
+#[derive(Debug)]
+pub struct PublishedCleanupFailure {
+    pub displaced: std::path::PathBuf,
+    pub source: io::Error,
+}
+
+impl fmt::Display for PublishedCleanupFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "link published but displaced link cleanup failed: {}",
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for PublishedCleanupFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 /// Making a link to a file needs a privilege this account does not have.
 #[derive(Debug)]
 pub struct NeedsPrivilege;
@@ -55,8 +79,15 @@ pub fn replace_link(target: &Path, link: &Path) -> io::Result<()> {
         .unwrap_or_else(|| Path::new(""))
         .join(super::temporary_name(name, "hide-link"));
     create_link(target, &beside)?;
-    sys::rename_over(&beside, link).inspect_err(|_| {
-        let _ = sys::remove(&beside);
+    sys::rename_over(&beside, link).inspect_err(|error| {
+        // After publication the displaced entry belongs to the caller's
+        // recovery, not a second best-effort delete hiding the failure.
+        if !error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<PublishedCleanupFailure>())
+        {
+            let _ = sys::remove(&beside);
+        }
     })
 }
 
@@ -82,8 +113,48 @@ mod sys {
         std::os::unix::fs::symlink(target, link)
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub(super) fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
         fs::rename(from, to)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
+        // Native directory-symlink open/rename controls expose EINVAL with
+        // ordinary rename-over; exchanged publication passes those controls.
+        // This is a boundary observation, not an inferred kernel cause.
+        // Exchange keeps both link identities through publication, then removes our displaced
+        // link. Reuse the platform's existing atomic exchange implementation.
+        // Swap accepts mixed file/directory types, unlike rename-over. Only
+        // existing symlinks use it; other kinds keep ordinary rename's refusal
+        // semantics, including an unchanged directory destination.
+        match fs::symlink_metadata(to) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {}
+            Ok(_) => return fs::rename(from, to),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return fs::rename(from, to),
+            Err(error) => return Err(error),
+        }
+        let parent = to.parent().unwrap_or_else(|| Path::new("."));
+        let folder = crate::fs::open_dir(parent)?;
+        let from_name = from
+            .file_name()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let to_name = to
+            .file_name()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        match crate::fs::atomic::exchange(&folder, from_name, to_name) {
+            Ok(()) => fs::remove_file(from).map_err(|source| {
+                io::Error::new(
+                    source.kind(),
+                    super::PublishedCleanupFailure {
+                        displaced: from.to_owned(),
+                        source,
+                    },
+                )
+            }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => fs::rename(from, to),
+            Err(error) => Err(error),
+        }
     }
 
     pub(super) fn remove(link: &Path) -> io::Result<()> {

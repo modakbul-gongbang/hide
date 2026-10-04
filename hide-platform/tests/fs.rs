@@ -10,7 +10,8 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1067,33 +1068,117 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
     }
     let current = outer.path().join("current");
     link::replace_link(Path::new("version-1"), &current).unwrap();
-    let done = AtomicBool::new(false);
+    let completed = AtomicUsize::new(0);
+    let (begin, phases) = mpsc::sync_channel(0);
+    let (observed, acknowledgements) = mpsc::sync_channel(1);
+    let (ready, reading) = mpsc::sync_channel(0);
+    let deadline = Instant::now() + Duration::from_secs(5);
     thread::scope(|scope| {
-        let _release = SetOnDrop(&done);
-        scope.spawn(|| {
-            let mut seen = 0;
-            while !done.load(Ordering::Relaxed) || seen < 20 {
-                // A read can be refused while the swap lands on Windows;
-                // what it must never be is "not found".
-                match fs::read_to_string(current.join("hide")) {
-                    Ok(text) => {
-                        assert!(text == "version-1" || text == "version-2");
-                        seen += 1;
+        let current = &current;
+        let completed = &completed;
+        scope.spawn(move || {
+            // Baseline proves the reader is scheduled, but is never overlap.
+            assert_eq!(
+                fs::read_to_string(current.join("hide")).unwrap(),
+                "version-1"
+            );
+            observed.send(0).unwrap();
+            for round in 1..=40 {
+                assert_eq!(
+                    phases
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                        .unwrap(),
+                    round
+                );
+                let before = fs::read_to_string(current.join("hide")).unwrap();
+                assert!(before == "version-1" || before == "version-2");
+                ready.send(round).unwrap();
+                loop {
+                    assert!(
+                        Instant::now() < deadline,
+                        "link reader phase {round} did not complete within its bound"
+                    );
+                    // A read can be refused while the swap lands on Windows;
+                    // what it must never be is "not found".
+                    match fs::read_to_string(current.join("hide")) {
+                        Ok(text) => {
+                            assert!(text == "version-1" || text == "version-2");
+                            // Sample completion before another read: the response
+                            // proves observation after this replacement, inside
+                            // its still-open phase, never before the first swap.
+                            if completed.load(Ordering::Acquire) == round {
+                                let after = fs::read_to_string(current.join("hide")).unwrap();
+                                assert!(after == "version-1" || after == "version-2");
+                                observed.send(round).unwrap();
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            assert_ne!(error.kind(), ErrorKind::NotFound, "link vanished: {error}");
+                            assert!(
+                                cfg!(windows) && error.kind() == ErrorKind::PermissionDenied,
+                                "unexpected link reader error: {error}"
+                            );
+                        }
                     }
-                    Err(error) => assert_ne!(error.kind(), ErrorKind::NotFound, "{error}"),
                 }
             }
         });
+        assert_eq!(
+            acknowledgements
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap(),
+            0
+        );
         for round in 0..40 {
+            begin.send(round + 1).unwrap();
+            assert_eq!(
+                reading
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .unwrap(),
+                round + 1,
+                "replacement started before its reader phase"
+            );
             let version = if round % 2 == 0 {
                 "version-2"
             } else {
                 "version-1"
             };
             link::replace_link(Path::new(version), &current).unwrap();
+            completed.store(round + 1, Ordering::Release);
+            assert_eq!(
+                acknowledgements
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .unwrap(),
+                round + 1,
+                "reader did not observe replacement phase"
+            );
         }
-        done.store(true, Ordering::Relaxed);
     });
+    assert_eq!(completed.load(Ordering::Acquire), 40);
+    assert_eq!(names(outer.path()), ["current", "version-1", "version-2"]);
+}
+
+#[test]
+fn link_replacement_refuses_a_directory_and_preserves_its_content_and_names() {
+    let outer = folder();
+    let destination = outer.path().join("current");
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("owned"), "original content").unwrap();
+    fs::create_dir(outer.path().join("version-2")).unwrap();
+    let original = names(outer.path());
+    link::replace_link(Path::new("version-2"), &destination).unwrap_err();
+    assert!(
+        !fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("owned")).unwrap(),
+        "original content"
+    );
+    assert_eq!(names(outer.path()), original);
 }
 
 #[test]
