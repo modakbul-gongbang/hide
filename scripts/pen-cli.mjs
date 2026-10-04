@@ -12,15 +12,26 @@ const MAX_OUTPUT_BYTES = 1024 * 1024;
 // PEN_CLI_INPUT and is written to the CLI's own stdin.
 const guard = `
 const {spawn} = require('node:child_process');
-const stop = () => { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } };
+const killGroup = () => { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } };
+const input = process.env.PEN_CLI_INPUT;
+const cli = spawn('pen', process.argv.slice(1), {stdio: [input ? 'pipe' : 'ignore', 'inherit', 'inherit']});
+let stopping = false;
+const stop = () => {
+  if (stopping) return;
+  stopping = true;
+  // Reap the CLI before ending its guard and remaining descendants. Killing
+  // both at once leaves the CLI's reaping to an unrelated system process.
+  setTimeout(killGroup, 5000);
+  if (!cli.kill('SIGKILL')) killGroup();
+};
 process.stdin.resume();
 process.stdin.once('end', stop);
 process.stdin.once('error', stop);
-const input = process.env.PEN_CLI_INPUT;
-const cli = spawn('pen', process.argv.slice(1), {stdio: [input ? 'pipe' : 'ignore', 'inherit', 'inherit']});
+process.once('SIGINT', stop);
+process.once('SIGTERM', stop);
 if (input) cli.stdin.end(input);
 cli.once('error', error => { console.error('Cannot run pen: ' + error.message); process.exit(1); });
-cli.once('exit', code => process.exit(code ?? 1));
+cli.once('exit', code => { if (stopping) killGroup(); else process.exit(code ?? 1); });
 `;
 
 /** A Pen failure the operator can act on: `reason` says what, `next` what to run. */
@@ -34,18 +45,20 @@ export class PenError extends Error {
 }
 
 /** Runs one Pen CLI command in its own process group and resolves its stdout. */
-export function pen(args, {cwd, input = '', timeoutMs = 60_000, action = 'Pen command'} = {}) {
-  return new Promise((resolve, reject) => {
+export function pen(args, {cwd, input = '', timeoutMs = 60_000, action = 'Pen command', cleanup} = {}) {
+  const task = new Promise((resolve, reject) => {
     const env = {...process.env};
     if (input) env.PEN_CLI_INPUT = input;
     else delete env.PEN_CLI_INPUT;
     const child = spawn(process.execPath, ['-e', guard, '--', ...args], {cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe']});
     let stdout = '', stderr = '', bytes = 0, failure;
-    const stop = () => {
+    const killGroup = () => {
       if (!child.pid) return;
       try { process.kill(-child.pid, 'SIGKILL'); }
       catch (error) { if (error.code !== 'ESRCH') failure ??= error; }
     };
+    const stop = () => { if (!child.stdin.writableEnded) child.stdin.end(); };
+    child.stdin.on('error', error => { if (error.code !== 'EPIPE') failure ??= error; });
     const abort = message => { failure ??= new Error(message); stop(); };
     const interrupt = () => abort(`Interrupted; ${action} cancelled.`);
     process.once('SIGINT', interrupt);
@@ -60,9 +73,9 @@ export function pen(args, {cwd, input = '', timeoutMs = 60_000, action = 'Pen co
     }
     child.once('error', error => { failure = new Error(`Cannot run pen: ${error.message}`); });
     // Do not wait for close: a descendant may still hold the output pipes.
-    child.once('exit', stop);
+    child.once('exit', killGroup);
     child.once('close', (code, signal) => {
-      stop();
+      killGroup();
       clearTimeout(timer);
       process.removeListener('SIGINT', interrupt);
       process.removeListener('SIGTERM', interrupt);
@@ -75,6 +88,10 @@ export function pen(args, {cwd, input = '', timeoutMs = 60_000, action = 'Pen co
       } else resolve(stdout);
     });
   });
+  // A command owner joins this task before exiting on cancellation. The
+  // command itself still receives its failure through the returned promise.
+  cleanup?.push(() => task.then(() => {}, () => {}));
+  return task;
 }
 
 const installHint = () => `Install with: npm install -g @pen.dev/cli@${PEN_VERSION}`;
@@ -92,8 +109,8 @@ export function parseVersion(output) {
 }
 
 /** Refuses anything but the pinned Pen CLI. */
-export async function requirePen(cwd) {
-  const version = parseVersion(await pen(['version'], {cwd, action: 'the version check'}));
+export async function requirePen(cwd, {cleanup} = {}) {
+  const version = parseVersion(await pen(['version'], {cwd, action: 'the version check', cleanup}));
   if (version !== `pen ${PEN_VERSION}`) throw new PenError(`Expected pen ${PEN_VERSION}, received ${JSON.stringify(version)}.`, installHint());
   return version;
 }

@@ -118,6 +118,7 @@ The exit status is 0 for PASS, 1 for FAIL (the static contract or a rule failed)
 An INCOMPLETE report names the cause and the command to rerun on a machine that can render; it is never read as a pass.
 A PASS covers only the rules; the comparisons and the report's judgment list are for a person.
 The run owns its dev server, browser and Pen session and closes them on every exit, including an interrupt at any step, which ends the whole run; a process it cannot close is reported, and it touches no other app, pane or server.
+Cancellation joins the pending Pen command before the review exits; its guard reaps the CLI before ending the remaining owned process group, with a five-second cleanup cap.
 
 Only the selected conditions are measured, so a change names what it touched (`--theme dark --width 240 --content long`), and a bundle frame is always captured under its own conditions so its comparison exists.
 
