@@ -7,7 +7,7 @@ use crate::session_sync::ProjectedAgent;
 use hide_herdr_client::{ApiConnector, request_with_connector};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const STORE_TIMEOUT: Duration = Duration::from_secs(5);
 // Finite side effects serialize without occupying the durable store or Runtime.
@@ -61,14 +61,52 @@ fn context(
         .coordination_context(device)
 }
 fn agents(connector: &dyn ApiConnector) -> Result<Vec<ProjectedAgent>, String> {
+    agents_with_timeout(connector, Duration::from_secs(2))
+}
+fn agents_with_timeout(
+    connector: &dyn ApiConnector,
+    timeout: Duration,
+) -> Result<Vec<ProjectedAgent>, String> {
     let result = request_with_connector(
         connector,
         "agent.list",
         crate::wire::empty_params(),
-        Duration::from_secs(2),
+        timeout,
     )
     .map_err(|error| format!("{error}"))?;
     crate::wire::agents_response(result).map_err(|_| "native_identity_unavailable".into())
+}
+fn wait_native_identity(
+    connector: &dyn ApiConnector,
+    pane: &str,
+    name: Option<&str>,
+    kind: &str,
+) -> Result<ProjectedAgent, String> {
+    // The public socket start acknowledges the typed command before the
+    // process and its native session are detected. Wait for that observation,
+    // never send another start, and keep every read within one finite deadline.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("native_identity_unavailable".into());
+        }
+        let observed = agents_with_timeout(connector, remaining.min(Duration::from_secs(2)))?;
+        if let Some(agent) = observed.into_iter().find(|agent| {
+            agent.pane_id == pane
+                && name.is_none_or(|name| agent.name.as_deref() == Some(name))
+                && agent.agent.as_deref() == Some(kind)
+                && agent.lineage_session.is_some()
+                && agent.agent_session.is_some()
+        }) {
+            return Ok(agent);
+        }
+        std::thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100)),
+        );
+    }
 }
 fn actor_for(agent: &ProjectedAgent, device: &str) -> Result<Actor, String> {
     let actor = Actor {
@@ -461,13 +499,9 @@ fn spawn(
             codex_daemon,
         )?;
     }
-    let observed = agents(connector.as_ref())?;
-    let native = observed
-        .iter()
-        .find(|agent| agent.pane_id == pane && agent.name.as_deref() == Some(name))
-        .ok_or("child_unavailable")?;
+    let native = wait_native_identity(connector.as_ref(), pane, Some(name), kind)?;
     let child = record(
-        native,
+        &native,
         &actor.device_id,
         &host_scope,
         &native_machine,
@@ -568,12 +602,14 @@ pub(crate) fn link_fork(
             .ok_or("parent_unavailable")?
             .to_owned()
     };
-    let native_child = observed
-        .iter()
-        .find(|agent| agent.pane_id == child)
-        .ok_or("child_unavailable")?;
+    let native_child = wait_native_identity(
+        connector.as_ref(),
+        child,
+        None,
+        native_parent.agent.as_deref().ok_or("parent_unavailable")?,
+    )?;
     let child_record = record(
-        native_child,
+        &native_child,
         &actor.device_id,
         &host_scope,
         &native_machine,
@@ -596,4 +632,37 @@ pub(crate) fn link_fork(
         connector.as_ref(),
         value["id"].as_str().ok_or("child_unavailable")?,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fake_herdr::FakeHerdr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn an_accepted_start_waits_for_native_identity_without_starting_again() {
+        let observations = Arc::new(AtomicUsize::new(0));
+        let reads = observations.clone();
+        let herdr = FakeHerdr::start("coordination-native-ready", move |method, _| {
+            assert_eq!(method, "agent.list");
+            let mut agent = json!({"pane_id":"w2:p1","workspace_id":"w2",
+                "tab_id":"w2:t1","terminal_id":"fixture-child-terminal",
+                "revision":1,"focused":false,"agent_status":"idle",
+                "agent":"claude","name":"child"});
+            if reads.fetch_add(1, Ordering::SeqCst) > 0 {
+                agent["agent_session"] = json!({"source":"herdr:claude",
+                    "agent":"claude","kind":"id","value":"fixture-child-session"});
+            }
+            json!({"type":"agent_list","agents":[agent]})
+        });
+        let child =
+            wait_native_identity(&herdr.connector(), "w2:p1", Some("child"), "claude").unwrap();
+        assert_eq!(
+            child.lineage_session,
+            crate::wire::session_digest("fixture-child-session")
+        );
+        assert_eq!(observations.load(Ordering::SeqCst), 2);
+        assert_eq!(herdr.methods(), ["agent.list", "agent.list"]);
+    }
 }
