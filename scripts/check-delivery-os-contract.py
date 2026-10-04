@@ -181,7 +181,7 @@ def parse_execution(output, selected, group):
     return len(selected)
 
 
-def group_resources(pgid):
+def group_resources(pgid, ignored_pid=None):
     """Sample the group's process count and resident bytes from the kernel.
 
     RSS is sampled, not a claim about unsampled instantaneous peaks. This
@@ -199,15 +199,16 @@ def group_resources(pgid):
         size = query(2, pgid, buffer, ctypes.sizeof(buffer))  # PROC_PGRP_ONLY
         if ctypes.get_errno() or size < 0 or size % ctypes.sizeof(ctypes.c_int):
             raise OSError("cannot count owned process group")
-        count = size // ctypes.sizeof(ctypes.c_int)
-        if count > MAX_PROCESSES:
-            return count, 0
+        members = [pid for pid in buffer[:size // ctypes.sizeof(ctypes.c_int)]
+                   if pid != ignored_pid]
+        if len(members) > MAX_PROCESSES:
+            return len(members), 0
         info = library.proc_pidinfo
         info.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
                          ctypes.c_void_p, ctypes.c_int]
         info.restype = ctypes.c_int
         rss = 0
-        for pid in buffer[:count]:
+        for pid in members:
             # proc_taskinfo: six uint64 values followed by twelve int32 values.
             # pti_resident_size is the second uint64, in bytes.
             task = (ctypes.c_uint64 * 12)()
@@ -219,7 +220,7 @@ def group_resources(pgid):
                     continue  # This sampled member exited during the query.
                 raise OSError(error, "cannot measure owned group resident bytes")
             rss += task[1]
-        return count, rss
+        return len(members), rss
     if sys.platform != "linux":
         raise ValueError("unsupported POSIX contract runner")
     count, rss = 0, 0
@@ -231,6 +232,8 @@ def group_resources(pgid):
             if index >= MAX_PROC_ENTRIES:
                 raise ValueError("process table exceeds bounded query capacity")
             if not entry.name.isdecimal():
+                continue
+            if int(entry.name) == ignored_pid:
                 continue
             try:
                 with open(Path(entry.path) / "stat", "rb") as source:
@@ -253,15 +256,61 @@ def group_resources(pgid):
     return count, rss
 
 
+def retained_exit_status(process):
+    """Observe exit without releasing the PID that pins our process group.
+
+    Reaping before group cleanup lets that number be reused by another session.
+    This protects the group identity; it does not contain detached descendants.
+    """
+    if sys.platform == "darwin":
+        # macOS runner Python builds can lack os.waitid. The native waitid and
+        # siginfo_t contract is in the macOS SDK's sys/wait.h and sys/signal.h.
+        class SigInfo(ctypes.Structure):
+            _fields_ = [("signo", ctypes.c_int), ("error", ctypes.c_int),
+                        ("code", ctypes.c_int), ("pid", ctypes.c_int32),
+                        ("uid", ctypes.c_uint32), ("status", ctypes.c_int),
+                        ("address", ctypes.c_void_p), ("value", ctypes.c_void_p),
+                        ("band", ctypes.c_long), ("reserved", ctypes.c_ulong * 7)]
+        wait = ctypes.CDLL(None, use_errno=True).waitid
+        wait.argtypes = [ctypes.c_int, ctypes.c_uint32,
+                         ctypes.POINTER(SigInfo), ctypes.c_int]
+        wait.restype = ctypes.c_int
+        result = SigInfo()
+        if wait(1, process.pid, ctypes.byref(result), 4 | 1 | 32):
+            raise OSError(ctypes.get_errno(), "cannot observe owned wrapper exit")
+        pid, code, status = result.pid, result.code, result.status
+        exited, killed, dumped = 1, 2, 3
+    elif sys.platform == "linux":
+        result = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if result is None:
+            return None
+        pid, code, status = result.si_pid, result.si_code, result.si_status
+        exited, killed, dumped = os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED
+    else:
+        raise RuntimeError("unsupported POSIX exit observation")
+    if pid == 0:  # WNOHANG has no exit state yet; the child stays waitable.
+        return None
+    if pid != process.pid:
+        raise RuntimeError("exit observation did not name the owned wrapper")
+    if code == exited:
+        return status
+    if code in (killed, dumped):
+        return -status
+    raise RuntimeError("unknown owned wrapper exit state")
+
+
 def end_group(process):
-    """End/reap the owned session even when the wrapper already returned."""
+    """Keep the primary unreaped until its group is empty, then reap it."""
     deadline = time.monotonic() + CLEANUP_SECONDS
     while True:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        status = retained_exit_status(process)
+        count, _rss = group_resources(process.pid,
+                                     process.pid if status is not None else None)
+        if status is not None and count == 0:
             break
-        process.poll()
+        # The primary's unreaped PID still belongs to this guardian, so the
+        # group number cannot become another session's group during this call.
+        os.killpg(process.pid, signal.SIGKILL)
         if time.monotonic() >= deadline:
             raise RuntimeError("owned process group survived cleanup deadline")
         time.sleep(0.05)
@@ -328,22 +377,14 @@ class PosixOwned:
                 ended, status = os.waitpid(self.pid, os.WNOHANG)
                 if ended:
                     if status != 0:
-                        failure = RuntimeError("process guardian failed")
-                        if self.child_pid is not None:
-                            try:
-                                os.killpg(self.child_pid, signal.SIGKILL)
-                            except ProcessLookupError:
-                                pass
+                        failure = RuntimeError("process guardian failed; command release is unconfirmed")
                     break
                 if time.monotonic() >= deadline:
-                    if self.child_pid is not None:
-                        try:
-                            os.killpg(self.child_pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
+                    # The child's PID may have been reaped by a failing
+                    # guardian. Never signal a stale numeric process group.
                     os.kill(self.pid, signal.SIGKILL)
                     os.waitpid(self.pid, 0)
-                    raise RuntimeError("process guardian exceeded cleanup deadline")
+                    raise RuntimeError("process guardian exceeded cleanup deadline; command release is unconfirmed")
                 time.sleep(0.05)
         finally:
             self.control.close()
@@ -661,7 +702,7 @@ def spawn_owned(command, environment, deadline):
                                    stderr=subprocess.STDOUT, start_new_session=True,
                                    close_fds=True)
         child.sendall(json.dumps({"pid": process.pid}).encode() + b"\n")
-        while process.poll() is None:
+        while (status := retained_exit_status(process)) is None:
             count, rss = group_resources(process.pid)
             peak = max(peak, count)
             peak_rss = max(peak_rss, rss)
@@ -674,8 +715,8 @@ def spawn_owned(command, environment, deadline):
             ready, _, _ = select.select([child], [], [], 0.1)
             if ready and not child.recv(1):
                 raise RuntimeError("contract check owner exited")
-        returncode = process.returncode
-        if group_resources(process.pid)[0]:
+        returncode = status
+        if group_resources(process.pid, process.pid)[0]:
             raise RuntimeError("wrapper exited with owned descendants still present")
     except BaseException as failure:
         error = str(failure)[:512]
