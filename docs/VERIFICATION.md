@@ -68,6 +68,7 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
   A missing native shell fails fixture setup before starting the server.
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.
+  On Windows the interactive shim writes its readiness line after console setup; provider/auth replies return before that line, and input logs record only received input.
   The native compiler is `cc` on Unix and `clang.exe` on Windows; its owned child has a 20-second bound and a compiler failure fails setup.
   The private Herdr server, panes and `hided` use `fixturePath`: the shim directory followed by system-tool directories, including `/usr/sbin` for `lsof` on Unix and native Windows and Git directories on Windows.
   `fixtureExecutable` supplies native `.exe` names and `fixtureToolPath` uses the native path delimiter while refusing missing or non-absolute Windows system-root or program-files values.

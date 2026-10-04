@@ -157,6 +157,10 @@ int main(int argc, char **argv) {
   int log = log_path ? open(log_path, flags, 0644) : -1;
   raw_terminal();
 #ifdef _WIN32
+  // Herdr's encoded PowerShell launch has no visible agent name.
+  // Announce from the initialized interactive process before reading input.
+  static const char ready[] = "claude fixture ready\\r\\n";
+  if (terminal_write(ready, sizeof ready - 1) != (fixture_count_t)(sizeof ready - 1)) return 1;
   char b[16384];
 #else
   char b[4096];
