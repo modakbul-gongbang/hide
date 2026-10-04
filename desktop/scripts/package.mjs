@@ -1,6 +1,6 @@
 // Packages the release app for the system this runs on: the Electron host
 // with the release daemon, the hide CLI, the hook and device helpers, the
-// pinned Herdr and hcoord in its resources folder, archived beside a SHA-256
+// pinned Herdr in its resources folder, archived beside a SHA-256
 // checksum (the Electron release app PRD, D-03 and D-08).
 //
 // macOS builds hide.app, ad-hoc signed, as a zip. Windows x64 builds an
@@ -104,7 +104,6 @@ for (const entry of fs.readdirSync(out)) {
 // Release hided embeds web/dist, so the web shell is built first; the cargo
 // wrapper reuses the machine's toolchain and keeps output in this worktree.
 pnpm(["--dir", "web", "build"]);
-pnpm(["--dir", "plugins/hcoord", "build"]);
 run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit" });
 const herdr = system.herdr();
 
@@ -143,14 +142,6 @@ for (const companion of herdr.companions) {
   fs.cpSync(companion, target, { recursive: true });
   extraResource.push(target);
 }
-const hcoordBuild = path.join(repo, "plugins", "hcoord", "dist");
-if (!fs.existsSync(path.join(hcoordBuild, "hcoord", "cli.js"))) {
-  throw new Error(`cannot package hide: built hcoord CLI is missing (${path.join(hcoordBuild, "hcoord", "cli.js")})`);
-}
-const stagedHcoord = path.join(staged, "hcoord");
-fs.mkdirSync(stagedHcoord, { recursive: true });
-fs.cpSync(hcoordBuild, path.join(stagedHcoord, "dist"), { recursive: true });
-extraResource.push(stagedHcoord);
 const notices = path.join(resources, "THIRD_PARTY_NOTICES");
 if (!fs.existsSync(notices)) throw new Error(`third-party notices are missing: ${notices}`);
 extraResource.push(notices);
@@ -182,7 +173,6 @@ const [outputDir] = await packager({
 // the Electron executable at its top and the resources folder beside it.
 const bundle = platform === "darwin" ? path.join(outputDir, "hide.app") : outputDir;
 const bundledResources = platform === "darwin" ? path.join(bundle, "Contents", "Resources") : path.join(bundle, "resources");
-const appExecutable = platform === "darwin" ? path.join(bundle, "Contents", "MacOS", "hide") : path.join(bundle, `hide${exe}`);
 for (const [name] of shipped) {
   const file = path.join(bundledResources, name);
   fs.accessSync(file, fs.constants.X_OK);
@@ -192,33 +182,6 @@ for (const companion of herdr.companions) {
   const name = path.basename(companion);
   if (!fs.existsSync(path.join(bundledResources, name))) throw new Error(`Herdr's ${name} did not land in ${bundledResources}`);
 }
-const bundledHcoord = path.join(bundledResources, "hcoord", "dist", "hcoord", "cli.js");
-if (!fs.statSync(bundledHcoord).isFile()) throw new Error(`built hcoord CLI did not land in ${bundledResources}`);
-
-// The packaged daemon runs in Electron's Node runtime. Execute the exact
-// package before signing so a disabled RunAsNode fuse fails the package by
-// name instead of shipping an app whose login daemon cannot start.
-let runAsNode;
-try {
-  runAsNode = run(appExecutable, [bundledHcoord, "version", "--json"], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-    timeout: 10_000,
-  });
-} catch (error) {
-  fs.rmSync(bundle, { recursive: true, force: true });
-  throw new Error(`cannot package hide: Electron RunAsNode fuse did not execute bundled hcoord: ${String(error)}`);
-}
-let hcoordProbe;
-try { hcoordProbe = JSON.parse(runAsNode); }
-catch {
-  fs.rmSync(bundle, { recursive: true, force: true });
-  throw new Error("cannot package hide: Electron RunAsNode fuse returned invalid hcoord JSON");
-}
-if (hcoordProbe?.ok !== true || typeof hcoordProbe?.value?.hcoordVersion !== "string") {
-  fs.rmSync(bundle, { recursive: true, force: true });
-  throw new Error("cannot package hide: Electron RunAsNode fuse did not confirm the bundled hcoord version");
-}
-
 if (platform === "darwin") {
   run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", bundle], { stdio: "inherit" });
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundle], { stdio: "inherit" });

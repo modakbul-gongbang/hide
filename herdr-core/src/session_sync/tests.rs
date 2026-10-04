@@ -2008,7 +2008,7 @@ fn a_device_agents_declared_parent_is_scoped_to_the_device() {
     assert_eq!(row.declared_parent_pane_id.as_deref(), Some("w9:p3"));
 }
 
-/// What the operator sees of a Herdr `agent.list` that carries hcoord's lineage
+/// What the operator sees of a Herdr `agent.list` that carries hided's lineage
 /// tokens: the rows the replica projects for a device, joined into the lineage
 /// the sidebar draws. Panes `w1:p1` (the parent) and `w1:p2` (the child) share
 /// one device, so the declared parent is scoped to it like any pane id.
@@ -2033,7 +2033,7 @@ mod lineage_sessions {
         agent
     }
 
-    /// The tokens hcoord writes on the child of `parent_session` that runs
+    /// The tokens hided writes on the child of `parent_session` that runs
     /// `child_session`.
     fn declared(child_session: &str, parent_session: &str) -> Value {
         json!({
@@ -2144,7 +2144,7 @@ mod lineage_sessions {
     }
 
     #[test]
-    fn a_parent_declared_before_sessions_were_recorded_is_a_root_until_hcoord_rewrites_it() {
+    fn a_parent_declared_before_sessions_were_recorded_is_a_root_until_hided_rewrites_it() {
         let rows = lineage(
             listed("w1:p1", Some("s-parent"), json!({})),
             listed("w1:p2", Some("s-child"), json!({"parent_pane": "w1:p1"})),

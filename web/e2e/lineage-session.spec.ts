@@ -1,5 +1,5 @@
 // A relationship holds only while both panes still host the sessions it was
-// written for, on an isolated pinned Herdr and hided: the tokens hcoord writes
+// written for, on an isolated pinned Herdr and hided: the tokens hided writes
 // outlive the agent that earned them (they die with the pane), so an agent
 // that takes over a pane must not inherit its parent, and a parent pane taken
 // over by another agent must not adopt the old children.
@@ -37,7 +37,7 @@ test("a pane taken over by another agent is a root, and so is a child of a paren
     await expect(row(child)).toBeVisible({ timeout: 20_000 });
     await expect(row(child)).not.toHaveAttribute("data-delegated", "true");
 
-    // hcoord writes the relationship again for the session the pane runs now.
+    // hided writes the relationship again for the session the pane runs now.
     declareParent(herdr, child, parent);
     await expect(row(child)).toHaveCount(0, { timeout: 20_000 });
 

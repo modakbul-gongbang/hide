@@ -68,7 +68,7 @@ pub struct RowFacts {
 #[serde(tag = "kind", content = "name", rename_all = "snake_case")]
 pub enum RequestSender {
     Operator,
-    /// An hcoord sender, or the delegated child's parent by its title.
+    /// A letter sender, or the delegated child's parent by its title.
     Named(String),
     /// Something other than Hide's input wrote it.
     Agent,
@@ -299,12 +299,12 @@ fn sender(request: &Request, delegated: bool, parent: Option<&String>) -> Reques
     }
 }
 
-/// The longest sender name a row shows; hcoord names are short handles.
+/// The longest sender name a row shows; participant names are short handles.
 const MAX_SENDER_CHARS: usize = 64;
 /// The longest label line a row carries; the label keeps its own to 40.
 const MAX_LINE_CHARS: usize = 200;
 /// What the row writes for the operator and for an unnamed agent, so no
-/// sender can pass as either (an hcoord name is whatever its sender chose).
+/// sender can pass as either (a participant name is whatever its sender chose).
 const RESERVED_SENDERS: [&str; 3] = ["나", "에이전트", "operator"];
 
 fn named(name: &str) -> RequestSender {

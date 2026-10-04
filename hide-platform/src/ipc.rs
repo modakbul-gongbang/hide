@@ -315,6 +315,13 @@ impl Drop for LocalListener {
     }
 }
 
+/// Whether the entry at `path` has the kind a local listener leaves: a socket
+/// on Unix, a marker file on Windows. A link is judged as itself, not followed.
+/// This only reads metadata; it neither connects nor removes the entry.
+pub fn is_endpoint(path: &Path) -> io::Result<bool> {
+    fs::symlink_metadata(path).map(|metadata| sys::is_leftover_kind(&metadata))
+}
+
 /// Removes what a dead listener left at `path`, and refuses a live one.
 ///
 /// Only what a listener leaves is removed: a socket on Unix, the marker file

@@ -478,6 +478,12 @@ pub fn others_can_modify(path: &Path) -> io::Result<bool> {
     sys::access_of_others(path, true)
 }
 
+/// Whether another account can change an open file or folder. The descriptor
+/// is judged directly, so replacing its path cannot change this answer.
+pub fn handle_others_can_modify(handle: &impl Handle) -> io::Result<bool> {
+    sys::handle_access_of_others(handle, true)
+}
+
 /// Whether the file or folder at `path` belongs to the current account.
 pub fn owned_by_current_user(path: &Path) -> io::Result<bool> {
     sys::owned_by_current_user(path)
@@ -488,6 +494,26 @@ pub fn handle_owned_by_current_user(handle: &impl Handle) -> io::Result<bool> {
     sys::handle_owned_by_current_user(handle)
 }
 
+/// One authenticated directory entry. The caller still validates every
+/// containing directory and, for an alias, its returned target namespace.
+#[derive(Debug, Eq, PartialEq)]
+pub enum InspectionDirectory {
+    /// A real directory protected from replacement by another account.
+    Real,
+    /// An alias owned by the system, inspected as the alias itself.
+    SystemAlias(PathBuf),
+}
+
+/// Inspects one entry without following it. Real directories must belong
+/// to this account or the system and deny other-account modification; a
+/// root-owned sticky system directory also protects existing child names.
+/// A system-owned alias returns its raw target so the caller can inspect
+/// that namespace before following it. Account-owned links are refused.
+/// This creates nothing and leaves permissions unchanged.
+pub fn inspect_directory_entry(path: &Path) -> io::Result<InspectionDirectory> {
+    sys::inspect_directory_entry(path)
+}
+
 #[cfg(unix)]
 mod sys {
     use std::fs;
@@ -495,7 +521,7 @@ mod sys {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::path::Path;
 
-    use super::Handle;
+    use super::{Handle, InspectionDirectory};
 
     pub(super) fn create_dir(path: &Path) -> io::Result<()> {
         fs::DirBuilder::new().mode(0o700).create(path)
@@ -540,6 +566,11 @@ mod sys {
         Ok(fs::metadata(path)?.mode() & watched != 0)
     }
 
+    pub(super) fn handle_access_of_others(handle: &impl Handle, changes: bool) -> io::Result<bool> {
+        let watched = if changes { 0o022 } else { 0o077 };
+        Ok(crate::fs::duplicate(handle)?.metadata()?.mode() & watched != 0)
+    }
+
     fn current_user() -> u32 {
         // SAFETY: geteuid has no preconditions and cannot fail.
         unsafe { libc::geteuid() }
@@ -552,6 +583,22 @@ mod sys {
     pub(super) fn handle_owned_by_current_user(handle: &impl Handle) -> io::Result<bool> {
         let metadata = crate::fs::duplicate(handle)?.metadata()?;
         Ok(metadata.uid() == current_user())
+    }
+
+    pub(super) fn inspect_directory_entry(path: &Path) -> io::Result<InspectionDirectory> {
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() && metadata.uid() == 0 {
+            return fs::read_link(path).map(InspectionDirectory::SystemAlias);
+        }
+        let shared = metadata.mode() & 0o022 != 0;
+        let system = metadata.uid() == 0 && (!shared || metadata.mode() & 0o1000 != 0);
+        if metadata.is_dir() && (system || (metadata.uid() == current_user() && !shared)) {
+            return Ok(InspectionDirectory::Real);
+        }
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "directory entry is not an owned real directory safe to inspect",
+        ))
     }
 }
 
@@ -589,7 +636,7 @@ mod sys {
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-    use super::Handle;
+    use super::{Handle, InspectionDirectory};
     use crate::fs::wide;
 
     /// Access that changes a file: write, append, delete, delete a child,
@@ -957,10 +1004,55 @@ mod sys {
         owned(&security_of_handle(handle)?)
     }
 
+    pub(super) fn inspect_directory_entry(path: &Path) -> io::Result<InspectionDirectory> {
+        use std::os::windows::fs::MetadataExt;
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
+            READ_CONTROL,
+        };
+
+        // Security inspection needs READ_CONTROL, unlike identity-only
+        // queries. Open the entry itself, including a directory or alias.
+        let entry = fs::OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?;
+        let metadata = entry.metadata()?;
+        let security = security_of_handle(&entry)?;
+        let system = [
+            Sid::well_known(WinLocalSystemSid)?,
+            Sid::well_known(WinBuiltinAdministratorsSid)?,
+        ]
+        .iter()
+        .any(|sid| sid.same_as(security.owner));
+        if !access_of_security(&security, true)? {
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                if system && metadata.file_type().is_symlink() {
+                    return fs::read_link(path).map(InspectionDirectory::SystemAlias);
+                }
+            } else if metadata.is_dir() && (system || owned(&security)?) {
+                return Ok(InspectionDirectory::Real);
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "directory entry is not an owned real directory safe to inspect",
+        ))
+    }
+
     /// Whether an access list the current account does not own grants `others`
     /// any access (`changes` false) or any access that changes the file.
     pub(super) fn access_of_others(path: &Path, changes: bool) -> io::Result<bool> {
-        let security = security_of_path(path)?;
+        access_of_security(&security_of_path(path)?, changes)
+    }
+
+    pub(super) fn handle_access_of_others(handle: &impl Handle, changes: bool) -> io::Result<bool> {
+        access_of_security(&security_of_handle(handle)?, changes)
+    }
+
+    fn access_of_security(security: &Security, changes: bool) -> io::Result<bool> {
         let account = account()?;
         let trusted = [
             account.user,

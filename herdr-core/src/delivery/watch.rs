@@ -3,6 +3,23 @@ use serde::{Deserialize, Serialize};
 use super::ledger::Ledger;
 use super::{Actor, FILE_LIMIT, INACTIVITY_MS, SECOND_WARNING_MS, WATCH_LIMIT};
 
+/// The inactivity episode and external notification reservation survive the
+/// watch itself, so stopping/restarting or sibling watches cannot resend.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WarningReceipt {
+    pub target: Actor,
+    pub activity_at_unix_ms: u64,
+    pub ordinal: u8,
+    #[serde(default)]
+    pub parent_notified: bool,
+}
+
+impl WarningReceipt {
+    pub(crate) fn valid(&self) -> bool {
+        self.target.valid() && matches!(self.ordinal, 1 | 2)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Watch {
     pub id: String,
@@ -15,6 +32,8 @@ pub struct Watch {
     pub last_status: String,
     pub last_state_change_seq: Option<u64>,
     pub status_changed_at_unix_ms: u64,
+    #[serde(default)]
+    pub generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -43,7 +62,6 @@ impl Watch {
         super::valid_key(&self.id)
             && self.parent.valid()
             && self.target.valid()
-            && self.parent.device_id == "local"
             && self.warning_count <= 2
             && super::valid_key(&self.last_status)
             && (self.warning_count == 0) == self.first_warning_at_unix_ms.is_none()
@@ -57,9 +75,6 @@ pub fn start(
     activity: u64,
 ) -> Result<Watch, String> {
     parent.require_native_identity()?;
-    if parent.device_id != "local" {
-        return Err("local_parent_required".into());
-    }
     if let Some(watch) = ledger
         .watches
         .iter()
@@ -83,6 +98,7 @@ pub fn start(
         last_status: "unknown".into(),
         last_state_change_seq: None,
         status_changed_at_unix_ms: activity,
+        generation: 0,
     };
     ledger.watches.push(watch.clone());
     Ok(watch)
@@ -96,6 +112,54 @@ pub fn stop(ledger: &mut Ledger, parent: &Actor, id: &str) -> Result<(), String>
         .ok_or("watch_unavailable")?;
     ledger.watches.remove(index);
     Ok(())
+}
+
+pub fn assign(
+    ledger: &mut Ledger,
+    parent: &Actor,
+    id: &str,
+    observer: &Actor,
+    expected_generation: Option<u64>,
+    approval: Option<&str>,
+) -> Result<Watch, String> {
+    observer.require_native_identity()?;
+    if approval.is_some_and(|text| !valid_approval(text)) {
+        return Err("invalid_approval".into());
+    }
+    let approved_observer = parent.same_identity(observer) && approval.is_some();
+    if approved_observer && expected_generation.is_none() {
+        return Err("expected_generation_required".into());
+    }
+    let registered = crate::coordination::resolve_actor(ledger, id).cloned();
+    let mut matches = ledger.watches.iter().enumerate().filter(|(_, watch)| {
+        (watch.parent.same_identity(parent) || approved_observer)
+            && (watch.id == id
+                || registered
+                    .as_ref()
+                    .is_some_and(|target| watch.target.same_identity(target)))
+    });
+    let index = matches
+        .next()
+        .map(|(index, _)| index)
+        .ok_or("watch_unavailable")?;
+    if matches.next().is_some() {
+        return Err("watch_ambiguous".into());
+    }
+    let watch = &mut ledger.watches[index];
+    if expected_generation.is_some_and(|expected| expected != watch.generation) {
+        return Err("stale_generation".into());
+    }
+    if !watch.parent.same_identity(observer) {
+        watch.generation = watch.generation.checked_add(1).ok_or("capacity")?;
+        watch.parent = observer.clone();
+    }
+    Ok(watch.clone())
+}
+
+/// Approval permits only the attested new observer to accept a handover.
+/// The explicit text is bounded input and is never emitted to diagnostics.
+pub fn valid_approval(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
 #[derive(Clone)]
@@ -255,7 +319,7 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         let letters_before = ledger.letters.len();
         let sequence_before = ledger.next_id;
         let outcome = (|| {
-            super::mailbox::send(
+            let letter = super::mailbox::send(
                 ledger,
                 &before.parent,
                 &before.parent,
@@ -268,6 +332,17 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
                 None,
                 now,
             )?;
+            let letter = ledger
+                .letters
+                .iter_mut()
+                .find(|stored| stored.id == letter.id)
+                .ok_or("ledger_unavailable")?;
+            letter.watch_warning = Some(WarningReceipt {
+                target: before.target.clone(),
+                activity_at_unix_ms: before.last_activity_at_unix_ms,
+                ordinal: count,
+                parent_notified: false,
+            });
             let watch = &mut ledger.watches[index];
             watch.first_warning_at_unix_ms.get_or_insert(now);
             watch.warning_count = count;
@@ -340,6 +415,101 @@ mod tests {
             failure: None,
             gone: false,
         }
+    }
+
+    #[test]
+    fn reassigning_a_watch_preserves_activity_and_rejects_stale_or_wrong_observers() {
+        let mut ledger = Ledger::default();
+        let parent = actor("parent");
+        let next = actor("next");
+        let target = actor("target");
+        let watch = start(&mut ledger, &parent, &target, 10).unwrap();
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
+        let before = ledger.watches[0].clone();
+        let changed = assign(&mut ledger, &parent, &watch.id, &next, Some(0), None).unwrap();
+        assert_eq!(changed.generation, 1);
+        assert_eq!(
+            changed.last_activity_at_unix_ms,
+            before.last_activity_at_unix_ms
+        );
+        assert_eq!(
+            changed.first_warning_at_unix_ms,
+            before.first_warning_at_unix_ms
+        );
+        assert_eq!(changed.warning_count, before.warning_count);
+        assert_eq!(
+            assign(&mut ledger, &next, &watch.id, &parent, Some(0), None).unwrap_err(),
+            "stale_generation"
+        );
+        assert_eq!(
+            assign(&mut ledger, &parent, &watch.id, &parent, Some(1), None).unwrap_err(),
+            "watch_unavailable"
+        );
+        let restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        assert_eq!(restored.watches[0], changed);
+    }
+
+    #[test]
+    fn the_current_new_observer_accepts_handover_only_with_approval_and_current_generation() {
+        let mut ledger = Ledger::default();
+        let parent = actor("parent");
+        let next = actor("next");
+        let stranger = actor("stranger");
+        let watch = start(&mut ledger, &parent, &actor("target"), 10).unwrap();
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
+        let before = ledger.watches[0].clone();
+        for (caller, observer, generation, approval, expected) in [
+            (&next, &next, Some(0), None, "watch_unavailable"),
+            (
+                &next,
+                &next,
+                None,
+                Some("approved"),
+                "expected_generation_required",
+            ),
+            (&next, &next, Some(1), Some("approved"), "stale_generation"),
+            (
+                &stranger,
+                &next,
+                Some(0),
+                Some("approved"),
+                "watch_unavailable",
+            ),
+            (&next, &next, Some(0), Some(" "), "invalid_approval"),
+        ] {
+            assert_eq!(
+                assign(
+                    &mut ledger,
+                    caller,
+                    &watch.id,
+                    observer,
+                    generation,
+                    approval
+                )
+                .unwrap_err(),
+                expected
+            );
+            assert_eq!(ledger.watches[0], before);
+        }
+        let changed = assign(
+            &mut ledger,
+            &next,
+            &watch.id,
+            &next,
+            Some(0),
+            Some("approved"),
+        )
+        .unwrap();
+        let mut expected = before;
+        expected.parent = next;
+        expected.generation = 1;
+        assert_eq!(changed, expected);
+        assert_eq!(ledger.watches[0], expected);
+        assert!(
+            !String::from_utf8(ledger.bytes().unwrap())
+                .unwrap()
+                .contains("approved")
+        );
     }
 
     #[test]
@@ -522,6 +692,7 @@ mod tests {
             } else {
                 super::super::ledger::State::Acknowledged
             },
+            hook_confirmed: Some(true),
             waiting_answer: open,
             reply_to: None,
             created_at_unix_ms: now,
@@ -529,6 +700,8 @@ mod tests {
             bell_errors: 0,
             bell_sent: false,
             bell_attempts: Some(0),
+            human_notified: false,
+            watch_warning: None,
         }
     }
 

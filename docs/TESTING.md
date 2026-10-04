@@ -32,6 +32,10 @@ Pick the cheapest layer that can observe the result.
 | End to end | A flow that crosses a process boundary a user depends on: browser to hided to the core to Herdr to the PTY, or the desktop window and its native integration | `web/e2e/`, `desktop/e2e/` |
 
 An e2e spec is for a flow that crosses a boundary, not for a rule a unit or core test can state.
+The external crate-boundary lane in `herdr-core/tests/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
+It verifies real helper attestation and reverse-forward mailbox intake, the two-second disconnected hook boundary, and reconnect without duplicate delivery.
+Its explicit ignore marks the external prerequisites; the macOS desktop CI job builds those binaries and runs this lane with `--ignored`.
+The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory.
 Each spec starts its own Herdr, hided and browser, so a rule restated end to end costs runner minutes on every pull request and fails for reasons that have nothing to do with the rule.
 Keep one representative journey per user-visible flow; when a long spec carries an independent contract, split that contract into a small spec that still runs against the real pinned Herdr and hided rather than adding steps to the journey.
 
@@ -65,21 +69,26 @@ When the behavior depends on the order of two events, the test fixes that order;
 
 ## Writing a fixture
 
-- Set each fixture's `HCOORD_HOME` to a private folder such as `HOME/.hcoord`, so its daemon gets a launchd label of its own; hcoord gives the plain `com.hcoord.daemon` label only to the account's default `~/.hide/hcoord`, read from the user database, but a fixture that names its own home leaves no doubt.
-- A test of a one-time move (`hide connect` moving the state folder, `hcoord home adopt`, the kit's hcoord part) stops only a daemon the test started in its own private folder, and injects launchctl and the label (`plugins/hcoord/test/unit/hcoord-home.test.mjs`); launchd domains are per account, so a real `launchctl` call with the default label reaches the operator's coordinator whatever `HOME` says.
-  The desktop fixture refuses a mismatched coordinator before launching a candidate.
+- Set every fixture's `HOME` and Hide state folder to private paths before starting a candidate.
+- A retirement test injects its service-control boundary and uses private legacy folders and ledger fixtures.
+  A real launchd call to the account's default retired-service label reaches the operator's service regardless of a private `HOME`, so it is never part of fixture teardown.
+- The private SSH mailbox fixture stages candidate executable copies without debug symbols, as shipped binaries are, and ad-hoc signs those copies on macOS.
+  The original build output, setup deadlines, real helper upload and mailbox assertions remain unchanged; terminal helper refusal reports its state message instead of waiting out the readiness deadline.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
+- Offline kit fixtures clear an inherited XDG config override in an owned subprocess, preserving both their private HOME registry and parallel test isolation.
+- The Linux and Windows package smoke places state beneath its private HOME, matching the shipped default and preserving the retirement preflight's HOME authority.
+  An external state override still requires the full namespace ownership and permission checks.
+- A fixture that starts the packaged daemon also sets the host's `HIDE_CLI_PATH` to that bundle's `hide`, because an unbundled debug CLI correctly refuses a different release build.
+  Keep the installation and idempotence assertions unchanged; a mixed-build fixture never reaches them through the window.
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
   The exit callback cannot run after SIGKILL, an OOM kill or host loss; these require separate recovery and are not proven by a `process.exit()` regression.
 - `desktop/e2e/fixture.ts` owns each `isolate` home through both automatic test teardown and worker exit, with at most sixteen unclosed homes per worker.
   Each home records at most sixteen live or pending candidate launches; a launch over that cap fails before starting another process.
-  Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided, unloading only the hashed hcoord labels for that home's legacy and adopted directories, and confirming each label absent before deleting the home.
-  An unconfirmed candidate exit, stop, launchctl query or unload failure fails teardown and retains the home for recovery; the error names the retained path and recovery action.
+  Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided and deleting the home.
+  An unconfirmed candidate exit, stop or cleanup failure fails teardown and retains the home for recovery; the error names the retained path and recovery action.
   When candidate exit is unconfirmed, close only the recorded owned candidate, confirm its exit, then call that fixture's `cleanup()` again.
   `desktop/e2e/fixture-cleanup.unit.ts` injects Electron close failures at the external boundary and checks real home retention, confirmed-exit deletion and recovery without starting native processes.
-  `desktop/e2e/lifecycle.spec.ts` checks running and manually stopped services, failed tests, Node-managed worker exit via `process.exit(23)`, and retained state after an unload failure against private homes in real launchd.
-  Standalone hcoord fixtures must use `hcoord daemon uninstall --json` with their original `HOME` and `HCOORD_HOME` before removing those paths; `daemon stop` alone keeps the job registered.
 - Set `terminal.default_shell` in the private Herdr config, because Windows Herdr does not select its shell from `SHELL`.
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
@@ -105,9 +114,9 @@ When the behavior depends on the order of two events, the test fixes that order;
 
 `hide-platform` owns what differs between systems in the product; the e2e fixtures need the same for their own resources: the endpoint they listen on, how they spell a path the core compares, the programs they copy and run, and how they clean up.
 That belongs in one shared fixture helper under `web/e2e/`, which the specs and both fixtures call, not in a `process.platform` branch per spec.
-No such helper exists on `main` yet: `web/e2e/herdr-fixture.ts` assumes a Unix socket under `/tmp`, and `desktop/e2e/fixture.ts` branches on `process.platform` itself.
-Until it lands, put a new difference beside the fixture that owns the resource, and do not add it to a spec.
-The first Windows runs of the web e2e fixtures found three differences the helper has to own:
+`web/e2e/platform-fixture.ts` owns native home variables, executable names, the controlled tool path, compiler and no-op opener used by both fixtures.
+Put new operating-system differences in that shared boundary rather than repeating them in a spec.
+The Windows fixture boundaries also preserve these requirements:
 
 - An endpoint is a named pipe on Windows: a fixture that would use the socket path `P` on Unix uses `\\.\pipe\P`, because listening on a Unix socket path there fails with `EACCES`.
 - A key the core derives from a path is computed from the wire spelling the core uses (`/` between names, `hide-platform`'s `path`), never from the native spelling.

@@ -146,10 +146,20 @@ Done is therefore scoped to the lineage root: a delegated child that finishes le
 ## Where a parent comes from
 
 Ownership, the tree, the breadcrumb and the descendant badge all start from one fact per agent: the pane it was spawned from.
-Herdr records no lineage, so hcoord is the sole writer of four pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, `parent_machine` names the machine that owns that pane when the parent is on another device, and `child_session` and `parent_session` carry a digest of the session each pane hosted when the relationship was written.
-The complete writer, value, lifetime, machine identity, and clone-limit contract lives in [plugins/hcoord/docs/pane-tokens.md](../plugins/hcoord/docs/pane-tokens.md).
-Hide's fork and an external coordinator both register a completed spawn through the fixed hcoord binary; neither Hide nor another integration writes the tokens directly.
-`wire.rs` is the only conversion point from those tokens into the projection, and the runtime resolves machine-qualified parents only after it has read each connected device's immutable hcoord machine identity outside the runtime mutex.
+Herdr records no lineage, so hided writes the four pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, `parent_machine` names its machine when the parent is remote, and `child_session` and `parent_session` are the original session digests.
+The value and lifetime contract is unchanged.
+The session tokens are lowercase hexadecimal SHA-256 digests of each original `agent_session.value`; this keeps even a path-valued session inside Herdr's 80-character token limit.
+A same-server relationship omits `parent_machine`.
+A changed child session clears all four tokens, while an absent session proves neither a valid relationship nor a session change.
+Ending registration leaves the tokens until the child pane changes or disappears.
+A relationship is accepted only when both panes still report the recorded session digests; without both digests the child is a root until a complete declaration is written.
+A changed parent session cannot adopt the previous session's children, and an absent parent agent retains the existing orphan presentation.
+A missing or unknown remote machine identity leaves the child a root until its matching device connects.
+The operating-system identity is the platform UUID on macOS and the machine-id on Linux; cloned machines need distinct identities before they can safely resolve different parents.
+`hide agent register` and `hide agent spawn`, including Hide's fork, record the relationship in the core's coordination ledger.
+The existing one-second agent refresh writes only panes whose tokens differ, with a complete reconciliation on startup or reconnect and an immediate write after spawn.
+`wire.rs` and `sidebar.rs` remain the readers of this contract.
+A connected device's immutable machine identity comes from its consented helper's connection greeting, outside the runtime mutex; an unavailable identity leaves the parent unresolved and records a diagnostic.
 A declaration whose machine cannot be matched stays a root and records one diagnostic for that pane instead of guessing.
 
 A pane outlives the agent it hosted and the tokens outlive the agent with it, so a declaration is only a claim until the sessions prove it: it holds while the child's pane reports the `child_session` and the parent's pane the `parent_session`.

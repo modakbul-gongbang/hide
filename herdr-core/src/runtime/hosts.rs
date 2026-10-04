@@ -317,6 +317,7 @@ impl Runtime {
         };
         self.set_host_phase(device_id, HostPhase::Connecting);
         let packages = self.host_packages.clone();
+        let retirement_projects = self.retirement_projects(device_id);
         let device = device_id.to_owned();
         let spawned = thread::Builder::new()
             .name("herdr-core-device-host".to_owned())
@@ -338,7 +339,8 @@ impl Runtime {
                         close_context.notifier.notify();
                     }
                 });
-                let result = host::establish(&client, &packages, &consent, on_close);
+                let result =
+                    host::establish(&client, &packages, &consent, &retirement_projects, on_close);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -398,6 +400,10 @@ impl Runtime {
         }
         match result {
             Ok(established) => {
+                self.ingest_device_machine_id(
+                    device_id,
+                    established.hello.machine_identity.into_result(),
+                );
                 let mut bound_now = false;
                 if let Some(consent) = self
                     .snapshot
@@ -500,6 +506,9 @@ impl Runtime {
             return false;
         }
         host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
+        if self.device_machine_ids.remove(device_id).is_some() {
+            self.refresh_agent_lineage();
+        }
         self.refresh_device_snapshots();
         true
     }
@@ -515,6 +524,9 @@ impl Runtime {
             {
                 remote.close(reason);
             }
+        }
+        if self.device_machine_ids.remove(device_id).is_some() {
+            self.refresh_agent_lineage();
         }
     }
 

@@ -205,6 +205,17 @@ fn serve_preserves_kit_protocol_alongside_activity() {
         true,
     );
     assert_eq!(answers[&25]["ok"]["protocol"], PROTOCOL_VERSION);
+    let identity = serde_json::from_value::<hide_host::protocol::MachineIdentity>(
+        answers[&25]["ok"]["machine_identity"].clone(),
+    )
+    .unwrap()
+    .into_result()
+    .unwrap();
+    assert_eq!(
+        identity,
+        hide_platform::host::machine_id().unwrap(),
+        "the private helper and local daemon use the same native machine identity"
+    );
     assert_activity(&answers[&3], &codex);
     let components = answers[&17]["ok"]["components"].as_array().unwrap();
     assert!(components.iter().any(|part| part["id"] == "codex_per_pane"));
@@ -303,4 +314,17 @@ fn helper_exits_when_owner_dies_with_stdin_still_open() {
     assert!(!output.status.success());
     assert!(owner.try_wait().unwrap().is_some());
     assert!(started.elapsed() < DEADLINE);
+}
+
+#[test]
+fn kit_protocol_carries_device_checkout_paths_and_accepts_older_requests() {
+    let old: Call = serde_json::from_value(
+        json!({"op":"kit", "action":{"kind":"status"}, "cli_dir":"~/bin", "herdr_socket":null}),
+    )
+    .unwrap();
+    assert!(matches!(old, Call::Kit { retirement_projects, .. } if retirement_projects.is_empty()));
+    let current: Call = serde_json::from_value(json!({"op":"kit", "action":{"kind":"apply"}, "cli_dir":"~/bin", "herdr_socket":null, "retirement_projects":["/checkout/on-this-device"]})).unwrap();
+    assert!(
+        matches!(current, Call::Kit { retirement_projects, .. } if retirement_projects == ["/checkout/on-this-device"])
+    );
 }

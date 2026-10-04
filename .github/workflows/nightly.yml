@@ -108,11 +108,10 @@ jobs:
       - name: Install the pinned Electron runtime
         timeout-minutes: 5
         run: bash scripts/verify-web.sh desktop electron-install
-      - name: Build the web shell and hcoord
+      - name: Build the web shell
         timeout-minutes: 5
         run: |
           bash scripts/verify-web.sh web build
-          bash scripts/verify-web.sh hcoord build
       - name: Install Playwright Chromium
         timeout-minutes: 5
         run: bash scripts/verify-web.sh desktop playwright-install

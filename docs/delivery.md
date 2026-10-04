@@ -1,9 +1,9 @@
 # Agent delivery and inactivity watches
 
-Hide's core owns the local mailbox and inactivity watches while the existing hcoord coordinator continues to own its requests, watches, spawning and lineage.
+Hide's core owns agent registration, spawning and lineage, the single mailbox and inactivity watches for local and connected device agents.
 This guide is the public operating contract.
 Approved implementation contracts and run state stay in the private local harness.
-Remote recipients, hcoord retirement, human Inbox UI and automatic draft clearing belong to later work.
+Human Inbox UI, relay/escalate, authority proof and automatic draft clearing remain follow-up work.
 
 ## Commands and caller identity
 
@@ -14,7 +14,8 @@ Each queued command revalidates both its original capability caller and the agen
 Mailbox callers and new recipients require a positive native-session binding; a missing binding returns `native_identity_required`.
 Two missing native references in the same pane never authorize retained mail.
 Target names and pane IDs resolve against the daemon's current observations.
-Sending to a remote recipient returns `remote_delivery_unsupported`.
+A connected device recipient uses the existing reverse-forwarded Workspace bridge; the capability fixes its pane, sender and kind, and the only ledger remains on the controlling daemon.
+A disconnected device hook finishes within its two-second budget with no letters, leaving them pending in that ledger.
 
 ```sh
 hide request send child-name --intent task-question-1 --body 'Please report the check result.'
@@ -26,18 +27,21 @@ hide inbox
 hide watch start child-name
 hide watch list
 hide watch stop watch-2
+hide request send parent-name --kind report --intent task-complete-1 --body 'The check passed.'
 ```
 
 The recipient can acknowledge or reply; the sender can cancel.
-Acknowledgement changes the receipt state, and a reply separately closes the original request's answer wait.
+Acknowledgement marks a letter as manually checked without changing its durable `hook_confirmed` intake receipt; a reply separately closes the original request's answer wait.
 Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery.
 Use a new intent for a new letter.
 The envelope identifies the sender and letter kind; it is not a session-level authority or anti-forgery proof.
+The current first-line format is `Hide letter <id> from <name> (<agent>) [<kind>]`, with independent writer and transcript-reader examples in [delivery-envelope.json](../contracts/delivery-envelope.json).
+A batch keeps the first letter's sender attribution in the request view; neither later headers nor older delivery formats select a sender.
 
 ## Safe intake and manual fallback
 
 A doorbell carries only a short instruction to read `hide inbox`.
-It requires a current local idle/done occupant, 30 seconds since Hide last routed a key to that pane, positive native readiness, a positively styled empty composer, and a recognized footer structure.
+It requires a current idle/done occupant, 30 seconds since Hide last routed a key to that pane, positive native readiness, a positively styled empty composer, and a recognized footer structure.
 Working agents, drafts, uncertain menus and unknown layouts leave the letter pending.
 The adapter never copies, clears or restores a draft.
 Its bounded visible ANSI read preserves the styling that distinguishes a placeholder from identical typed text.
@@ -47,14 +51,14 @@ The reservation is persisted before input, and the adapter repeats the native/co
 A crash or changed composer after reservation may consume an attempt while leaving the letter pending.
 Legacy records with a successful bell but no total count conservatively have no automatic attempts left; manual and prompt-hook intake remain available.
 
-The next `UserPromptSubmit` hook pulls the oldest pending letters, emits their context, flushes stdout, then confirms those IDs.
+The next `UserPromptSubmit` hook pulls the oldest pending letters and newly acknowledged letters with `hook_confirmed: false`, which remain open for capacity and retention, emits their context, flushes stdout, then confirms those IDs.
 Transport arrival and the doorbell alone do not confirm intake.
 Interruption before confirmation can repeat the same letter ID; confirmed letters do not appear again in hook context.
 The hook emits at most five letters and 8 KiB of context, with a remaining-count line and `hide inbox` guidance when more are pending.
 A large letter is truncated at a UTF-8 boundary and includes its ID and `hide request show` command for the complete body.
 The installed prompt hook supervises one guarded internal operation with a 1.85-second deadline inside the two-second caller budget, including Memory, filesystem, output and diagnostic work.
 The internal operation requires positive owner proof and inherits the runtime payload and output streams; it confirms only after its output is successfully flushed.
-Failure leaves unconfirmed letters pending and attempts a rate-limited private diagnostic inside that same budget.
+Failure leaves actual intake unconfirmed and attempts a rate-limited private diagnostic inside that same budget.
 A blocked diagnostic store or output stream can prevent the diagnostic from finishing; the outer timeout performs no filesystem or output tail that could hold submission open.
 CLI output collection uses the canonical platform capture, with a 64 KiB bound and no reader thread or blocking join after timeout.
 Cleanup uncertainty is a separate private diagnostic field and never authorizes confirmation.
@@ -66,7 +70,7 @@ That residual limit is the approved D-18 boundary; external input is not represe
 
 ## Persistence, clocks and limits
 
-The mailbox lives at the state directory's `delivery-ledger.json`, named by `hide_kit::layout::delivery_ledger`, independently of hcoord's storage.
+The mailbox lives at the state directory's `delivery-ledger.json`, named by `hide_kit::layout::delivery_ledger`.
 An admitted mutation is atomically persisted as a private file before the daemon publishes it or returns success.
 Startup establishes the existing trusted ancestor's directory barriers, creates and syncs at most 64 private descendants, validates the actual ledger and reestablishes its file barrier before admitting effects.
 An uncertain replacement disables further delivery effects until a validated restart; corrupt bytes and incomplete directory chains remain available for recovery.
@@ -76,24 +80,29 @@ Capacity errors retain existing letters and watches.
 
 | Resource or clock | Bound |
 | --- | --- |
-| Pending delivery deadline | 10 minutes, then `undelivered`; visible through CLI |
+| Pending delivery deadline | 60 minutes, then `undelivered`; visible through CLI |
 | Hide-key quiet period | 30 seconds |
 | Doorbell reservations per letter | Three total, persisted across restart |
 | First inactivity warning | 20 minutes without activity |
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
+| Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
 | Intent retention and finished-letter cleanup | 30 days; open letters remain |
 | Open / retained letters | 1024 / 5000 |
 | Watches | 32 |
 | Letter body / ledger file | 16 KiB / 16 MiB |
 | Hook batch / context / total deadline | Five letters / 8 KiB / two seconds |
 
-The delivery deadline and watch clocks are distinct.
-There is no transition to `expired` in this contract, and an undelivered letter does not generate a new notification letter or UI banner.
+Automatic expiry and doorbells apply only to `pending` letters, while watch clocks remain distinct.
+Legacy records with missing or null `hook_confirmed` prove intake only in `delivered` state; older `acknowledged` records remain unknown, excluded from pull and subject to their previous closed-state retention rules unless still awaiting a reply.
+There is no transition to `expired` in this contract; an undelivered letter uses the existing human notification paths without creating another letter or UI banner.
 First-warning time and count persist across daemon restarts; activity resets both.
 
-## Watch activity and hcoord coexistence
+## Watch activity and completion
 
-Only a local parent that explicitly starts a watch receives its warning letters.
+The registered observer receives inactivity warning letters; `hide watch assign` changes that observer without a polling interval flag.
+The current observer can assign a new observer; an attested new observer can accept a handover with explicit `--approval <text>` and the current `--expected-generation <n>`.
+Approval is nonblank text of at most 256 bytes without control characters, and does not replace the command's native caller binding.
+For that acceptance, the requested observer must be the actual caller; `--actor` cannot select a different caller, and a missing or stale generation refuses the handover.
 Activity is the later of Herdr's status-transition time and the confirmed native session file's modification time.
 A local read and the device helper's `session_activity` use the same session ownership and root-confinement checks.
 Session lookup has one total budget of 10000 directory entries, including skipped extensions and unmatched names, 64 visited directories and 8 MiB of retained path bytes.
@@ -117,16 +126,34 @@ Session discovery, ownership reads and helper I/O run outside `Mutex<Runtime>`.
 A tick also performs one bounded ledger encoding and bounded per-watch admission checks; it publishes only watch start, warning and end transitions.
 A target exit or parent's explicit stop ends the watch.
 A normal reply closes the request's answer wait and leaves the watch active.
-A done target remains watched until exit or explicit stop; there is no completion-report command in this phase.
+A done target remains watched until exit, explicit stop or a completion report.
+The first actual post-flush confirmation records `hook_confirmed: true` and ends a matching sender-parent watch for `hide request send --kind report`, even after acknowledgement, cancellation or the delivery deadline; replay after restart preserves a watch explicitly started after that receipt.
+A report from an unwatched sender is an ordinary letter; the parent can restart a watch explicitly.
 
-At registration only, Hide runs one existing read-only hcoord watch-list call and, when active watches exist, at most one agent-list call within one combined two-second budget.
-An exact current pane/session/machine/host-scope match rejects registration as `conflict`; unavailable or ambiguous proof records a stable diagnostic and allows registration.
-One off-lock probe owner serializes registration reads with a nonblocking admission check and retains at most one child whose cleanup is unconfirmed.
-It refuses another probe while that child remains unconfirmed, records the stable unverified-registration outcome, and spends at most 50 ms of the next registration's existing two-second budget retrying cleanup.
-Each probe keeps the existing 1 MiB output and 2048-row limits, and Runtime holds only a weak reference so its teardown cannot perform child cleanup under the runtime mutex.
-Returned prompts, paths and arguments are not persisted or logged.
-During PRD A, do not add an hcoord watch to a target already watched by Hide: the reverse registration direction is an operational rule, and two independent watches can otherwise produce two warning letters.
-The helper protocol addition must inherit the preceding request-view contract; this work does not authorize replacing an installed helper or retiring hcoord.
+## Agent registration and spawning
+
+`hide agent register [--check]`, `list`, `show` and `end` preserve the caller surface used by dispatch and Fork.
+`hide agent spawn` accepts `--parent`, `--name`, `--intent`, `--kind`, `--repo`, `--branch`, optional `--path`, `--no-watch` and native arguments after `--`.
+It creates the checkout when needed, the real child pane and agent, registers their relationship, writes lineage immediately and starts a watch unless `--no-watch` is present.
+A completed spawn stores a durable receipt for its parent and intent, so retries return the same child and preserve ended registrations and closed watches.
+Only incomplete intents resume their recorded creation and registration steps; starting a new watch after completion requires explicit `hide watch start`.
+Remote starts use Hide's existing device start path.
+The unsupported reconciliation/resume/session flags and relay, escalate, graph and events commands are absent.
+
+The existing one-second `agent.list` refresh, also requested by native events, reconciles only panes whose four lineage tokens differ; startup and reconnect perform one full pass.
+An unchanged native observation and append-only registration count skip planning; unrelated letter/watch writes and label/process/catalog publications do not start a lineage pass.
+The native pane and positive session select the matching retained registration, including an ended one, independently of append order.
+A positive child-session replacement clears stale tokens; an absent native session or agent end leaves the pane's tokens in place, while unchanged readers reject obsolete session identities.
+There is no separate lineage timer, subprocess on the input path or blocking work under `Mutex<Runtime>`.
+The token readers and digest contract remain unchanged.
+
+People receive notifications only for an unanswered parent inactivity warning and an overdue undelivered letter.
+A first warning left unacknowledged, uncancelled and unreplied for 60 minutes triggers one human notification per native target and inactivity episode, shared across sibling watches and phone Web Push/Herdr channels.
+The receipt lives on the existing warning letters and survives daemon restart and watch stop/restart; new target activity starts a new episode.
+The second agent warning introduces no second human notification schedule.
+An overdue letter's notification key is its ID plus the cause and sends once across both channels.
+A failed first channel falls back to the other; two failures record a diagnostic without retry.
+These cases add no Inbox screen or automatic escalation chain.
 
 ## Verification
 
@@ -144,8 +171,8 @@ The helper executable tests use private homes and fixture transcripts, pair JSON
 Each fixture launch and capture shares an absolute five-second deadline and a combined 64 KiB output cap; provider sessions and the installed helper are never used.
 The full Rust test and lint lanes still apply to the final committed head.
 Actual Linux and Windows OS-contract runner results are required for the state-machine, ledger and activity portability claim; declaring a workflow does not prove it passed.
-Real TUI delivery requires an isolated Herdr server, private HOME/state/HCOORD_HOME, precisely identified candidate processes and disposable provider sessions with observed native identity and hcoord lineage.
-Register only an actual parent session and spawn its child through the existing hcoord path; never seed a capability or coordination ledger.
+Real TUI delivery requires an isolated Herdr server, private HOME/state, precisely identified candidate processes and disposable provider sessions with observed native identity and registered lineage.
+Register only an actual parent session and spawn its child through `hide agent spawn`; never seed a capability or coordination ledger.
 Exercise idle/done delivery, working delay, a draft identical to the placeholder, uncertain menus, hook confirmation/restart, capacity/corruption, watch clocks/reset/exit/reply and helper privacy/fallback.
 Label protocol fixtures separately from actual provider runtime observations.
 Measure matched baseline/candidate input latency and idle/driven load through [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); a headless or socket-only check does not prove native presentation.

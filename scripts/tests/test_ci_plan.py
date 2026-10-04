@@ -97,7 +97,7 @@ class Selection(unittest.TestCase):
             [("M", "pnpm-lock.yaml")],
             [("M", "web/e2e/herdr-fixture.ts")],
             [("M", "web/package.json")],
-            [("M", "plugins/hcoord/src/cli.ts")],
+            [("M", "plugins/example/src/cli.ts")],
             [("M", "mystery/file.txt")],
             [("T", "web/src/store.ts")],
             [("M", "docs/README.md"), ("M", "scripts/ci-plan.py")],

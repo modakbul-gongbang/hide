@@ -73,7 +73,7 @@ export type Locations = Pick<DesktopEnv, "home" | "localAppData" | "appData" | "
  * - `%APPDATA%\npm`: the global folder the Node.js installer gives npm, where
  *   `npm install -g` puts `claude` and `codex`.
  * - `%ProgramFiles%\GitHub CLI` and `%ProgramFiles%\nodejs`: the GitHub CLI's
- *   and Node.js's installers' folders; npm's commands and hcoord run on `node`.
+ *   and Node.js's installers' folders; npm's commands run on `node`.
  */
 export function wellKnownDirs(at: Locations): Folders {
   if (process.platform !== "win32") return { dirs: [path.join(at.home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"], missing: [] };

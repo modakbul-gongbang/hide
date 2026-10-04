@@ -27,6 +27,8 @@ pub struct Letter {
     pub kind: String,
     pub body: String,
     pub state: State,
+    #[serde(default)]
+    pub hook_confirmed: Option<bool>,
     pub waiting_answer: bool,
     pub reply_to: Option<String>,
     pub created_at_unix_ms: u64,
@@ -35,11 +37,27 @@ pub struct Letter {
     pub bell_sent: bool,
     #[serde(default)]
     pub bell_attempts: Option<u8>,
+    #[serde(default)]
+    pub human_notified: bool,
+    #[serde(default)]
+    pub watch_warning: Option<super::watch::WarningReceipt>,
 }
 
 impl Letter {
     pub fn open(&self) -> bool {
-        self.state == State::Pending || self.waiting_answer
+        self.awaiting_intake() || self.waiting_answer
+    }
+
+    pub(crate) fn intake_confirmed(&self) -> bool {
+        // Only legacy Delivered proves a hook confirmation. A legacy Ack
+        // may have preceded intake, so its missing receipt remains unknown.
+        self.hook_confirmed
+            .unwrap_or(self.state == State::Delivered)
+    }
+
+    pub(crate) fn awaiting_intake(&self) -> bool {
+        self.state == State::Pending
+            || (self.state == State::Acknowledged && self.hook_confirmed == Some(false))
     }
 
     pub(crate) fn attempts(&self) -> u8 {
@@ -71,6 +89,10 @@ pub struct Ledger {
     pub next_id: u64,
     pub letters: Vec<Letter>,
     pub watches: Vec<Watch>,
+    #[serde(default)]
+    pub agents: Vec<crate::coordination::AgentRecord>,
+    #[serde(default)]
+    pub spawns: Vec<crate::coordination::SpawnRecord>,
 }
 
 impl Default for Ledger {
@@ -80,6 +102,8 @@ impl Default for Ledger {
             next_id: 1,
             letters: Vec::new(),
             watches: Vec::new(),
+            agents: Vec::new(),
+            spawns: Vec::new(),
         }
     }
 }
@@ -103,13 +127,24 @@ impl Ledger {
                 || !super::valid_key(&letter.intent)
                 || !letter.sender.valid()
                 || !letter.recipient.valid()
-                || !matches!(letter.kind.as_str(), "request" | "reply" | "watch")
-                || letter.sender.device_id != "local"
-                || letter.recipient.device_id != "local"
+                || !matches!(
+                    letter.kind.as_str(),
+                    "request" | "block" | "report" | "reply" | "watch"
+                )
                 || letter.body.len() > BODY_LIMIT
                 || letter.body.trim().is_empty()
                 || letter.bell_errors > 3
                 || letter.bell_attempts.is_some_and(|attempts| attempts > 3)
+                || (letter.hook_confirmed == Some(true)
+                    && matches!(
+                        letter.state,
+                        State::Pending | State::Undelivered | State::Expired
+                    ))
+                || (letter.hook_confirmed == Some(false) && letter.state == State::Delivered)
+                || letter
+                    .watch_warning
+                    .as_ref()
+                    .is_some_and(|warning| letter.kind != "watch" || !warning.valid())
                 || (!letter.open() && letter.finished_at_unix_ms.is_none())
                 || (matches!(
                     letter.state,
@@ -125,8 +160,14 @@ impl Ledger {
                 return Err("ledger_unavailable".into());
             }
         }
+        crate::coordination::validate_records(self)?;
         let mut sequences = HashSet::new();
-        for id in ids.into_iter().chain(watches) {
+        for id in ids
+            .into_iter()
+            .chain(watches)
+            .chain(self.agents.iter().map(|record| &record.id))
+            .chain(self.spawns.iter().map(|record| &record.id))
+        {
             let sequence = id
                 .split_once('-')
                 .and_then(|(_, value)| value.parse::<u64>().ok())
@@ -451,6 +492,159 @@ mod tests {
         let mut invalid = ledger;
         invalid.letters[0].bell_attempts = Some(4);
         assert_eq!(invalid.validate().unwrap_err(), "ledger_unavailable");
+    }
+
+    #[test]
+    fn actual_hook_receipt_survives_durable_ack_reload_and_replay_without_closing_new_watch() {
+        use super::super::{mailbox, watch};
+        let fixtures =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/runs/delivery-receipt-tests");
+        std::fs::create_dir_all(&fixtures).unwrap();
+        let root = tempfile::tempdir_in(fixtures).unwrap();
+        let path = root.path().join("ledger.json");
+        let mut ledger = letter();
+        ledger.letters[0].kind = "report".into();
+        ledger.letters[0].waiting_answer = false;
+        let child = ledger.letters[0].sender.clone();
+        let parent = ledger.letters[0].recipient.clone();
+        let id = ledger.letters[0].id.clone();
+        watch::start(&mut ledger, &parent, &child, 2).unwrap();
+        mailbox::apply(
+            &mut ledger,
+            &parent,
+            None,
+            &mailbox::Command::Ack { id: id.clone() },
+            3,
+        )
+        .unwrap();
+        save(&path, &ledger).unwrap();
+        let mut restored = load(&path).unwrap();
+        assert_eq!(
+            mailbox::pull(&restored, &parent).unwrap().ids.as_slice(),
+            std::slice::from_ref(&id)
+        );
+        let shown = mailbox::apply(
+            &mut restored,
+            &parent,
+            None,
+            &mailbox::Command::Show { id: id.clone() },
+            4,
+        )
+        .unwrap();
+        assert_eq!(shown["state"], "acknowledged");
+        assert_eq!(shown["hook_confirmed"], false);
+        assert_eq!(restored.watches.len(), 1);
+        let confirm = mailbox::Command::Confirm {
+            ids: vec![id.clone()],
+        };
+        mailbox::apply(&mut restored, &parent, None, &confirm, 5).unwrap();
+        save(&path, &restored).unwrap();
+        let mut restored = load(&path).unwrap();
+        assert!(restored.watches.is_empty());
+        assert!(mailbox::pull(&restored, &parent).unwrap().ids.is_empty());
+        let shown = mailbox::apply(
+            &mut restored,
+            &parent,
+            None,
+            &mailbox::Command::Show { id },
+            6,
+        )
+        .unwrap();
+        assert_eq!(shown["state"], "acknowledged");
+        assert_eq!(shown["hook_confirmed"], true);
+        watch::start(&mut restored, &parent, &child, 7).unwrap();
+        save(&path, &restored).unwrap();
+        let mut restored = load(&path).unwrap();
+        let before = restored.clone();
+        mailbox::apply(&mut restored, &parent, None, &confirm, 8).unwrap();
+        save(&path, &restored).unwrap();
+        assert_eq!(load(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn legacy_delivered_proves_intake_but_legacy_ack_stays_closed_without_delivery_proof() {
+        use super::super::{mailbox, watch};
+        for state in [State::Delivered, State::Acknowledged] {
+            let mut fixture = serde_json::to_value(letter()).unwrap();
+            let row = fixture["letters"][0].as_object_mut().unwrap();
+            row.remove("hook_confirmed");
+            row.insert("state".into(), serde_json::to_value(state).unwrap());
+            row.insert("kind".into(), serde_json::json!("report"));
+            row.insert("waiting_answer".into(), serde_json::json!(false));
+            row.insert("finished_at_unix_ms".into(), serde_json::json!(2));
+            let mut restored: Ledger = serde_json::from_value(fixture).unwrap();
+            restored.validate().unwrap();
+            let explicit_null: Ledger =
+                serde_json::from_value(serde_json::to_value(&restored).unwrap()).unwrap();
+            assert_eq!(explicit_null, restored);
+            let child = restored.letters[0].sender.clone();
+            let parent = restored.letters[0].recipient.clone();
+            let id = restored.letters[0].id.clone();
+            let watched = watch::start(&mut restored, &parent, &child, 3).unwrap();
+            let shown = mailbox::apply(
+                &mut restored,
+                &parent,
+                None,
+                &mailbox::Command::Show { id: id.clone() },
+                4,
+            )
+            .unwrap();
+            assert!(shown["hook_confirmed"].is_null());
+            assert!(!restored.letters[0].open());
+            assert!(mailbox::pull(&restored, &parent).unwrap().ids.is_empty());
+            let mut retained = restored.clone();
+            assert!(retained.cleanup(RETENTION_MS + 3));
+            assert!(retained.letters.is_empty());
+            assert_eq!(retained.watches[0].id, watched.id);
+            if state == State::Delivered {
+                assert!(restored.letters[0].intake_confirmed());
+                mailbox::apply(
+                    &mut restored,
+                    &parent,
+                    None,
+                    &mailbox::Command::Confirm { ids: vec![id] },
+                    5,
+                )
+                .unwrap();
+                assert_eq!(restored.watches[0].id, watched.id);
+                assert!(restored.letters[0].hook_confirmed.is_none());
+            } else {
+                assert!(!restored.letters[0].intake_confirmed());
+                assert_eq!(restored.watches[0].id, watched.id);
+                mailbox::apply(
+                    &mut restored,
+                    &parent,
+                    None,
+                    &mailbox::Command::Confirm { ids: vec![id] },
+                    5,
+                )
+                .unwrap();
+                assert!(restored.watches.is_empty());
+                assert_eq!(restored.letters[0].hook_confirmed, Some(true));
+            }
+        }
+        for (state, receipt) in [
+            (State::Pending, true),
+            (State::Undelivered, true),
+            (State::Expired, true),
+            (State::Delivered, false),
+        ] {
+            let mut invalid = letter();
+            invalid.letters[0].state = state;
+            invalid.letters[0].hook_confirmed = Some(receipt);
+            invalid.letters[0].waiting_answer = false;
+            invalid.letters[0].finished_at_unix_ms = Some(2);
+            assert_eq!(invalid.validate().unwrap_err(), "ledger_unavailable");
+        }
+        for receipt in [
+            serde_json::json!("true"),
+            serde_json::json!(1),
+            serde_json::json!({}),
+        ] {
+            let mut invalid = serde_json::to_value(letter()).unwrap();
+            invalid["letters"][0]["hook_confirmed"] = receipt;
+            assert!(serde_json::from_value::<Ledger>(invalid).is_err());
+        }
     }
 
     #[test]

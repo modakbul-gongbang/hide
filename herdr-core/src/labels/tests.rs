@@ -955,7 +955,10 @@ fn a_request_the_operator_submitted_is_theirs_and_survives_a_restart_without_a_r
         &[
             ("user", "요청 보기 만들어줘"),
             ("assistant", "만들었습니다\nPR을 열었어요"),
-            ("user", "HCOORD_REQUEST r1 from ci-lead (p9)\nCI 다시 봐줘"),
+            (
+                "user",
+                "Hide letter r1 from ci-lead (claude) [request]\nCI 다시 봐줘",
+            ),
         ],
     );
     harness.backend.answer("요청 보기", "done", "");
@@ -1033,7 +1036,10 @@ fn only_a_turn_the_operator_started_moves_the_goal() {
     let by_agent = [
         first[0],
         first[1],
-        ("user", "HCOORD_REQUEST r1 from ci-lead (p9)\nCI 다시 봐줘"),
+        (
+            "user",
+            "Hide letter r1 from ci-lead (claude) [request]\nCI 다시 봐줘",
+        ),
     ];
     harness.session("a", "native-a", &by_agent);
     harness.backend.answer("CI 다시 보는 작업", "working", "");

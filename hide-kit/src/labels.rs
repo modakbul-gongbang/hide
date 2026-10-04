@@ -121,24 +121,48 @@ pub(crate) fn retire(target: &KitTarget) -> Retirement {
 
 fn request(target: &KitTarget, method: &str, params: Value) -> Result<Value, String> {
     hide_herdr_client::request_with_timeout(&target.herdr_socket, method, params, HERDR_DEADLINE)
-        .map_err(|error| {
-            // A transport message can carry the socket's path (B20); the
-            // remote code is the part a reader needs.
-            let reason = match &error {
-                hide_herdr_client::ApiError::Remote { code, .. } => code.as_str(),
-                hide_herdr_client::ApiError::Transport(_) => "transport",
-                hide_herdr_client::ApiError::Malformed(_) => "malformed",
-            };
-            format!("Herdr on this machine did not answer {method}: {reason}")
-        })
+        .map_err(|error| request_failure(method, &error))
 }
 
-/// Takes the standalone hcoord plugin out of Herdr on every pass: nothing on
-/// disk says whether it was ever linked, and a Herdr that does not answer
-/// leaves it for the next pass.
+pub(crate) fn herdr_config_dir(target: &KitTarget) -> Result<std::path::PathBuf, String> {
+    hide_platform::host::herdr_config_dir_from(&|name| {
+        if name == hide_platform::host::HOME_VARIABLE {
+            Some(target.home.as_os_str().to_owned())
+        } else {
+            std::env::var_os(name)
+        }
+    })
+    .map_err(|error| format!("Herdr's config location cannot be resolved: {error}"))
+}
+
+fn request_failure(method: &str, error: &hide_herdr_client::ApiError) -> String {
+    // A transport message can carry the socket's path (B20); the
+    // remote code is the part a reader needs.
+    let reason = match &error {
+        hide_herdr_client::ApiError::Remote { code, .. } => code.as_str(),
+        hide_herdr_client::ApiError::Transport(_) => "transport",
+        hide_herdr_client::ApiError::Malformed(_) => "malformed",
+    };
+    format!("Herdr on this machine did not answer {method}: {reason}")
+}
+
+/// An unavailable server uses the pinned Herdr's durable registry and offline
+/// uninstall; an unreadable registry still leaves the step for the next pass.
 pub(crate) fn retire_hcoord_plugin(target: &KitTarget) -> Retirement {
     let mut outcome = Retirement::default();
-    match unlink(target, HCOORD_PLUGIN_ID) {
+    let unlinked = match hide_herdr_client::request_with_timeout(
+        &target.herdr_socket,
+        "plugin.list",
+        json!({"plugin_id": HCOORD_PLUGIN_ID}),
+        HERDR_DEADLINE,
+    ) {
+        Ok(result) => unlink_list(target, HCOORD_PLUGIN_ID, result),
+        Err(hide_herdr_client::ApiError::Transport(_)) => {
+            crate::coordination_retirement::retire_offline_plugin(target)
+        }
+        Err(error) => Err(request_failure("plugin.list", &error)),
+    };
+    match unlinked {
         Ok(Some(source)) => outcome
             .removed
             .push(format!("hcoord Herdr plugin link ({source})")),
@@ -152,6 +176,14 @@ pub(crate) fn retire_hcoord_plugin(target: &KitTarget) -> Retirement {
 /// came from, or `None` when Herdr has no such plugin.
 fn unlink(target: &KitTarget, plugin_id: &str) -> Result<Option<&'static str>, String> {
     let result = request(target, "plugin.list", json!({ "plugin_id": plugin_id }))?;
+    unlink_list(target, plugin_id, result)
+}
+
+fn unlink_list(
+    target: &KitTarget,
+    plugin_id: &str,
+    result: Value,
+) -> Result<Option<&'static str>, String> {
     let plugins = result
         .get("plugins")
         .cloned()
@@ -178,20 +210,21 @@ fn unlink(target: &KitTarget, plugin_id: &str) -> Result<Option<&'static str>, S
 
 /// A GitHub install is Herdr's managed checkout, which only the `herdr` CLI
 /// takes out; unlinking it through the socket would leave the checkout.
-fn uninstall_managed(target: &KitTarget, plugin_id: &str) -> Result<(), String> {
+pub(crate) fn uninstall_managed(target: &KitTarget, plugin_id: &str) -> Result<(), String> {
     let herdr = target.herdr_bin.as_deref().ok_or_else(|| {
-        format!("{plugin_id} is installed from GitHub and no herdr command was found to remove it")
+        format!("{plugin_id} is registered and no herdr command was found to remove it")
     })?;
     let mut env = vec![(
         "HERDR_SOCKET_PATH".to_owned(),
         target.herdr_socket.display().to_string(),
     )];
-    if let Some(config) = std::env::var_os("XDG_CONFIG_HOME") {
-        env.push((
-            "XDG_CONFIG_HOME".to_owned(),
-            config.to_string_lossy().into_owned(),
-        ));
-    }
+    // Pin the same config root the strict offline read used, including
+    // Windows APPDATA or USERPROFILE defaults, in the child's clean env.
+    let config = herdr_config_dir(target)?;
+    env.push((
+        "XDG_CONFIG_HOME".to_owned(),
+        config.parent().unwrap().to_string_lossy().into_owned(),
+    ));
     let finished = process::run(
         herdr,
         &["plugin", "uninstall", plugin_id],
@@ -206,7 +239,7 @@ fn uninstall_managed(target: &KitTarget, plugin_id: &str) -> Result<(), String> 
         // Its stderr can name the operator's folders (B20): the exit code
         // is the reason that reaches the log.
         Err(format!(
-            "herdr could not remove the GitHub copy of {plugin_id}: exit {:?}",
+            "herdr could not remove {plugin_id}: exit {:?}",
             finished.code
         ))
     }

@@ -1743,7 +1743,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
                     hide_kit::ComponentState::Failed,
                 ),
                 part(
-                    hide_kit::ComponentId::Hcoord,
+                    hide_kit::ComponentId::CoordinationRetirement,
                     hide_kit::ComponentState::Installed,
                 ),
             ],

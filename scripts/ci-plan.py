@@ -25,7 +25,6 @@ LANES = (
     "rust",
     "web-checks",
     "desktop-checks",
-    "hcoord",
     "os-contract",
     "windows-check",
     "windows-e2e",

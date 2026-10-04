@@ -197,37 +197,6 @@ impl Runtime {
                 test_in_flight: false,
             },
         );
-        let identity_runtime = context.runtime.clone();
-        let identity_notifier = context.notifier.clone();
-        let identity_target = device_id.clone();
-        let identity_client = Arc::clone(&client);
-        if let Err(error) = thread::Builder::new()
-            .name(format!("herdr-core-machine-id-{device_id}"))
-            .spawn(move || {
-                let result = identity_client
-                    .exec_read_only(RemoteReadCommand::MachineIdentity)
-                    .and_then(|output| parse_machine_identity(&identity_target, &output))
-                    .map_err(|error| error.to_string());
-                let Some(runtime) = identity_runtime.upgrade() else {
-                    return;
-                };
-                let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_device_machine_id(&identity_target, result),
-                    Err(_) => return,
-                };
-                drop(runtime);
-                if changed {
-                    identity_notifier.notify();
-                }
-            })
-        {
-            crate::diagnostic!(serde_json::json!({
-                "component": "lineage",
-                "kind": "machine_identity_worker_failed",
-                "target": device_id,
-                "message": error.to_string(),
-            }));
-        }
         let host_changed = self.start_device_host(&device_id);
         changed || host_changed || self.refresh_device_snapshots()
     }

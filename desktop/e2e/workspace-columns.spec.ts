@@ -8,7 +8,7 @@ import { performance } from "node:perf_hooks";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { chord } from "../../web/e2e/chords";
 import { countSent, enterWorkspace, keyboardFocus, rest, sendEvent, showExplorer } from "../../web/e2e/wire";
-import { bootoutTestLabel, deviceHome, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL, proveDeviceHome, resetDeviceHome, stageBuild, writeSshConfig } from "./device-home";
+import { deviceHome, proveDeviceHome, resetDeviceHome, stageBuild, writeSshConfig } from "./device-home";
 import { isolate, launchShell, test } from "./fixture";
 
 type Probe = {
@@ -492,8 +492,6 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
   let run: ReturnType<typeof isolate> | null = null;
   let app: ElectronApplication | null = null;
   let remoteHome: string | null = null;
-  let provedHcoord: string | null = null;
-  const operator = launchdPid(OPERATOR_HCOORD_LABEL);
   const errors: unknown[] = [];
   try {
     remote = await startHerdr({ agents: false });
@@ -502,8 +500,8 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
     run.env.HIDE_HOST_CLI_DIR = path.join(run.root, "device-bin");
     writeSshConfig(run.env.HOME!, ["isolated-columns"]);
     remoteHome = deviceHome();
-    provedHcoord = proveDeviceHome(run.env, "isolated-columns", remoteHome);
-    resetDeviceHome(remoteHome, hcoordLabel(provedHcoord));
+    proveDeviceHome(run.env, "isolated-columns", remoteHome);
+    resetDeviceHome(remoteHome);
     // The host starts and owns the staged daemon through its existing CLI
     // boundary; no second resident-process launcher belongs to this spec.
     run.env.HIDE_CLI_PATH = path.join(stageBuild(run.root), "hide");
@@ -523,7 +521,7 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
     const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
     if (dir) {
       const candidate = await app.evaluate(({ BrowserWindow }) => ({ pid: process.pid, window: BrowserWindow.getAllWindows()[0]!.getMediaSourceId(), executable: process.execPath }));
-      fs.writeFileSync(path.join(dir, "remote-columns-identity.json"), JSON.stringify({ ...candidate, daemonPid: run.daemonPid(), localSocket: local.socket, remoteSocket: remote.socket, home: run.env.HOME, deviceHome: remoteHome, provedHcoord, state: run.env.HIDE_STATE_DIR, profile: run.env.HIDE_DESKTOP_USER_DATA_DIR, operatorHcoord: operator, transport: "real loopback SSH to a separate private Herdr server" }, null, 2));
+      fs.writeFileSync(path.join(dir, "remote-columns-identity.json"), JSON.stringify({ ...candidate, daemonPid: run.daemonPid(), localSocket: local.socket, remoteSocket: remote.socket, home: run.env.HOME, deviceHome: remoteHome, state: run.env.HIDE_STATE_DIR, profile: run.env.HIDE_DESKTOP_USER_DATA_DIR, transport: "real loopback SSH to a separate private Herdr server" }, null, 2));
     }
     await enterWorkspace(page, "fixture");
     const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { token: string };
@@ -618,9 +616,6 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
     try { await app?.close(); } catch (error) { errors.push(error); }
     for (const cleanup of [
       () => run?.cleanup(),
-      () => { if (provedHcoord) bootoutTestLabel(hcoordLabel(provedHcoord)); },
-      () => { if (remoteHome) bootoutTestLabel(hcoordLabel(path.join(remoteHome, ".hide", "hcoord"))); },
-      () => { expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operator); },
       () => remote?.stop(),
       () => local.stop(),
     ]) {

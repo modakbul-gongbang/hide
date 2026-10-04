@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 mkdir -p target
 exec > >(tee target/hide-full.log) 2>&1
 
-# verify / rust lane, and the unit suites of the web, desktop and hcoord lanes
+# verify / rust lane, and the unit suites of the web and desktop lanes
 # (short of the Playwright flows in the web e2e and desktop e2e lanes)
 bash scripts/verify-cargo.sh lint
 bash scripts/verify-cargo.sh test

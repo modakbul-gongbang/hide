@@ -816,7 +816,7 @@ pub struct SidebarAgentSnapshot {
     /// cross-device parent resolve again when its machine reconnects.
     #[serde(skip_serializing)]
     pub declared_parent_pane_id: Option<String>,
-    /// The stable machine identity hcoord recorded for a cross-device parent.
+    /// The stable machine identity recorded for a cross-device parent.
     #[serde(skip_serializing)]
     pub spawned_from_machine_id: Option<String>,
     /// The digest of the parent's session the declaration was written for.
@@ -4522,7 +4522,7 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::Hcoord
+                | hide_kit::ComponentId::CoordinationRetirement
                 | hide_kit::ComponentId::CodexPerPane => {}
             }
         }

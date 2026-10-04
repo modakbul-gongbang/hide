@@ -2,15 +2,14 @@
 //!
 //! The core uploads each build's parts into `<root>/<version>/` beside the
 //! helper, and the helper points `<root>/current` at its own version before
-//! it applies the kit, so the hooks, the `hide` link and the hcoord copy name
-//! a path that survives the next build (B16). hcoord runs on a Node the
-//! device already has, and the `herdr` CLI is the device's own.
+//! it applies the kit, so the hooks, the `hide` link name
+//! a path that survives the next build (B16). The `herdr` CLI is the device's own.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::{HcoordRuntime, KitTarget, find_node};
+use crate::KitTarget;
 
 /// The name of the link under the helper root that leads to the running
 /// build's folder.
@@ -26,18 +25,9 @@ pub fn device_target(
     stop: Arc<AtomicBool>,
 ) -> KitTarget {
     let herdr_bin = find_herdr(home);
-    let relocated = crate::layout::hcoord_home_override();
-    let hcoord_home = crate::layout::hcoord_home(home, relocated.as_deref());
-    let hcoord = find_node(home, &hcoord_home, &stop).map(|program| HcoordRuntime {
-        program,
-        // hcoord calls `herdr` for lineage; a daemon started from a
-        // non-login SSH shell would not find the one the operator uses.
-        env: herdr_bin
-            .iter()
-            .map(|herdr| ("HERDR_BIN_PATH".to_owned(), herdr.display().to_string()))
-            .chain(crate::hcoord::relocation_env(relocated.as_deref()))
-            .collect(),
-    });
+    let relocated = std::env::var_os("HCOORD_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
     KitTarget {
         home: home.to_path_buf(),
         kit_dir: root.join(CURRENT),
@@ -47,9 +37,10 @@ pub fn device_target(
         owned_roots: vec![root.to_path_buf(), crate::layout::legacy_helper_root(home)],
         herdr_socket: herdr_socket.to_path_buf(),
         herdr_bin,
-        hcoord,
         codex: hide_agent_hooks::codex_daemon::find_codex(home),
-        hcoord_home: relocated,
+        legacy_coordination_home: relocated,
+        user_agents: hide_platform::user_agents::UserAgents::current(),
+        retirement_projects: Vec::new(),
         legacy: crate::legacy::device(home, root),
         stop,
     }

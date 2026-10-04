@@ -225,19 +225,19 @@ export function hostLine(host: DeviceHost | undefined): { text: string; tone: "o
 export function kitConsentTerms(helperRoot: string | null, cliDir: string | null): string[] {
   const root = helperRoot ?? "the helper folder in the device account's home";
   return [
-    `Hide copies its helper, the hide command, its hook helper and hcoord into ${root}, and replaces them there when this version of Hide needs newer ones.`,
-    `It links hide and hcoord in ${cliDir ?? "the account's command folder"}, adds its own entries to ~/.claude/settings.json and ~/.codex/hooks.json, and installs hcoord at ~/.hide/hcoord/bin/hcoord with the device's Node, moving an existing ~/.hcoord there. It keeps its records in ~/.hide and takes the folders of an older Hide layout away. Another tool's entries and files are left as they are.`,
+    `Hide copies its helper, the hide command and its hook helper into ${root}, and replaces them there when this version of Hide needs newer ones.`,
+    `It links hide in ${cliDir ?? "the account's command folder"}, adds its own entries to ~/.claude/settings.json and ~/.codex/hooks.json. It keeps its records in ~/.hide and takes the folders of an older Hide layout away. The former coordination service is retired after active work is closed, with its old records preserved. Another tool's entries and files are left as they are.`,
     "Codex를 pane마다 실행: Codex의 백그라운드 데몬을 끈다 (codex features disable daemon_auto_start). 떠 있는 데몬은 멈추지 않고, 새로 여는 Codex부터 적용된다. Settings › Devices의 그 줄에서 다시 켤 수 있다.",
-    "The helper runs only while Hide holds the SSH connection, serves registered projects, and manages the device's Home (~/hide and its project links). Agent labels for the device's panes are made on this Mac from conversations the helper reads, and hcoord keeps its own daemon.",
+    "The helper runs only while Hide holds the SSH connection, serves registered projects, and manages the device's Home (~/hide and its project links). Agent labels for the device's panes are made on this Mac from conversations the helper reads.",
     "Every move to the Trash or worktree removal still asks you for its target each time. A part you take away stays away until you press Reinstall.",
-    "Removing the device takes Hide's parts and its helper folder off it again; hcoord and the records in ~/.hide stay. A different SSH identity asks again.",
+    "Removing the device takes Hide's parts and its helper folder off it again; the records in ~/.hide stay. A different SSH identity asks again.",
   ];
 }
 
 /**
  * What removing a device does to Hide's kit on it, in one line (PRD
- * device-parity B22): with its helper connected the parts come off and hcoord
- * stays; without one nothing on the device changes.
+ * device-parity B22): with its helper connected the parts come off and records
+ * stay; without one nothing on the device changes.
  */
 export function kitRemovalLine(device: Device): string {
   const where = device.ssh_alias ?? device.label;
@@ -247,7 +247,7 @@ export function kitRemovalLine(device: Device): string {
   }
   if (device.host?.state === "ready") {
     const folder = device.host?.helper_root ? ` (${device.host.helper_root})` : "";
-    return `On ${where}, Hide removes its hook entries, its hide link and its helper folder${folder}; hcoord and the records in ~/.hide stay.`;
+    return `On ${where}, Hide removes its hook entries, its hide link and its helper folder${folder}; the records in ~/.hide stay.`;
   }
   return `Hide's helper is not connected to ${where}, so its kit stays there; it does not get in the way of agent sessions, and adding the device again replaces it.`;
 }

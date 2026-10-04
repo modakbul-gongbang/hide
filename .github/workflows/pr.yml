@@ -29,10 +29,7 @@
 # beside the OS contract's Windows leg (issue #293), and `windows e2e` runs the
 # browser `@platform` tests.
 #
-# Every job and every long step has a timeout a few times its usual length
-# (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that
-# usually takes two minutes hung for 48 and for 156 in two runs, holding a
-# required check, and a job without a timeout runs for six hours.
+# Every job and every long step has a timeout to bound a stalled required check.
 name: verify
 
 on:
@@ -188,32 +185,6 @@ jobs:
           bash scripts/verify-web.sh desktop typecheck
           bash scripts/verify-web.sh desktop lint
           bash scripts/verify-web.sh desktop test
-
-  hcoord:
-    name: hcoord
-    needs: plan
-    if: contains(fromJSON(needs.plan.outputs.lanes), 'hcoord')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - name: Install dependencies
-        run: bash scripts/verify-web.sh install
-      - name: hcoord typecheck, build, unit test, and end-to-end test
-        timeout-minutes: 10
-        run: |
-          bash scripts/verify-web.sh hcoord typecheck
-          bash scripts/verify-web.sh hcoord build
-          bash scripts/verify-web.sh hcoord test
-          bash scripts/verify-web.sh hcoord test:e2e
 
   # What differs on Windows (issue #293), as a required lane: the whole
   # workspace compiles for Windows, hided's pane bootstrap and end-to-end
@@ -413,10 +384,6 @@ jobs:
       - name: Build the web shell
         # The desktop app serves web/dist through the hided it starts.
         run: bash scripts/verify-web.sh web build
-      - name: Build hcoord
-        # The staged app carries plugins/hcoord/dist, which the kit installs
-        # at ~/.hide/hcoord; the home-layout spec stages it like a package.
-        run: bash scripts/verify-web.sh hcoord build
       - name: Install Playwright Chromium
         # The browser spec opens a page in Chromium beside the Electron app.
         run: bash scripts/verify-web.sh desktop playwright-install
@@ -425,6 +392,10 @@ jobs:
         run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
       - name: Compare the binary schema and version with the pin on macOS
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
+      - name: Remote mailbox over private SSH
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: bash scripts/verify-cargo.sh test-scoped -p herdr-core --test remote_delivery -- --ignored
       - name: OS contract on macOS
         # The macOS leg of os-contract.yml, here because this job already
         # holds a macOS runner and the workspace build it needs.
@@ -484,7 +455,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [plan, policy, rust, web-checks, desktop-checks, hcoord, os-contract, windows-check, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e]
+    needs: [plan, policy, rust, web-checks, desktop-checks, os-contract, windows-check, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

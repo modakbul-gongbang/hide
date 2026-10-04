@@ -16,6 +16,9 @@ pub struct SnapshotReply {
 }
 
 enum Command {
+    DeliveryHuman {
+        reply: Sender<Result<herdr_core::delivery::worker::PreparedHuman, String>>,
+    },
     DeliveryPrepare {
         device_id: String,
         pane_id: String,
@@ -88,6 +91,15 @@ pub struct CoreHandle {
 }
 
 impl CoreHandle {
+    pub fn prepare_delivery_human(
+        &self,
+    ) -> Result<herdr_core::delivery::worker::PreparedHuman, String> {
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::DeliveryHuman { reply })
+            .map_err(|_| "delivery_unavailable")?;
+        result.recv().map_err(|_| "delivery_unavailable")?
+    }
     pub fn prepare_delivery(
         &self,
         device: &str,
@@ -345,6 +357,9 @@ fn owner_loop(
     let _ = ready.send(Ok(()));
     while let Ok(command) = commands.recv() {
         match command {
+            Command::DeliveryHuman { reply } => {
+                let _ = reply.send(core.prepare_delivery_human());
+            }
             Command::DeliveryPrepare {
                 device_id,
                 pane_id,

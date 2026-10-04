@@ -1,31 +1,13 @@
-// The device side of the SSH e2e. The isolated sshd logs in as this account,
-// and connecting a device installs Hide's kit into that account's HOME
-// (hooks in ~/.claude and ~/.codex, ~/.hide/kit, ~/.hcoord and hcoord's
-// LaunchAgent), so these specs run only against an sshd that gives its
-// sessions a private HOME, and they prove that before a device is registered.
-//
-// The sshd's config carries, besides the port, keys and known_hosts the
-// HIDE_E2E_SSH_* variables name:
-//
-//   SetEnv HOME=<private> HCOORD_HOME=<private>/.hcoord
-//
-// <private> holds a `.hide-e2e-device-home` file and HIDE_E2E_SSH_HOME names
-// it. HCOORD_HOME gives the kit's hcoord daemon a LaunchAgent label of its
-// own (`plugins/hcoord/src/hcoord/platform.ts`); without it the daemon would
-// take the account's `com.hcoord.daemon` and replace the operator's. The
-// device's Node is the machine's own (`/opt/homebrew/bin` or PATH), and its
-// herdr is the pinned one, linked into the private HOME's ~/.local/bin as a
-// device's own install would be.
+// The device side of SSH e2e runs only in the declared private HOME.
+// The isolated sshd must set HOME to HIDE_E2E_SSH_HOME and that folder must
+// carry the fixture marker before a device can receive Hide's kit.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { herdrBinary } from "../../web/e2e/herdr-fixture";
-import { HIDE_CLI, REPO } from "./fixture";
-import { bootoutTestLabel } from "./launchd";
-export { bootoutTestLabel, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL } from "./launchd";
-
+import { HIDE_CLI } from "./fixture";
 const MARKER = ".hide-e2e-device-home";
 
 /** The private HOME the isolated sshd gives its sessions, refused unless it is declared a test HOME. */
@@ -58,27 +40,20 @@ export function writeSshConfig(localHome: string, aliases: string[]): void {
   ]).join("\n"), { mode: 0o600 });
 }
 
-/**
- * Asks the server what HOME and HCOORD_HOME a session there gets, and refuses
- * unless they are the declared private HOME and a folder inside it. Returns
- * the HCOORD_HOME the device's hcoord will use.
- */
+/** Proves an SSH session receives the declared private HOME before installing anything. */
 export function proveDeviceHome(localEnv: Record<string, string>, alias: string, home: string): string {
   const ssh = path.join(localEnv.HOME!, ".ssh");
   const answer = spawnSync("ssh", [
     "-F", path.join(ssh, "config"), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
     "-o", `UserKnownHostsFile=${path.join(ssh, "known_hosts")}`, "-o", "GlobalKnownHostsFile=/dev/null",
-    alias, 'printf "%s\\n%s" "$HOME" "$HCOORD_HOME"',
+    alias, 'printf "%s" "$HOME"',
   ], { env: localEnv, encoding: "utf8", timeout: 20_000 });
   if (answer.status !== 0) throw new Error(`the isolated sshd did not answer: ${answer.stderr}`);
-  const [remoteHome = "", hcoordHome = ""] = answer.stdout.split("\n");
+  const remoteHome = answer.stdout;
   if (!remoteHome || fs.realpathSync(remoteHome) !== home) {
-    throw new Error(`a session on the isolated sshd gets HOME=${remoteHome}, not the private ${home}; the kit would write that account's own files`);
+    throw new Error(`a session on the isolated sshd does not receive the declared private HOME; the kit would write that account's own files`);
   }
-  if (!hcoordHome.startsWith(remoteHome + path.sep)) {
-    throw new Error(`a session on the isolated sshd gets HCOORD_HOME=${hcoordHome}; it must sit inside ${remoteHome} so hcoord's LaunchAgent label is its own`);
-  }
-  return hcoordHome;
+  return remoteHome;
 }
 
 export type AgentSettings = { hooks: Record<string, { hooks: { type: string; command: string; timeout?: number }[] }[]>; [key: string]: unknown };
@@ -89,14 +64,12 @@ export const readSettings = (file: string) => JSON.parse(fs.readFileSync(file, "
 
 /**
  * Puts the private HOME back to a device that has never met Hide: Herdr
- * installed in ~/.local/bin, the test's hcoord daemon unloaded, the kit's
+ * installed in ~/.local/bin, the kit's
  * folders gone, and the agent files seeded by `seedAgentFiles`.
  */
-export function resetDeviceHome(home: string, label: string): { claude: AgentSettings; codex: AgentSettings } {
+export function resetDeviceHome(home: string): { claude: AgentSettings; codex: AgentSettings } {
   assertTestHome(home);
-  bootoutTestLabel(label);
-  for (const name of [".claude", ".codex", ".hide", ".hcoord", ".local"]) fs.rmSync(path.join(home, name), { recursive: true, force: true });
-  fs.rmSync(path.join(home, "Library", "LaunchAgents", `${label}.plist`), { force: true });
+  for (const name of [".claude", ".codex", ".hide", ".local"]) fs.rmSync(path.join(home, name), { recursive: true, force: true });
   fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
   fs.symlinkSync(herdrBinary(), path.join(home, ".local", "bin", "herdr"));
   return seedAgentFiles(home);
@@ -141,15 +114,11 @@ function seedCodex(home: string): void {
 /**
  * A daemon folder laid out as the app's Contents/Resources: this build's
  * binaries and every kit part a device gets. The daemon reads the device
- * payload from beside its own executable, so a daemon started from here
- * installs hcoord too.
+ * payload from beside its own executable.
  */
 export function stageBuild(root: string): string {
   const debug = path.dirname(HIDE_CLI);
   const build = path.join(root, "build");
-  const hcoord = path.join(REPO, "plugins", "hcoord", "dist");
-  const cli = path.join(hcoord, "hcoord", "cli.js");
-  if (!fs.existsSync(cli)) throw new Error(`${cli} is missing: run \`pnpm --dir plugins/hcoord build\``);
   fs.mkdirSync(build, { recursive: true });
   const place = (source: string, target: string) => {
     try { fs.linkSync(source, target); } catch { fs.copyFileSync(source, target); fs.chmodSync(target, 0o755); }
@@ -159,6 +128,5 @@ export function stageBuild(root: string): string {
     if (!fs.existsSync(binary)) throw new Error(`${binary} is missing: run \`cargo build -p hided -p hide-agent-hooks -p hide-host\``);
     place(binary, path.join(build, name));
   }
-  fs.cpSync(hcoord, path.join(build, "hcoord", "dist"), { recursive: true });
   return build;
 }

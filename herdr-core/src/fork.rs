@@ -1,7 +1,7 @@
 //! Forking an agent pane into a sibling that carries the parent conversation.
 //!
 //! A fork asks Herdr to split beside the parent and start the new agent, then
-//! asks hcoord to register both exact executions and publish lineage. This
+//! registers both exact executions in Hide and publishes lineage. This
 //! module decides which panes can be forked and spells each agent's resume
 //! arguments; running the calls is [`crate::live`]'s job.
 
@@ -65,6 +65,14 @@ pub struct ForkRequest {
 /// it must start with a lowercase letter and carry only lowercase letters,
 /// digits, `-` or `_`, in 1 to 32 characters.
 const MAX_NAME_CHARACTERS: usize = 32;
+
+pub(crate) fn valid_agent_name(name: &str) -> bool {
+    (1..=MAX_NAME_CHARACTERS).contains(&name.len())
+        && name.starts_with(|character: char| character.is_ascii_lowercase())
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        })
+}
 
 /// A name no other pane's fork can collide with, that Herdr will accept.
 ///

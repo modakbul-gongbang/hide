@@ -37,7 +37,6 @@ export function fixtureHomeEnv(home: string): Record<string, string> {
   return {
     HOME: home,
     ...windows,
-    HCOORD_HOME: path.join(home, ".hcoord"),
     XDG_CONFIG_HOME: path.join(home, ".config"),
     XDG_STATE_HOME: path.join(home, ".local", "state"),
     CLAUDE_CONFIG_DIR: path.join(home, ".claude"),

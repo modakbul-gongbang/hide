@@ -18,7 +18,7 @@ import type { Duplex } from "node:stream";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { claudeSettings, deviceHome, hcoordLabel, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
+import { claudeSettings, deviceHome, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
 import { HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
 
 const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
@@ -130,7 +130,8 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
   // the second, with its own Herdr server, id and connections.
   writeSshConfig(run.env.HOME!, ["isolated-workspace", "isolated-workspace-2"]);
   const deviceAccount = deviceHome();
-  resetDeviceHome(deviceAccount, hcoordLabel(proveDeviceHome(run.env, "isolated-workspace", deviceAccount)));
+  proveDeviceHome(run.env, "isolated-workspace", deviceAccount);
+  resetDeviceHome(deviceAccount);
   const daemonLog = path.join(run.root, "daemon.log");
   const daemonOutput = fs.openSync(daemonLog, "w");
   const daemon = spawn(path.join(path.dirname(HIDE_CLI), "hided"), [], {

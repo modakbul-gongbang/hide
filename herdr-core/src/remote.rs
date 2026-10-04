@@ -1075,8 +1075,6 @@ pub fn require_terminal_surface(surface: &RemoteSurface) -> RemoteResult<&Remote
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum RemoteReadCommand {
-    /// The hcoord installation's stable operating-system machine identity.
-    MachineIdentity,
     GitStatus {
         root: String,
     },
@@ -1102,7 +1100,6 @@ const REMOTE_HERDR_PATH: &str = "$HOME/.local/bin:/opt/homebrew/bin:/usr/local/b
 impl RemoteReadCommand {
     fn operation_id(&self) -> &'static str {
         match self {
-            Self::MachineIdentity => "remote-machine-identity",
             Self::GitStatus { .. } => "remote-git-status",
             Self::HerdrServerStatus { .. } => "remote-herdr-status",
             Self::WorkspacePane { .. } => "workspace-pane-inspect",
@@ -1111,7 +1108,6 @@ impl RemoteReadCommand {
 
     fn stage(&self) -> RemoteStage {
         match self {
-            Self::MachineIdentity => RemoteStage::Herdr,
             Self::GitStatus { .. } => RemoteStage::Git,
             Self::HerdrServerStatus { .. } => RemoteStage::Herdr,
             Self::WorkspacePane { .. } => RemoteStage::Herdr,
@@ -1120,9 +1116,6 @@ impl RemoteReadCommand {
 
     fn command_line(&self) -> RemoteResult<String> {
         match self {
-            Self::MachineIdentity => {
-                Ok("\"$HOME/.hide/hcoord/bin/hcoord\" remote identity --json".to_owned())
-            }
             Self::WorkspacePane {
                 helper_path,
                 socket,
@@ -1201,52 +1194,6 @@ pub struct RemoteCommandOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_status: u32,
-}
-
-/// Extracts the stable machine identity from the remote hcoord boundary.
-/// A host without hcoord is unresolved, never inferred from its SSH alias.
-pub fn parse_machine_identity(host_id: &str, output: &RemoteCommandOutput) -> RemoteResult<String> {
-    let operation_id = RemoteReadCommand::MachineIdentity.operation_id();
-    if output.exit_status != 0 {
-        return Err(remote_error(
-            operation_id,
-            host_id,
-            RemoteStage::Herdr,
-            format!(
-                "remote hcoord could not report its machine identity: {}",
-                output.stderr.trim()
-            ),
-            true,
-            true,
-        ));
-    }
-    let value: serde_json::Value = serde_json::from_str(output.stdout.trim()).map_err(|error| {
-        remote_error(
-            operation_id,
-            host_id,
-            RemoteStage::Herdr,
-            format!("remote hcoord returned invalid identity JSON: {error}"),
-            true,
-            true,
-        )
-    })?;
-    value
-        .get("value")
-        .and_then(|value| value.get("machineId"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            remote_error(
-                operation_id,
-                host_id,
-                RemoteStage::Herdr,
-                "remote hcoord returned no machine identity",
-                true,
-                true,
-            )
-        })
 }
 
 /// The fields of `herdr status server --json` the IDE reads. The CLI is the
@@ -4698,34 +4645,6 @@ mod tests {
             stderr: String::new(),
             exit_status,
         }
-    }
-
-    #[test]
-    fn hcoord_machine_identity_is_read_without_joining_or_reconfiguring_the_remote() {
-        let command = RemoteReadCommand::MachineIdentity
-            .command_line()
-            .expect("machine identity command");
-        assert_eq!(
-            command,
-            "\"$HOME/.hide/hcoord/bin/hcoord\" remote identity --json"
-        );
-
-        let identity = parse_machine_identity(
-            "mini",
-            &status_output(
-                0,
-                r#"{"ok":true,"value":{"protocol":1,"machineId":"machine-mini"}}"#,
-            ),
-        )
-        .expect("machine identity parses");
-        assert_eq!(identity, "machine-mini");
-
-        let missing = parse_machine_identity(
-            "mini",
-            &status_output(0, r#"{"ok":true,"value":{"protocol":1}}"#),
-        )
-        .expect_err("a missing identity is observable");
-        assert!(missing.to_string().contains("no machine identity"));
     }
 
     /// The shape `herdr status server --json` prints on 0.9.1, with the

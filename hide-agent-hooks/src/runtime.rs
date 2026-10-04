@@ -32,7 +32,7 @@ pub const HOOK_VERSION: u32 = 6;
 /// Both runtimes accept the same `hookSpecificOutput.additionalContext`
 /// envelope, while the runtime argument remains explicit in the installed
 /// command so a future protocol difference has one dispatch point.
-pub const PURPOSE_CONTEXT: &str = "When you create a worktree, set its one-line purpose in 40 characters or fewer by running `herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\"`. Delegate new work with `hcoord agent spawn --parent here …` so its lineage remains visible.";
+pub const PURPOSE_CONTEXT: &str = "When you create a worktree, set its one-line purpose in 40 characters or fewer by running `herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\"`. Delegate new work with `hide agent spawn --parent here …` so its lineage remains visible.";
 
 pub fn hook_stdout(runtime: AgentRuntime, event: HookEvent) -> Option<String> {
     hook_stdout_with_context(runtime, event, None)
@@ -338,8 +338,7 @@ mod tests {
             assert!(PURPOSE_CONTEXT.contains(
                 "herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\""
             ));
-            assert!(PURPOSE_CONTEXT.contains("`hcoord agent spawn --parent here"));
-            assert!(!PURPOSE_CONTEXT.contains(".hcoord"));
+            assert!(PURPOSE_CONTEXT.contains("`hide agent spawn --parent here"));
             for event in [
                 HookEvent::SubagentStart,
                 HookEvent::SubagentStop,

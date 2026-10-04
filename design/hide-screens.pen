@@ -482,9 +482,9 @@
                     {
                       "type": "text",
                       "id": "main-sidebar-agent1-summary0-l-b",
-                      "name": "hcoord-decouple",
+                      "name": "mailbox-decouple",
                       "fill": "$--subtle-foreground",
-                      "content": "hcoord-decouple",
+                      "content": "mailbox-decouple",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-caption"
                     },
@@ -889,9 +889,9 @@
                                     {
                                       "type": "text",
                                       "id": "main-lineage-pop2-b-l",
-                                      "name": "hcoord-decouple",
+                                      "name": "mailbox-decouple",
                                       "fill": "$--muted-foreground",
-                                      "content": "hcoord-decouple",
+                                      "content": "mailbox-decouple",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption"
                                     },
@@ -1176,9 +1176,9 @@
                                 {
                                   "type": "text",
                                   "id": "main-lineage-chip2-b-l",
-                                  "name": "hcoord-decouple",
+                                  "name": "mailbox-decouple",
                                   "fill": "$--subtle-foreground",
-                                  "content": "hcoord-decouple",
+                                  "content": "mailbox-decouple",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-caption"
                                 },
@@ -4429,7 +4429,7 @@
                             {
                               "type": "frame",
                               "id": "main-r2-l",
-                              "name": "hcoord-decouple: move lineage tokens into the plugin",
+                              "name": "mailbox-decouple: move lineage tokens into the plugin",
                               "width": 288,
                               "fill": "$--card",
                               "cornerRadius": "$--radius-md",
@@ -4498,11 +4498,11 @@
                                 {
                                   "type": "text",
                                   "id": "main-r2-l-title",
-                                  "name": "hcoord-decouple: move lineag",
+                                  "name": "mailbox-decouple: move linea",
                                   "fill": "$--foreground",
                                   "textGrowth": "fixed-width",
                                   "width": 272,
-                                  "content": "hcoord-decouple: move lineage tokens into the plugin",
+                                  "content": "mailbox-decouple: move lineage tokens into the plugin",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
@@ -4542,9 +4542,9 @@
                                             {
                                               "type": "text",
                                               "id": "main-r2-l-co-br-t",
-                                              "name": "9-hcoord-decouple",
+                                              "name": "9-mailbox-decouple",
                                               "fill": "$--muted-foreground",
-                                              "content": "9-hcoord-decouple",
+                                              "content": "9-mailbox-decouple",
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption"
                                             }
@@ -6831,9 +6831,9 @@
                     {
                       "type": "text",
                       "id": "main-sidebar-agent1-summary0-d-b",
-                      "name": "hcoord-decouple",
+                      "name": "mailbox-decouple",
                       "fill": "$--subtle-foreground",
-                      "content": "hcoord-decouple",
+                      "content": "mailbox-decouple",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-caption"
                     },
@@ -7238,9 +7238,9 @@
                                     {
                                       "type": "text",
                                       "id": "main-lineage-pop2-b-d",
-                                      "name": "hcoord-decouple",
+                                      "name": "mailbox-decouple",
                                       "fill": "$--muted-foreground",
-                                      "content": "hcoord-decouple",
+                                      "content": "mailbox-decouple",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption"
                                     },
@@ -7525,9 +7525,9 @@
                                 {
                                   "type": "text",
                                   "id": "main-lineage-chip2-b-d",
-                                  "name": "hcoord-decouple",
+                                  "name": "mailbox-decouple",
                                   "fill": "$--subtle-foreground",
-                                  "content": "hcoord-decouple",
+                                  "content": "mailbox-decouple",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-caption"
                                 },
@@ -10778,7 +10778,7 @@
                             {
                               "type": "frame",
                               "id": "main-r2-d",
-                              "name": "hcoord-decouple: move lineage tokens into the plugin",
+                              "name": "mailbox-decouple: move lineage tokens into the plugin",
                               "width": 288,
                               "fill": "$--card",
                               "cornerRadius": "$--radius-md",
@@ -10847,11 +10847,11 @@
                                 {
                                   "type": "text",
                                   "id": "main-r2-d-title",
-                                  "name": "hcoord-decouple: move lineag",
+                                  "name": "mailbox-decouple: move linea",
                                   "fill": "$--foreground",
                                   "textGrowth": "fixed-width",
                                   "width": 272,
-                                  "content": "hcoord-decouple: move lineage tokens into the plugin",
+                                  "content": "mailbox-decouple: move lineage tokens into the plugin",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
@@ -10891,9 +10891,9 @@
                                             {
                                               "type": "text",
                                               "id": "main-r2-d-co-br-t",
-                                              "name": "9-hcoord-decouple",
+                                              "name": "9-mailbox-decouple",
                                               "fill": "$--muted-foreground",
-                                              "content": "9-hcoord-decouple",
+                                              "content": "9-mailbox-decouple",
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption"
                                             }
@@ -18685,7 +18685,7 @@
                             {
                               "type": "frame",
                               "id": "ov-gsb-pr-l",
-                              "name": "184-hcoord-plugin",
+                              "name": "184-mailbox-plugin",
                               "width": 272,
                               "height": 112,
                               "fill": "$--card",
@@ -18732,9 +18732,9 @@
                                         {
                                           "type": "text",
                                           "id": "ov-gsb-pr-l-head-b",
-                                          "name": "184-hcoord-plugin",
+                                          "name": "184-mailbox-plugin",
                                           "fill": "$--foreground",
-                                          "content": "184-hcoord-plugin",
+                                          "content": "184-mailbox-plugin",
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-body"
                                         }
@@ -18751,9 +18751,9 @@
                                         {
                                           "type": "text",
                                           "id": "ov-gsb-pr-l-head-purpose",
-                                          "name": "Bundle hcoord as a Herdr plu",
+                                          "name": "Bundle mailbox as a Herdr pl",
                                           "fill": "$--muted-foreground",
-                                          "content": "Bundle hcoord as a Herdr plugin",
+                                          "content": "Bundle mailbox as a Herdr plugin",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -23517,7 +23517,7 @@
                             {
                               "type": "frame",
                               "id": "ov-r2-l",
-                              "name": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                              "name": "Bundle mailbox as a Herdr plugin with checkout lineage",
                               "width": 288,
                               "fill": "$--card",
                               "cornerRadius": "$--radius-md",
@@ -23577,11 +23577,11 @@
                                 {
                                   "type": "text",
                                   "id": "ov-r2-l-title",
-                                  "name": "Bundle hcoord as a Herdr plu",
+                                  "name": "Bundle mailbox as a Herdr pl",
                                   "fill": "$--foreground",
                                   "textGrowth": "fixed-width",
                                   "width": 272,
-                                  "content": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                                  "content": "Bundle mailbox as a Herdr plugin with checkout lineage",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
@@ -23621,9 +23621,9 @@
                                             {
                                               "type": "text",
                                               "id": "ov-r2-l-co-br-t",
-                                              "name": "184-hcoord-plugin",
+                                              "name": "184-mailbox-plugin",
                                               "fill": "$--muted-foreground",
-                                              "content": "184-hcoord-plugin",
+                                              "content": "184-mailbox-plugin",
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption"
                                             }
@@ -24607,7 +24607,7 @@
                         {
                           "type": "frame",
                           "id": "ov-s3-l",
-                          "name": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                          "name": "Bundle mailbox as a Herdr plugin with checkout lineage",
                           "width": 288,
                           "fill": "$--accent",
                           "cornerRadius": "$--radius-md",
@@ -24704,11 +24704,11 @@
                             {
                               "type": "text",
                               "id": "ov-s3-l-title",
-                              "name": "Bundle hcoord as a Herdr plu",
+                              "name": "Bundle mailbox as a Herdr pl",
                               "fill": "$--foreground",
                               "textGrowth": "fixed-width",
                               "width": 272,
-                              "content": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                              "content": "Bundle mailbox as a Herdr plugin with checkout lineage",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-title",
                               "fontWeight": "600"
@@ -24748,9 +24748,9 @@
                                         {
                                           "type": "text",
                                           "id": "ov-s3-l-co-br-t",
-                                          "name": "184-hcoord-plugin",
+                                          "name": "184-mailbox-plugin",
                                           "fill": "$--muted-foreground",
-                                          "content": "184-hcoord-plugin",
+                                          "content": "184-mailbox-plugin",
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption"
                                         }
@@ -43424,7 +43424,7 @@
                             {
                               "type": "frame",
                               "id": "ov-gsb-pr-d",
-                              "name": "184-hcoord-plugin",
+                              "name": "184-mailbox-plugin",
                               "width": 272,
                               "height": 112,
                               "fill": "$--card",
@@ -43471,9 +43471,9 @@
                                         {
                                           "type": "text",
                                           "id": "ov-gsb-pr-d-head-b",
-                                          "name": "184-hcoord-plugin",
+                                          "name": "184-mailbox-plugin",
                                           "fill": "$--foreground",
-                                          "content": "184-hcoord-plugin",
+                                          "content": "184-mailbox-plugin",
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-body"
                                         }
@@ -43490,9 +43490,9 @@
                                         {
                                           "type": "text",
                                           "id": "ov-gsb-pr-d-head-purpose",
-                                          "name": "Bundle hcoord as a Herdr plu",
+                                          "name": "Bundle mailbox as a Herdr pl",
                                           "fill": "$--muted-foreground",
-                                          "content": "Bundle hcoord as a Herdr plugin",
+                                          "content": "Bundle mailbox as a Herdr plugin",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -48256,7 +48256,7 @@
                             {
                               "type": "frame",
                               "id": "ov-r2-d",
-                              "name": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                              "name": "Bundle mailbox as a Herdr plugin with checkout lineage",
                               "width": 288,
                               "fill": "$--card",
                               "cornerRadius": "$--radius-md",
@@ -48316,11 +48316,11 @@
                                 {
                                   "type": "text",
                                   "id": "ov-r2-d-title",
-                                  "name": "Bundle hcoord as a Herdr plu",
+                                  "name": "Bundle mailbox as a Herdr pl",
                                   "fill": "$--foreground",
                                   "textGrowth": "fixed-width",
                                   "width": 272,
-                                  "content": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                                  "content": "Bundle mailbox as a Herdr plugin with checkout lineage",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
                                   "fontWeight": "600"
@@ -48360,9 +48360,9 @@
                                             {
                                               "type": "text",
                                               "id": "ov-r2-d-co-br-t",
-                                              "name": "184-hcoord-plugin",
+                                              "name": "184-mailbox-plugin",
                                               "fill": "$--muted-foreground",
-                                              "content": "184-hcoord-plugin",
+                                              "content": "184-mailbox-plugin",
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption"
                                             }
@@ -49346,7 +49346,7 @@
                         {
                           "type": "frame",
                           "id": "ov-s3-d",
-                          "name": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                          "name": "Bundle mailbox as a Herdr plugin with checkout lineage",
                           "width": 288,
                           "fill": "$--accent",
                           "cornerRadius": "$--radius-md",
@@ -49443,11 +49443,11 @@
                             {
                               "type": "text",
                               "id": "ov-s3-d-title",
-                              "name": "Bundle hcoord as a Herdr plu",
+                              "name": "Bundle mailbox as a Herdr pl",
                               "fill": "$--foreground",
                               "textGrowth": "fixed-width",
                               "width": 272,
-                              "content": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                              "content": "Bundle mailbox as a Herdr plugin with checkout lineage",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-title",
                               "fontWeight": "600"
@@ -49487,9 +49487,9 @@
                                         {
                                           "type": "text",
                                           "id": "ov-s3-d-co-br-t",
-                                          "name": "184-hcoord-plugin",
+                                          "name": "184-mailbox-plugin",
                                           "fill": "$--muted-foreground",
-                                          "content": "184-hcoord-plugin",
+                                          "content": "184-mailbox-plugin",
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption"
                                         }
@@ -101673,9 +101673,9 @@
                         {
                           "type": "text",
                           "id": "pal-side-a0t-l",
-                          "name": "hcoord 원격 에이전트 구현",
+                          "name": "mailbox 원격 에이전트 구현",
                           "fill": "$--foreground",
-                          "content": "hcoord 원격 에이전트 구현",
+                          "content": "mailbox 원격 에이전트 구현",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-body",
                           "fontWeight": "500"
@@ -101867,9 +101867,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q0-l-title",
-                                          "name": "#273 hcoord 쓰기 명령이 sandbox 거",
+                                          "name": "#273 mailbox 쓰기 명령이 sandbox ",
                                           "fill": "$--foreground",
-                                          "content": "#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                          "content": "#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -101940,9 +101940,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q1-l-title",
-                                          "name": "fix/hcoord-sandbox-letters",
+                                          "name": "fix/mailbox-sandbox-letters",
                                           "fill": "$--foreground",
-                                          "content": "fix/hcoord-sandbox-letters",
+                                          "content": "fix/mailbox-sandbox-letters",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -102004,9 +102004,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q2-l-title",
-                                          "name": "#275 Surface hcoord sandbox ",
+                                          "name": "#275 Surface mailbox sandbox",
                                           "fill": "$--foreground",
-                                          "content": "#275 Surface hcoord sandbox refusals",
+                                          "content": "#275 Surface mailbox sandbox refusals",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -102014,9 +102014,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q2-l-detail",
-                                          "name": "PR · Open · fix/hcoord-sandb",
+                                          "name": "PR · Open · fix/mailbox-sand",
                                           "fill": "$--muted-foreground",
-                                          "content": "PR · Open · fix/hcoord-sandbox-letters",
+                                          "content": "PR · Open · fix/mailbox-sandbox-letters",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -102061,9 +102061,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q3-l-title",
-                                          "name": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "name": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fill": "$--foreground",
-                                          "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -102071,9 +102071,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q3-l-detail",
-                                          "name": "herdr-ide › fix/hcoord-sandb",
+                                          "name": "herdr-ide › fix/mailbox-sand",
                                           "fill": "$--muted-foreground",
-                                          "content": "herdr-ide › fix/hcoord-sandbox-letters · Done",
+                                          "content": "herdr-ide › fix/mailbox-sandbox-letters · Done",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -102162,9 +102162,9 @@
                                 {
                                   "type": "text",
                                   "id": "pal-rel-d-l-t",
-                                  "name": "hcoord 쓰기 명령이 sandbox 거부를 in",
+                                  "name": "mailbox 쓰기 명령이 sandbox 거부를 i",
                                   "fill": "$--foreground",
-                                  "content": "hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                  "content": "mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "600"
@@ -102265,9 +102265,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-l-fv1",
-                                      "name": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -102343,9 +102343,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-l-rl0",
-                                      "name": "#273 hcoord 쓰기 명령이 sandbox 거",
+                                      "name": "#273 mailbox 쓰기 명령이 sandbox ",
                                       "fill": "$--foreground",
-                                      "content": "#273 hcoord 쓰기 명령이 sandbox 거부를…",
+                                      "content": "#273 mailbox 쓰기 명령이 sandbox 거부를…",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
                                       "fontWeight": "600"
@@ -102360,9 +102360,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-l-rl1",
-                                      "name": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
                                       "fill": "$--subtle-foreground",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -102382,9 +102382,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-l-rl2",
-                                      "name": "#275 Surface hcoord sandbox ",
+                                      "name": "#275 Surface mailbox sandbox",
                                       "fill": "$--subtle-foreground",
-                                      "content": "#275 Surface hcoord sandbox refusals",
+                                      "content": "#275 Surface mailbox sandbox refusals",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -102616,9 +102616,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t0-l-title",
-                                          "name": "#273 hcoord 쓰기 명령이 sandbox 거",
+                                          "name": "#273 mailbox 쓰기 명령이 sandbox ",
                                           "fill": "$--foreground",
-                                          "content": "#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                          "content": "#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -102696,9 +102696,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t1-l-title",
-                                          "name": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "name": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fill": "$--foreground",
-                                          "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -102706,9 +102706,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t1-l-detail",
-                                          "name": "herdr-ide › fix/hcoord-sandb",
+                                          "name": "herdr-ide › fix/mailbox-sand",
                                           "fill": "$--muted-foreground",
-                                          "content": "herdr-ide › fix/hcoord-sandbox-letters · Done",
+                                          "content": "herdr-ide › fix/mailbox-sandbox-letters · Done",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -102791,9 +102791,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t2-l-title",
-                                          "name": "herdr-ide / fix/hcoord-sandb",
+                                          "name": "herdr-ide / fix/mailbox-sand",
                                           "fill": "$--foreground",
-                                          "content": "herdr-ide / fix/hcoord-sandbox-letters",
+                                          "content": "herdr-ide / fix/mailbox-sandbox-letters",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -102880,9 +102880,9 @@
                                 {
                                   "type": "text",
                                   "id": "pal-typed-d-l-t",
-                                  "name": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                  "name": "mailbox 쓰기 명령 sandbox 오류 해결",
                                   "fill": "$--foreground",
-                                  "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                  "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "600"
@@ -102957,9 +102957,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-typed-d-l-fv0",
-                                      "name": "herdr-ide › fix/hcoord-sandb",
+                                      "name": "herdr-ide › fix/mailbox-sand",
                                       "fill": "$--foreground",
-                                      "content": "herdr-ide › fix/hcoord-sandbox-letters",
+                                      "content": "herdr-ide › fix/mailbox-sandbox-letters",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -103192,9 +103192,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-n0-l-title",
-                                          "name": "#275 Surface hcoord sandbox ",
+                                          "name": "#275 Surface mailbox sandbox",
                                           "fill": "$--foreground",
-                                          "content": "#275 Surface hcoord sandbox refusals",
+                                          "content": "#275 Surface mailbox sandbox refusals",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -103202,9 +103202,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-n0-l-detail",
-                                          "name": "PR · Open · fix/hcoord-sandb",
+                                          "name": "PR · Open · fix/mailbox-sand",
                                           "fill": "$--muted-foreground",
-                                          "content": "PR · Open · fix/hcoord-sandbox-letters",
+                                          "content": "PR · Open · fix/mailbox-sandbox-letters",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -103245,9 +103245,9 @@
                                 {
                                   "type": "text",
                                   "id": "pal-number-d-l-t",
-                                  "name": "Surface hcoord sandbox refus",
+                                  "name": "Surface mailbox sandbox refu",
                                   "fill": "$--foreground",
-                                  "content": "Surface hcoord sandbox refusals",
+                                  "content": "Surface mailbox sandbox refusals",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "600"
@@ -103370,9 +103370,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-number-d-l-fv1",
-                                      "name": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -104051,9 +104051,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-gr1-l-title",
-                                          "name": "#96 hcoord sandbox 거부 로그가 비어",
+                                          "name": "#96 mailbox sandbox 거부 로그가 비",
                                           "fill": "$--foreground",
-                                          "content": "#96 hcoord sandbox 거부 로그가 비어 있음",
+                                          "content": "#96 mailbox sandbox 거부 로그가 비어 있음",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -105080,9 +105080,9 @@
                         {
                           "type": "text",
                           "id": "pal-side-a0t-d",
-                          "name": "hcoord 원격 에이전트 구현",
+                          "name": "mailbox 원격 에이전트 구현",
                           "fill": "$--foreground",
-                          "content": "hcoord 원격 에이전트 구현",
+                          "content": "mailbox 원격 에이전트 구현",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-body",
                           "fontWeight": "500"
@@ -105274,9 +105274,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q0-d-title",
-                                          "name": "#273 hcoord 쓰기 명령이 sandbox 거",
+                                          "name": "#273 mailbox 쓰기 명령이 sandbox ",
                                           "fill": "$--foreground",
-                                          "content": "#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                          "content": "#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -105347,9 +105347,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q1-d-title",
-                                          "name": "fix/hcoord-sandbox-letters",
+                                          "name": "fix/mailbox-sandbox-letters",
                                           "fill": "$--foreground",
-                                          "content": "fix/hcoord-sandbox-letters",
+                                          "content": "fix/mailbox-sandbox-letters",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -105411,9 +105411,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q2-d-title",
-                                          "name": "#275 Surface hcoord sandbox ",
+                                          "name": "#275 Surface mailbox sandbox",
                                           "fill": "$--foreground",
-                                          "content": "#275 Surface hcoord sandbox refusals",
+                                          "content": "#275 Surface mailbox sandbox refusals",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -105421,9 +105421,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q2-d-detail",
-                                          "name": "PR · Open · fix/hcoord-sandb",
+                                          "name": "PR · Open · fix/mailbox-sand",
                                           "fill": "$--muted-foreground",
-                                          "content": "PR · Open · fix/hcoord-sandbox-letters",
+                                          "content": "PR · Open · fix/mailbox-sandbox-letters",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -105468,9 +105468,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q3-d-title",
-                                          "name": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "name": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fill": "$--foreground",
-                                          "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -105478,9 +105478,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q3-d-detail",
-                                          "name": "herdr-ide › fix/hcoord-sandb",
+                                          "name": "herdr-ide › fix/mailbox-sand",
                                           "fill": "$--muted-foreground",
-                                          "content": "herdr-ide › fix/hcoord-sandbox-letters · Done",
+                                          "content": "herdr-ide › fix/mailbox-sandbox-letters · Done",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -105569,9 +105569,9 @@
                                 {
                                   "type": "text",
                                   "id": "pal-rel-d-d-t",
-                                  "name": "hcoord 쓰기 명령이 sandbox 거부를 in",
+                                  "name": "mailbox 쓰기 명령이 sandbox 거부를 i",
                                   "fill": "$--foreground",
-                                  "content": "hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                  "content": "mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "600"
@@ -105672,9 +105672,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-d-fv1",
-                                      "name": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -105750,9 +105750,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-d-rl0",
-                                      "name": "#273 hcoord 쓰기 명령이 sandbox 거",
+                                      "name": "#273 mailbox 쓰기 명령이 sandbox ",
                                       "fill": "$--foreground",
-                                      "content": "#273 hcoord 쓰기 명령이 sandbox 거부를…",
+                                      "content": "#273 mailbox 쓰기 명령이 sandbox 거부를…",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
                                       "fontWeight": "600"
@@ -105767,9 +105767,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-d-rl1",
-                                      "name": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
                                       "fill": "$--subtle-foreground",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -105789,9 +105789,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-d-rl2",
-                                      "name": "#275 Surface hcoord sandbox ",
+                                      "name": "#275 Surface mailbox sandbox",
                                       "fill": "$--subtle-foreground",
-                                      "content": "#275 Surface hcoord sandbox refusals",
+                                      "content": "#275 Surface mailbox sandbox refusals",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -106023,9 +106023,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t0-d-title",
-                                          "name": "#273 hcoord 쓰기 명령이 sandbox 거",
+                                          "name": "#273 mailbox 쓰기 명령이 sandbox ",
                                           "fill": "$--foreground",
-                                          "content": "#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                          "content": "#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -106103,9 +106103,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t1-d-title",
-                                          "name": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "name": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fill": "$--foreground",
-                                          "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -106113,9 +106113,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t1-d-detail",
-                                          "name": "herdr-ide › fix/hcoord-sandb",
+                                          "name": "herdr-ide › fix/mailbox-sand",
                                           "fill": "$--muted-foreground",
-                                          "content": "herdr-ide › fix/hcoord-sandbox-letters · Done",
+                                          "content": "herdr-ide › fix/mailbox-sandbox-letters · Done",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -106198,9 +106198,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t2-d-title",
-                                          "name": "herdr-ide / fix/hcoord-sandb",
+                                          "name": "herdr-ide / fix/mailbox-sand",
                                           "fill": "$--foreground",
-                                          "content": "herdr-ide / fix/hcoord-sandbox-letters",
+                                          "content": "herdr-ide / fix/mailbox-sandbox-letters",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -106287,9 +106287,9 @@
                                 {
                                   "type": "text",
                                   "id": "pal-typed-d-d-t",
-                                  "name": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                  "name": "mailbox 쓰기 명령 sandbox 오류 해결",
                                   "fill": "$--foreground",
-                                  "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                  "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "600"
@@ -106364,9 +106364,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-typed-d-d-fv0",
-                                      "name": "herdr-ide › fix/hcoord-sandb",
+                                      "name": "herdr-ide › fix/mailbox-sand",
                                       "fill": "$--foreground",
-                                      "content": "herdr-ide › fix/hcoord-sandbox-letters",
+                                      "content": "herdr-ide › fix/mailbox-sandbox-letters",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -106599,9 +106599,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-n0-d-title",
-                                          "name": "#275 Surface hcoord sandbox ",
+                                          "name": "#275 Surface mailbox sandbox",
                                           "fill": "$--foreground",
-                                          "content": "#275 Surface hcoord sandbox refusals",
+                                          "content": "#275 Surface mailbox sandbox refusals",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -106609,9 +106609,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-n0-d-detail",
-                                          "name": "PR · Open · fix/hcoord-sandb",
+                                          "name": "PR · Open · fix/mailbox-sand",
                                           "fill": "$--muted-foreground",
-                                          "content": "PR · Open · fix/hcoord-sandbox-letters",
+                                          "content": "PR · Open · fix/mailbox-sandbox-letters",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption"
                                         }
@@ -106652,9 +106652,9 @@
                                 {
                                   "type": "text",
                                   "id": "pal-number-d-d-t",
-                                  "name": "Surface hcoord sandbox refus",
+                                  "name": "Surface mailbox sandbox refu",
                                   "fill": "$--foreground",
-                                  "content": "Surface hcoord sandbox refusals",
+                                  "content": "Surface mailbox sandbox refusals",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "600"
@@ -106777,9 +106777,9 @@
                                     {
                                       "type": "text",
                                       "id": "pal-number-d-d-fv1",
-                                      "name": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     }
@@ -107458,9 +107458,9 @@
                                         {
                                           "type": "text",
                                           "id": "pal-gr1-d-title",
-                                          "name": "#96 hcoord sandbox 거부 로그가 비어",
+                                          "name": "#96 mailbox sandbox 거부 로그가 비",
                                           "fill": "$--foreground",
-                                          "content": "#96 hcoord sandbox 거부 로그가 비어 있음",
+                                          "content": "#96 mailbox sandbox 거부 로그가 비어 있음",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
                                           "fontWeight": "500"
@@ -120356,9 +120356,9 @@
                                                 {
                                                   "type": "text",
                                                   "id": "psb-a2-l-summary1-b",
-                                                  "name": "hcoord-decouple",
+                                                  "name": "mailbox-decouple",
                                                   "fill": "$--subtle-foreground",
-                                                  "content": "hcoord-decouple",
+                                                  "content": "mailbox-decouple",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": "$--text-caption"
                                                 },
@@ -130918,9 +130918,9 @@
                                                 {
                                                   "type": "text",
                                                   "id": "psb-a2-d-summary1-b",
-                                                  "name": "hcoord-decouple",
+                                                  "name": "mailbox-decouple",
                                                   "fill": "$--subtle-foreground",
-                                                  "content": "hcoord-decouple",
+                                                  "content": "mailbox-decouple",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": "$--text-caption"
                                                 },
@@ -147409,7 +147409,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mob-list-b-l-n1",
-                                      "name": "hcoord 플러그인 구현",
+                                      "name": "mailbox 플러그인 구현",
                                       "width": 390,
                                       "height": 82,
                                       "layout": "vertical",
@@ -147481,9 +147481,9 @@
                                                 {
                                                   "type": "text",
                                                   "id": "mob-list-b-l-n1-t",
-                                                  "name": "hcoord 플러그인 구현",
+                                                  "name": "mailbox 플러그인 구현",
                                                   "fill": "$--foreground",
-                                                  "content": "hcoord 플러그인 구현",
+                                                  "content": "mailbox 플러그인 구현",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": 15,
                                                   "fontWeight": "600"
@@ -147536,9 +147536,9 @@
                                             {
                                               "type": "text",
                                               "id": "mob-list-b-l-n1-pb",
-                                              "name": "herdr-ide · prd/hcoord-plugi",
+                                              "name": "herdr-ide · prd/mailbox-plug",
                                               "fill": "$--muted-foreground",
-                                              "content": "herdr-ide · prd/hcoord-plugin",
+                                              "content": "herdr-ide · prd/mailbox-plugin",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-body"
                                             },
@@ -150436,7 +150436,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mob-unreach-b-l-n1",
-                                      "name": "hcoord 플러그인 구현",
+                                      "name": "mailbox 플러그인 구현",
                                       "width": 390,
                                       "height": 82,
                                       "layout": "vertical",
@@ -150508,9 +150508,9 @@
                                                 {
                                                   "type": "text",
                                                   "id": "mob-unreach-b-l-n1-t",
-                                                  "name": "hcoord 플러그인 구현",
+                                                  "name": "mailbox 플러그인 구현",
                                                   "fill": "$--foreground",
-                                                  "content": "hcoord 플러그인 구현",
+                                                  "content": "mailbox 플러그인 구현",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": 15,
                                                   "fontWeight": "600"
@@ -150563,9 +150563,9 @@
                                             {
                                               "type": "text",
                                               "id": "mob-unreach-b-l-n1-pb",
-                                              "name": "herdr-ide · prd/hcoord-plugi",
+                                              "name": "herdr-ide · prd/mailbox-plug",
                                               "fill": "$--muted-foreground",
-                                              "content": "herdr-ide · prd/hcoord-plugin",
+                                              "content": "herdr-ide · prd/mailbox-plugin",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-body"
                                             },
@@ -152769,7 +152769,7 @@
                                             {
                                               "type": "frame",
                                               "id": "mob-start-b-l-l-n1",
-                                              "name": "hcoord 플러그인 구현",
+                                              "name": "mailbox 플러그인 구현",
                                               "width": 390,
                                               "height": 82,
                                               "layout": "vertical",
@@ -152841,9 +152841,9 @@
                                                         {
                                                           "type": "text",
                                                           "id": "mob-start-b-l-l-n1-t",
-                                                          "name": "hcoord 플러그인 구현",
+                                                          "name": "mailbox 플러그인 구현",
                                                           "fill": "$--foreground",
-                                                          "content": "hcoord 플러그인 구현",
+                                                          "content": "mailbox 플러그인 구현",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": 15,
                                                           "fontWeight": "600"
@@ -152896,9 +152896,9 @@
                                                     {
                                                       "type": "text",
                                                       "id": "mob-start-b-l-l-n1-pb",
-                                                      "name": "herdr-ide · prd/hcoord-plugi",
+                                                      "name": "herdr-ide · prd/mailbox-plug",
                                                       "fill": "$--muted-foreground",
-                                                      "content": "herdr-ide · prd/hcoord-plugin",
+                                                      "content": "herdr-ide · prd/mailbox-plugin",
                                                       "fontFamily": "$--font-ui",
                                                       "fontSize": "$--text-body"
                                                     },
@@ -162335,7 +162335,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mob-list-b-d-n1",
-                                      "name": "hcoord 플러그인 구현",
+                                      "name": "mailbox 플러그인 구현",
                                       "width": 390,
                                       "height": 82,
                                       "layout": "vertical",
@@ -162407,9 +162407,9 @@
                                                 {
                                                   "type": "text",
                                                   "id": "mob-list-b-d-n1-t",
-                                                  "name": "hcoord 플러그인 구현",
+                                                  "name": "mailbox 플러그인 구현",
                                                   "fill": "$--foreground",
-                                                  "content": "hcoord 플러그인 구현",
+                                                  "content": "mailbox 플러그인 구현",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": 15,
                                                   "fontWeight": "600"
@@ -162462,9 +162462,9 @@
                                             {
                                               "type": "text",
                                               "id": "mob-list-b-d-n1-pb",
-                                              "name": "herdr-ide · prd/hcoord-plugi",
+                                              "name": "herdr-ide · prd/mailbox-plug",
                                               "fill": "$--muted-foreground",
-                                              "content": "herdr-ide · prd/hcoord-plugin",
+                                              "content": "herdr-ide · prd/mailbox-plugin",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-body"
                                             },
@@ -165362,7 +165362,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mob-unreach-b-d-n1",
-                                      "name": "hcoord 플러그인 구현",
+                                      "name": "mailbox 플러그인 구현",
                                       "width": 390,
                                       "height": 82,
                                       "layout": "vertical",
@@ -165434,9 +165434,9 @@
                                                 {
                                                   "type": "text",
                                                   "id": "mob-unreach-b-d-n1-t",
-                                                  "name": "hcoord 플러그인 구현",
+                                                  "name": "mailbox 플러그인 구현",
                                                   "fill": "$--foreground",
-                                                  "content": "hcoord 플러그인 구현",
+                                                  "content": "mailbox 플러그인 구현",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": 15,
                                                   "fontWeight": "600"
@@ -165489,9 +165489,9 @@
                                             {
                                               "type": "text",
                                               "id": "mob-unreach-b-d-n1-pb",
-                                              "name": "herdr-ide · prd/hcoord-plugi",
+                                              "name": "herdr-ide · prd/mailbox-plug",
                                               "fill": "$--muted-foreground",
-                                              "content": "herdr-ide · prd/hcoord-plugin",
+                                              "content": "herdr-ide · prd/mailbox-plugin",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-body"
                                             },
@@ -167695,7 +167695,7 @@
                                             {
                                               "type": "frame",
                                               "id": "mob-start-b-d-l-n1",
-                                              "name": "hcoord 플러그인 구현",
+                                              "name": "mailbox 플러그인 구현",
                                               "width": 390,
                                               "height": 82,
                                               "layout": "vertical",
@@ -167767,9 +167767,9 @@
                                                         {
                                                           "type": "text",
                                                           "id": "mob-start-b-d-l-n1-t",
-                                                          "name": "hcoord 플러그인 구현",
+                                                          "name": "mailbox 플러그인 구현",
                                                           "fill": "$--foreground",
-                                                          "content": "hcoord 플러그인 구현",
+                                                          "content": "mailbox 플러그인 구현",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": 15,
                                                           "fontWeight": "600"
@@ -167822,9 +167822,9 @@
                                                     {
                                                       "type": "text",
                                                       "id": "mob-start-b-d-l-n1-pb",
-                                                      "name": "herdr-ide · prd/hcoord-plugi",
+                                                      "name": "herdr-ide · prd/mailbox-plug",
                                                       "fill": "$--muted-foreground",
-                                                      "content": "herdr-ide · prd/hcoord-plugin",
+                                                      "content": "herdr-ide · prd/mailbox-plugin",
                                                       "fontFamily": "$--font-ui",
                                                       "fontSize": "$--text-body"
                                                     },

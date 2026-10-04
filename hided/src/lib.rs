@@ -1,3 +1,4 @@
+pub mod agent_cli;
 pub mod attachments;
 pub mod boundary;
 mod browser_assets;

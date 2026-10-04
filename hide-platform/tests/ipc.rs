@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use hide_platform::ipc::{LocalListener, LocalStream};
+use hide_platform::ipc::{LocalListener, LocalStream, is_endpoint};
 use tempfile::TempDir;
 
 /// A folder and an endpoint path inside it. Kept short: a Unix socket path
@@ -17,6 +17,46 @@ fn endpoint() -> (TempDir, PathBuf) {
     let folder = tempfile::Builder::new().prefix("hp").tempdir().unwrap();
     let path = folder.path().join("s.sock");
     (folder, path)
+}
+
+#[test]
+fn endpoint_kind_is_read_only_and_missing_entries_stay_missing() {
+    let (folder, path) = endpoint();
+    assert!(
+        matches!(is_endpoint(&path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    );
+    assert!(!path.exists());
+    let listener = LocalListener::bind(&path).unwrap();
+    let before = std::fs::read_dir(folder.path()).unwrap().count();
+    assert!(is_endpoint(&path).unwrap());
+    assert!(is_endpoint(&path).unwrap());
+    assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), before);
+    assert!(path.exists());
+    drop(listener);
+}
+
+#[test]
+fn endpoint_kind_keeps_folders_and_checks_the_native_marker_kind() {
+    let (_folder, path) = endpoint();
+    std::fs::create_dir(&path).unwrap();
+    assert!(!is_endpoint(&path).unwrap());
+    assert!(path.is_dir());
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::write(&path, b"preserved marker bytes").unwrap();
+    assert_eq!(is_endpoint(&path).unwrap(), cfg!(windows));
+    assert_eq!(std::fs::read(path).unwrap(), b"preserved marker bytes");
+}
+
+#[cfg(unix)]
+#[test]
+fn endpoint_kind_refuses_a_link_to_an_actual_socket_without_following_it() {
+    let (folder, path) = endpoint();
+    let _listener = LocalListener::bind(&path).unwrap();
+    let alias = folder.path().join("alias");
+    std::os::unix::fs::symlink(&path, &alias).unwrap();
+    assert!(!is_endpoint(&alias).unwrap());
+    assert_eq!(std::fs::read_link(&alias).unwrap(), path);
+    assert!(is_endpoint(&path).unwrap());
 }
 
 fn read_line(stream: &mut LocalStream) -> String {

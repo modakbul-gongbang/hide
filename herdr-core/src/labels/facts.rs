@@ -10,7 +10,7 @@
 //! Device records stay in memory and are read again after a daemon restart.
 //!
 //! Who sent a request is decided once per message and kept with its offset
-//! (D-19): the hcoord envelope's sender; else the operator when Hide saw them
+//! (D-19): the Hide letter envelope's sender; else the operator when Hide saw them
 //! submit to that pane just before the message was written; else, for a
 //! message older than Hide's view of the pane, the operator unless lineage
 //! says otherwise; else another agent. A delegated child's first request
@@ -69,7 +69,7 @@ pub(crate) enum Requester {
     /// Written before Hide saw the pane's input and carrying no envelope:
     /// the operator's, unless it is a delegated child's first request.
     Unobserved,
-    /// The sender an hcoord envelope names.
+    /// The sender a Hide letter envelope names.
     Named(String),
     /// Something other than Hide's input wrote it.
     Agent,
@@ -484,7 +484,11 @@ mod tests {
     fn an_envelope_names_its_sender_and_an_unobserved_message_counts_as_the_operators() {
         let mut facts = SessionFacts::default();
         let mut claimed = None;
-        let mut enveloped = human("HCOORD_REQUEST r1 from ci-lead (p9)\nrerun", 5_000, 2);
+        let mut enveloped = human(
+            "Hide letter letter-1 from ci-lead (claude) [request]\nrerun",
+            5_000,
+            2,
+        );
         enveloped.sender = Some("ci-lead".to_owned());
         fold(
             &mut facts,

@@ -1081,7 +1081,7 @@ function MachineKit({ device, actions }: { device: Device; actions: Actions }) {
             {part.state === "installed" ? <span className="sr-only">{line.text}</span> : null}
             <span className="min-w-0 break-words text-subtle-foreground">
               {part.state === "installed" ? <span className="break-all font-mono">{part.location}</span> : `${line.text}${part.reason ? `: ${part.reason}` : ""}`}
-              {/* An installed part can still carry a reason, such as another program's `hcoord` on PATH (B14). */}
+              {/* An installed part can still carry a reason, such as a setting that applies to newly opened sessions. */}
               {part.state === "installed" && part.reason ? <span className="block text-muted-foreground" data-kit-part-note="">{part.reason}</span> : null}
             </span>
             {switched ? (

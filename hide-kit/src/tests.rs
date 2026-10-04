@@ -11,10 +11,66 @@ use serde_json::{Value, json};
 
 use super::*;
 
-/// Whether this system is one the kit installs hcoord on (see
-/// `hcoord::unsupported_system`); the tests that need its shim, its modes or
-/// its removal run only there.
-const HCOORD_INSTALLS: bool = cfg!(target_os = "macos");
+type IndexReadHook = Box<dyn FnOnce(&Path)>;
+std::thread_local! {
+    static SUPERVISOR_INDEX_READ_HOOK: std::cell::RefCell<Option<IndexReadHook>> =
+        const { std::cell::RefCell::new(None) };
+    static SYSTEM_ALIAS_FIXTURE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+// A private fixture cannot create a root-owned system alias. Inject only
+// that kernel ownership answer; the alias, target walk and kit are real.
+pub(crate) fn inspect_system_alias_fixture(
+    path: &Path,
+) -> Option<std::io::Result<hide_platform::fs::private::InspectionDirectory>> {
+    SYSTEM_ALIAS_FIXTURE.with(|slot| {
+        (slot.borrow().as_deref() == Some(path)).then(|| {
+            std::fs::read_link(path)
+                .map(hide_platform::fs::private::InspectionDirectory::SystemAlias)
+        })
+    })
+}
+
+struct ArmedSystemAliasFixture;
+
+impl ArmedSystemAliasFixture {
+    fn new(path: PathBuf) -> Self {
+        SYSTEM_ALIAS_FIXTURE.with(|slot| {
+            assert!(slot.borrow_mut().replace(path).is_none());
+        });
+        Self
+    }
+}
+
+impl Drop for ArmedSystemAliasFixture {
+    fn drop(&mut self) {
+        SYSTEM_ALIAS_FIXTURE.with(|slot| slot.borrow_mut().take());
+    }
+}
+
+pub(crate) fn before_supervisor_index_read(path: &Path) {
+    if let Some(hook) = SUPERVISOR_INDEX_READ_HOOK.with(|slot| slot.borrow_mut().take()) {
+        hook(path);
+    }
+}
+
+struct ArmedIndexReadHook;
+
+impl ArmedIndexReadHook {
+    fn new(hook: impl FnOnce(&Path) + 'static) -> Self {
+        SUPERVISOR_INDEX_READ_HOOK.with(|slot| {
+            assert!(slot.borrow_mut().replace(Box::new(hook)).is_none());
+        });
+        Self
+    }
+}
+
+impl Drop for ArmedIndexReadHook {
+    fn drop(&mut self) {
+        SUPERVISOR_INDEX_READ_HOOK.with(|slot| slot.borrow_mut().take());
+    }
+}
 
 /// A Herdr that keeps a plugin registry in memory and answers `plugin.list`
 /// and `plugin.unlink` the way Herdr 0.9.1 does.
@@ -101,7 +157,13 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        // The private HOME must leave room for the legacy daemon's nested
+        // socket under SUN_LEN, even when the harness gives TMPDIR a long
+        // spelling. TempDir owns this unique private short-root fixture.
+        let dir = tempfile::Builder::new()
+            .prefix("hk")
+            .tempdir_in("/tmp")
+            .unwrap();
         // Resolved, so paths compare equal to what the fake Herdr records.
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let home = root.join("home");
@@ -110,21 +172,7 @@ impl Fixture {
         std::fs::write(home.join(".claude/settings.json"), OTHER_TOOL).unwrap();
         executable(&kit.join("hide"), "#!/bin/sh\n");
         executable(&kit.join("hide-agent-hooks"), "#!/bin/sh\n");
-        // hcoord's "Node" is sh, and its cli.js a script that answers the
-        // ensure call the way hcoord does and remembers it was asked.
-        // `home adopt` moves the old home the way hcoord does, or refuses
-        // when the test left an `adopt-fails` file.
-        executable(
-            &kit.join("hcoord/dist/hcoord/cli.js"),
-            concat!(
-                "echo \"$@\" >> \"$HOME/ensure.log\"\n",
-                "if [ \"$1\" = home ]; then\n",
-                "  if [ -e \"$HOME/adopt-fails\" ]; then printf '{\"ok\":false,\"error\":{\"code\":\"adopt_failed\",\"message\":\"pid 9 still runs\"}}\\n'; exit 1; fi\n",
-                "  mv \"$HOME/.hcoord\" \"$HOME/.hide/hcoord\" && printf '{\"ok\":true,\"value\":{\"moved\":true}}\\n'; exit 0\n",
-                "fi\n",
-                "printf '{\"ok\":true,\"value\":{}}\\n'\n",
-            ),
-        );
+        executable(&root.join("launchctl"), "#!/bin/sh\nexit 113\n");
         executable(
             &root.join("bin/herdr"),
             "#!/bin/sh\necho \"$@\" >> \"$HOME/herdr.log\"\n",
@@ -137,12 +185,13 @@ impl Fixture {
             owned_roots: vec![root.join("helper-root")],
             herdr_socket: herdr.socket.clone(),
             herdr_bin: Some(root.join("bin/herdr")),
-            hcoord: Ok(HcoordRuntime {
-                program: PathBuf::from("/bin/sh"),
-                env: vec![("HCOORD_TEST".to_owned(), "1".to_owned())],
-            }),
             codex: None,
-            hcoord_home: None,
+            legacy_coordination_home: None,
+            user_agents: hide_platform::user_agents::UserAgents::fixture(
+                root.join("launchctl"),
+                "fixture".into(),
+            ),
+            retirement_projects: Vec::new(),
             legacy: Vec::new(),
             stop: Arc::default(),
         };
@@ -210,16 +259,9 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
             "{id:?}: {report:?}"
         );
     }
-    // hcoord keeps its daemon running through launchd, so the kit installs it
-    // on a Mac and reports it absent anywhere else.
     assert_eq!(
-        state(&report, ComponentId::Hcoord),
-        if HCOORD_INSTALLS {
-            ComponentState::Installed
-        } else {
-            ComponentState::Absent
-        },
-        "{report:?}"
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Installed
     );
     assert_eq!(
         state(&report, ComponentId::CodexHook),
@@ -244,32 +286,19 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
     // standalone hcoord plugin is looked for once.
     assert_eq!(*fixture.herdr.calls.lock().unwrap(), ["plugin.list"]);
     assert!(report.labels_retirement.is_empty());
-    if HCOORD_INSTALLS {
-        let shim = std::fs::read_to_string(fixture.home().join(".hide/hcoord/bin/hcoord")).unwrap();
-        assert!(shim.starts_with("#!/bin/sh\nHCOORD_TEST='1' exec '/bin/sh' '"));
-        assert!(
-            std::fs::read_to_string(fixture.home().join("ensure.log"))
-                .unwrap()
-                .contains("daemon ensure --json")
-        );
-    } else {
-        assert!(!fixture.home().join(".hide/hcoord").exists());
-    }
+    assert!(!fixture.home().join(".hide/hcoord").exists());
     let record: Value = serde_json::from_str(
         &std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap(),
     )
     .unwrap();
-    let mut installed = vec!["claude_code_hook", "cli"];
-    if HCOORD_INSTALLS {
-        installed.push("hcoord");
-    }
+    let installed = vec!["claude_code_hook", "cli", "coordination_retirement"];
     assert_eq!(
         record["installed"],
         serde_json::json!(installed),
         "{record}"
     );
     // The standalone plugin is looked for on every platform, so its
-    // retirement is recorded whether or not this one installs hcoord.
+    // retirement is recorded on every platform.
     assert_eq!(
         record["retired"],
         serde_json::json!(["hide.hcoord"]),
@@ -623,32 +652,6 @@ fn a_watcher_that_cannot_be_stopped_keeps_its_state_folder() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn without_a_runtime_for_hcoord_it_fails_and_an_existing_shim_is_left() {
-    let mut fixture = Fixture::new();
-    let shim = fixture.home().join(".hide/hcoord/bin/hcoord");
-    executable(
-        &shim,
-        "#!/bin/sh\nexec \"/opt/node\" \"/x/cli.js\" \"$@\"\n",
-    );
-    fixture.target.hcoord = Err("hcoord needs Node 22.12.0 or later; none was found".to_owned());
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    let hcoord = report.component(ComponentId::Hcoord).unwrap();
-    assert_eq!(hcoord.state, ComponentState::Failed);
-    assert!(hcoord.reason.as_deref().unwrap().contains("Node 22.12.0"));
-    assert!(
-        std::fs::read_to_string(&shim)
-            .unwrap()
-            .contains("/opt/node")
-    );
-}
-
-/// The kit keeps code that launchd and Herdr run under `~/.hide/kit`: a
-/// fresh folder is the account's alone, and one another account can write to
-/// is refused rather than run from.
-#[cfg(target_os = "macos")]
-#[test]
 fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
     let fixture = Fixture::new();
     apply(&fixture.target, &Scope::automatic());
@@ -656,11 +659,12 @@ fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
     let state = kit_state_dir(&fixture.target.home);
     assert_eq!(mode(&state), 0o700);
     assert_eq!(mode(state.parent().unwrap()), 0o700);
-    assert_eq!(mode(&fixture.target.home.join(".hide/hcoord/bin")), 0o700);
 
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o775)).unwrap();
     let report = status(&fixture.target);
-    let part = report.component(ComponentId::Hcoord).unwrap();
+    let part = report
+        .component(ComponentId::CoordinationRetirement)
+        .unwrap();
     assert_eq!(part.state, ComponentState::Failed);
     assert!(
         part.reason
@@ -722,7 +726,7 @@ fn an_unreadable_record_installs_nothing_missing_on_a_guess() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn removing_the_kit_takes_only_hides_parts_and_leaves_hcoord() {
+fn removing_the_kit_takes_only_hides_parts_and_keeps_preserved_data() {
     let fixture = Fixture::new();
     apply(&fixture.target, &Scope::automatic());
 
@@ -739,254 +743,14 @@ fn removing_the_kit_takes_only_hides_parts_and_leaves_hcoord() {
     assert_eq!(outcome(ComponentId::Cli), RemoveOutcome::Removed);
     assert_eq!(outcome(ComponentId::ClaudeCodeHook), RemoveOutcome::Removed);
     assert!(matches!(
-        outcome(ComponentId::Hcoord),
+        outcome(ComponentId::CoordinationRetirement),
         RemoveOutcome::Kept { .. }
     ));
     let settings = fixture.settings();
     assert!(!settings.contains("hide-subagents"));
     assert_eq!(other_tool_entry(&settings), other_tool_entry(OTHER_TOOL));
     assert!(!fixture.home().join(".local/bin/hide").exists());
-    assert!(fixture.home().join(".hide/hcoord/bin/hcoord").is_file());
     assert!(!fixture.home().join(".hide/kit/installed.json").exists());
-}
-
-/// The old `~/.hcoord` as an earlier Hide left it, and a record that says
-/// hcoord was installed: the new shim is missing, which must not read as
-/// taken away (PRD hide-home-layout D-09, B10, B11).
-#[cfg(target_os = "macos")]
-fn installed_under_the_old_home(fixture: &Fixture) -> PathBuf {
-    let old = fixture.home().join(".hcoord");
-    executable(
-        &old.join("bin/hcoord"),
-        "#!/bin/sh\nexec '/opt/node' '/x/cli.js' \"$@\"\n",
-    );
-    std::fs::write(old.join("ledger.json"), "{\"kept\":true}").unwrap();
-    let record = fixture.home().join(".hide/kit/installed.json");
-    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    std::fs::write(&record, "{\"format\":1,\"installed\":[\"cli\",\"hcoord\"]}").unwrap();
-    old
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn a_recorded_hcoord_in_the_old_home_is_moved_before_the_new_copy_and_linked_on_path() {
-    let fixture = Fixture::new();
-    let old = installed_under_the_old_home(&fixture);
-    let before = status(&fixture.target);
-    assert_eq!(
-        state(&before, ComponentId::Hcoord),
-        ComponentState::Outdated
-    );
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    assert_eq!(
-        state(&report, ComponentId::Hcoord),
-        ComponentState::Installed,
-        "{report:?}"
-    );
-    assert!(!old.exists(), "no copy of the old home is left");
-    let home = fixture.home().join(".hide/hcoord");
-    assert_eq!(
-        std::fs::read_to_string(home.join("ledger.json")).unwrap(),
-        "{\"kept\":true}"
-    );
-    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
-    let calls: Vec<&str> = calls.lines().collect();
-    assert_eq!(calls[0], "home adopt --json");
-    assert_eq!(calls[1], "daemon ensure --json", "{calls:?}");
-    // The adopt ran from the build's packaged copy, before the installed one changed.
-    assert!(
-        std::fs::read_to_string(home.join("bin/hcoord"))
-            .unwrap()
-            .contains(".hide/kit/hcoord/dist/hcoord/cli.js")
-    );
-    assert_eq!(
-        std::fs::read_link(fixture.home().join(".local/bin/hcoord")).unwrap(),
-        home.join("bin/hcoord")
-    );
-    assert_eq!(
-        report
-            .component(ComponentId::Hcoord)
-            .unwrap()
-            .location
-            .as_deref(),
-        Some(home.join("bin/hcoord").display().to_string().as_str())
-    );
-    let again = apply(&fixture.target, &Scope::automatic());
-    assert_eq!(
-        state(&again, ComponentId::Hcoord),
-        ComponentState::Installed
-    );
-    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
-    assert_eq!(
-        calls.matches("home adopt").count(),
-        1,
-        "a second pass moves nothing"
-    );
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn a_failed_move_leaves_the_old_home_and_says_how_it_is_retried() {
-    let fixture = Fixture::new();
-    let old = installed_under_the_old_home(&fixture);
-    std::fs::write(fixture.home().join("adopt-fails"), "").unwrap();
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    let part = report.component(ComponentId::Hcoord).unwrap();
-    assert_eq!(part.state, ComponentState::Failed);
-    let reason = part.reason.as_deref().unwrap();
-    assert!(reason.contains("pid 9 still runs"), "{reason}");
-    assert!(
-        reason.contains("next launch or Reinstall tries again"),
-        "{reason}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(old.join("ledger.json")).unwrap(),
-        "{\"kept\":true}"
-    );
-    assert!(
-        !fixture.home().join(".hide/kit/hcoord").exists(),
-        "the old daemon's code is not replaced"
-    );
-    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
-    assert!(!calls.contains("daemon ensure"), "{calls}");
-}
-
-/// A move that worked followed by an install that did not is finished on
-/// the next pass, not read as hcoord taken away.
-#[cfg(target_os = "macos")]
-#[test]
-fn an_install_that_failed_after_the_move_is_finished_on_the_next_pass() {
-    let fixture = Fixture::new();
-    let old = installed_under_the_old_home(&fixture);
-    // A folder where the shim goes: the move works, the shim write does not.
-    std::fs::remove_file(old.join("bin/hcoord")).unwrap();
-    std::fs::create_dir(old.join("bin/hcoord")).unwrap();
-
-    let first = apply(&fixture.target, &Scope::automatic());
-    assert_eq!(
-        state(&first, ComponentId::Hcoord),
-        ComponentState::Failed,
-        "{first:?}"
-    );
-    assert!(fixture.home().join(".hide/hcoord/ledger.json").is_file());
-
-    std::fs::remove_dir(fixture.home().join(".hide/hcoord/bin/hcoord")).unwrap();
-    let second = apply(&fixture.target, &Scope::automatic());
-    assert_eq!(
-        state(&second, ComponentId::Hcoord),
-        ComponentState::Installed,
-        "{second:?}"
-    );
-    assert!(fixture.home().join(".hide/hcoord/bin/hcoord").is_file());
-    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
-    assert!(calls.contains("daemon ensure"), "{calls}");
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn a_relocated_hcoord_is_never_moved() {
-    let mut fixture = Fixture::new();
-    let old = installed_under_the_old_home(&fixture);
-    std::fs::remove_file(fixture.home().join(".hide/kit/installed.json")).unwrap();
-    let relocated = fixture.root.join("coordinator");
-    fixture.target.hcoord_home = Some(relocated.clone());
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    assert_eq!(
-        state(&report, ComponentId::Hcoord),
-        ComponentState::Installed,
-        "{report:?}"
-    );
-    assert!(old.join("ledger.json").is_file());
-    assert!(relocated.join("bin/hcoord").is_file());
-    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
-    assert!(!calls.contains("home adopt"), "{calls}");
-}
-
-/// A relocated hcoord is not the account's: the `hcoord` link on PATH that
-/// leads to the account's own copy stays as it is.
-#[cfg(target_os = "macos")]
-#[test]
-fn a_relocated_hcoord_leaves_the_accounts_hcoord_link_alone() {
-    let mut fixture = Fixture::new();
-    let link = fixture.home().join(".local/bin/hcoord");
-    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
-    let accounts = fixture.home().join(".hide/hcoord/bin/hcoord");
-    std::os::unix::fs::symlink(&accounts, &link).unwrap();
-    fixture.target.hcoord_home = Some(fixture.root.join("coordinator"));
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    let part = report.component(ComponentId::Hcoord).unwrap();
-    assert_eq!(part.state, ComponentState::Installed, "{report:?}");
-    assert_eq!(part.reason, None);
-    assert_eq!(std::fs::read_link(&link).unwrap(), accounts);
-}
-
-/// An old home left beside the new one (an old copy made it again) is never
-/// merged and never blocks the new one: hcoord is updated and kept running,
-/// and the row names both folders.
-#[cfg(target_os = "macos")]
-#[test]
-fn an_old_home_beside_the_new_one_is_named_and_does_not_block_updates() {
-    let fixture = Fixture::new();
-    apply(&fixture.target, &Scope::automatic());
-    std::fs::remove_file(fixture.home().join("ensure.log")).unwrap();
-    let old = fixture.home().join(".hcoord");
-    std::fs::create_dir_all(&old).unwrap();
-    std::fs::write(old.join("ledger.json"), "{\"kept\":true}").unwrap();
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    let part = report.component(ComponentId::Hcoord).unwrap();
-    assert_eq!(part.state, ComponentState::Installed, "{report:?}");
-    let reason = part.reason.as_deref().unwrap();
-    assert!(reason.contains("never merges two hcoord homes"), "{reason}");
-    assert!(reason.contains(&old.display().to_string()), "{reason}");
-    assert_eq!(
-        std::fs::read_to_string(old.join("ledger.json")).unwrap(),
-        "{\"kept\":true}"
-    );
-    assert!(fixture.home().join(".hide/hcoord/bin/hcoord").is_file());
-    let calls = std::fs::read_to_string(fixture.home().join("ensure.log")).unwrap();
-    assert!(!calls.contains("home adopt"), "{calls}");
-    assert!(calls.contains("daemon ensure"), "{calls}");
-}
-
-/// `hcoord` on PATH is linked only when the name is free or already Hide's;
-/// another program's stays and the row says so (B14).
-#[cfg(target_os = "macos")]
-#[test]
-fn another_programs_hcoord_on_path_is_left_and_named() {
-    let fixture = Fixture::new();
-    let theirs = fixture.home().join(".local/bin/hcoord");
-    executable(&theirs, "#!/bin/sh\necho theirs\n");
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    let part = report.component(ComponentId::Hcoord).unwrap();
-    assert_eq!(part.state, ComponentState::Installed);
-    let reason = part.reason.as_deref().unwrap();
-    assert!(reason.contains("another program's file"), "{reason}");
-    assert_eq!(
-        std::fs::read_to_string(&theirs).unwrap(),
-        "#!/bin/sh\necho theirs\n"
-    );
-
-    // A link to the old home's shim is Hide's and is moved along.
-    std::fs::remove_file(&theirs).unwrap();
-    std::os::unix::fs::symlink(fixture.home().join(".hcoord/bin/hcoord"), &theirs).unwrap();
-    let report = apply(&fixture.target, &Scope::automatic());
-    assert_eq!(report.component(ComponentId::Hcoord).unwrap().reason, None);
-    assert_eq!(
-        std::fs::read_link(&theirs).unwrap(),
-        fixture.home().join(".hide/hcoord/bin/hcoord")
-    );
 }
 
 /// The standalone hcoord plugin is taken out of Herdr once, and the result
@@ -1402,4 +1166,1351 @@ fn a_later_choice_for_one_part_wins_when_two_requests_merge() {
     assert_eq!(merged.restore, BTreeSet::from([ComponentId::Cli]));
     assert_eq!(merged.turn_off, BTreeSet::from([ComponentId::CodexPerPane]));
     assert!(Scope::automatic().merge(Scope::automatic()).is_automatic());
+}
+
+fn old_coordination(fixture: &Fixture, requests: Value, watches: Value) -> PathBuf {
+    let home = fixture.home().join(".hide/hcoord");
+    executable(&home.join("bin/hcoord"), "#!/bin/sh\n");
+    std::fs::write(home.join("ledger.json"), json!({"schema":"hcoord.ledger.v1", "requests":requests, "watches":watches, "retained":"verbatim history"}).to_string()).unwrap();
+    home
+}
+
+fn home_tree(home: &Path) -> std::collections::BTreeMap<PathBuf, (u32, Option<Vec<u8>>)> {
+    let mut result = std::collections::BTreeMap::new();
+    let mut pending = vec![home.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            let metadata = std::fs::symlink_metadata(entry.path()).unwrap();
+            let contents = if metadata.is_file() {
+                Some(std::fs::read(entry.path()).unwrap())
+            } else {
+                None
+            };
+            result.insert(
+                entry.path().strip_prefix(home).unwrap().to_path_buf(),
+                (metadata.permissions().mode(), contents),
+            );
+            if metadata.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    result
+}
+
+#[test]
+fn open_legacy_requests_and_active_watches_leave_the_entire_home_unchanged() {
+    for (requests, watches) in [
+        (json!({"r":{"status":"open"}}), json!({})),
+        (json!({}), json!({"w":{"status":"active"}})),
+    ] {
+        let fixture = Fixture::new();
+        old_coordination(&fixture, requests, watches);
+        let before = home_tree(fixture.home());
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Failed
+        );
+        assert_eq!(home_tree(fixture.home()), before);
+        assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn supervisor_revision_head_and_unreadable_referenced_runs_block_before_mutation() {
+    for (unreadable, owner) in [(false, "hcoord"), (true, "hcoord"), (false, "hide")] {
+        let fixture = Fixture::new();
+        old_coordination(&fixture, json!({}), json!({}));
+        let registry = fixture.home().join(".sasu/supervisor");
+        std::fs::create_dir_all(&registry).unwrap();
+        let state_path = fixture.home().join("run-state.json");
+        if !unreadable {
+            std::fs::write(&state_path, json!({"status":"active","supervision":{"runInstanceId":"run-1","coordinationOwner":owner}}).to_string()).unwrap();
+        }
+        std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1","entries":[],"coordinated":[],"tickExecutor":null}).to_string()).unwrap();
+        std::fs::write(registry.join("index.json.revision-000000000002"), json!({"schema":"sasu.supervisor.index.v1","entries":[],"coordinated":[{"statePath":state_path,"runInstanceId":"run-1"}],"tickExecutor":null}).to_string()).unwrap();
+        let before = home_tree(fixture.home());
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Failed
+        );
+        assert_eq!(home_tree(fixture.home()), before);
+        assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn an_absent_sasu_index_stays_empty_without_creating_a_registry() {
+    for has_folder in [false, true] {
+        let fixture = Fixture::new();
+        let registry = fixture.home().join(".sasu/supervisor");
+        if has_folder {
+            std::fs::create_dir_all(&registry).unwrap();
+        }
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "{report:?}"
+        );
+        assert!(!registry.join("index.json").exists());
+        if has_folder {
+            assert!(home_tree(&registry).is_empty());
+        } else {
+            assert!(!registry.exists());
+        }
+    }
+}
+
+#[test]
+fn current_sasu_registry_allows_empty_and_retired_runs_without_importing_it() {
+    for scenario in ["empty", "retired null", "retired recipient"] {
+        let fixture = Fixture::new();
+        let registry = fixture.home().join(".sasu/supervisor");
+        std::fs::create_dir_all(&registry).unwrap();
+        let entries = if scenario != "empty" {
+            let path = fixture.home().join("project/agents/runs/task/state.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, json!({"status":"retired"}).to_string()).unwrap();
+            let mut entry = current_registry_entry(&path);
+            if scenario == "retired recipient" {
+                entry["recipientAuthorityKey"] = json!("a".repeat(64));
+            }
+            vec![entry]
+        } else {
+            Vec::new()
+        };
+        // A previous revision is history, not the current occupancy authority.
+        std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1","entries":[{"statePath":"legacy"}],"coordinated":[]}).to_string()).unwrap();
+        std::fs::write(
+            registry.join("index.json.revision-000000000002"),
+            current_registry(entries).to_string(),
+        )
+        .unwrap();
+        let before = home_tree(&registry);
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "{report:?}"
+        );
+        assert_eq!(home_tree(&registry), before);
+    }
+}
+
+fn current_registry_entry(path: &Path) -> Value {
+    json!({"statePath":path,"runInstanceId":"run-1","registrationId":"registration-1","recipientAuthorityKey":null,"addedAt":"2026-10-03T00:00:00.000Z"})
+}
+
+fn current_registry(entries: Vec<Value>) -> Value {
+    json!({"schema":"sasu.supervisor.index.v2.hide","entries":entries,"appliedWrites":["write-1"]})
+}
+
+#[test]
+fn current_sasu_registry_refuses_active_missing_unknown_and_malformed_records() {
+    for problem in [
+        "active",
+        "missing state",
+        "unknown state",
+        "malformed state",
+        "unknown schema",
+        "missing entries",
+        "invalid write history",
+        "missing identity",
+        "invalid recipient",
+        "too many entries",
+        "too many writes",
+        "long write",
+    ] {
+        let mut fixture = Fixture::new();
+        let registry = fixture.home().join(".sasu/supervisor");
+        let path = fixture.home().join("project/agents/runs/task/state.json");
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if problem != "missing state" {
+            let bytes = match problem {
+                "active" => json!({"status":"active"}).to_string(),
+                "unknown state" => json!({"status":"unknown"}).to_string(),
+                "malformed state" => "not json".to_owned(),
+                _ => json!({"status":"retired"}).to_string(),
+            };
+            std::fs::write(&path, bytes).unwrap();
+        }
+        let mut index = current_registry(vec![current_registry_entry(&path)]);
+        match problem {
+            "unknown schema" => index["schema"] = json!("sasu.supervisor.index.v3"),
+            "missing entries" => index
+                .as_object_mut()
+                .unwrap()
+                .remove("entries")
+                .map(|_| ())
+                .unwrap(),
+            "invalid write history" => index["appliedWrites"] = json!([null]),
+            "missing identity" => index["entries"][0]["registrationId"] = json!(""),
+            "invalid recipient" => {
+                index["entries"][0]["recipientAuthorityKey"] = json!("unreadable")
+            }
+            "too many entries" => {
+                index["entries"] = json!(vec![current_registry_entry(&path); 1025])
+            }
+            "too many writes" => index["appliedWrites"] = json!(vec!["write"; 1025]),
+            "long write" => index["appliedWrites"] = json!(["w".repeat(129)]),
+            _ => {}
+        }
+        std::fs::write(
+            registry.join("index.json"),
+            current_registry(Vec::new()).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            registry.join("index.json.revision-000000000002"),
+            index.to_string(),
+        )
+        .unwrap();
+        record_preflight_commands(&mut fixture);
+        assert_preflight_refusal_preserves_fixture(&fixture, None);
+    }
+}
+
+#[test]
+fn legacy_sasu_registry_keeps_tick_and_registered_legacy_run_refusals() {
+    for (entries, tick) in [
+        (json!([{"statePath":"old run"}]), Value::Null),
+        (json!([]), json!({"pid":1})),
+    ] {
+        let mut fixture = Fixture::new();
+        let registry = fixture.home().join(".sasu/supervisor");
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1","entries":entries,"coordinated":[],"tickExecutor":tick}).to_string()).unwrap();
+        record_preflight_commands(&mut fixture);
+        assert_preflight_refusal_preserves_fixture(&fixture, None);
+    }
+}
+
+#[test]
+fn a_selected_sasu_revision_disappearing_refuses_instead_of_using_the_empty_base() {
+    let mut fixture = Fixture::new();
+    let registry = fixture.home().join(".sasu/supervisor");
+    std::fs::create_dir_all(&registry).unwrap();
+    std::fs::write(
+        registry.join("index.json"),
+        current_registry(Vec::new()).to_string(),
+    )
+    .unwrap();
+    let revision = registry.join("index.json.revision-000000000002");
+    std::fs::write(&revision, current_registry(Vec::new()).to_string()).unwrap();
+    record_preflight_commands(&mut fixture);
+    let observed = Arc::new(Mutex::new(None));
+    let expected = Arc::clone(&observed);
+    let root = fixture.root.clone();
+    let saved = fixture.root.join("pruned-revision.json");
+    let _hook = ArmedIndexReadHook::new(move |selected| {
+        assert_eq!(selected, revision);
+        std::fs::rename(selected, &saved).unwrap();
+        *expected.lock().unwrap() = Some(home_tree(&root));
+    });
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Failed,
+        "{report:?}"
+    );
+    assert!(
+        report
+            .component(ComponentId::CoordinationRetirement)
+            .unwrap()
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("selected sasu registry revision disappeared")
+    );
+    assert_eq!(
+        home_tree(&fixture.root),
+        observed.lock().unwrap().take().unwrap()
+    );
+    assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+    assert!(!fixture.home().join("service-called").exists());
+    assert!(!fixture.home().join("status-called").exists());
+}
+
+#[test]
+fn hide_waiting_requests_and_watches_block_retirement() {
+    for (letters, watches) in [
+        (
+            json!([{"state":"delivered","waiting_answer":true}]),
+            json!([]),
+        ),
+        (json!([]), json!([{"id":"watch-1"}])),
+    ] {
+        let fixture = Fixture::new();
+        let state_directory = fixture.home().join(".hide/state");
+        std::fs::create_dir_all(&state_directory).unwrap();
+        std::fs::write(
+            state_directory.join("delivery-ledger.json"),
+            json!({"version":1,"letters":letters,"watches":watches}).to_string(),
+        )
+        .unwrap();
+        let before = home_tree(fixture.home());
+        assert_eq!(
+            state(
+                &apply(&fixture.target, &Scope::automatic()),
+                ComponentId::CoordinationRetirement
+            ),
+            ComponentState::Failed
+        );
+        assert_eq!(home_tree(fixture.home()), before);
+    }
+}
+
+#[test]
+fn unconfirmed_or_invalid_hook_receipts_refuse_retirement_before_any_effect() {
+    for (letter, invalid) in [
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":false}),
+            false,
+        ),
+        (
+            json!({"state":"pending","waiting_answer":false,"hook_confirmed":false}),
+            false,
+        ),
+        (json!({"state":"pending","waiting_answer":false}), false),
+        (json!({"state":"acknowledged","waiting_answer":true}), false),
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":"true"}),
+            true,
+        ),
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":0}),
+            true,
+        ),
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":{}}),
+            true,
+        ),
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":[]}),
+            true,
+        ),
+        (
+            json!({"state":"pending","waiting_answer":false,"hook_confirmed":true}),
+            true,
+        ),
+        (
+            json!({"state":"undelivered","waiting_answer":false,"hook_confirmed":true}),
+            true,
+        ),
+        (
+            json!({"state":"expired","waiting_answer":false,"hook_confirmed":true}),
+            true,
+        ),
+        (
+            json!({"state":"delivered","waiting_answer":false,"hook_confirmed":false}),
+            true,
+        ),
+        (
+            json!({"state":"cancelled","waiting_answer":true,"hook_confirmed":true}),
+            true,
+        ),
+        (json!({"state":"undelivered","waiting_answer":true}), true),
+        (json!({"state":"expired","waiting_answer":true}), true),
+    ] {
+        let mut fixture = Fixture::new();
+        let directory = fixture.home().join(".hide/state");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("delivery-ledger.json"),
+            json!({"version":1,"letters":[letter],"watches":[]}).to_string(),
+        )
+        .unwrap();
+        record_preflight_commands(&mut fixture);
+        let old = old_coordination(&fixture, json!({}), json!({}));
+        let daemon = UnixListener::bind(old.join("api.sock")).unwrap();
+        daemon.set_nonblocking(true).unwrap();
+        assert_preflight_refusal_preserves_fixture(&fixture, Some(&daemon));
+        let reason = retirement_preflight(&fixture.target).unwrap_err();
+        assert!(
+            reason.contains(if invalid {
+                "request status cannot be inspected"
+            } else {
+                "open requests"
+            }),
+            "{reason}"
+        );
+    }
+}
+
+#[test]
+fn confirmed_and_legacy_closed_hook_receipts_allow_read_only_retirement_preflight() {
+    for letter in [
+        json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":true}),
+        json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":null}),
+        json!({"state":"acknowledged","waiting_answer":false}),
+        json!({"state":"delivered","waiting_answer":false,"hook_confirmed":true}),
+        json!({"state":"delivered","waiting_answer":false}),
+        json!({"state":"cancelled","waiting_answer":false,"hook_confirmed":true}),
+        json!({"state":"cancelled","waiting_answer":false,"hook_confirmed":false}),
+        json!({"state":"undelivered","waiting_answer":false,"hook_confirmed":false}),
+        json!({"state":"expired","waiting_answer":false,"hook_confirmed":null}),
+    ] {
+        let mut fixture = Fixture::new();
+        let directory = fixture.home().join(".hide/state");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("delivery-ledger.json"),
+            json!({"version":1,"letters":[letter],"watches":[]}).to_string(),
+        )
+        .unwrap();
+        record_preflight_commands(&mut fixture);
+        let before = home_tree(&fixture.root);
+        retirement_preflight(&fixture.target).unwrap();
+        assert_eq!(home_tree(&fixture.root), before);
+        assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+        assert!(!fixture.home().join("service-called").exists());
+        assert!(!fixture.home().join("status-called").exists());
+    }
+}
+
+fn loaded_agent(fixture: &Fixture) {
+    std::fs::write(fixture.home().join("launchctl-loaded"), "loaded").unwrap();
+    executable(
+        &fixture.root.join("launchctl"),
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s %s\\n' \"$1\" \"$2\" >> \"$HOME/launchctl.log\"\n",
+            "if [ \"$1\" = print ]; then [ -f \"$HOME/launchctl-loaded\" ] && exit 0; exit 113; fi\n",
+            "if [ -f \"$HOME/bootout-fails\" ]; then exit 5; fi\n",
+            "/bin/rm \"$HOME/launchctl-loaded\"\n",
+        ),
+    );
+}
+
+#[test]
+fn retirement_stops_the_fixture_daemon_removes_only_owned_links_and_preserves_bytes() {
+    let mut fixture = Fixture::new();
+    let old = old_coordination(
+        &fixture,
+        json!({"r":{"status":"answered"}}),
+        json!({"w":{"status":"stopped"}}),
+    );
+    let bytes = std::fs::read(old.join("ledger.json")).unwrap();
+    loaded_agent(&fixture);
+    fixture.target.cli_dir = fixture.root.join("owned-bin");
+    std::fs::create_dir_all(&fixture.target.cli_dir).unwrap();
+    std::os::unix::fs::symlink(
+        old.join("bin/hcoord"),
+        fixture.target.cli_dir.join("hcoord"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(fixture.home().join(".local/bin")).unwrap();
+    let foreign = fixture.home().join(".local/bin/hcoord");
+    std::os::unix::fs::symlink("/another/tool/hcoord", &foreign).unwrap();
+    executable(
+        &fixture.home().join(".hide/kit/hcoord/dist/cli.js"),
+        "old code",
+    );
+    let listener = UnixListener::bind(old.join("api.sock")).unwrap();
+    let daemon = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = String::new();
+        BufReader::new(&stream).read_line(&mut request).unwrap();
+        let request: Value = serde_json::from_str(&request).unwrap();
+        assert_eq!(request["operation"], "daemon.stop");
+        drop(listener);
+        writeln!(stream, "{{\"ok\":true,\"value\":{{\"stopped\":true}}}}").unwrap();
+    });
+    let report = apply(&fixture.target, &Scope::automatic());
+    daemon.join().unwrap();
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert!(!old.exists());
+    assert!(!fixture.target.cli_dir.join("hcoord").exists());
+    assert_eq!(
+        std::fs::read_link(foreign).unwrap(),
+        PathBuf::from("/another/tool/hcoord")
+    );
+    assert!(!fixture.home().join(".hide/kit/hcoord").exists());
+    let preserved = std::fs::read_dir(fixture.home().join(".hide"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("hcoord.retired-")
+        })
+        .unwrap();
+    assert_eq!(std::fs::read(preserved.join("ledger.json")).unwrap(), bytes);
+    let calls = std::fs::read_to_string(fixture.home().join("launchctl.log")).unwrap();
+    assert!(
+        calls.contains("bootout fixture/com.hcoord.daemon."),
+        "{calls}"
+    );
+    assert!(
+        !calls
+            .lines()
+            .any(|line| line.ends_with("fixture/com.hcoord.daemon"))
+    );
+    let before = home_tree(fixture.home());
+    apply(&fixture.target, &Scope::automatic());
+    assert_eq!(home_tree(fixture.home()), before);
+}
+
+#[test]
+fn failed_bootout_is_visible_and_a_second_pass_resumes_without_rollback() {
+    let fixture = Fixture::new();
+    let old = old_coordination(&fixture, json!({}), json!({}));
+    let bytes = std::fs::read(old.join("ledger.json")).unwrap();
+    loaded_agent(&fixture);
+    std::fs::write(fixture.home().join("bootout-fails"), "fail").unwrap();
+    let first = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&first, ComponentId::CoordinationRetirement),
+        ComponentState::Failed
+    );
+    let saved = status(&fixture.target);
+    assert!(
+        saved
+            .component(ComponentId::CoordinationRetirement)
+            .unwrap()
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("remove login agent failed")
+    );
+    assert_eq!(std::fs::read(old.join("ledger.json")).unwrap(), bytes);
+    assert!(fixture.home().join("launchctl-loaded").exists());
+    std::fs::remove_file(fixture.home().join("bootout-fails")).unwrap();
+    let second = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&second, ComponentId::CoordinationRetirement),
+        ComponentState::Installed,
+        "{second:?}"
+    );
+    assert!(!old.exists());
+    assert!(!fixture.home().join("launchctl-loaded").exists());
+}
+
+#[test]
+fn a_registered_checkout_with_an_active_run_blocks_before_mutation() {
+    let mut fixture = Fixture::new();
+    let project = fixture.root.join("project");
+    let state_path = project.join("agents/runs/task/state.json");
+    std::fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+    std::fs::write(&state_path, json!({"status":"active"}).to_string()).unwrap();
+    fixture.target.retirement_projects.push(project);
+    let before = home_tree(fixture.home());
+    assert_eq!(
+        state(
+            &apply(&fixture.target, &Scope::automatic()),
+            ComponentId::CoordinationRetirement
+        ),
+        ComponentState::Failed
+    );
+    assert_eq!(home_tree(fixture.home()), before);
+}
+
+#[test]
+fn identified_sasu_run_with_unknown_status_blocks_and_other_artifacts_do_not() {
+    for (state, blocked) in [
+        (
+            json!({"schema":"sasu.implement.state.v10", "status":"unknown"}),
+            true,
+        ),
+        (
+            json!({"schema":"sasu.implement.state.v11.stateless-verification"}),
+            true,
+        ),
+        (json!({"schema":"another-tool.v1"}), false),
+        (
+            json!({"schema":"sasu.implement.state.v10", "status":"retired"}),
+            false,
+        ),
+    ] {
+        let mut fixture = Fixture::new();
+        let project = fixture.root.join("project");
+        let path = project.join("agents/runs/task/state.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, state.to_string()).unwrap();
+        fixture.target.retirement_projects.push(project);
+        let before = home_tree(fixture.home());
+        assert_eq!(retirement_preflight(&fixture.target).is_err(), blocked);
+        assert_eq!(home_tree(fixture.home()), before);
+    }
+}
+
+#[test]
+fn intermediate_kit_links_refuse_before_services_status_or_any_mutation() {
+    for linked_component in [".hide", ".hide/kit"] {
+        let mut fixture = Fixture::new();
+        let outside = fixture.root.join("outside-owned-folder");
+        let copy = if linked_component == ".hide" {
+            outside.join("kit/hcoord")
+        } else {
+            outside.join("hcoord")
+        };
+        executable(&copy.join("dist/cli.js"), "unrelated preserved bytes");
+        std::fs::write(outside.join("notes.txt"), b"another folder's files").unwrap();
+        let link = fixture.home().join(linked_component);
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        executable(
+            &fixture.root.join("launchctl"),
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
+        );
+        let codex = fixture.root.join("bin/codex");
+        executable(
+            &codex,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
+        );
+        fixture.target.codex = Some(codex);
+        let daemon_home = fixture.home().join(".hcoord");
+        std::fs::create_dir_all(&daemon_home).unwrap();
+        let daemon = UnixListener::bind(daemon_home.join("api.sock")).unwrap();
+        daemon.set_nonblocking(true).unwrap();
+        let before_home = home_tree(fixture.home());
+        let before_outside = home_tree(&outside);
+        let observed = status(&fixture.target);
+        assert_eq!(
+            state(&observed, ComponentId::CoordinationRetirement),
+            ComponentState::Failed,
+            "{observed:?}"
+        );
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Failed,
+            "{report:?}"
+        );
+        assert!(
+            matches!(daemon.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "a daemon RPC was initiated"
+        );
+        assert_eq!(
+            home_tree(&outside),
+            before_outside,
+            "the intermediate link target changed"
+        );
+        assert_eq!(
+            home_tree(fixture.home()),
+            before_home,
+            "preflight wrote to HOME"
+        );
+        assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+        assert!(!fixture.home().join("service-called").exists());
+        assert!(!fixture.home().join("status-called").exists());
+        assert!(!outside.join(".lock").exists());
+        assert!(!outside.join("installed.json").exists());
+        assert_eq!(std::fs::read_link(link).unwrap(), outside);
+    }
+}
+
+#[test]
+fn writable_retirement_records_refuse_before_services_status_or_any_mutation() {
+    for record in ["ledger", "progress", "run"] {
+        for mode in [0o660, 0o666] {
+            let mut fixture = Fixture::new();
+            let path = match record {
+                "ledger" => old_coordination(&fixture, json!({}), json!({})).join("ledger.json"),
+                "progress" => {
+                    let path = kit_state_dir(fixture.home()).join("coordination-retirement.json");
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    std::fs::write(
+                        &path,
+                        json!({"homes":[],"step":"complete","failure":null,"complete":true})
+                            .to_string(),
+                    )
+                    .unwrap();
+                    path
+                }
+                _ => {
+                    let project = fixture.root.join("project");
+                    let path = project.join("agents/runs/task/state.json");
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    std::fs::write(&path, json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"}).to_string()).unwrap();
+                    fixture.target.retirement_projects.push(project);
+                    path
+                }
+            };
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            executable(
+                &fixture.root.join("launchctl"),
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
+            );
+            let codex = fixture.root.join("bin/codex");
+            executable(
+                &codex,
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
+            );
+            fixture.target.codex = Some(codex);
+            let daemon_home = fixture.home().join(".hcoord");
+            std::fs::create_dir_all(&daemon_home).unwrap();
+            let daemon = UnixListener::bind(daemon_home.join("api.sock")).unwrap();
+            daemon.set_nonblocking(true).unwrap();
+            let before_home = home_tree(fixture.home());
+            let before_record = std::fs::read(&path).unwrap();
+            let parent = path.parent().unwrap();
+            let before_parent = home_tree(parent);
+            let report = apply(&fixture.target, &Scope::automatic());
+            assert_eq!(
+                state(&report, ComponentId::CoordinationRetirement),
+                ComponentState::Failed,
+                "{record} {mode:o}: {report:?}"
+            );
+            assert!(
+                matches!(daemon.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+                "a daemon RPC was initiated"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before_record);
+            assert_eq!(
+                home_tree(parent),
+                before_parent,
+                "{record} {mode:o}: record folder changed"
+            );
+            assert_eq!(
+                home_tree(fixture.home()),
+                before_home,
+                "{record} {mode:o}: HOME changed"
+            );
+            assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+            assert!(!fixture.home().join("service-called").exists());
+            assert!(!fixture.home().join("status-called").exists());
+        }
+    }
+}
+
+// These fixtures select their own HOME registry. Clear an inherited XDG
+// override in an owned subprocess, without changing the parallel runner's env.
+fn isolated_plugin_registry(test: &str) -> bool {
+    if std::env::var_os("XDG_CONFIG_HOME").is_none() {
+        return false;
+    }
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", test, "--nocapture"])
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = hide_platform::process::OwnedChild::spawn(&mut command)
+        .unwrap()
+        .capture_until(
+            std::time::Instant::now() + std::time::Duration::from_secs(20),
+            1024 * 1024,
+        )
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
+#[test]
+fn retirement_without_a_herdr_server_finishes_when_no_plugin_is_registered() {
+    if isolated_plugin_registry(
+        "tests::retirement_without_a_herdr_server_finishes_when_no_plugin_is_registered",
+    ) {
+        return;
+    }
+    for refused_socket in [false, true] {
+        for registry in [
+            None,
+            Some(json!([])),
+            Some(json!([plugin("other.plugin", "/foreign", "local")])),
+        ] {
+            let mut fixture = Fixture::new();
+            old_coordination(&fixture, json!({}), json!({}));
+            fixture.target.herdr_socket = fixture.root.join("offline.sock");
+            fixture.target.herdr_bin = None;
+            if refused_socket {
+                drop(UnixListener::bind(&fixture.target.herdr_socket).unwrap());
+            }
+            let path = fixture.home().join(".config/herdr/plugins.json");
+            let bytes = registry.map(|value| serde_json::to_vec(&value).unwrap());
+            if let Some(bytes) = &bytes {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, bytes).unwrap();
+            }
+            let report = apply(&fixture.target, &Scope::automatic());
+            assert_eq!(
+                state(&report, ComponentId::CoordinationRetirement),
+                ComponentState::Installed,
+                "{report:?}"
+            );
+            assert_eq!(std::fs::read(&path).ok(), bytes);
+            assert!(!fixture.home().join(".hide/hcoord").exists());
+            let before = home_tree(fixture.home());
+            assert_eq!(
+                state(
+                    &apply(&fixture.target, &Scope::automatic()),
+                    ComponentId::CoordinationRetirement
+                ),
+                ComponentState::Installed
+            );
+            assert_eq!(home_tree(fixture.home()), before);
+        }
+    }
+}
+
+#[test]
+fn offline_plugin_retirement_refuses_an_unreadable_registry_and_resumes_after_repair() {
+    if isolated_plugin_registry(
+        "tests::offline_plugin_retirement_refuses_an_unreadable_registry_and_resumes_after_repair",
+    ) {
+        return;
+    }
+    for bytes in [b"invalid".as_slice(), b"{}", b"[{}]"] {
+        let mut fixture = Fixture::new();
+        old_coordination(&fixture, json!({}), json!({}));
+        fixture.target.herdr_socket = fixture.root.join("absent.sock");
+        let path = fixture.home().join(".config/herdr/plugins.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Failed,
+            "{report:?}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert!(fixture.home().join(".hide/hcoord/ledger.json").exists());
+        assert!(!fixture.home().join("herdr.log").exists());
+        std::fs::write(path, "[]").unwrap();
+        assert_eq!(
+            state(
+                &apply(&fixture.target, &Scope::automatic()),
+                ComponentId::CoordinationRetirement
+            ),
+            ComponentState::Installed
+        );
+    }
+}
+
+#[test]
+fn offline_plugin_retirement_requires_confirmed_removal_and_preserves_foreign_entries() {
+    if isolated_plugin_registry(
+        "tests::offline_plugin_retirement_requires_confirmed_removal_and_preserves_foreign_entries",
+    ) {
+        return;
+    }
+    let mut fixture = Fixture::new();
+    old_coordination(&fixture, json!({}), json!({}));
+    fixture.target.herdr_socket = fixture.root.join("absent.sock");
+    let path = fixture.home().join(".config/herdr/plugins.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let foreign = json!([plugin("other.plugin", "/foreign", "local")]);
+    let original = json!([plugin(HCOORD_PLUGIN_ID, "/old", "local"), foreign[0]]);
+    std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+    // The boundary first returns success without unregistering: retirement
+    // must retain its failed step instead of preserving a false completion.
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Failed,
+        "{report:?}"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+        original
+    );
+    executable(
+        fixture.target.herdr_bin.as_ref().unwrap(),
+        &format!(
+            "#!/bin/sh\n[ \"$*\" = 'plugin uninstall hide.hcoord' ] || exit 1\nprintf '%s' '{}' > \"$HOME/.config/herdr/plugins.json\"\n",
+            foreign
+        ),
+    );
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+        foreign
+    );
+}
+
+#[test]
+fn a_long_home_with_no_daemon_socket_finishes_retirement_and_converges() {
+    if isolated_plugin_registry(
+        "tests::a_long_home_with_no_daemon_socket_finishes_retirement_and_converges",
+    ) {
+        return;
+    }
+    for legacy_folder in [false, true] {
+        let mut fixture = Fixture::new();
+        // Each component stays below NAME_MAX; the nested suffix alone
+        // exceeds the assertion regardless of the platform's temp root.
+        fixture.target.home = fixture.root.join("l".repeat(120)).join("l".repeat(120));
+        fixture.target.cli_dir = fixture.home().join(".local/bin");
+        std::fs::create_dir_all(fixture.home()).unwrap();
+        let old = fixture.home().join(".hide/hcoord");
+        let ledger = if legacy_folder {
+            old_coordination(&fixture, json!({}), json!({}));
+            Some(std::fs::read(old.join("ledger.json")).unwrap())
+        } else {
+            None
+        };
+        for home in [&old, &fixture.home().join(".hcoord")] {
+            let socket = home.join("api.sock");
+            assert!(socket.as_os_str().len() > 200);
+            assert!(
+                matches!(std::fs::symlink_metadata(&socket), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+            );
+        }
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "legacy folder {legacy_folder}: {report:?}"
+        );
+        let progress: Value = serde_json::from_slice(
+            &std::fs::read(kit_state_dir(fixture.home()).join("coordination-retirement.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(progress["complete"], true);
+        if let Some(ledger) = ledger {
+            let preserved = std::fs::read_dir(fixture.home().join(".hide"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("hcoord.retired-")
+                })
+                .unwrap();
+            assert_eq!(
+                std::fs::read(preserved.join("ledger.json")).unwrap(),
+                ledger
+            );
+            assert!(!old.exists());
+        }
+        let before = home_tree(fixture.home());
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed
+        );
+        assert_eq!(home_tree(fixture.home()), before);
+    }
+}
+
+fn record_preflight_commands(fixture: &mut Fixture) {
+    executable(
+        &fixture.root.join("launchctl"),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
+    );
+    let codex = fixture.root.join("bin/codex");
+    executable(
+        &codex,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
+    );
+    fixture.target.codex = Some(codex);
+}
+
+fn assert_preflight_refusal_preserves_fixture(fixture: &Fixture, daemon: Option<&UnixListener>) {
+    let before = home_tree(&fixture.root);
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Failed,
+        "{report:?}"
+    );
+    assert_eq!(home_tree(&fixture.root), before, "preflight changed a file");
+    assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+    assert!(!fixture.home().join("service-called").exists());
+    assert!(!fixture.home().join("status-called").exists());
+    if let Some(daemon) = daemon {
+        assert!(
+            matches!(daemon.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "a daemon RPC was initiated"
+        );
+    }
+}
+
+#[test]
+fn external_hide_state_override_keeps_its_ancestor_authority() {
+    exercise_external_state_override("HIDE_STATE_DIR");
+}
+
+#[test]
+fn external_xdg_state_override_keeps_its_ancestor_authority() {
+    exercise_external_state_override("XDG_STATE_HOME");
+}
+
+fn exercise_external_state_override(key: &str) {
+    const CASE: &str = "HIDE_KIT_TEST_EXTERNAL_STATE_CASE";
+    const ROOT: &str = "HIDE_KIT_TEST_EXTERNAL_STATE_ROOT";
+    let Ok(case) = std::env::var(CASE) else {
+        // A separate test process supplies the real environment contract;
+        // no global environment is changed under parallel test threads.
+        let mut failures = Vec::new();
+        for case in [
+            "parent link",
+            "group write",
+            "world write",
+            "active ledger",
+            "safe existing",
+            "safe missing",
+            "system alias",
+            "relative system alias",
+            "system alias through account link",
+        ] {
+            let outside = tempfile::tempdir().unwrap();
+            let root = std::fs::canonicalize(outside.path()).unwrap();
+            let parent = root.join("state-parent");
+            let leaf = if key == "HIDE_STATE_DIR" {
+                "state"
+            } else {
+                "hide"
+            };
+            let state_dir = parent.join(leaf);
+            if case != "safe missing" {
+                std::fs::create_dir_all(&state_dir).unwrap();
+            }
+            if matches!(case, "parent link" | "active ledger") {
+                std::fs::write(
+                    state_dir.join("delivery-ledger.json"),
+                    json!({"version":1,"letters":[{"state":"pending","waiting_answer":false}],"watches":[]}).to_string(),
+                )
+                .unwrap();
+            } else if case == "safe existing" {
+                std::fs::write(
+                    state_dir.join("delivery-ledger.json"),
+                    json!({"version":1,"letters":[],"watches":[]}).to_string(),
+                )
+                .unwrap();
+            }
+            if case == "parent link" {
+                std::fs::rename(&parent, root.join("preserved-active-state")).unwrap();
+                let redirect = root.join("empty-redirect");
+                std::fs::create_dir(&redirect).unwrap();
+                std::os::unix::fs::symlink(&redirect, &parent).unwrap();
+            } else if matches!(case, "group write" | "world write") {
+                let mode = if case == "group write" { 0o770 } else { 0o777 };
+                std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+            let selected_parent = if matches!(
+                case,
+                "relative system alias" | "system alias through account link"
+            ) {
+                let system = root.join("system");
+                let var = system.join("var");
+                let run = system.join("run");
+                std::fs::create_dir_all(&var).unwrap();
+                std::fs::create_dir_all(run.join(leaf)).unwrap();
+                let target = if case == "relative system alias" {
+                    PathBuf::from("../run")
+                } else {
+                    let redirect = root.join("redirect");
+                    std::fs::create_dir(&redirect).unwrap();
+                    std::os::unix::fs::symlink(&redirect, run.join("account-link")).unwrap();
+                    PathBuf::from("../run/account-link/..")
+                };
+                let alias = var.join("run");
+                std::os::unix::fs::symlink(target, &alias).unwrap();
+                alias
+            } else if case == "system alias" {
+                // On macOS the temporary spelling includes the root-owned
+                // /var alias; its canonical spelling names the same fixture.
+                outside.path().join("state-parent")
+            } else {
+                parent
+            };
+            let selected = if key == "HIDE_STATE_DIR" {
+                selected_parent.join(leaf)
+            } else {
+                selected_parent
+            };
+            let test = if key == "HIDE_STATE_DIR" {
+                "tests::external_hide_state_override_keeps_its_ancestor_authority"
+            } else {
+                "tests::external_xdg_state_override_keeps_its_ancestor_authority"
+            };
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture"])
+                .env_remove("HIDE_STATE_DIR")
+                .env_remove("XDG_STATE_HOME")
+                .env("HOME", root.join("process-home"))
+                .env(CASE, case)
+                .env(ROOT, &root)
+                .env(key, selected)
+                .output()
+                .unwrap();
+            if !result.status.success() {
+                failures.push(format!(
+                    "{key}, {case}: {}{}",
+                    String::from_utf8_lossy(&result.stdout),
+                    String::from_utf8_lossy(&result.stderr)
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        return;
+    };
+    let mut fixture = Fixture::new();
+    let outside = PathBuf::from(std::env::var_os(ROOT).unwrap());
+    let before_outside = home_tree(&outside);
+    let _system_alias = matches!(
+        case.as_str(),
+        "relative system alias" | "system alias through account link"
+    )
+    .then(|| ArmedSystemAliasFixture::new(outside.join("system/var/run")));
+    let selected = layout::state_dir_from_process(fixture.home());
+    assert!(!selected.starts_with(fixture.home()));
+    if matches!(
+        case.as_str(),
+        "safe existing" | "safe missing" | "system alias" | "relative system alias"
+    ) {
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "{report:?}"
+        );
+        assert_eq!(home_tree(&outside), before_outside);
+        assert!(fixture.home().join(".local/bin/hide").exists());
+    } else {
+        record_preflight_commands(&mut fixture);
+        let old = old_coordination(&fixture, json!({}), json!({}));
+        let daemon = UnixListener::bind(old.join("api.sock")).unwrap();
+        daemon.set_nonblocking(true).unwrap();
+        assert_preflight_refusal_preserves_fixture(&fixture, Some(&daemon));
+        assert_eq!(home_tree(&outside), before_outside);
+    }
+}
+
+#[test]
+fn a_relocated_legacy_home_cannot_follow_an_intermediate_alias() {
+    let mut fixture = Fixture::new();
+    let outside = fixture.root.join("outside-owned-folder");
+    let old = outside.join("hcoord");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(
+        old.join("ledger.json"),
+        json!({"schema":"hcoord.ledger.v1", "requests":{},"watches":{}}).to_string(),
+    )
+    .unwrap();
+    let alias = fixture.home().join("relocated");
+    std::os::unix::fs::symlink(&outside, &alias).unwrap();
+    fixture.target.legacy_coordination_home = Some(alias.join("hcoord"));
+    record_preflight_commands(&mut fixture);
+    assert_preflight_refusal_preserves_fixture(&fixture, None);
+}
+
+#[test]
+fn a_relocated_legacy_folder_preserves_bytes_only_below_an_owned_parent() {
+    for mode in [0o700, 0o770, 0o777] {
+        let mut fixture = Fixture::new();
+        let parent = fixture.home().join("legacy-location");
+        let old = parent.join("hcoord");
+        std::fs::create_dir_all(&old).unwrap();
+        let bytes = json!({"schema":"hcoord.ledger.v1", "requests":{}, "watches":{}})
+            .to_string()
+            .into_bytes();
+        std::fs::write(old.join("ledger.json"), &bytes).unwrap();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode)).unwrap();
+        fixture.target.legacy_coordination_home = Some(old.clone());
+        if mode == 0o700 {
+            let report = apply(&fixture.target, &Scope::automatic());
+            assert_eq!(
+                state(&report, ComponentId::CoordinationRetirement),
+                ComponentState::Installed,
+                "{report:?}"
+            );
+            assert!(!old.exists());
+            let preserved = std::fs::read_dir(&parent)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            assert!(
+                preserved
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("hcoord.retired-")
+            );
+            assert_eq!(std::fs::read(preserved.join("ledger.json")).unwrap(), bytes);
+        } else {
+            record_preflight_commands(&mut fixture);
+            assert_preflight_refusal_preserves_fixture(&fixture, None);
+        }
+    }
+}
+
+#[test]
+fn registry_and_checkout_ancestors_refuse_links_and_other_account_write_access() {
+    for component in [
+        ".sasu",
+        ".sasu/supervisor",
+        "agents",
+        "agents/runs",
+        "agents/runs/task",
+    ] {
+        for change in ["link", "group write", "world write"] {
+            let mut fixture = Fixture::new();
+            let registry = component.starts_with(".sasu");
+            let anchor = if registry {
+                fixture.home().to_path_buf()
+            } else {
+                let project = fixture.root.join("registered-checkout");
+                fixture.target.retirement_projects.push(project.clone());
+                project
+            };
+            let state = if registry {
+                anchor.join(".sasu/supervisor/index.json")
+            } else {
+                anchor.join("agents/runs/task/state.json")
+            };
+            std::fs::create_dir_all(state.parent().unwrap()).unwrap();
+            let value = if registry {
+                json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[]})
+            } else {
+                json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"})
+            };
+            std::fs::write(&state, value.to_string()).unwrap();
+            let changed = anchor.join(component);
+            if change == "link" {
+                let outside = fixture.root.join("preserved-outside-folder");
+                std::fs::rename(&changed, &outside).unwrap();
+                std::os::unix::fs::symlink(&outside, &changed).unwrap();
+            } else {
+                let mode = if change == "group write" {
+                    0o770
+                } else {
+                    0o777
+                };
+                std::fs::set_permissions(&changed, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+            record_preflight_commands(&mut fixture);
+            let daemon_home = fixture.home().join(".hcoord");
+            std::fs::create_dir_all(&daemon_home).unwrap();
+            let daemon = UnixListener::bind(daemon_home.join("api.sock")).unwrap();
+            daemon.set_nonblocking(true).unwrap();
+            assert_preflight_refusal_preserves_fixture(&fixture, Some(&daemon));
+        }
+    }
+}
+
+#[test]
+fn legacy_overrides_without_mutation_authority_refuse_the_entire_pass() {
+    for location in [
+        "outside",
+        "relative",
+        "escape",
+        "home",
+        "kit ancestor",
+        "active state",
+        "kit child",
+        "state child",
+    ] {
+        let mut fixture = Fixture::new();
+        let home = fixture.home().to_path_buf();
+        fixture.target.legacy_coordination_home = Some(match location {
+            "outside" => {
+                let outside = fixture.root.join("outside-owned-folder/hcoord");
+                std::fs::create_dir_all(&outside).unwrap();
+                std::fs::write(
+                    outside.join("ledger.json"),
+                    json!({"schema":"hcoord.ledger.v1", "requests":{}, "watches":{}}).to_string(),
+                )
+                .unwrap();
+                outside
+            }
+            "relative" => PathBuf::from("untrusted-relative-home"),
+            "escape" => home.join("missing/../../outside-owned-folder"),
+            "home" => home.clone(),
+            "kit ancestor" => home.join(".hide"),
+            "kit child" => home.join(".hide/kit/hcoord"),
+            "state child" => home.join(".hide/state/old-coordinator"),
+            _ => home.join(".hide/state"),
+        });
+        record_preflight_commands(&mut fixture);
+        let daemon_home = home.join(".hcoord");
+        std::fs::create_dir_all(&daemon_home).unwrap();
+        let daemon = UnixListener::bind(daemon_home.join("api.sock")).unwrap();
+        daemon.set_nonblocking(true).unwrap();
+        assert_preflight_refusal_preserves_fixture(&fixture, Some(&daemon));
+    }
+}
+
+#[test]
+fn indexed_runs_outside_home_use_the_registered_checkout_authority() {
+    for registered in [false, true] {
+        let mut fixture = Fixture::new();
+        let project = fixture.root.join("outside-home-checkout");
+        let state_path = project.join("agents/runs/task/state.json");
+        std::fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &state_path,
+            json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"})
+                .to_string(),
+        )
+        .unwrap();
+        let registry = fixture.home().join(".sasu/supervisor");
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[{"statePath":state_path,"runInstanceId":"run"}]}).to_string()).unwrap();
+        if registered {
+            fixture.target.retirement_projects.push(project.clone());
+            let before = home_tree(&project);
+            let report = apply(&fixture.target, &Scope::automatic());
+            assert_eq!(
+                state(&report, ComponentId::CoordinationRetirement),
+                ComponentState::Installed,
+                "{report:?}"
+            );
+            assert_eq!(home_tree(&project), before);
+        } else {
+            record_preflight_commands(&mut fixture);
+            assert_preflight_refusal_preserves_fixture(&fixture, None);
+        }
+    }
+}
+
+#[test]
+fn an_explicit_home_or_registered_checkout_anchor_can_have_an_alias() {
+    for selected in ["home", "checkout"] {
+        let mut fixture = Fixture::new();
+        let alias = fixture.root.join("selected-alias");
+        if selected == "home" {
+            let original = fixture.home().to_path_buf();
+            std::os::unix::fs::symlink(&original, &alias).unwrap();
+            fixture.target.home = alias.clone();
+            fixture.target.cli_dir = alias.join(".local/bin");
+            let run = original.join("project/agents/runs/task/state.json");
+            std::fs::create_dir_all(run.parent().unwrap()).unwrap();
+            std::fs::write(&run, json!({"status":"retired"}).to_string()).unwrap();
+            let registry = alias.join(".sasu/supervisor");
+            std::fs::create_dir_all(&registry).unwrap();
+            std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[{"statePath":run,"runInstanceId":"run"}]}).to_string()).unwrap();
+        } else {
+            let actual = fixture.root.join("actual-checkout");
+            let run = actual.join("agents/runs/task/state.json");
+            std::fs::create_dir_all(run.parent().unwrap()).unwrap();
+            std::fs::write(&run, json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"}).to_string()).unwrap();
+            std::os::unix::fs::symlink(&actual, &alias).unwrap();
+            fixture.target.retirement_projects.push(alias.clone());
+        }
+        let destination = std::fs::read_link(&alias).unwrap();
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "{report:?}"
+        );
+        assert_eq!(std::fs::read_link(alias).unwrap(), destination);
+    }
 }

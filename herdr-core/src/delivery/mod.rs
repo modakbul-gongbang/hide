@@ -1,5 +1,6 @@
-//! Durable agent delivery, owned by the core independently of hcoord.
+//! Durable agent delivery owned by the core.
 pub(crate) mod doorbell;
+mod human;
 pub mod ledger;
 pub mod mailbox;
 pub mod watch;
@@ -7,7 +8,7 @@ pub mod worker;
 
 pub use mailbox::Command;
 
-pub const DELIVERY_EXPIRY_MS: u64 = 10 * 60 * 1_000;
+pub const DELIVERY_EXPIRY_MS: u64 = 60 * 60 * 1_000;
 pub const INPUT_QUIET_MS: u64 = 30_000;
 pub const TICK_MS: u64 = 60_000;
 pub const INACTIVITY_MS: u64 = 20 * 60_000;

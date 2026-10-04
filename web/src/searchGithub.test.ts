@@ -90,7 +90,7 @@ describe("the explicit GitHub search (B16-B19)", () => {
 
   it("shows a result a held row already is only once (B17)", () => {
     const results = [
-      { kind: "pr" as const, repository: "acme/herdr-ide", number: 275, title: "Surface hcoord sandbox refusals", state: "open", url: "https://github.com/acme/herdr-ide/pull/275" },
+      { kind: "pr" as const, repository: "acme/herdr-ide", number: 275, title: "Surface mailbox sandbox refusals", state: "open", url: "https://github.com/acme/herdr-ide/pull/275" },
       { kind: "pr" as const, repository: "acme/herdr-ide", number: 12, title: "Old", state: "merged", url: "https://github.com/acme/herdr-ide/pull/12" },
     ];
     const held = [{ url: "https://github.com/acme/herdr-ide/pull/275" }] as unknown as Parameters<typeof githubEntries>[1];
