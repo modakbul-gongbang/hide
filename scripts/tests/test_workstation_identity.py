@@ -65,6 +65,12 @@ class WorkstationIdentityTests(unittest.TestCase):
             self.assertEqual(self.classes(result), ["contact_email"])
             self.assertNotIn(address, result.stdout + result.stderr)
 
+    def test_email_in_a_url_path_or_before_colon_is_still_private(self):
+        address = "private-fixture-person" + "@" + "mail.vendor.com"
+        for value in ("https://host.vendor.com/contact/" + address, address + ": contact"):
+            self.tracked("contact.txt", value)
+            self.assertEqual(self.classes(self.check()), ["contact_email"])
+
     def test_contact_address_in_a_filename_is_redacted(self):
         address = "private-fixture-person" + "@" + "mail.vendor.com"
         self.tracked(address + ".txt", address)

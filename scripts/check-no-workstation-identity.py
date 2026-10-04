@@ -62,7 +62,11 @@ def email_findings(text):
             continue
         # A URL authority or scp-style remote is not a contact address.
         token_start = max(text.rfind(char, 0, match.start()) for char in " \t\r\n\"'<>") + 1
-        if "://" in text[token_start:match.start()] or text[match.end():].startswith(":"):
+        prefix = text[token_start:match.start()]
+        scheme = prefix.rfind("://")
+        authority = scheme >= 0 and "/" not in prefix[scheme + 3:]
+        remote = text[match.end():].startswith(":") and match.group().startswith("git@")
+        if authority or remote:
             continue
         yield match
 
