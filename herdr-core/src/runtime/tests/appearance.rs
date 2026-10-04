@@ -283,3 +283,109 @@ fn an_out_of_range_stored_sidebar_width_opens_at_the_default() {
             .any(|entry| entry.kind == "ui_state.sidebar_width_out_of_range")
     );
 }
+
+fn language_set(language: serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "interface_language_set",
+        "payload": { "language": language }
+    }))
+    .unwrap()
+}
+
+#[test]
+fn language_choices_survive_restart_and_unrelated_stale_saves() {
+    let path = state_path("interface-language");
+    let mut runtime = runtime_at(&path);
+    assert_eq!(
+        serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["interface_language"],
+        serde_json::Value::Null
+    );
+    let stale = ui_state_update(&runtime, serde_json::json!({ "font_size": 15 }));
+    for language in ["en", "ko", "zh-CN", "ja"] {
+        assert!(runtime.dispatch_json(&language_set(serde_json::json!(language))));
+        assert!(!runtime.dispatch_json(&language_set(serde_json::json!(language))));
+        runtime.dispatch_json(&stale);
+        assert_eq!(
+            serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["interface_language"],
+            language
+        );
+        drop(runtime);
+        runtime = runtime_at(&path);
+        assert_eq!(
+            serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["interface_language"],
+            language
+        );
+    }
+    for invalid in [
+        serde_json::json!("fr"),
+        serde_json::json!(true),
+        serde_json::json!({"language":"en"}),
+    ] {
+        runtime.dispatch_json(&language_set(invalid));
+        assert_eq!(
+            serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["interface_language"],
+            "ja"
+        );
+    }
+    let missing = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "interface_language_set", "payload": {}
+    }))
+    .unwrap();
+    runtime.dispatch_json(&missing);
+    assert_eq!(
+        serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["interface_language"],
+        "ja"
+    );
+    assert!(runtime.dispatch_json(&language_set(serde_json::Value::Null)));
+    drop(runtime);
+    assert_eq!(
+        runtime_at(&path).snapshot().ui_state.interface_language,
+        None
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn invalid_stored_languages_publish_english_and_remain_stored() {
+    let path = state_path("interface-language-invalid");
+    let mut runtime = runtime_at(&path);
+    runtime.dispatch_json(&language_set(serde_json::json!("ko")));
+    drop(runtime);
+    for invalid in [
+        serde_json::json!("fr"),
+        serde_json::json!(42),
+        serde_json::json!({"unexpected":true}),
+    ] {
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        stored["interface_language"] = invalid.clone();
+        std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+        let mut runtime = runtime_at(&path);
+        assert_eq!(
+            serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["interface_language"],
+            "en"
+        );
+        assert!(
+            runtime
+                .snapshot()
+                .status
+                .diagnostics
+                .iter()
+                .any(|entry| entry.kind == "ui_state.interface_language_invalid")
+        );
+        assert!(runtime.snapshot().status.last_error.is_none());
+        let update = ui_state_update(
+            &runtime,
+            serde_json::json!({ "left_sidebar_visible": false }),
+        );
+        runtime.dispatch_json(&update);
+        // A changed appearance event also uses the existing coalesced save.
+        runtime.dispatch_json(&theme_set("light"));
+        drop(runtime);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["interface_language"], invalid);
+    }
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}

@@ -2180,6 +2180,32 @@ impl RightPanelSection {
     }
 }
 
+/// Explicit interface languages shared by every client of this core.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+pub enum InterfaceLanguage {
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "ko")]
+    Korean,
+    #[serde(rename = "zh-CN")]
+    SimplifiedChinese,
+    #[serde(rename = "ja")]
+    Japanese,
+}
+
+/// The store retains an invalid value; the wire exposes its English fallback.
+fn serialize_interface_language<S: serde::Serializer>(
+    value: &Option<serde_json::Value>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    value
+        .as_ref()
+        .map(|value| {
+            InterfaceLanguage::deserialize(value).unwrap_or(InterfaceLanguage::English)
+        })
+        .serialize(serializer)
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UiStateSnapshot {
     #[serde(default = "default_panel_visible")]
@@ -2263,6 +2289,10 @@ pub struct UiStateSnapshot {
     /// The web shell's color theme.
     #[serde(default)]
     pub theme: ThemePreference,
+    /// None follows each client's system language. Raw JSON preserves an
+    /// invalid stored selection through unrelated saves without publishing it.
+    #[serde(default, serialize_with = "serialize_interface_language")]
+    pub interface_language: Option<serde_json::Value>,
     /// The Projects and Agents sidebar's width in CSS pixels, dragged on its
     /// right edge and kept within `SIDEBAR_WIDTH_MIN..=SIDEBAR_WIDTH_MAX`
     /// (PRD sidebar-typography D-08, D-09). A store written before the drag
@@ -2726,6 +2756,7 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
+            interface_language: None,
             sidebar_width: default_sidebar_width(),
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
