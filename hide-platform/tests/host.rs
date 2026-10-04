@@ -464,6 +464,14 @@ fn herdrs_default_socket_is_resolved_in_herdrs_own_order() {
         socket(home.join(".config"))
     };
     assert_eq!(
+        host::herdr_config_dir_from(&with_appdata).unwrap(),
+        if cfg!(windows) {
+            roaming.join("herdr")
+        } else {
+            home.join(".config/herdr")
+        }
+    );
+    assert_eq!(
         host::herdr_socket_default_from(&with_appdata).unwrap(),
         expected
     );
@@ -473,6 +481,10 @@ fn herdrs_default_socket_is_resolved_in_herdrs_own_order() {
         ("APPDATA", roaming),
         ("XDG_CONFIG_HOME", config.clone()),
     ]);
+    assert_eq!(
+        host::herdr_config_dir_from(&with_config).unwrap(),
+        config.join("herdr")
+    );
     assert_eq!(
         host::herdr_socket_default_from(&with_config).unwrap(),
         socket(config)

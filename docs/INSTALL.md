@@ -206,7 +206,7 @@ It shares the local ledger and run predicates, needs no remote interpreter, and 
 The kit never stops an old test server by name without an ownership receipt.
 Before the transition, the operator checks earlier test servers and refuses automatic cleanup of any whose ownership cannot be confirmed.
 After that check succeeds, the ordered steps stop the old daemon, unload its LaunchAgent and delete the plist, remove only Hide-owned command and plugin links, remove the kit copy, and rename the old `~/.hide/hcoord` and `~/.hcoord` folders to siblings ending in `.retired-YYYY-MM-DD`.
-When Herdr's server is unavailable, the link step strictly inspects its owned `plugins.json` registry under `$XDG_CONFIG_HOME/herdr` or `~/.config/herdr`.
+When Herdr's server is unavailable, the link step strictly inspects its owned `plugins.json` registry at the platform layer's pinned Herdr config location: `$XDG_CONFIG_HOME/herdr`, otherwise `~/.config/herdr` on Unix or `%APPDATA%\herdr` on Windows.
 A missing registry or absent coordination entry needs no server or Herdr command; a registered entry is removed through Herdr's offline `plugin uninstall`, then its absence is checked again.
 Foreign plugin entries and locally linked source remain intact; an unreadable, untrusted or oversized registry, a missing command for a registered entry, or unconfirmed removal keeps the link step failed for retry.
 A socket confirmed absent, or an owned socket that refuses a connection, is already stopped; a missing socket does not need its name validated by the local transport.

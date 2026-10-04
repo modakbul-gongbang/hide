@@ -676,11 +676,7 @@ fn remove_links(target: &KitTarget) -> Result<crate::Retirement, String> {
 pub(crate) fn retire_offline_plugin(target: &KitTarget) -> Result<Option<&'static str>, String> {
     use hide_herdr_client::wire::success_response::{InstalledPluginInfo, PluginSourceKind};
 
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| target.home.join(".config"))
-        .join("herdr");
+    let config = crate::labels::herdr_config_dir(target)?;
     if let Ok(anchor) = home_anchor(&target.home, &config) {
         if !inspect_below(&anchor, &config)? {
             return Ok(None);

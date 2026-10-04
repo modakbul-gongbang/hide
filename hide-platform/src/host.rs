@@ -114,13 +114,13 @@ pub fn herdr_socket_default() -> io::Result<PathBuf> {
 
 /// [`herdr_socket_default`] from the caller's variables.
 pub fn herdr_socket_default_from(variables: Variables) -> io::Result<PathBuf> {
-    Ok(herdr_config_dir(variables)?.join("herdr.sock"))
+    Ok(herdr_config_dir_from(variables)?.join("herdr.sock"))
 }
 
 /// Herdr's config folder, resolved in Herdr's own order (`config::io` of the
 /// pinned release); where Herdr would fall back to a temporary folder, this
 /// says there is none.
-fn herdr_config_dir(variables: Variables) -> io::Result<PathBuf> {
+pub fn herdr_config_dir_from(variables: Variables) -> io::Result<PathBuf> {
     if variables("XDG_CONFIG_HOME").is_some() {
         return Ok(absolute_variable(variables, "XDG_CONFIG_HOME")?.join("herdr"));
     }

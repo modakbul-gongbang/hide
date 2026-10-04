@@ -124,6 +124,17 @@ fn request(target: &KitTarget, method: &str, params: Value) -> Result<Value, Str
         .map_err(|error| request_failure(method, &error))
 }
 
+pub(crate) fn herdr_config_dir(target: &KitTarget) -> Result<std::path::PathBuf, String> {
+    hide_platform::host::herdr_config_dir_from(&|name| {
+        if name == hide_platform::host::HOME_VARIABLE {
+            Some(target.home.as_os_str().to_owned())
+        } else {
+            std::env::var_os(name)
+        }
+    })
+    .map_err(|error| format!("Herdr's config location cannot be resolved: {error}"))
+}
+
 fn request_failure(method: &str, error: &hide_herdr_client::ApiError) -> String {
     // A transport message can carry the socket's path (B20); the
     // remote code is the part a reader needs.
@@ -207,12 +218,13 @@ pub(crate) fn uninstall_managed(target: &KitTarget, plugin_id: &str) -> Result<(
         "HERDR_SOCKET_PATH".to_owned(),
         target.herdr_socket.display().to_string(),
     )];
-    if let Some(config) = std::env::var_os("XDG_CONFIG_HOME") {
-        env.push((
-            "XDG_CONFIG_HOME".to_owned(),
-            config.to_string_lossy().into_owned(),
-        ));
-    }
+    // Pin the same config root the strict offline read used, including
+    // Windows APPDATA or USERPROFILE defaults, in the child's clean env.
+    let config = herdr_config_dir(target)?;
+    env.push((
+        "XDG_CONFIG_HOME".to_owned(),
+        config.parent().unwrap().to_string_lossy().into_owned(),
+    ));
     let finished = process::run(
         herdr,
         &["plugin", "uninstall", plugin_id],
