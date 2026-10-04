@@ -1,13 +1,18 @@
 // A sidebar row's pull request with no screen asking (issue #391): on an
 // isolated pinned Herdr and hided with a fake `gh` that knows one pull request
-// in each of two repositories. The first daemon only chooses a Workspace, so
+// in each of three repositories. The first daemon only chooses a Workspace, so
 // the next start opens on it with the right panel on Explorer: no Overview, no
 // project Overview and no palette ever opens, and each page's wire carries no
 // `github_request` and no `overview_refresh` (the wire it does carry is the
 // terminal and the usage hint). Both rows still draw their lifecycle from the
 // core's own read. A restart with `gh` down draws the previous run's pull
 // requests muted as stale instead of falling back to a branch glyph, and a
-// restart with `gh` back replaces them, still with no screen asking.
+// restart with `gh` back replaces them, still with no screen asking. The third
+// repository's pull request is merged and names its head commit: it reattaches
+// to the checkout on that commit from the saved answer alone. The repositories
+// are tiny, so the worktree reader answers within milliseconds and this flow
+// proves the end state; that the row does not wait for the reader is owned by
+// the unit test in `herdr-core/src/runtime/tests/github_reads.rs`.
 
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -22,6 +27,8 @@ test.describe.configure({ timeout: 180_000 });
 const REPOSITORIES = [
   { name: "alpha", branch: "feature/alpha", number: 41, state: "OPEN" },
   { name: "bravo", branch: "feature/bravo", number: 42, state: "OPEN", draft: true },
+  // Merged: GitHub names the head commit, and the row takes the pull request only while its checkout is still on that commit (#408).
+  { name: "charlie", branch: "feature/charlie", number: 43, state: "MERGED" },
 ];
 
 function git(cwd: string, args: string[]): void {
@@ -33,7 +40,7 @@ function git(cwd: string, args: string[]): void {
  * runs in, until `gh-down` exists beside it; then every call fails the way a
  * missing network does.
  */
-function fakeGh(dir: string): { bin: string; down: string } {
+function fakeGh(dir: string, heads: Map<string, string>): { bin: string; down: string } {
   const bin = path.join(dir, "gh-bin");
   fs.mkdirSync(bin, { recursive: true });
   const down = path.join(bin, "gh-down");
@@ -44,14 +51,15 @@ function fakeGh(dir: string): { bin: string; down: string } {
         title: `Work in ${repository.name}`,
         statusCheckRollup: [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "verify" }],
         headRefName: repository.branch,
+        headRefOid: heads.get(repository.name) ?? "",
         baseRefName: "main",
         state: repository.state,
         reviewDecision: null,
         isDraft: "draft" in repository,
         url: `https://example.invalid/${repository.name}/pull/${repository.number}`,
-        mergedAt: null,
+        mergedAt: repository.state === "MERGED" ? "2026-09-27T00:00:00Z" : null,
         updatedAt: "2026-09-27T00:00:00Z",
-        closedAt: null,
+        closedAt: repository.state === "MERGED" ? "2026-09-27T00:00:00Z" : null,
         closingIssuesReferences: [],
       },
     ]);
@@ -81,7 +89,7 @@ esac
 }
 
 /** A repository with its `branch` checked out as a linked worktree, and a Herdr workspace on each. */
-function repositoryWithWorktree(herdr: HerdrFixture, name: string, branch: string): void {
+function repositoryWithWorktree(herdr: HerdrFixture, name: string, branch: string): string {
   const repo = path.join(herdr.root, name);
   fs.mkdirSync(repo);
   git(repo, ["init"]);
@@ -94,6 +102,7 @@ function repositoryWithWorktree(herdr: HerdrFixture, name: string, branch: strin
   for (const cwd of [repo, worktree]) {
     herdr.run(["workspace", "create", "--cwd", cwd, "--label", path.basename(cwd), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
   }
+  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim();
 }
 
 test("the sidebar draws every project's pull request with no screen asking, and a restart keeps them as stale", async ({ page }) => {
@@ -101,8 +110,9 @@ test("the sidebar draws every project's pull request with no screen asking, and 
   const herdr = await startHerdr();
   let daemon = null as Daemon | null;
   try {
-    for (const { name, branch } of REPOSITORIES) repositoryWithWorktree(herdr, name, branch);
-    const gh = fakeGh(herdr.root);
+    const heads = new Map<string, string>();
+    for (const { name, branch } of REPOSITORIES) heads.set(name, repositoryWithWorktree(herdr, name, branch));
+    const gh = fakeGh(herdr.root, heads);
     daemon = await startHided(herdr, "sidebar-pr-start", undefined, { PATH: `${gh.bin}:${herdr.fixturePath}` });
 
     // The first run opens on All projects and chooses a Workspace, so the next start resumes on it.
@@ -121,6 +131,13 @@ test("the sidebar draws every project's pull request with no screen asking, and 
       await page.locator('[data-sidebar-mode="projects"]').click();
       return sent;
     };
+    /** A merged pull request's checkout is settled, so its row sits in the project's Inactive fold; open it once, the core keeps it open. */
+    const mergedGlyph = async () => {
+      const fold = page.locator('[data-inactive-checkouts$="/charlie"]');
+      await expect(fold).toBeVisible({ timeout: 30_000 });
+      if ((await fold.getAttribute("aria-expanded")) !== "true") await fold.click();
+      return glyph(43);
+    };
     const nothingAsked = (sent: Map<string, number>) => {
       expect(sent.get("github_request") ?? 0).toBe(0);
       expect(sent.get("overview_refresh") ?? 0).toBe(0);
@@ -136,6 +153,8 @@ test("the sidebar draws every project's pull request with no screen asking, and 
     await expect(row("feature/alpha")).toHaveAttribute("data-checkout-kind", "pr_open", { timeout: 30_000 });
     await expect(row("feature/bravo")).toHaveAttribute("data-checkout-kind", "pr_draft", { timeout: 30_000 });
     await expect(glyph(41)).not.toHaveClass(/text-muted-foreground/);
+    await expect(await mergedGlyph()).toHaveAttribute("aria-label", "Open pull request #43");
+    await expect(glyph(43)).not.toHaveClass(/text-muted-foreground/);
     nothingAsked(sent);
 
     // Start 2: GitHub is unreachable. The previous run's answer is drawn and kept, muted.
@@ -146,6 +165,8 @@ test("the sidebar draws every project's pull request with no screen asking, and 
     await expect(row("feature/bravo")).toHaveAttribute("data-checkout-kind", "pr_draft", { timeout: 30_000 });
     await expect(glyph(41)).toHaveClass(/text-muted-foreground/);
     await expect(glyph(42)).toHaveClass(/text-muted-foreground/);
+    // The merged one is drawn from the saved answer too: the checkout's head comes from Git's files, not from the slow worktree catalog.
+    await expect(await mergedGlyph()).toHaveClass(/text-muted-foreground/);
     nothingAsked(sent);
 
     // Start 3: GitHub is back. The core's own read replaces the stale answer.
@@ -154,6 +175,7 @@ test("the sidebar draws every project's pull request with no screen asking, and 
     sent = await attach(daemon);
     await expect(glyph(41)).not.toHaveClass(/text-muted-foreground/, { timeout: 30_000 });
     await expect(glyph(42)).not.toHaveClass(/text-muted-foreground/);
+    await expect(await mergedGlyph()).not.toHaveClass(/text-muted-foreground/);
     nothingAsked(sent);
   } finally {
     daemon?.stop();

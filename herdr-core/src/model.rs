@@ -1126,6 +1126,12 @@ pub struct CheckoutSnapshot {
     pub closes_task_keys: Vec<String>,
     #[serde(skip_serializing)]
     pub branch_issue: Option<String>,
+    /// The commit HEAD pointed at when the catalog built this row, read from
+    /// Git's files beside the branch name and so known before the worktree
+    /// reader has answered. Core only, and never fresher than the reader's
+    /// own value: see `head_sha`.
+    #[serde(skip_serializing)]
+    pub head_oid: Option<String>,
     pub github: GithubStatusSnapshot,
     pub agent_summary: CheckoutAgentSummary,
     pub id: String,
@@ -3155,12 +3161,21 @@ impl GithubSnapshot {
 }
 
 impl CheckoutSnapshot {
-    /// The commit this checkout is on, as the worktree reader last saw it:
-    /// the one fact that tells a branch's current work from an older one of
-    /// the same name. Absent until that reader has answered, and on a
-    /// checkout it never listed.
+    /// The commit this checkout is on: the one fact that tells a branch's
+    /// current work from an older one of the same name.
+    ///
+    /// The worktree reader's value wins when it has one, because the reader
+    /// runs again whenever a watched HEAD or ref changes, while `head_oid` is
+    /// only as new as the row's last build (a topology change or the catalog's
+    /// 30-second refresh). Until the reader has answered, and for a checkout
+    /// it never listed, the commit read from Git's files stands in, so a
+    /// settled pull request is connected from the first frame after a restart
+    /// instead of after the reader's first full pass.
     pub fn head_sha(&self) -> Option<&str> {
-        self.worktree.as_ref()?.head_sha.as_deref()
+        self.worktree
+            .as_ref()
+            .and_then(|worktree| worktree.head_sha.as_deref())
+            .or(self.head_oid.as_deref())
     }
 }
 

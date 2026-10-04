@@ -372,3 +372,133 @@ fn a_named_project_that_is_no_longer_registered_loses_its_place() {
     runtime.reread_stale_github(Instant::now());
     assert!(runtime.github_wanted.is_empty());
 }
+
+/// A repository with one commit on `branch`, and that commit.
+fn repository_on(branch: &str) -> (tempfile::TempDir, String) {
+    let folder = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+            ])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .current_dir(folder.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "-q", "-b", branch]);
+    git(&["commit", "-q", "--allow-empty", "-m", "work"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    (folder, head)
+}
+
+/// A runtime whose only project is the repository at `path`, with no worktree
+/// catalog answered yet, as in the first second after a restart.
+fn runtime_before_the_catalog(path: &std::path::Path) -> Runtime {
+    let mut runtime = runtime();
+    runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
+        id: "workspace:restart".to_owned(),
+        label: "restart".to_owned(),
+        path: path.to_string_lossy().into_owned(),
+        device_id: "local".to_owned(),
+        pinned: false,
+        home: false,
+    }];
+    runtime.rebuild_catalog();
+    assert!(runtime.worktree_catalog.projects.is_empty());
+    runtime
+}
+
+/// The restored answer of a merged pull request on `branch` whose head is `head`.
+fn saved_merged(file: &std::path::Path, root: &std::path::Path, branch: &str, head: &str) {
+    let mut merged = pull_request(9, branch, PullRequestBadge::Merged);
+    merged.head_oid = Some(head.to_owned());
+    let store = GithubStore::new(file.to_path_buf());
+    store.save(GithubSnapshot {
+        projects: vec![read_ok(&root.to_string_lossy(), vec![merged], 1_000)],
+    });
+}
+
+fn shown(runtime: &Runtime) -> Option<u32> {
+    runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .pull_request
+        .as_ref()
+        .map(|pull_request| pull_request.number)
+}
+
+#[test]
+fn a_restored_merged_pull_request_attaches_at_once_to_the_checkout_on_its_head() {
+    let (repository, head) = repository_on("feature");
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("github-snapshot.json");
+    saved_merged(&file, &root, "feature", &head);
+
+    let mut runtime = runtime_before_the_catalog(&root);
+    let store = GithubStore::new(file);
+    let restored = store.restore();
+    runtime.install_github_store(store, restored);
+    assert_eq!(
+        shown(&runtime),
+        Some(9),
+        "the commit read from Git's files connects it before the catalog answers"
+    );
+}
+
+#[test]
+fn a_restored_merged_pull_request_stays_off_a_checkout_on_another_commit() {
+    let (repository, _head) = repository_on("feature");
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("github-snapshot.json");
+    saved_merged(&file, &root, "feature", &"f".repeat(40));
+
+    let mut runtime = runtime_before_the_catalog(&root);
+    let store = GithubStore::new(file);
+    let restored = store.restore();
+    runtime.install_github_store(store, restored);
+    assert_eq!(
+        shown(&runtime),
+        None,
+        "a reused branch name shows no old merge"
+    );
+}
+
+#[test]
+fn a_checkouts_commit_is_the_readers_when_it_has_one_and_the_files_before_that() {
+    let mut checkout = crate::model::CheckoutSnapshot {
+        head_oid: Some("b".repeat(40)),
+        ..Default::default()
+    };
+    assert_eq!(
+        checkout.head_sha(),
+        Some("b".repeat(40).as_str()),
+        "before the reader has answered, the commit read from Git's files"
+    );
+    checkout.worktree = Some(crate::model::WorktreeSnapshot {
+        head_sha: Some("a".repeat(40)),
+        ..Default::default()
+    });
+    assert_eq!(
+        checkout.head_sha(),
+        Some("a".repeat(40).as_str()),
+        "the reader reruns on a moved HEAD, so its commit beats the file value"
+    );
+    checkout.worktree = Some(crate::model::WorktreeSnapshot::default());
+    assert_eq!(
+        checkout.head_sha(),
+        Some("b".repeat(40).as_str()),
+        "a reader row with no commit leaves the file value standing"
+    );
+}
