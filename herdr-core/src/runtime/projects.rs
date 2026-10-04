@@ -316,6 +316,10 @@ impl Runtime {
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = loading;
         self.refresh_worktree_projection();
+        // A HEAD the reader moved decides again which pull request a checkout
+        // holds, and what hangs off that (its issues, its request rows).
+        self.apply_pull_requests();
+        self.refresh_worktree_projection();
         changed
     }
 
@@ -669,8 +673,15 @@ impl Runtime {
                     ..Default::default()
                 }
             });
+            // One per branch, as the catalog always carried; a checkout's own
+            // pull request is on its row (`associate_pull_requests`).
             project.pull_requests = github_project
-                .map(|g| g.pull_requests.clone())
+                .map(|g| {
+                    crate::github::preferred_per_branch(&g.pull_requests)
+                        .into_iter()
+                        .cloned()
+                        .collect()
+                })
                 .unwrap_or_default();
             project.pull_request_window = crate::github::PULL_REQUEST_LIMIT.into();
             for worktree in &mut project.worktrees {
@@ -3285,8 +3296,6 @@ pub(super) fn owner_open(
     )
 }
 
-/// When GitHub made each pull request read, by the address's lowercase
-/// `owner/name` and number.
 /// Gives each checkout the one pull request that is its own work
 /// (`github::pull_request_for_checkout`), and reports whether any changed.
 /// Both places that learn something new about a checkout, GitHub's list and
@@ -3297,22 +3306,24 @@ fn associate_pull_requests(
 ) -> bool {
     let mut changed = false;
     for checkout in &mut workspace.checkouts {
-        let pull_request = project.and_then(|project| {
+        let found = project.and_then(|project| {
             crate::github::pull_request_for_checkout(
                 &project.pull_requests,
                 checkout.branch.as_deref(),
                 checkout.head_sha(),
             )
-            .cloned()
         });
-        if checkout.pull_request != pull_request {
-            checkout.pull_request = pull_request;
+        // Cloned only when it moved: this runs on every session update.
+        if checkout.pull_request.as_ref() != found {
+            checkout.pull_request = found.cloned();
             changed = true;
         }
     }
     changed
 }
 
+/// When GitHub made each pull request read, by the address's lowercase
+/// `owner/name` and number.
 fn pull_request_times(
     github: &crate::model::GithubSnapshot,
 ) -> crate::labels::facts::PullRequestTimes {

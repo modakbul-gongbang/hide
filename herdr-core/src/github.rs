@@ -347,17 +347,15 @@ fn list_pull_requests(
     let mut pull_requests = parse_pull_requests(&every).map_err(GhFailure::network)?;
     let mut open_checks = parse_open_checks(&open).map_err(GhFailure::network)?;
     for pull_request in &mut pull_requests {
-        let fresh = if is_open(pull_request) {
+        // An open pull request's checks are the open list's or nothing: a
+        // remembered value could be of a commit it has since moved past.
+        pull_request.checks = if is_open(pull_request) {
             open_checks.remove(&pull_request.number)
         } else {
-            None
-        };
-        pull_request.checks = fresh
-            .or_else(|| {
-                let head = pull_request.head_oid.clone()?;
-                known.get(&(pull_request.number, head)).copied()
-            })
-            .unwrap_or(PullRequestChecks::Unknown);
+            let head = pull_request.head_oid.clone();
+            head.and_then(|head| known.get(&(pull_request.number, head)).copied())
+        }
+        .unwrap_or(PullRequestChecks::Unknown);
     }
     Ok(pull_requests)
 }
@@ -1573,8 +1571,9 @@ pub fn review_decision(value: Option<&str>) -> Option<ReviewDecision> {
 /// `head`. Every place a pull request is tied to a checkout asks this and
 /// nothing else, because a branch name is not an identity: it is used again.
 ///
-/// - An open pull request belongs to the checkout on its head branch, unless
-///   that branch lives in a fork, whose name is only a coincidence.
+/// - A pull request from a fork never belongs to a local branch of the same
+///   name.
+/// - An open pull request belongs to the checkout on its head branch.
 /// - A merged or closed one belongs only while the checkout's commit is
 ///   exactly the pull request's head. A branch name reused for new work has
 ///   a new commit, and the old merge must not follow it.
@@ -1586,11 +1585,13 @@ pub(crate) fn belongs_to_checkout(
     branch: Option<&str>,
     head: Option<&str>,
 ) -> bool {
-    if branch != Some(pull_request.head_branch.as_str()) {
+    // A fork's branch name says nothing about this repository's branch of
+    // the same name, whether the pull request is open or long merged.
+    if pull_request.cross_repository || branch != Some(pull_request.head_branch.as_str()) {
         return false;
     }
     if is_open(pull_request) {
-        return !pull_request.cross_repository;
+        return true;
     }
     matches!((pull_request.head_oid.as_deref(), head), (Some(pull), Some(head)) if pull == head)
 }
@@ -1630,10 +1631,14 @@ pub(crate) fn preferred_per_branch(
     pull_requests: &[PullRequestSnapshot],
 ) -> Vec<&PullRequestSnapshot> {
     let mut candidates: Vec<&PullRequestSnapshot> = pull_requests.iter().collect();
+    // Open first, then the most recently updated whether merged or closed:
+    // the order these lists have always kept, so what they show is unchanged.
     candidates.sort_by(|left, right| {
         left.head_branch
             .cmp(&right.head_branch)
-            .then_with(|| precedence(left, right))
+            .then_with(|| is_open(right).cmp(&is_open(left)))
+            .then_with(|| right.updated_at_unix_ms.cmp(&left.updated_at_unix_ms))
+            .then_with(|| right.number.cmp(&left.number))
     });
     candidates.dedup_by(|later, kept| later.head_branch == kept.head_branch);
     candidates
@@ -2514,6 +2519,30 @@ esac"#,
     }
 
     #[test]
+    fn a_settled_pull_request_from_a_fork_never_belongs_either() {
+        // A fork's `main` merged by fast-forward leaves local main on its head.
+        let mut from_fork = candidate(1, "main", PullRequestBadge::Merged, Some("head"), 10);
+        from_fork.cross_repository = true;
+        assert_eq!(
+            picked(std::slice::from_ref(&from_fork), "main", Some("head")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_list_shows_the_newer_closed_pull_request_over_an_older_merged_one() {
+        let pull_requests = [
+            candidate(1, "alpha", PullRequestBadge::Merged, Some("a"), 10),
+            candidate(2, "alpha", PullRequestBadge::Closed, Some("b"), 20),
+        ];
+        let numbers: Vec<u32> = preferred_per_branch(&pull_requests)
+            .into_iter()
+            .map(|pull_request| pull_request.number)
+            .collect();
+        assert_eq!(numbers, vec![2]);
+    }
+
+    #[test]
     fn each_branch_lists_its_preferred_pull_request_once() {
         let pull_requests = [
             candidate(1, "alpha", PullRequestBadge::Merged, Some("a"), 10),
@@ -2637,6 +2666,16 @@ esac"#,
             PullRequestChecks::Unknown,
             "checks read at another head commit are not this commit's"
         );
+    }
+
+    #[test]
+    fn an_open_pull_request_never_borrows_remembered_checks() {
+        let gh = TwoLists::new(&format!("[{}]", listed_at(1, "a", "OPEN", "h1")), "[]");
+        let known: KnownChecks = [((1, "h1".to_owned()), PullRequestChecks::Passing)]
+            .into_iter()
+            .collect();
+        let read = gh.read(&known).expect("both lists answer");
+        assert_eq!(checks_of(&read, 1), PullRequestChecks::Unknown);
     }
 
     #[test]

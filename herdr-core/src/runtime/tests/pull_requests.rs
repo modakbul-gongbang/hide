@@ -501,6 +501,27 @@ fn moving_the_worktree_head_decides_the_connection_again() {
     assert_eq!(shown_on_task(&runtime), (Some(1), Some(1)));
 }
 
+/// What hangs off the connection moves with it: with no link of its own, a
+/// worktree is the task its pull request closes only while it is on that pull
+/// request's commit, and the task its branch name says otherwise.
+#[test]
+fn the_task_a_pull_request_names_follows_the_connection_when_the_head_moves() {
+    let mut merged = pull_request_at(1, PullRequestBadge::Merged, "merged-head", 10);
+    merged.closing_issues = vec![reference(2)];
+    let mut runtime = pr_runtime(vec![merged]);
+    let task = |runtime: &Runtime| {
+        runtime.snapshot().navigator.workspaces[0]
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.path == "/repo/task")
+            .and_then(|checkout| checkout.task_key.clone())
+    };
+    runtime.ingest_worktrees(catalog_at("merged-head"), 0);
+    assert_eq!(task(&runtime).as_deref(), Some("github:acme/project#2"));
+    runtime.ingest_worktrees(catalog_at("a-new-commit"), 0);
+    assert_eq!(task(&runtime).as_deref(), Some("github:acme/project#4"));
+}
+
 /// Before the worktree reader has answered, a merged pull request cannot be
 /// told from an older one of the same name, so only an open one shows.
 #[test]
