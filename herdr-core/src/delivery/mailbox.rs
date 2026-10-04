@@ -341,6 +341,65 @@ mod tests {
     }
 
     #[test]
+    fn pulled_letters_match_the_independent_delivery_envelope_contract() {
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/delivery-envelope.json"))
+                .unwrap();
+        let recipient = actor("recipient");
+        for example in contract["examples"].as_array().unwrap() {
+            let mut ledger = Ledger::default();
+            let mut sender = actor("sender");
+            sender.name = example["sender"].as_str().unwrap().into();
+            sender.kind = example["sender_kind"].as_str().unwrap().into();
+            let letter = send(
+                &mut ledger,
+                &sender,
+                &recipient,
+                "contract",
+                "Please look",
+                example["kind"].as_str().unwrap(),
+                None,
+                1,
+            )
+            .unwrap();
+            assert_eq!(letter.id, example["id"].as_str().unwrap());
+            let intake = pull(&ledger, &recipient).unwrap();
+            assert_eq!(
+                intake.context.trim_start().lines().next(),
+                example["first_line"].as_str(),
+            );
+            assert_eq!(intake.ids, [letter.id]);
+        }
+
+        let mut ledger = Ledger::default();
+        for (index, example) in contract["batch"]["letters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            let mut sender = actor(&format!("sender-{index}"));
+            sender.name = example["sender"].as_str().unwrap().into();
+            sender.kind = example["sender_kind"].as_str().unwrap().into();
+            send(
+                &mut ledger,
+                &sender,
+                &recipient,
+                "contract-batch",
+                example["body"].as_str().unwrap(),
+                example["kind"].as_str().unwrap(),
+                None,
+                index as u64 + 1,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            pull(&ledger, &recipient).unwrap().context,
+            contract["batch"]["context"].as_str().unwrap(),
+        );
+    }
+
+    #[test]
     fn missing_native_identity_cannot_send_read_or_confirm_previous_occupant_mail() {
         let mut ledger = Ledger::default();
         let sender = actor("sender");
