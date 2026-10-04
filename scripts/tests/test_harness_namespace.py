@@ -12,7 +12,9 @@ CHECK = Path(__file__).resolve().parents[1] / "check-harness-ignore-anchor.sh"
 
 class HarnessNamespaceTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
+        runs = CHECK.parent.parent / "agents" / "runs" / "privacy-tests"
+        runs.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=runs)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.git("init", "--quiet")

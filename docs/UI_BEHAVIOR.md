@@ -7,7 +7,7 @@ Each rule below names the code that owns it: a web owner in `web/src/` and, wher
 
 ## Web Workspace
 
-The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its body follows PRD three-column-panel (`agents/prd/three-column-panel/prd.md`, issue 321): three docked columns, every control sitting once, on the container it changes.
+The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7, and its body follows PRD three-column-panel (issue 321): three docked columns, every control sitting once, on the container it changes.
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
 The toolbar spans the Workspace's full width and holds the path back (`Home / Project / Workspace`, where `Home` opens the Overview), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `Home / ~/hide`, since Home is no project.
@@ -449,10 +449,10 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 ## Project Home
 
 Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (the Overview of every project), `web/src/RequestView.tsx` and `web/src/requestList.ts` (the request view both scopes draw and its grouping, one-line and chip rules), `web/src/OverviewLenses.tsx` (the tiles, and the chips, popover and fold line the Agents graph shares), `web/src/GraphView.tsx` and `web/src/agentGraph.ts` (the Agents graph both scopes draw and its layout, routing and filter rules), `web/src/overviewLens.ts` (the buckets, the tile values and the cleanup rule), `web/src/IssuesView.tsx` (the Issues view both scopes draw, with its panel beside the board), `web/src/TaskBoards.tsx` (the Board, List and Dependencies modes and the issue card, which the Overview of every project calls Tasks), `web/src/IssuePanel.tsx` (the issue panel), `web/src/issueDetails.ts` (the issue reads the panel and the preview share), `web/src/MarkdownText.tsx` (an issue's body in Markdown), `web/src/IssueDialogs.tsx` (New issue and Start), `web/src/issueStart.ts` (the Start dialog's first name and prompt), `web/src/PullRequestsView.tsx` (the PRs view), `web/src/PrDialogs.tsx` (이슈 잇기 and 맡기기), `web/src/prDelegate.ts` (맡기기's first prompt), `web/src/projectBoard.ts` (the board rules, the PRs tab's groups included); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
-The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`), reworked issue-first on 2026-09-28: work starts from an issue, and a card reads issue, then agents, then pull request.
-The project's page is laid out by PRD overview-lenses-tiles-agents (`agents/prd/overview-lenses-tiles-agents/prd.md`): tiles where the tab row was, and an Agents view, one graph of checkout boxes and delegation lines (PRD agents-graph-view, `agents/prd/agents-graph-view/prd.md`), in place of the agent inbox.
-Its PRs tile and view, 이슈 잇기 and 맡기기 are PRD overview-lenses-prs's (`agents/prd/overview-lenses-prs/prd.md`).
-Its first screen, the request view and its `요청` tile and tab, is PRD overview-request-view's (`agents/prd/overview-request-view/prd.md`); the verb each row carries is the core's (`docs/status-model.md`, The request view's verb).
+The web boards follow PRD task-agents-views, reworked issue-first on 2026-09-28: work starts from an issue, and a card reads issue, then agents, then pull request.
+The project's page is laid out by PRD overview-lenses-tiles-agents: tiles where the tab row was, and an Agents view, one graph of checkout boxes and delegation lines (the Agents graph), in place of the agent inbox.
+Its PRs tile and view, 이슈 잇기 and 맡기기 are PRD overview-lenses-prs's.
+Its first screen, the request view and its `요청` tile and tab, is PRD overview-request-view's; the verb each row carries is the core's (`docs/status-model.md`, The request view's verb).
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
 
@@ -513,7 +513,7 @@ Unchanged request, agent, descendant and issue/PR inputs keep the row tree aslee
 
 ### Agents: graph
 
-The Agents view is one graph, laid out by PRD agents-graph-view (`agents/prd/agents-graph-view/prd.md`), which replaced the checkout and lineage modes: a checkout is a box, an agent is a row in it, and a delegation into another checkout is a line between two boxes.
+The Agents view is one graph, laid out by PRD agents-graph-view, which replaced the checkout and lineage modes: a checkout is a box, an agent is a row in it, and a delegation into another checkout is a line between two boxes.
 Its web owners are `web/src/GraphView.tsx` (the renderer, with the filter controls), `web/src/agentGraph.ts` (the pure layout, routing and filter rules), `web/src/graphMotion.ts` (the glide) and `web/src/graphGeometry.ts` (the `--graph-*` sizes read from the tokens); the chips, popover and fold line it shares with the other tabs are in `web/src/OverviewLenses.tsx`.
 There is no mode control: the facts line's right end carries the filter instead.
 
@@ -578,7 +578,7 @@ The graph's elements carry `data-graph-box`, `data-graph-row`, `data-graph-edge`
 
 ### Issues
 
-The Issues tile opens a board of issues, laid out by PRD overview-lenses-issues (`agents/prd/overview-lenses-issues/prd.md`): four columns, `백로그 · 진행 중 · 리뷰 · 완료`, each headed `name count`, on a page that scrolls as one; a column grows with its cards and its head stays in view while the page scrolls under it.
+The Issues tile opens a board of issues, laid out by PRD overview-lenses-issues: four columns, `백로그 · 진행 중 · 리뷰 · 완료`, each headed `name count`, on a page that scrolls as one; a column grows with its cards and its head stays in view while the page scrolls under it.
 백로그 always stands, so a new issue has somewhere to go; another column shows only while it holds a card or a line of work with no issue.
 
 Every project on this Mac has one issue source, chosen in Settings › Issues: GitHub issues, read and written through the operator's own `gh`, or Local issues, which Hide keeps in `local-issues.json` in its state directory, numbered per project and shown as `L-N`.

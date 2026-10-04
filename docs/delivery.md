@@ -1,7 +1,8 @@
 # Agent delivery and inactivity watches
 
 Hide's core owns the local mailbox and inactivity watches while the existing hcoord coordinator continues to own its requests, watches, spawning and lineage.
-The operating contract is [PRD A](../agents/prd/hcoord-delivery-v2/prd.md).
+This guide is the public operating contract.
+Approved implementation contracts and run state stay in the private local harness.
 Remote recipients, hcoord retirement, human Inbox UI and automatic draft clearing belong to later work.
 
 ## Commands and caller identity
