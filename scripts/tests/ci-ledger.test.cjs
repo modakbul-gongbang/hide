@@ -2,6 +2,20 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { merge, category, signature, jobs, quarantine } = require('../ci-ledger.cjs');
 const row = {sha:'head',os:'Linux',run:1,runAttempt:1,job:'web',shard:'1/6',suite:'suite',test:'test',repeat:0,retry:0,status:'failed'};
+test('thirty repetitions mean every exact focus identity, with the original suite independently present', () => {
+  const controls=require('../ci-controls.cjs');
+  const contract=require('../../contracts/ci-failure-controls.json');
+  const source={sha:'head',run:1,runAttempt:1};
+  const records=contract.scenarios.focus.tests.flatMap(([suite,test])=>Array.from({length:30},(_,repeat)=>({...row,os:'Windows',suite,test,repeat,status:'passed'})));
+  const value={version:1,records};
+  const original={version:1,records:records.filter(r=>r.repeat===0).map(r=>({...r,run:2}))};
+  assert.equal(controls.results('focus','Windows',value,source,original).checks.length,2);
+  for (const changed of [records.slice(0,30),records.slice(1),[...records,records[0]],records.map(r=>r.repeat===29?{...r,repeat:28}:r),
+    records.map(r=>({...r,os:'macOS'})),records.map(r=>({...r,retry:1})),records.map(r=>({...r,sha:'other'})),records.map(r=>({...r,status:'skipped'}))]) {
+    assert.throws(()=>controls.results('focus','Windows',{version:1,records:changed},source,original),/incomplete controls/);
+  }
+  assert.throws(()=>controls.results('focus','Windows',value,source,{version:1,records:original.records.slice(0,1)}),/original suite/);
+});
 test('a later pass cannot replace the first failure, and repeated upload deduplicates', () => {
   const ledger = merge([row,row,{...row,retry:1,status:'passed'}]);
   assert.equal(ledger.records.length,2);

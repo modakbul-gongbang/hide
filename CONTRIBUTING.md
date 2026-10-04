@@ -178,6 +178,9 @@ When the change's subject is one of the integrated products, name it in full or 
 
 The nightly manual input `mode=full` keeps the complete scheduled matrix.
 `mode=failure-controls` runs thirty fresh, retry-zero fixtures per selected native/browser failure case with each test's ordinary deadline, plus the original platform and kit suites.
+The exact file/title contract in `contracts/ci-failure-controls.json` includes both pane-focus-ordering scenarios on macOS and Windows.
+Each required identity must report all thirty distinct repeat indices, with no skipped result or retry; a partially executed grep group fails the receipt check.
+Final acceptance also compares those identities with the original full web and desktop suites from `mode=full` on the same SHA and OS.
 These diagnostics do not replace required PR lanes or full nightly coverage.
 `mode=capacity` compares `max-parallel=4` and `6` on the same pushed SHA while preserving all six Linux shards and their full suites.
 The normalized job history distinguishes queue, execution and first attempts; a capacity choice requires measured coverage and first-pass evidence rather than a configured runner count.

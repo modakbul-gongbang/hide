@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "repetitions": 30,
+  "scenarios": {
+    "checkout": {
+      "oses": ["Linux", "macOS", "Windows"],
+      "tests": [
+        ["web/e2e/checkout-owner.spec.ts", "With no workspace bound, Herdr binds the unbound one already at the checkout, and Hide leaves its name"],
+        ["web/e2e/checkout-owner.spec.ts", "A new tab in a plain folder opens one marked workspace and the next tab reuses it"]
+      ]
+    },
+    "external": {
+      "oses": ["Linux", "macOS", "Windows"],
+      "tests": [["web/e2e/agent-tab-groups.spec.ts", "An external focused creation joins a bar without replacing either shown canvas"]]
+    },
+    "s2": {
+      "oses": ["Linux", "macOS", "Windows"],
+      "tests": [["web/e2e/s2.spec.ts", "checkouts, tabs, splits, zoom, close and the sheet"]]
+    },
+    "reported-linux": {
+      "oses": ["Linux", "macOS", "Windows"],
+      "tests": [
+        ["web/e2e/s6.spec.ts", "Main, Overview and a Workspace with its columns, tools and delegated child"],
+        ["web/e2e/tab-strip-fit.spec.ts", "Agent tabs shrink in stages, the selected one keeping its title longest, and marks come only when nothing else fits"]
+      ]
+    },
+    "focus": {
+      "oses": ["macOS", "Windows"],
+      "tests": [
+        ["web/e2e/pane-focus-ordering.spec.ts", "rapid pane clicks coalesce behind one request and leave keys on the last pane"],
+        ["web/e2e/pane-focus-ordering.spec.ts", "an unknown focus result ends the burst before a delayed mutation is released"]
+      ]
+    },
+    "bytes": {
+      "oses": ["macOS"],
+      "tests": [["desktop/e2e/agent-tab-groups.spec.ts", "Agent edge drag splits the desktop column into two live tab groups"]]
+    },
+    "native": {
+      "oses": ["macOS"],
+      "tests": [["desktop/e2e/browser.spec.ts", "area cycle native: page input previews one exact area, releases once and cancels"]]
+    }
+  }
+}

@@ -66,6 +66,26 @@ test('registered scenario', () => {{}});
                 with self.assertRaisesRegex(ValueError, 'missing'):
                     quarantine.results(selected, excluded, mode == 'required', 'Linux')
 
+            # Exercise thirty identities through the installed reporter. A grep
+            # group with only its first member must not satisfy the controls.
+            contract = json.loads((ROOT / 'contracts/ci-failure-controls.json').read_text())
+            focus = contract['scenarios']['focus']['tests']
+            (tests / 'pane-focus-ordering.spec.ts').write_text(
+                f'import {{ test }} from {json.dumps(package)};\n' +
+                ''.join(f'test({json.dumps(title)}, () => {{}});\n' for _, title in focus))
+            observed, _ = run('repeat-identities', 'pane-focus-ordering.spec.ts', '--repeat-each=30')
+            check = """const fs=require('node:fs'), c=require('./scripts/ci-controls.cjs');
+const value=JSON.parse(fs.readFileSync(process.argv[1]));
+for(const row of value.records) row.os='Windows';
+const source={sha:value.records[0].sha,run:value.records[0].run,runAttempt:value.records[0].runAttempt};
+c.results('focus','Windows',value,source);
+const partial={...value,records:value.records.filter(row=>row.test===value.records[0].test)};
+try { c.results('focus','Windows',partial,source); throw Error('partial group accepted'); }
+catch(error) { if(!error.message.includes('incomplete controls')) throw error; }
+"""
+            checked = subprocess.run(['node', '-e', check, str(root / 'repeat-identities.ledger.json')], cwd=ROOT, capture_output=True, text=True, timeout=10)
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+
             (tests / 'errors.spec.ts').write_text(f"""import {{ test }} from {json.dumps(package)};
 import {{ cleanupAfterFailure, ownUntilWorkerExit }} from {json.dumps(worker)};
 for (const value of ['A', 'B']) test('primary ' + value, () => {{

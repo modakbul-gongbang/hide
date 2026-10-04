@@ -67,7 +67,17 @@ jobs:
       - name: Original platform and kit suites
         if: ${{ !cancelled() }}
         timeout-minutes: 10
-        run: bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-kit
+        env:
+          CI_LANE: boundary-original
+          CI_JOB_LABEL: Rust boundary controls (${{ matrix.system }})
+          CI_REPEAT: 0
+        run: |
+          mkdir -p "$RUNNER_TEMP/boundary-controls"
+          status=0
+          bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-kit --message-format=json-render-diagnostics > "$RUNNER_TEMP/boundary-controls/original.log" 2>&1 || status=$?
+          node scripts/ci-ledger.cjs rust "$RUNNER_TEMP/boundary-controls/original.log" "$RUNNER_TEMP/boundary-controls/original.json"
+          cat "$RUNNER_TEMP/boundary-controls/original.log"
+          exit "$status"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -108,12 +118,20 @@ jobs:
             grep: 'checkouts, tabs, splits, zoom, close and the sheet'
           - name: reported-linux
             grep: 'Main, Overview and a Workspace with its columns|Agent tabs shrink in stages'
+          - name: focus
+            grep: 'rapid pane clicks coalesce behind one request|an unknown focus result ends the burst'
+        exclude:
+          - system: linux
+            scenario:
+              name: focus
+              grep: 'rapid pane clicks coalesce behind one request|an unknown focus result ends the burst'
     uses: ./.github/workflows/web-e2e.yml
     with:
       lane: controls-${{ matrix.system }}-${{ matrix.scenario.name }}
       runner: ${{ matrix.runner }}
       herdr-platform: ${{ matrix.platform }}
       ledger-lane: web-controls
+      control-scenario: ${{ matrix.scenario.name }}
       shards: 1
       grep: ${{ matrix.scenario.grep }}
       full-suite: true
@@ -169,12 +187,13 @@ jobs:
           SCENARIO: ${{ matrix.scenario }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          if [ "$SCENARIO" = bytes ]; then
-            filter='Agent edge drag splits the desktop column'
-          else
-            filter='area cycle native: page input previews one exact area'
-          fi
-          bash scripts/verify-web.sh desktop e2e --grep "$filter" --repeat-each=30 --retries=0
+          node scripts/ci-controls.cjs select "$SCENARIO" "$RUNNER_OS" "$RUNNER_TEMP/controls-list.txt"
+          bash scripts/verify-web.sh desktop e2e --test-list "$RUNNER_TEMP/controls-list.txt" --repeat-each=30 --retries=0
+      - name: Check every required repetition identity
+        if: always()
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+        run: node scripts/ci-controls.cjs results "$SCENARIO" "$RUNNER_OS" "$RUNNER_TEMP/desktop-controls/ledger.json" "$RUNNER_TEMP/desktop-controls/control-receipt.json"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

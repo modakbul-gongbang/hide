@@ -41,6 +41,11 @@ on:
         type: string
         required: false
         default: web-e2e
+      control-scenario:
+        description: Exact registered diagnostic identities, with thirty-result validation.
+        type: string
+        required: false
+        default: ""
       shards:
         description: How many shards deal the tests out.
         type: number
@@ -73,6 +78,7 @@ jobs:
           SHARDS: ${{ inputs.shards }}
           MAX_PARALLEL: ${{ inputs.max-parallel }}
           REPEATS: ${{ inputs.repeat-each }}
+          CONTROL: ${{ inputs.control-scenario }}
         run: |
           python3 - <<'PYPLAN'
           import json, os
@@ -260,15 +266,25 @@ jobs:
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
           FULL_SUITE: ${{ inputs.full-suite }}
           REPEATS: ${{ inputs.repeat-each }}
+          CONTROL: ${{ inputs.control-scenario }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           args=(--shard="$SHARD" --repeat-each="$REPEATS" --retries=0)
+          if [ -n "$CONTROL" ]; then
+            node scripts/ci-controls.cjs select "$CONTROL" "$RUNNER_OS" "$RUNNER_TEMP/controls-list.txt"
+            args+=(--test-list "$RUNNER_TEMP/controls-list.txt")
+          fi
           if [ "$FULL_SUITE" != true ]; then
             python3 scripts/ci-quarantine.py filter --suite web --mode exclude --os "$RUNNER_OS" --output "$RUNNER_TEMP/quarantine-list.txt"
             args+=(--test-list-invert "$RUNNER_TEMP/quarantine-list.txt")
           fi
           if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
           bash scripts/verify-web.sh web e2e "${args[@]}"
+      - name: Check every required repetition identity
+        if: ${{ always() && inputs.control-scenario != '' }}
+        env:
+          CONTROL: ${{ inputs.control-scenario }}
+        run: node scripts/ci-controls.cjs results "$CONTROL" "$RUNNER_OS" "$RUNNER_TEMP/hide-e2e/ledger-${{ matrix.shard }}.json" "$RUNNER_TEMP/hide-e2e/control-receipt.json"
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),
