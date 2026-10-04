@@ -196,6 +196,8 @@ The kit retains this stage for one release on each machine, with its result show
 
 Before changing anything, the stage checks the legacy ledgers, Hide's delivery ledger and the sasu run registry and registered checkout run state.
 An open item, an unreadable or unknown record, or a capacity limit stops the pass, names the reason and recovery action, and leaves the machine unchanged.
+Every local directory below the selected HOME or registered checkout must be a real directory owned by the account and unwritable by other accounts; an alias at or above that selected root remains valid.
+A relocated legacy home must stay below HOME and cannot overlap the active Hide state or kit; an indexed run outside HOME needs its owning checkout registered before inspection.
 On a device, the existing SSH/SFTP connection performs this read-only check against that device's registered checkouts before uploading a helper, creating its folders or changing its current link.
 It shares the local ledger and run predicates, needs no remote interpreter, and stops at the existing 15-second SSH operation deadline.
 The kit never stops an old test server by name without an ownership receipt.

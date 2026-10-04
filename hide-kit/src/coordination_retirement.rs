@@ -120,56 +120,162 @@ pub fn preflight(target: &KitTarget) -> Result<(), String> {
         return Ok(());
     }
     for home in homes(target) {
-        inspect_directory(&home)?;
+        inspect_legacy_home(target, &home)?;
         let Some(ledger) = read_json(&home.join("ledger.json"), MAX_LEDGER_BYTES)? else {
             continue;
         };
         retirement_inspection::legacy_ledger(&ledger)?;
     }
-    inspect_directory(&crate::kit_state_dir(&target.home).join("hcoord"))?;
-    if let Some(ledger) = read_json(
-        &crate::layout::delivery_ledger(&crate::layout::state_dir_from_process(&target.home)),
-        MAX_LEDGER_BYTES,
-    )? {
+    inspect_below(
+        &target.home,
+        &crate::kit_state_dir(&target.home).join("hcoord"),
+    )?;
+    let state = crate::layout::state_dir_from_process(&target.home);
+    if let Ok(anchor) = home_anchor(&target.home, &state) {
+        inspect_below(&anchor, &state)?;
+    }
+    if let Some(ledger) = read_json(&crate::layout::delivery_ledger(&state), MAX_LEDGER_BYTES)? {
         retirement_inspection::delivery_ledger(&ledger)?;
     }
-    sasu_preflight(&target.home)?;
     if target.retirement_projects.len() > MAX_ENTRIES {
         return Err(
             "registered checkouts exceed the preflight entry bound; inspect them before retirement"
                 .into(),
         );
     }
+    sasu_preflight(target)?;
     for project in &target.retirement_projects {
         project_preflight(project)?;
     }
     Ok(())
 }
 
-fn inspect_directory(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err("a legacy coordination folder is not an owned directory; inspect it before retirement".into());
-            }
-            let owned = hide_platform::fs::private::owned_by_current_user(path)
-                .map_err(|error| error.to_string())?;
-            let writable = hide_platform::fs::private::others_can_modify(path)
-                .map_err(|error| error.to_string())?;
-            if !owned || writable {
-                return Err("a legacy coordination folder can be changed by another account; inspect it before retirement".into());
-            }
-            Ok(())
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "legacy coordination folder cannot be inspected: {error}"
-        )),
+/// Only the selected anchor may have aliases above it. Every directory below
+/// it must be a real, owned directory that another account cannot replace.
+fn inspect_below(anchor: &Path, path: &Path) -> Result<bool, String> {
+    if !anchor.is_absolute() {
+        return Err(
+            "an inspection root is not absolute; inspect its registration before retrying".into(),
+        );
     }
+    let relative = path.strip_prefix(anchor).map_err(|_| {
+        "an inspection path has no trusted root; register its checkout before retrying retirement"
+            .to_owned()
+    })?;
+    if relative
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(
+            "an inspection path leaves its trusted root; inspect it before retrying retirement"
+                .into(),
+        );
+    }
+    let mut current = anchor.to_path_buf();
+    for (count, component) in relative.components().enumerate() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(
+                "an inspection path leaves its trusted root; inspect it before retrying retirement"
+                    .into(),
+            );
+        };
+        if count >= MAX_ENTRIES {
+            return Err(
+                "an inspection path exceeds the component bound; inspect it before retirement"
+                    .into(),
+            );
+        }
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(format!(
+                        "{} is not an owned real directory; inspect it before retrying retirement",
+                        current.display()
+                    ));
+                }
+                let owned = hide_platform::fs::private::owned_by_current_user(&current)
+                    .map_err(|error| error.to_string())?;
+                let writable = hide_platform::fs::private::others_can_modify(&current)
+                    .map_err(|error| error.to_string())?;
+                if !owned || writable {
+                    return Err(format!(
+                        "{} can be changed by another account; inspect its ownership and permissions before retrying retirement",
+                        current.display()
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(format!(
+                    "{} cannot be inspected: {error}; resolve it before retrying retirement",
+                    current.display()
+                ));
+            }
+        }
+    }
+    Ok(true)
 }
 
-fn sasu_preflight(home: &Path) -> Result<(), String> {
-    let directory = home.join(".sasu/supervisor");
+fn home_anchor(home: &Path, path: &Path) -> Result<PathBuf, String> {
+    if home.is_absolute() && path.starts_with(home) {
+        return Ok(home.to_path_buf());
+    }
+    // Resolve only the selected anchor, never a child that may redirect a read.
+    let resolved = fs::canonicalize(home)
+        .map_err(|error| format!("HOME authority cannot be inspected: {error}"))?;
+    if path.starts_with(&resolved) {
+        return Ok(resolved);
+    }
+    Err("the legacy coordination home has no trusted HOME anchor; inspect its location before retrying retirement".into())
+}
+
+fn inspect_legacy_home(target: &KitTarget, path: &Path) -> Result<bool, String> {
+    let anchor = home_anchor(&target.home, path)?;
+    let state = crate::layout::state_dir_from_process(&target.home);
+    let state_anchor = home_anchor(&target.home, &state).ok();
+    // A canonical spelling of HOME still protects the selected state spelling.
+    let state = state_anchor
+        .as_ref()
+        .and_then(|root| state.strip_prefix(root).ok())
+        .map(|relative| anchor.join(relative))
+        .unwrap_or(state);
+    let wire = |path: &Path| hide_platform::path::to_wire(path).map_err(|error| error.to_string());
+    retirement_inspection::legacy_location(&wire(&anchor)?, &wire(path)?, &wire(&state)?)?;
+    inspect_below(&anchor, path)
+}
+
+fn run_state_anchor(target: &KitTarget, path: &Path) -> Result<PathBuf, String> {
+    let path_wire = hide_platform::path::to_wire(path).map_err(|error| error.to_string())?;
+    let authorized = |root: &Path| {
+        hide_platform::path::to_wire(root).is_ok_and(|root| {
+            retirement_inspection::inspection_root(&path_wire, std::iter::once(root.as_str()))
+                .is_ok()
+        })
+    };
+    for root in &target.retirement_projects {
+        if authorized(root) {
+            return Ok(root.clone());
+        }
+    }
+    if let Ok(anchor) = home_anchor(&target.home, path) {
+        return Ok(anchor);
+    }
+    for root in &target.retirement_projects {
+        if let Ok(resolved) = fs::canonicalize(root)
+            && authorized(&resolved)
+        {
+            return Ok(resolved);
+        }
+    }
+    Err("a sasu run state has no trusted HOME or registered checkout root; register its owning checkout, then retry retirement".into())
+}
+
+fn sasu_preflight(target: &KitTarget) -> Result<(), String> {
+    let directory = target.home.join(".sasu/supervisor");
+    if !inspect_below(&target.home, &directory)? {
+        return Ok(());
+    }
     let mut latest = directory.join("index.json");
     let mut revision = None;
     match fs::read_dir(&directory) {
@@ -208,7 +314,13 @@ fn sasu_preflight(home: &Path) -> Result<(), String> {
         return Ok(());
     };
     for state_path in retirement_inspection::supervisor_states(&index)? {
-        let state = read_json(Path::new(state_path), MAX_STATE_BYTES)?
+        let path = Path::new(state_path);
+        let anchor = run_state_anchor(target, path)?;
+        let parent = path.parent().ok_or(
+            "a sasu run state has no parent directory; inspect its registry before retrying",
+        )?;
+        inspect_below(&anchor, parent)?;
+        let state = read_json(path, MAX_STATE_BYTES)?
             .ok_or("a sasu run state is missing; inspect its registry before retirement")?;
         retirement_inspection::indexed_run(&state)?;
     }
@@ -217,6 +329,9 @@ fn sasu_preflight(home: &Path) -> Result<(), String> {
 
 fn project_preflight(project: &Path) -> Result<(), String> {
     let directory = project.join("agents/runs");
+    if !inspect_below(project, &directory)? {
+        return Ok(());
+    }
     let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -240,6 +355,7 @@ fn project_preflight(project: &Path) -> Result<(), String> {
         if !kind.is_dir() {
             continue;
         }
+        inspect_below(project, &entry.path())?;
         if let Some(state) = read_json(&entry.path().join("state.json"), MAX_STATE_BYTES)? {
             retirement_inspection::checkout_run(&state)?;
         }
@@ -312,7 +428,7 @@ pub(crate) fn install(target: &KitTarget) -> Result<crate::Retirement, String> {
                 retirement = report;
             }),
             "remove kit copy" => remove_copy(target),
-            _ => preserve(&progress),
+            _ => preserve(target, &progress),
         };
         if let Err(reason) = outcome {
             progress.failure = Some(format!(
@@ -331,20 +447,12 @@ pub(crate) fn install(target: &KitTarget) -> Result<crate::Retirement, String> {
 /// An absent endpoint is already stopped, before IPC validates its name.
 /// An existing entry must be an owned local endpoint, never a followed link.
 fn daemon_socket_present(path: &Path) -> Result<bool, String> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let endpoint = match hide_platform::ipc::is_endpoint(path) {
+        Ok(endpoint) => endpoint,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(format!("daemon socket cannot be inspected: {error}")),
     };
-    #[cfg(unix)]
-    let endpoint = {
-        use std::os::unix::fs::FileTypeExt;
-        metadata.file_type().is_socket()
-    };
-    // The local IPC layer keeps an owned marker for a Windows pipe.
-    #[cfg(windows)]
-    let endpoint = metadata.is_file();
-    if metadata.file_type().is_symlink() || !endpoint {
+    if !endpoint {
         return Err(
             "daemon socket is not an owned local endpoint; inspect it before retrying".into(),
         );
@@ -500,15 +608,15 @@ fn remove_copy(target: &KitTarget) -> Result<(), String> {
     }
 }
 
-fn preserve(progress: &Progress) -> Result<(), String> {
+fn preserve(target: &KitTarget, progress: &Progress) -> Result<(), String> {
     for (home, destination) in &progress.homes {
-        if home.exists() {
+        if inspect_legacy_home(target, home)? {
             if destination.exists() {
                 return Err("the preserved ledger name already exists; keep both folders and resolve the collision before retrying".into());
             }
             fs::rename(home, destination)
                 .map_err(|error| format!("ledger folder cannot be renamed: {error}"))?;
-        } else if !destination.exists() {
+        } else if !inspect_below(&home_anchor(&target.home, destination)?, destination)? {
             return Err("both the old ledger folder and its preserved destination are missing; inspect before retrying".into());
         }
     }

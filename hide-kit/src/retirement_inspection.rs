@@ -1,11 +1,42 @@
 //! Read-only predicates shared by local kit and the pre-upload SFTP inspection.
-//! They parse occupancy only; no legacy contents are imported or rewritten.
+//! They check path authority and occupancy; no legacy contents are imported or rewritten.
 
 use serde_json::Value;
 
 pub const MAX_LEDGER_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 1024;
+
+/// Authority is a selected HOME or a checkout already registered on that
+/// machine. Wire paths compare by whole names without filesystem access.
+pub fn inspection_root<'a>(
+    path: &str,
+    roots: impl IntoIterator<Item = &'a str>,
+) -> Result<&'a str, String> {
+    roots
+        .into_iter()
+        .find(|root| hide_platform::path::wire_relative(root, path).is_ok())
+        .ok_or_else(|| "a sasu run state has no trusted HOME or registered checkout root; register its owning checkout, then retry retirement".into())
+}
+
+/// A legacy folder may be renamed only below HOME, separate from the
+/// current kit and state. A selected root itself is never a removal target.
+pub fn legacy_location(home: &str, path: &str, state: &str) -> Result<(), String> {
+    let relative = hide_platform::path::wire_relative(home, path).map_err(|_| {
+        "the legacy coordination home has no trusted HOME anchor; inspect its location before retrying retirement".to_owned()
+    })?;
+    let kit = hide_platform::path::RelPath::parse(".hide/kit").unwrap();
+    let overlaps = |other: &hide_platform::path::RelPath| {
+        relative.starts_with(other) || other.starts_with(&relative)
+    };
+    if relative.is_root()
+        || overlaps(&kit)
+        || hide_platform::path::wire_relative(home, state).is_ok_and(|state| overlaps(&state))
+    {
+        return Err("the legacy coordination home overlaps active Hide state; inspect the override before retrying retirement".into());
+    }
+    Ok(())
+}
 
 pub fn legacy_ledger(ledger: &Value) -> Result<(), String> {
     if ledger["schema"] != "hcoord.ledger.v1" {

@@ -216,7 +216,15 @@ pub(super) async fn preflight(
     {
         return Ok(());
     }
+    let state = if let Some(state) = &locations.state_dir {
+        absolute(state, home)?
+    } else if let Some(xdg) = &locations.xdg_state_home {
+        format!("{}/hide", absolute(xdg, home)?)
+    } else {
+        format!("{home}/.hide/state")
+    };
     for legacy_home in &homes {
+        predicates::legacy_location(home, legacy_home, &state).map_err(refused)?;
         directory(raw, legacy_home, owner).await?;
         if let Some(ledger) = json(
             raw,
@@ -230,13 +238,6 @@ pub(super) async fn preflight(
         }
     }
     directory(raw, &format!("{home}/.hide/kit/hcoord"), owner).await?;
-    let state = if let Some(state) = &locations.state_dir {
-        absolute(state, home)?
-    } else if let Some(xdg) = &locations.xdg_state_home {
-        format!("{}/hide", absolute(xdg, home)?)
-    } else {
-        format!("{home}/.hide/state")
-    };
     if let Some(ledger) = json(
         raw,
         &format!("{state}/delivery-ledger.json"),
@@ -247,6 +248,13 @@ pub(super) async fn preflight(
     {
         predicates::delivery_ledger(&ledger).map_err(refused)?;
     }
+    if projects.len() > MAX_ENTRIES {
+        return Err(refused("registered checkouts exceed the entry bound"));
+    }
+    let projects = projects
+        .iter()
+        .map(|project| absolute(project, home))
+        .collect::<Result<Vec<_>, _>>()?;
     let registry = format!("{home}/.sasu/supervisor");
     let mut latest = "index.json".to_owned();
     let mut revision: Option<String> = None;
@@ -265,17 +273,21 @@ pub(super) async fn preflight(
     if let Some(index) = json(raw, &format!("{registry}/{latest}"), owner, MAX_STATE_BYTES).await? {
         for path in predicates::supervisor_states(&index).map_err(refused)? {
             let path = absolute(path, home)?;
+            predicates::inspection_root(
+                &path,
+                projects
+                    .iter()
+                    .map(String::as_str)
+                    .chain(std::iter::once(home)),
+            )
+            .map_err(refused)?;
             let run = json(raw, &path, owner, MAX_STATE_BYTES)
                 .await?
                 .ok_or_else(|| refused("an indexed run state is missing"))?;
             predicates::indexed_run(&run).map_err(refused)?;
         }
     }
-    if projects.len() > MAX_ENTRIES {
-        return Err(refused("registered checkouts exceed the entry bound"));
-    }
-    for project in projects {
-        let project = absolute(project, home)?;
+    for project in &projects {
         let runs = format!("{project}/agents/runs");
         for entry in entries(raw, &runs, owner).await? {
             if entry.attrs.is_symlink() {
@@ -454,6 +466,20 @@ mod tests {
         projects: &[String],
         installation: bool,
     ) -> (Result<(), EstablishError>, usize) {
+        inspect_at(
+            account,
+            projects,
+            installation,
+            Locations::from_environment("\n\n\n").unwrap(),
+        )
+    }
+
+    fn inspect_at(
+        account: Account,
+        projects: &[String],
+        installation: bool,
+        locations: Locations,
+    ) -> (Result<(), EstablishError>, usize) {
         let mutations = Arc::clone(&account.mutations);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -464,7 +490,6 @@ mod tests {
             let (client, server) = tokio::io::duplex(256 * 1024);
             let task = tokio::spawn(russh_sftp::server::run(server, account));
             let raw = RawSftpSession::new(client);
-            let locations = Locations::from_environment("\n\n\n").unwrap();
             let result = if installation {
                 // Exercise the real install ordering. A blocker must return
                 // before this deliberately empty payload can create a folder.
@@ -488,6 +513,118 @@ mod tests {
     }
 
     #[test]
+    fn unknown_legacy_authority_refuses_before_remote_install_mutation() {
+        for path in [
+            "/outside/hcoord",
+            "/fixture-home-other/hcoord",
+            "relative",
+            "/fixture-home/missing/../../outside/hcoord",
+            "/fixture-home",
+            "/fixture-home/.hide",
+            "/fixture-home/.hide/kit/hcoord",
+            "/fixture-home/.hide/state",
+            "/fixture-home/.hide/state/old-coordinator",
+        ] {
+            let mut account = Account::new();
+            if path.starts_with('/') {
+                account.add(
+                    &format!("{path}/ledger.json"),
+                    serde_json::json!({"schema":"hcoord.ledger.v1", "requests":{}, "watches":{}}),
+                );
+            }
+            let locations = Locations::from_environment(&format!("{path}\n\n\n")).unwrap();
+            let (result, mutations) = inspect_at(account, &[], true, locations);
+            let failure = result.unwrap_err().to_string();
+            assert!(
+                failure.contains("trusted HOME anchor")
+                    || failure.contains("overlaps active Hide state")
+                    || failure.contains("absolute plain path"),
+                "{path}: {failure}"
+            );
+            assert_eq!(mutations, 0, "{path}: mutation preceded authority refusal");
+        }
+    }
+
+    #[test]
+    fn indexed_outside_home_runs_need_a_registered_checkout_before_upload() {
+        for (path, registered) in [
+            ("/checkout/agents/runs/task/state.json", false),
+            ("/checkout/agents/runs/task/state.json", true),
+            ("/checkout-other/agents/runs/task/state.json", true),
+        ] {
+            let mut account = Account::new();
+            account.add("/fixture-home/.sasu/supervisor/index.json", serde_json::json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[{"statePath":path, "runInstanceId":"run"}]}));
+            account.add(path, serde_json::json!({"status":"retired"}));
+            let projects = if registered {
+                vec!["/checkout".into()]
+            } else {
+                Vec::new()
+            };
+            let allowed = registered && path.starts_with("/checkout/");
+            let (result, mutations) = inspect(account, &projects, !allowed);
+            if allowed {
+                result.unwrap();
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("trusted HOME or registered checkout root")
+                );
+            }
+            assert_eq!(mutations, 0);
+        }
+    }
+
+    #[test]
+    fn unsafe_relocated_legacy_parents_refuse_before_remote_install_mutation() {
+        for permissions in [0o120700, 0o040770, 0o040777] {
+            let mut account = Account::new();
+            account.add(
+                "/fixture-home/legacy-location/hcoord/ledger.json",
+                serde_json::json!({"schema":"hcoord.ledger.v1", "requests":{}, "watches":{}}),
+            );
+            account
+                .files
+                .get_mut("/fixture-home/legacy-location")
+                .unwrap()
+                .0
+                .permissions = Some(permissions);
+            let locations =
+                Locations::from_environment("/fixture-home/legacy-location/hcoord\n\n\n").unwrap();
+            let (result, mutations) = inspect_at(account, &[], true, locations);
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("not an owned directory safe to inspect")
+            );
+            assert_eq!(mutations, 0);
+        }
+    }
+
+    #[test]
+    fn unsafe_registry_and_run_ancestors_refuse_before_remote_install_mutation() {
+        for path in [
+            "/fixture-home/.sasu",
+            "/fixture-home/.sasu/supervisor",
+            "/checkout/agents",
+            "/checkout/agents/runs",
+            "/checkout/agents/runs/task",
+        ] {
+            for permissions in [0o120700, 0o040770, 0o040777] {
+                let mut account = Account::new();
+                account.add("/fixture-home/.sasu/supervisor/index.json", serde_json::json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[]}));
+                account.add("/checkout/agents/runs/task/state.json", serde_json::json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"}));
+                account.files.get_mut(path).unwrap().0.permissions = Some(permissions);
+                let (result, mutations) = inspect(account, &["/checkout".into()], true);
+                assert!(result.is_err(), "{path}: {permissions:o}");
+                assert_eq!(mutations, 0, "{path}: {permissions:o}");
+            }
+        }
+    }
+
+    #[test]
     fn active_registered_run_refuses_before_any_remote_install_mutation() {
         let mut account = Account::new();
         account.add("/checkout/agents/runs/task/state.json", serde_json::json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"active"}));
@@ -505,8 +642,11 @@ mod tests {
     fn newest_supervisor_revision_is_read_before_remote_staging() {
         let mut account = Account::new();
         account.add("/fixture-home/.sasu/supervisor/index.json", serde_json::json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[]}));
-        account.add("/fixture-home/.sasu/supervisor/index.json.revision-000000000002", serde_json::json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[{"statePath":"/run/state.json", "runInstanceId":"run"}]}));
-        account.add("/run/state.json", serde_json::json!({"status":"active"}));
+        account.add("/fixture-home/.sasu/supervisor/index.json.revision-000000000002", serde_json::json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[{"statePath":"/fixture-home/run/state.json", "runInstanceId":"run"}]}));
+        account.add(
+            "/fixture-home/run/state.json",
+            serde_json::json!({"status":"active"}),
+        );
         let (result, mutations) = inspect(account, &[], true);
         assert!(
             result

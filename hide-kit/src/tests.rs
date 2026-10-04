@@ -1158,7 +1158,7 @@ fn supervisor_revision_head_and_unreadable_referenced_runs_block_before_mutation
         old_coordination(&fixture, json!({}), json!({}));
         let registry = fixture.home().join(".sasu/supervisor");
         std::fs::create_dir_all(&registry).unwrap();
-        let state_path = fixture.root.join("run-state.json");
+        let state_path = fixture.home().join("run-state.json");
         if !unreadable {
             std::fs::write(&state_path, json!({"status":"active","supervision":{"runInstanceId":"run-1","coordinationOwner":owner}}).to_string()).unwrap();
         }
@@ -1572,5 +1572,262 @@ fn a_long_home_with_no_daemon_socket_finishes_retirement_and_converges() {
             ComponentState::Installed
         );
         assert_eq!(home_tree(fixture.home()), before);
+    }
+}
+
+fn record_preflight_commands(fixture: &mut Fixture) {
+    executable(
+        &fixture.root.join("launchctl"),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
+    );
+    let codex = fixture.root.join("bin/codex");
+    executable(
+        &codex,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
+    );
+    fixture.target.codex = Some(codex);
+}
+
+fn assert_preflight_refusal_preserves_fixture(fixture: &Fixture, daemon: Option<&UnixListener>) {
+    let before = home_tree(&fixture.root);
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Failed,
+        "{report:?}"
+    );
+    assert_eq!(home_tree(&fixture.root), before, "preflight changed a file");
+    assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+    assert!(!fixture.home().join("service-called").exists());
+    assert!(!fixture.home().join("status-called").exists());
+    if let Some(daemon) = daemon {
+        assert!(
+            matches!(daemon.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "a daemon RPC was initiated"
+        );
+    }
+}
+
+#[test]
+fn a_relocated_legacy_home_cannot_follow_an_intermediate_alias() {
+    let mut fixture = Fixture::new();
+    let outside = fixture.root.join("outside-owned-folder");
+    let old = outside.join("hcoord");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(
+        old.join("ledger.json"),
+        json!({"schema":"hcoord.ledger.v1", "requests":{},"watches":{}}).to_string(),
+    )
+    .unwrap();
+    let alias = fixture.home().join("relocated");
+    std::os::unix::fs::symlink(&outside, &alias).unwrap();
+    fixture.target.legacy_coordination_home = Some(alias.join("hcoord"));
+    record_preflight_commands(&mut fixture);
+    assert_preflight_refusal_preserves_fixture(&fixture, None);
+}
+
+#[test]
+fn a_relocated_legacy_folder_preserves_bytes_only_below_an_owned_parent() {
+    for mode in [0o700, 0o770, 0o777] {
+        let mut fixture = Fixture::new();
+        let parent = fixture.home().join("legacy-location");
+        let old = parent.join("hcoord");
+        std::fs::create_dir_all(&old).unwrap();
+        let bytes = json!({"schema":"hcoord.ledger.v1", "requests":{}, "watches":{}})
+            .to_string()
+            .into_bytes();
+        std::fs::write(old.join("ledger.json"), &bytes).unwrap();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode)).unwrap();
+        fixture.target.legacy_coordination_home = Some(old.clone());
+        if mode == 0o700 {
+            let report = apply(&fixture.target, &Scope::automatic());
+            assert_eq!(
+                state(&report, ComponentId::CoordinationRetirement),
+                ComponentState::Installed,
+                "{report:?}"
+            );
+            assert!(!old.exists());
+            let preserved = std::fs::read_dir(&parent)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            assert!(
+                preserved
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("hcoord.retired-")
+            );
+            assert_eq!(std::fs::read(preserved.join("ledger.json")).unwrap(), bytes);
+        } else {
+            record_preflight_commands(&mut fixture);
+            assert_preflight_refusal_preserves_fixture(&fixture, None);
+        }
+    }
+}
+
+#[test]
+fn registry_and_checkout_ancestors_refuse_links_and_other_account_write_access() {
+    for component in [
+        ".sasu",
+        ".sasu/supervisor",
+        "agents",
+        "agents/runs",
+        "agents/runs/task",
+    ] {
+        for change in ["link", "group write", "world write"] {
+            let mut fixture = Fixture::new();
+            let registry = component.starts_with(".sasu");
+            let anchor = if registry {
+                fixture.home().to_path_buf()
+            } else {
+                let project = fixture.root.join("registered-checkout");
+                fixture.target.retirement_projects.push(project.clone());
+                project
+            };
+            let state = if registry {
+                anchor.join(".sasu/supervisor/index.json")
+            } else {
+                anchor.join("agents/runs/task/state.json")
+            };
+            std::fs::create_dir_all(state.parent().unwrap()).unwrap();
+            let value = if registry {
+                json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[]})
+            } else {
+                json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"})
+            };
+            std::fs::write(&state, value.to_string()).unwrap();
+            let changed = anchor.join(component);
+            if change == "link" {
+                let outside = fixture.root.join("preserved-outside-folder");
+                std::fs::rename(&changed, &outside).unwrap();
+                std::os::unix::fs::symlink(&outside, &changed).unwrap();
+            } else {
+                let mode = if change == "group write" {
+                    0o770
+                } else {
+                    0o777
+                };
+                std::fs::set_permissions(&changed, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+            record_preflight_commands(&mut fixture);
+            let daemon_home = fixture.home().join(".hcoord");
+            std::fs::create_dir_all(&daemon_home).unwrap();
+            let daemon = UnixListener::bind(daemon_home.join("api.sock")).unwrap();
+            daemon.set_nonblocking(true).unwrap();
+            assert_preflight_refusal_preserves_fixture(&fixture, Some(&daemon));
+        }
+    }
+}
+
+#[test]
+fn legacy_overrides_without_mutation_authority_refuse_the_entire_pass() {
+    for location in [
+        "outside",
+        "relative",
+        "escape",
+        "home",
+        "kit ancestor",
+        "active state",
+        "kit child",
+        "state child",
+    ] {
+        let mut fixture = Fixture::new();
+        let home = fixture.home().to_path_buf();
+        fixture.target.legacy_coordination_home = Some(match location {
+            "outside" => {
+                let outside = fixture.root.join("outside-owned-folder/hcoord");
+                std::fs::create_dir_all(&outside).unwrap();
+                std::fs::write(
+                    outside.join("ledger.json"),
+                    json!({"schema":"hcoord.ledger.v1", "requests":{}, "watches":{}}).to_string(),
+                )
+                .unwrap();
+                outside
+            }
+            "relative" => PathBuf::from("untrusted-relative-home"),
+            "escape" => home.join("missing/../../outside-owned-folder"),
+            "home" => home.clone(),
+            "kit ancestor" => home.join(".hide"),
+            "kit child" => home.join(".hide/kit/hcoord"),
+            "state child" => home.join(".hide/state/old-coordinator"),
+            _ => home.join(".hide/state"),
+        });
+        record_preflight_commands(&mut fixture);
+        let daemon_home = home.join(".hcoord");
+        std::fs::create_dir_all(&daemon_home).unwrap();
+        let daemon = UnixListener::bind(daemon_home.join("api.sock")).unwrap();
+        daemon.set_nonblocking(true).unwrap();
+        assert_preflight_refusal_preserves_fixture(&fixture, Some(&daemon));
+    }
+}
+
+#[test]
+fn indexed_runs_outside_home_use_the_registered_checkout_authority() {
+    for registered in [false, true] {
+        let mut fixture = Fixture::new();
+        let project = fixture.root.join("outside-home-checkout");
+        let state_path = project.join("agents/runs/task/state.json");
+        std::fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &state_path,
+            json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"})
+                .to_string(),
+        )
+        .unwrap();
+        let registry = fixture.home().join(".sasu/supervisor");
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[{"statePath":state_path,"runInstanceId":"run"}]}).to_string()).unwrap();
+        if registered {
+            fixture.target.retirement_projects.push(project.clone());
+            let before = home_tree(&project);
+            let report = apply(&fixture.target, &Scope::automatic());
+            assert_eq!(
+                state(&report, ComponentId::CoordinationRetirement),
+                ComponentState::Installed,
+                "{report:?}"
+            );
+            assert_eq!(home_tree(&project), before);
+        } else {
+            record_preflight_commands(&mut fixture);
+            assert_preflight_refusal_preserves_fixture(&fixture, None);
+        }
+    }
+}
+
+#[test]
+fn an_explicit_home_or_registered_checkout_anchor_can_have_an_alias() {
+    for selected in ["home", "checkout"] {
+        let mut fixture = Fixture::new();
+        let alias = fixture.root.join("selected-alias");
+        if selected == "home" {
+            let original = fixture.home().to_path_buf();
+            std::os::unix::fs::symlink(&original, &alias).unwrap();
+            fixture.target.home = alias.clone();
+            fixture.target.cli_dir = alias.join(".local/bin");
+            let run = original.join("project/agents/runs/task/state.json");
+            std::fs::create_dir_all(run.parent().unwrap()).unwrap();
+            std::fs::write(&run, json!({"status":"retired"}).to_string()).unwrap();
+            let registry = alias.join(".sasu/supervisor");
+            std::fs::create_dir_all(&registry).unwrap();
+            std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1", "entries":[], "coordinated":[{"statePath":run,"runInstanceId":"run"}]}).to_string()).unwrap();
+        } else {
+            let actual = fixture.root.join("actual-checkout");
+            let run = actual.join("agents/runs/task/state.json");
+            std::fs::create_dir_all(run.parent().unwrap()).unwrap();
+            std::fs::write(&run, json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"}).to_string()).unwrap();
+            std::os::unix::fs::symlink(&actual, &alias).unwrap();
+            fixture.target.retirement_projects.push(alias.clone());
+        }
+        let destination = std::fs::read_link(&alias).unwrap();
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "{report:?}"
+        );
+        assert_eq!(std::fs::read_link(alias).unwrap(), destination);
     }
 }
