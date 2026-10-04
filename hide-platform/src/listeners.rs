@@ -66,12 +66,14 @@ pub struct ListeningSocket {
     pub cwd: ObservedWorkingDirectory,
 }
 
-/// A complete native observation, or an explicit refusal to call it complete.
+/// A native observation of accessible owners, or an explicit refusal.
 ///
-/// Protected/unreadable live owners, unknown layouts, changed owners and
-/// resource limits fail the entire sample. Only owners demonstrably no longer
-/// listening at the final bounded table read can be excluded. No subprocess,
-/// privilege elevation, process mutation or executable-directory guess.
+/// A cwd observation denied permission excludes that owner from the sample;
+/// protected owners are outside the current user's cleanup targets. Other cwd
+/// errors, unknown layouts, changed owners and resource limits fail the entire
+/// sample. Owners no longer listening at the final bounded table read are also
+/// excluded. No subprocess, privilege elevation, process mutation or
+/// executable-directory guess.
 /// The synchronous read checks a ten-second work budget between bounded
 /// native calls; it does not preempt a kernel call. It leaves no pending work
 /// to cancel, and the caller observes its own cancellation after it returns.
@@ -125,6 +127,9 @@ fn complete_sample(
                 "listener owner has no observation",
             )
         })?;
+        if matches!(observation, Err(error) if error.kind() == io::ErrorKind::PermissionDenied) {
+            continue;
+        }
         let (birth, cwd) = observation.as_ref().map_err(|error| {
             io::Error::new(
                 error.kind(),
@@ -172,7 +177,47 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn unreadable_live_owners_refuse_the_whole_sample_and_only_proven_absence_excludes_them() {
+    fn permission_denied_cwd_owners_are_excluded_and_readable_owners_are_reported() {
+        let before = Owners::from([
+            (4, ["[::1]:8080".parse().unwrap()].into()),
+            (41, ["127.0.0.1:5173".parse().unwrap()].into()),
+        ]);
+        let observations = BTreeMap::from([
+            (
+                4,
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "protected owner",
+                )),
+            ),
+            (
+                41,
+                Ok((700, ObservedWorkingDirectory("C:\\checkout".into()))),
+            ),
+        ]);
+        let sample = complete_sample(&before, &observations, before.clone(), |pid| {
+            if pid == 41 {
+                Ok(700)
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "protected owner identity",
+                ))
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            sample,
+            vec![ListeningSocket {
+                pid: 41,
+                address: "127.0.0.1:5173".parse().unwrap(),
+                cwd: ObservedWorkingDirectory("C:\\checkout".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn other_cwd_errors_refuse_the_whole_sample_and_only_proven_absence_excludes_them() {
         let before = Owners::from([
             (41, ["127.0.0.1:5173".parse().unwrap()].into()),
             (42, ["[::1]:8080".parse().unwrap()].into()),
@@ -185,14 +230,14 @@ mod tests {
             (
                 42,
                 Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "protected owner",
+                    io::ErrorKind::Unsupported,
+                    "unknown owner layout",
                 )),
             ),
         ]);
         let error =
             complete_sample(&before, &observations, before.clone(), |_| Ok(700)).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
         assert!(error.to_string().contains("42"));
         let mut after = before.clone();
         after.remove(&42);
