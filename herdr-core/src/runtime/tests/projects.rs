@@ -81,6 +81,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     git(&["init", "-q", "-b", "main"]);
     git(&["config", "user.name", "Fixture"]);
     git(&["config", "user.email", "fixture@example.invalid"]);
+    git(&["config", "commit.gpgsign", "false"]);
     for (name, content) in [
         ("registered/inside.txt", "base inside\n"),
         ("registered/deleted.txt", "deleted content\n"),
@@ -1016,6 +1017,8 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
         is_draft: false,
         merged_at_unix_ms: None,
         updated_at_unix_ms: None,
+        created_at_unix_ms: None,
+        closed_at_unix_ms: None,
     };
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
@@ -3091,6 +3094,7 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
     assert_eq!(
         runtime.pending_task_agent_start(id),
         Some(live::PendingAgentStart {
+            codex_daemon: Default::default(),
             pane_id: "w1:p9".to_owned(),
             kind: "claude".to_owned(),
             prompt: None,
@@ -3169,6 +3173,7 @@ fn a_client_cannot_claim_a_worktree_removal_finished() {
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "removing".into(),
         message: None,
     });
@@ -3267,6 +3272,7 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "closing".into(),
         message: None,
     };
@@ -3361,6 +3367,7 @@ fn a_finished_removal_drops_its_row_at_once_and_an_older_read_cannot_bring_it_ba
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "removing".into(),
         message: None,
     });
@@ -3426,6 +3433,7 @@ fn a_failed_removal_keeps_its_row_and_rereads() {
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "removing".into(),
         message: None,
     });

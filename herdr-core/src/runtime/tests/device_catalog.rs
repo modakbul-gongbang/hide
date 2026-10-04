@@ -704,7 +704,6 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
             request_id: request.to_owned(),
             report_pane_focus_outcome: false,
             focus_device: false,
-            in_place: false,
             request: RemoteControlRequest::CreateTab {
                 workspace_id: workspace_id.to_owned(),
                 checkout_id: Some(device_catalog::checkout_id(TARGET, &t.other)),
@@ -1049,12 +1048,11 @@ fn a_registration_answer_after_its_device_was_removed_is_dropped() {
     assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
 }
 
-/// S6 D-08, B12, B21: an agent chosen on a device is one event that brings
-/// the device forward, and the Agent area comes back on the Workspace that
-/// holds the agent, not on the one the device showed before its Herdr moved.
+/// S6 B12, B21 and PRD three-column-panel D-17, B34: an agent chosen on a
+/// device is one event that brings the device forward, and it changes no
+/// column of either Workspace.
 #[test]
-fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
-    use crate::workspace_views::PanelState;
+fn a_device_agent_chosen_brings_the_device_forward_and_moves_no_column() {
     let t = tree();
     let mut runtime = runtime();
     runtime.snapshot.navigator.devices.push(DeviceSnapshot {
@@ -1098,8 +1096,8 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
     ));
     let views = tempfile::tempdir().unwrap();
     let mut store = WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0;
-    store.views.entry(TARGET, &t.main).panel = PanelState::Expanded;
-    store.views.entry(TARGET, &t.linked).panel = PanelState::Expanded;
+    store.views.entry(TARGET, &t.main).views = true;
+    store.views.entry(TARGET, &t.linked).views = true;
     runtime.workspace_views = Some(store);
 
     runtime.request_remote_control(RemoteControlPayload {
@@ -1107,7 +1105,6 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         request_id: "open-agent".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
-        in_place: false,
         request: RemoteControlRequest::FocusPane {
             pane_id: format!("remote:{TARGET}:pane:t3"),
         },
@@ -1126,10 +1123,10 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
             .views
             .get(TARGET, path)
             .unwrap()
-            .panel
+            .views
     };
-    assert_eq!(panel(&runtime, &t.linked), PanelState::Closed);
-    assert_eq!(panel(&runtime, &t.main), PanelState::Expanded);
+    assert!(panel(&runtime, &t.linked));
+    assert!(panel(&runtime, &t.main));
 
     // D-11: the choice is remembered only once the device's Herdr has moved
     // there, so a refusal on the device would remember nothing.
@@ -1157,7 +1154,6 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         request_id: "open-workspace".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
-        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w1"),
             checkout_id: Some(device_catalog::checkout_id(TARGET, &t.main)),
@@ -1175,7 +1171,6 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         request_id: "refused".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
-        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w2"),
             checkout_id: Some(device_catalog::checkout_id(TARGET, &t.linked)),
@@ -1200,7 +1195,6 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         request_id: "lost".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
-        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w2"),
             checkout_id: Some(device_catalog::checkout_id(TARGET, &t.linked)),
@@ -1225,7 +1219,6 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         request_id: "removed".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
-        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w1"),
             checkout_id: Some(device_catalog::checkout_id(TARGET, &t.main)),
@@ -1269,7 +1262,6 @@ fn a_refused_device_request_does_not_bring_the_device_forward() {
         request_id: "open-workspace".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
-        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w1"),
             checkout_id: None,
@@ -1407,6 +1399,7 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
                 state: hide_kit::ComponentState::Installed,
                 reason: None,
                 location: None,
+                codex_daemon: None,
             }],
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
@@ -1513,6 +1506,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
                 state: hide_kit::ComponentState::Installed,
                 reason: None,
                 location: None,
+                codex_daemon: None,
             }],
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
@@ -1642,7 +1636,6 @@ fn one_device_folder_held_by_two_workspaces_is_one_row_whose_new_tabs_go_to_its_
             request_id: request_id.to_owned(),
             report_pane_focus_outcome: false,
             focus_device: false,
-            in_place: false,
             request,
         });
         assert_eq!(runtime.snapshot.status.last_error, None);
@@ -1724,7 +1717,6 @@ fn one_device_folder_held_by_two_workspaces_is_one_row_whose_new_tabs_go_to_its_
             request_id: request_id.to_owned(),
             report_pane_focus_outcome: false,
             focus_device: false,
-            in_place: false,
             request: RemoteControlRequest::CreateTab {
                 workspace_id: project,
                 checkout_id: Some(device_catalog::checkout_id(TARGET, &t.main)),

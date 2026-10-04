@@ -411,8 +411,8 @@ impl Runtime {
         let entry = store.views.entry(&key.0, &key.1);
         let stamp = entry.layout.next_stamp(now);
         let (value, changed) = change(&mut entry.layout, stamp)?;
-        let panel_changed = entry.close_empty_panel();
-        if changed || panel_changed {
+        let views_changed = entry.close_empty_views();
+        if changed || views_changed {
             store.generation += 1;
             self.persist_workspace_views();
         }
@@ -1787,7 +1787,7 @@ impl Runtime {
                 requested,
                 now,
             );
-            stored |= changed | view.close_empty_panel();
+            stored |= changed | view.close_empty_views();
             unshown.extend(
                 capped
                     .into_iter()

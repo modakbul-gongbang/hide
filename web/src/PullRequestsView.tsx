@@ -318,7 +318,7 @@ function IssuePicker({ row, project, open, onOpenChange, children }: { row: PrRo
 }
 
 /**
- * The agents on the branch's checkout, up to three marks and `+N` (B4): one
+ * The agents on the branch's checkout and the one that made it, up to three marks and `+N` (B4): one
  * agent's mark opens its pane, several unfold the row; each mark's
  * half-second card is everything that agent last said (B7).
  */

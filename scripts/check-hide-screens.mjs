@@ -43,26 +43,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {duplicateIds} from './pen-canvas.mjs';
-import {readLocalVariables} from './pen-screens.mjs';
+import {readLocalVariables, themedOverrides} from './pen-screens.mjs';
 
 const SCREEN_PREFIX = 'Screen / ';
 const LOCAL_VARIABLE = /^\$(--[A-Za-z0-9_-]+)$/;
 const ALIASED = /^\$?([A-Za-z0-9_-]+):(--[A-Za-z0-9_-]+|[A-Za-z0-9_-]+)$/;
-const THEMED_PROPS = ['fill', 'stroke'];
 
 function readDoc(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-/** Every id in `node`'s own subtree, via `children` only. */
-function collectIds(node, into = new Set()) {
-  if (node && typeof node === 'object' && typeof node.id === 'string') into.add(node.id);
-  for (const child of node?.children ?? []) collectIds(child, into);
-  return into;
-}
-
-/** `node`'s own subtree, via `children` only (matches collectIds's reach). */
+/** `node`'s own subtree, via `children` only. */
 function findMaster(node, id) {
+  if (typeof id !== 'string' || !id) return null;
   if (node && typeof node === 'object') {
     if (node.id === id) return node;
     for (const child of node.children ?? []) {
@@ -73,29 +66,43 @@ function findMaster(node, id) {
   return null;
 }
 
+/** Pen paths cross component instances, never arbitrary adjacent nodes. */
+function resolvesImportedPath(document, alias, id, scope = document) {
+  const segments = id.split('/');
+  if (segments.slice(1).some(part => !part.startsWith(`${alias}:`))) return false;
+  const parts = segments.map(part => part.startsWith(`${alias}:`) ? part.slice(alias.length + 1) : part);
+  if (parts.some(part => !part || part.includes(':'))) return false;
+  const activeMasters = new Set(scope.id ? [scope.id] : []);
+  const targetOf = instance => {
+    let master = instance;
+    while (master?.type === 'ref') {
+      master = findMaster(document, master.ref);
+      if (!master || activeMasters.has(master.id)) return null;
+      activeMasters.add(master.id);
+    }
+    return master;
+  };
+  let node = findMaster(targetOf(scope), parts[0]);
+  for (const part of parts.slice(1)) {
+    if (node?.type !== 'ref') return false;
+    const master = targetOf(node);
+    if (!master) return false;
+    node = findMaster(master, part);
+  }
+  if (node?.type === 'ref' && (!findMaster(document, node.ref) || activeMasters.has(node.ref))) return false;
+  return node !== null;
+}
+
 /**
  * Every `$--token` fill/stroke `masterId` carries in `importedDocument`: its
- * own top-level property names, and each descendant id's property names (any
- * depth, via `children` only - a nested same-library `ref`'s own internal
- * `descendants` map is not walked into, matching pen-screens.mjs's
- * themedOverrides()).
+ * own top-level properties and effective descendant colors across nested
+ * component instances, using the same walk as the owning screen generator.
  */
 function colorRequirements(importedDocument, masterId) {
   const master = findMaster({children: importedDocument.children}, masterId);
   if (!master) return null;
-  const top = new Set();
-  for (const prop of THEMED_PROPS) if (LOCAL_VARIABLE.test(master[prop])) top.add(prop);
-  const descendants = new Map();
-  (function walk(node) {
-    if (!node || typeof node !== 'object') return;
-    if (node.id !== masterId) {
-      const props = new Set();
-      for (const prop of THEMED_PROPS) if (LOCAL_VARIABLE.test(node[prop])) props.add(prop);
-      if (props.size) descendants.set(node.id, props);
-    }
-    for (const child of node.children ?? []) walk(child);
-  })(master);
-  return {top, descendants};
+  const colors = themedOverrides(masterId, importedDocument);
+  return {top: new Set(Object.keys(colors.top)), descendants: new Map(Object.entries(colors.descendants).map(([id, props]) => [id, new Set(Object.keys(props))]))};
 }
 
 /** Every `ref` node anywhere under `document`, with its alias and target master id (aliased refs only). */
@@ -114,16 +121,19 @@ function collectAliasedRefs(document, into = []) {
 /**
  * True if `value` is a local (non-aliased) override: any non-empty string that
  * is not `$alias:token`, or an image paint, which replaces the master's color
- * with artwork that looks the same in either theme (a provider mark).
+ * with artwork that looks the same in either theme (a provider mark), or an
+ * explicit empty paint list that clears the color in both themes.
  */
 function isLocalOverride(value) {
+  if (Array.isArray(value) && value.length === 0) return true;
   if (value && typeof value === 'object' && value.type === 'image' && typeof value.url === 'string' && value.url.length > 0) return true;
   return typeof value === 'string' && value.length > 0 && !ALIASED.test(value);
 }
 
 /** The descendant-override entry for `id` in a ref's `descendants` map, keyed bare or alias-prefixed. */
-function descendantEntry(descendants, id) {
+function descendantEntry(descendants, id, alias) {
   if (!descendants) return undefined;
+  if (id.includes('/')) return descendants[id.split('/').map(part => `${alias}:${part}`).join('/')];
   if (descendants[id]) return descendants[id];
   for (const [key, value] of Object.entries(descendants)) if (key === id || key.endsWith(`:${id}`)) return value;
   return undefined;
@@ -207,7 +217,7 @@ export function check(document, file) {
   }
 
   const imports = document.imports ?? {};
-  const importedIds = new Map();
+  const importedDocs = new Map();
   const unresolved = [];
   for (const reference of refs.aliased) {
     const colon = reference.indexOf(':');
@@ -216,17 +226,14 @@ export function check(document, file) {
     const importPath = imports[alias];
     if (importPath === undefined) { unresolved.push(`${reference} (no "${alias}" entry in imports)`); continue; }
     if (typeof importPath !== 'string') continue; // an import that is not a path (e.g. the transplant test's {status:'ok'} fixture) is out of scope here
-    if (!importedIds.has(alias)) {
+    if (!importedDocs.has(alias)) {
       const importedFile = path.resolve(root, importPath);
-      importedIds.set(alias, fs.existsSync(importedFile) ? collectIds(readDoc(importedFile)) : new Set());
+      importedDocs.set(alias, fs.existsSync(importedFile) ? readDoc(importedFile) : null);
     }
-    if (!importedIds.get(alias).has(id)) unresolved.push(`${reference} (no node "${id}" in ${importPath})`);
-  }
-  if (unresolved.length) {
-    failures.push(`${unresolved.length} ref(s) or descendant override(s) do not resolve against the imported library:\n` + unresolved.map(line => `    ${line}`).join('\n'));
+    const importedDocument = importedDocs.get(alias);
+    if (!importedDocument || !resolvesImportedPath(importedDocument, alias, id)) unresolved.push(`${reference} (no node "${id}" in ${importPath})`);
   }
 
-  const importedDocs = new Map();
   const unrestated = [];
   for (const {node, alias, masterId} of collectAliasedRefs(document)) {
     const importPath = imports[alias];
@@ -235,18 +242,31 @@ export function check(document, file) {
     if (!importedDocs.has(alias)) importedDocs.set(alias, fs.existsSync(importedFile) ? readDoc(importedFile) : null);
     const importedDocument = importedDocs.get(alias);
     if (!importedDocument) continue; // missing import already reported above
-    const requirements = colorRequirements(importedDocument, masterId);
+    const master = findMaster(importedDocument, masterId);
+    for (const key of Object.keys(node.descendants ?? {})) {
+      if (!master) continue;
+      const id = key.startsWith(`${alias}:`) ? key.slice(alias.length + 1) : key;
+      if (!key.startsWith(`${alias}:`) || (key.includes('/') && !resolvesImportedPath(importedDocument, alias, id, master))) {
+        unresolved.push(`${key} (not a component-instance path under ${node.ref})`);
+      }
+    }
+    let requirements;
+    try { requirements = colorRequirements(importedDocument, masterId); }
+    catch (error) { unresolved.push(`${node.id} (${node.ref}): ${error.message}`); continue; }
     if (!requirements) continue; // unresolved master id already reported above
 
     for (const prop of requirements.top) {
       if (!isLocalOverride(node[prop])) unrestated.push(`${node.id} (${node.ref}) does not restate its ${prop} (still ${JSON.stringify(node[prop] ?? null)})`);
     }
     for (const [descendantId, props] of requirements.descendants) {
-      const entry = descendantEntry(node.descendants, descendantId);
+      const entry = descendantEntry(node.descendants, descendantId, alias);
       for (const prop of props) {
         if (!isLocalOverride(entry?.[prop])) unrestated.push(`${node.id} (${node.ref})'s descendant ${descendantId} does not restate its ${prop} (still ${JSON.stringify(entry?.[prop] ?? null)})`);
       }
     }
+  }
+  if (unresolved.length) {
+    failures.push(`${unresolved.length} ref(s) or descendant override(s) do not resolve against the imported library:\n` + unresolved.map(line => `    ${line}`).join('\n'));
   }
   if (unrestated.length) {
     failures.push(`${unrestated.length} cross-library color(s) left un-restated, which freezes them at the library's own Light value in every theme:\n` + unrestated.map(line => `    ${line}`).join('\n'));

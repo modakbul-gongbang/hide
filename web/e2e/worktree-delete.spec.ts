@@ -4,20 +4,242 @@
 // the row is dimmed with a spinner while it goes, then the folder and its
 // unmerged branch go and the row leaves the sidebar.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { screenshot } from "./wire";
+import { countSent, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
 const BRANCH = "feature/delete";
 
+async function deletionFixture(herdr: HerdrFixture) {
+  const repo = path.join(herdr.root, "preflight-repo");
+  fs.mkdirSync(repo);
+  git(repo, ["init", "-q"]);
+  fs.writeFileSync(path.join(repo, ".gitignore"), "target/\nnode_modules/\n");
+  git(repo, ["add", ".gitignore"]);
+  git(repo, ["commit", "-qm", "initial"]);
+  git(repo, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+  const worktree = path.join(herdr.root, "preflight-linked");
+  git(repo, ["worktree", "add", "-qb", BRANCH, worktree]);
+  const created = herdr.run(["workspace", "create", "--cwd", worktree, "--label", "preflight-linked", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { root_pane: { pane_id: string } } };
+  return { repo, worktree, pane: created.result.root_pane.pane_id };
+}
+
+async function openDeletion(page: Page, daemon: Daemon) {
+  await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+  await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+  await page.locator('[data-sidebar-mode="projects"]').click();
+  const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
+  await expect(feature).toBeVisible({ timeout: 30_000 });
+  await feature.locator("[data-checkout-menu]").click({ button: "right" });
+  await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
+  return page.locator("[data-delete-worktree]");
+}
+
+test("a lock acquired after the dialog read refuses before closing the pane and names the reason and unlock action", { tag: "@platform" }, async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const fixture = await deletionFixture(herdr);
+    const reason = "검토 끝날 때까지 보관 $(literal)";
+    // Preserve the ordinary browser confirmation, then change Git at the
+    // transport boundary before the request reaches the real core.
+    await page.routeWebSocket(/\/ws$/, (socket) => {
+      const server = socket.connectToServer();
+      socket.onMessage((message) => {
+        if (typeof message === "string" && message.includes('"kind":"remove_worktree"')) git(fixture.repo, ["worktree", "lock", "--reason", reason, fixture.worktree]);
+        server.send(message);
+      });
+      server.onMessage((message) => socket.send(message));
+    });
+    daemon = await startHided(herdr, "worktree-locked-preflight");
+    const dialog = await openDeletion(page, daemon);
+    const confirm = dialog.locator("[data-delete-confirm]");
+    await expect(confirm).toBeEnabled({ timeout: 30_000 });
+    await confirm.click();
+    await expect(dialog.locator('[data-delete-result="failed"]')).toContainText(reason);
+    await expect(dialog).toContainText(`Worktree ${BRANCH} is locked`);
+    await expect(dialog).toContainText("git worktree unlock");
+    await expect(dialog).toContainText("No panes were closed");
+    const pane = herdr.run(["pane", "get", fixture.pane]) as { result: { pane: { pane_id: string } } };
+    expect(pane.result.pane.pane_id).toBe(fixture.pane);
+    expect(fs.existsSync(fixture.worktree)).toBe(true);
+    const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (evidence) await dialog.screenshot({ path: path.join(evidence, "worktree-locked-preflight.png") });
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("Discard names each ignored nested repository and deletes them only after explicit confirmation", { tag: "@platform" }, async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const fixture = await deletionFixture(herdr);
+    const names = ["node_modules/vendor/beta", "target/deep/alpha"];
+    for (const name of names) {
+      const nested = path.join(fixture.worktree, name);
+      fs.mkdirSync(nested, { recursive: true });
+      git(nested, ["init", "-q"]);
+    }
+    daemon = await startHided(herdr, "worktree-ignored-preflight");
+    const dialog = await openDeletion(page, daemon);
+    const discard = dialog.locator("label").filter({ has: page.locator("[data-delete-discard]") });
+    for (const name of names) await expect(discard).toContainText(name, { timeout: 30_000 });
+    const confirm = dialog.locator("[data-delete-confirm]");
+    await expect(confirm).toBeDisabled();
+    expect(fs.existsSync(fixture.worktree)).toBe(true);
+    const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (evidence) await dialog.screenshot({ path: path.join(evidence, "worktree-ignored-repositories.png") });
+    await dialog.locator("[data-delete-discard]").click();
+    await confirm.click();
+    await expect(dialog.locator('[data-delete-result="finished"]')).toBeVisible({ timeout: 60_000 });
+    expect(fs.existsSync(fixture.worktree)).toBe(false);
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("an open deletion dialog receives refreshed Git facts and retires Discard through an A-to-B-to-A return", { tag: "@platform" }, async ({ page }) => {
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    const fixture = await deletionFixture(herdr);
+    const names = ["node_modules/vendor/beta", "target/deep/alpha"];
+    for (const name of names) {
+      const nested = path.join(fixture.worktree, name);
+      fs.mkdirSync(nested, { recursive: true });
+      git(nested, ["init", "-q"]);
+    }
+    const payloads = new Map<string, Record<string, unknown>>();
+    const sent = countSent(page, payloads);
+    await page.addInitScript(() => {
+      const observed = window as Window & {
+        __preflightRendererSocket?: WebSocket;
+        __preflightRestoreSend?: () => void;
+      };
+      const nativeSend = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (data) {
+        if (typeof data === "string") {
+          try {
+            if (JSON.parse(data).client_kind === "web" && new URL(this.url).pathname === "/ws") observed.__preflightRendererSocket = this;
+          } catch { /* terminal bytes are not a handshake */ }
+        }
+        return nativeSend.call(this, data);
+      };
+      observed.__preflightRestoreSend = () => { WebSocket.prototype.send = nativeSend; };
+    });
+    const loading: boolean[] = [];
+    let rendererConnections = 0;
+    let owningConnections = 0;
+    let rendererClosed = false;
+    page.on("websocket", (socket) => {
+      if (new URL(socket.url()).pathname === "/ws") owningConnections += 1;
+      let renderer = false;
+      socket.on("close", () => { if (renderer) rendererClosed = true; });
+      socket.on("framesent", (frame) => {
+        try {
+          const value = JSON.parse(String(frame.payload)) as { client_kind?: string };
+          if (value.client_kind === "web") { renderer = true; rendererConnections += 1; }
+        } catch { /* terminal bytes are not a handshake */ }
+      });
+      socket.on("framereceived", (frame) => {
+        if (!renderer) return;
+        try {
+          const value = JSON.parse(String(frame.payload)) as { payload?: { rest?: { git_worktrees_loading?: boolean } } };
+          const next = value.payload?.rest?.git_worktrees_loading;
+          if (typeof next === "boolean" && loading.at(-1) !== next) loading.push(next);
+        } catch { /* terminal bytes are not a snapshot */ }
+      });
+    });
+    daemon = await startHided(herdr, "worktree-refreshed-consent");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
+    const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
+    await expect(feature).toBeVisible({ timeout: 30_000 });
+    await feature.locator("[data-checkout-menu]").click({ button: "right" });
+    await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
+    const dialog = page.locator("[data-delete-worktree]");
+    const workspaceId = await project.getAttribute("data-project");
+    expect(workspaceId).toBeTruthy();
+    const refresh = () => page.evaluate((workspace_id) => {
+      const socket = (window as Window & { __preflightRendererSocket?: WebSocket }).__preflightRendererSocket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("Existing renderer socket is unavailable");
+      socket.send(JSON.stringify({ schema_version: 2, kind: "overview_refresh", payload: { workspace_id } }));
+    }, workspaceId);
+    const discard = dialog.locator("[data-delete-discard]");
+    const confirm = dialog.locator("[data-delete-confirm]");
+    for (const name of names) await expect(dialog).toContainText(name);
+    await discard.click();
+    await expect(confirm).toBeEnabled();
+    const beforeEvents = new Map(sent);
+
+    const reason = "검토 끝날 때까지 보관 $(literal)";
+    git(fixture.repo, ["worktree", "lock", "--reason", reason, fixture.worktree]);
+    await refresh();
+    await expect(dialog.locator("[data-delete-blocked]")).toContainText(reason, { timeout: 15_000 });
+    await expect(confirm).toHaveCount(0);
+    git(fixture.repo, ["worktree", "unlock", fixture.worktree]);
+    await refresh();
+    await expect(dialog.locator("[data-delete-blocked]")).toHaveCount(0, { timeout: 15_000 });
+    await expect(discard).not.toBeChecked();
+    await expect(confirm).toBeDisabled();
+    await expect.poll(() => loading.slice(-2), { timeout: 15_000 }).toEqual([true, false]);
+    await discard.click();
+
+    const late = path.join(fixture.worktree, "target/late");
+    fs.mkdirSync(late);
+    git(late, ["init", "-q"]);
+    await refresh();
+    // Keep the original page, socket and dialog. A reconnect would conceal
+    // a missing publication because its first snapshot is already current.
+    await expect(dialog).toContainText("target/late", { timeout: 15_000 });
+    await expect(discard).not.toBeChecked();
+    await expect(confirm).toBeDisabled();
+    // A refresh with unchanged facts still completes its loading transition.
+    const beforeRefresh = loading.length;
+    await refresh();
+    await expect.poll(() => loading.slice(beforeRefresh), { timeout: 15_000 }).toEqual([true, false]);
+    expect(rendererConnections).toBe(1);
+    fs.rmSync(late, { recursive: true });
+    await refresh();
+    await expect(dialog).not.toContainText("target/late", { timeout: 15_000 });
+    await expect(discard).not.toBeChecked();
+    await expect(confirm).toBeDisabled();
+    expect(rendererConnections).toBe(1);
+    expect(owningConnections).toBe(1);
+    expect(rendererClosed).toBe(false);
+    for (const [kind, count] of sent) {
+      if (kind !== "overview_refresh") expect(count, `Unexpected client event ${kind} during refresh`).toBe(beforeEvents.get(kind) ?? 0);
+    }
+    const pane = herdr.run(["pane", "get", fixture.pane]) as { result: { pane: { pane_id: string } } };
+    expect(pane.result.pane.pane_id).toBe(fixture.pane);
+    expect(fs.existsSync(fixture.worktree)).toBe(true);
+
+    await discard.click();
+    await confirm.click();
+    await expect(dialog.locator('[data-delete-result="finished"]')).toBeVisible({ timeout: 60_000 });
+    expect(payloads.get("remove_worktree")?.discard_changes).toBe(true);
+    expect(payloads.get("remove_worktree")?.expected_ignored_repositories).toEqual(names);
+    expect(rendererConnections).toBe(1);
+    expect(owningConnections).toBe(1);
+    expect(rendererClosed).toBe(false);
+    expect(fs.existsSync(fixture.worktree)).toBe(false);
+  } finally {
+    if (!page.isClosed()) await page.evaluate(() => {
+      (window as Window & { __preflightRestoreSend?: () => void }).__preflightRestoreSend?.();
+    }).catch(() => { /* the renderer may already have closed */ });
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
+  return execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
 }
 
 async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {

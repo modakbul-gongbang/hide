@@ -58,6 +58,7 @@ pub struct ForkRequest {
     /// The agent name Herdr will list the fork under, unique per fork and
     /// already inside Herdr's name rule (`fork_name`).
     pub name: String,
+    pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
 /// Herdr's own rule for an agent name, quoted from the error it answers with:
@@ -158,6 +159,7 @@ mod tests {
 
     fn request(agent: ForkableAgent) -> ForkRequest {
         ForkRequest {
+            codex_daemon: Default::default(),
             parent_pane_id: "w1:p2".to_owned(),
             agent,
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),

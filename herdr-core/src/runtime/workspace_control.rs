@@ -90,7 +90,6 @@ impl Runtime {
                 request_id: format!("{request_id}-reveal"),
                 report_pane_focus_outcome: false,
                 focus_device: true,
-                in_place: false,
                 request: super::RemoteControlRequest::FocusWorkspace {
                     workspace_id: context.workspace_id.clone(),
                     checkout_id: Some(context.checkout_id.clone()),

@@ -18,15 +18,15 @@
 // device's own install would be.
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { herdrBinary } from "../../web/e2e/herdr-fixture";
 import { HIDE_CLI, REPO } from "./fixture";
+import { bootoutTestLabel } from "./launchd";
+export { bootoutTestLabel, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL } from "./launchd";
 
 const MARKER = ".hide-e2e-device-home";
-export const OPERATOR_HCOORD_LABEL = "com.hcoord.daemon";
 
 /** The private HOME the isolated sshd gives its sessions, refused unless it is declared a test HOME. */
 export function deviceHome(): string {
@@ -81,24 +81,6 @@ export function proveDeviceHome(localEnv: Record<string, string>, alias: string,
   return hcoordHome;
 }
 
-/** hcoord's LaunchAgent label for an HCOORD_HOME, by hcoord's own rule. */
-export function hcoordLabel(hcoordHome: string): string {
-  return `com.hcoord.daemon.${createHash("sha256").update(path.resolve(hcoordHome)).digest("hex").slice(0, 12)}`;
-}
-
-/** The pid launchd reports for a label in this account's GUI domain, `loaded` without one, null when not loaded; it only reads. */
-export function launchdPid(label: string): string | null {
-  const printed = spawnSync("launchctl", ["print", `gui/${os.userInfo().uid}/${label}`], { encoding: "utf8", timeout: 10_000 });
-  if (printed.status !== 0) return null;
-  return printed.stdout.match(/^\s*pid = (\d+)/m)?.[1] ?? "loaded";
-}
-
-/** Unloads the test's own hcoord daemon; the operator's label is never passed here. */
-export function bootoutTestLabel(label: string): void {
-  if (label === OPERATOR_HCOORD_LABEL || !label.startsWith(`${OPERATOR_HCOORD_LABEL}.`)) throw new Error(`${label} is not a test hcoord label`);
-  spawnSync("launchctl", ["bootout", `gui/${os.userInfo().uid}/${label}`], { encoding: "utf8", timeout: 15_000 });
-}
-
 export type AgentSettings = { hooks: Record<string, { hooks: { type: string; command: string; timeout?: number }[] }[]>; [key: string]: unknown };
 
 export const claudeSettings = (home: string) => path.join(home, ".claude", "settings.json");
@@ -128,7 +110,32 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   }
+  seedCodex(home);
   return { claude, codex };
+}
+
+/**
+ * A `codex` in the account's `~/.local/bin` that has the shared daemon and
+ * answers `codex features` the way Codex 0.160 does, so the kit's
+ * `codex_per_pane` part is applied on a runner without Codex. A machine whose
+ * PATH has a real Codex runs that one instead, against this HOME's `.codex`.
+ */
+function seedCodex(home: string): void {
+  const bin = path.join(home, ".local", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const script = [
+    "#!/bin/sh",
+    'state="${CODEX_HOME:-$HOME/.codex}/fake-daemon"',
+    'case "$1 $2" in',
+    "  '--version ') echo 'codex-cli 0.160.0' ;;",
+    "  'features list') echo \"daemon_auto_start    stable  $(cat \"$state\" 2>/dev/null || echo true)\" ;;",
+    "  'features disable') echo false > \"$state\" ;;",
+    "  'features enable') echo true > \"$state\" ;;",
+    "  *) exit 1 ;;",
+    "esac",
+    "",
+  ].join("\n");
+  fs.writeFileSync(path.join(bin, "codex"), script, { mode: 0o755 });
 }
 
 /**

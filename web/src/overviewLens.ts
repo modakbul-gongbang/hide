@@ -66,7 +66,7 @@ export function scopeAgents(projects: readonly BoardProject[]): LensAgent[] {
 /** One stretch of a tile's bar, with the name and count its legend reads. */
 export type TileSegment = { key: string; label: string; count: number };
 
-export type TileId = "agents" | "issues" | "prs" | "sessions";
+export type TileId = "requests" | "agents" | "issues" | "prs" | "sessions";
 
 /**
  * A lens tile (D-02): its name, the big number and its unit, the yellow
@@ -79,7 +79,8 @@ export type Tile = {
   label: string;
   value: number | null;
   unit: string | null;
-  badge: { count: number; parts: TileSegment[] } | null;
+  /** `label` names what the badge counts; the operator's turn when absent. */
+  badge: { count: number; parts: TileSegment[]; label?: string } | null;
   bar: TileSegment[] | null;
   failure: string | null;
 };

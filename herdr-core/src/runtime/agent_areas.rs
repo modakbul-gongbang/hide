@@ -414,7 +414,6 @@ impl Runtime {
                 workspace_id,
                 checkout_id,
                 tab_id,
-                in_place: true,
                 focus_device: false,
             }));
             self.agent_sleep_visit(prior.as_deref());

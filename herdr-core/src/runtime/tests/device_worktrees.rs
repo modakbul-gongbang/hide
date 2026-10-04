@@ -19,6 +19,7 @@ struct Repo {
 
 fn git(cwd: &str, arguments: &[&str]) -> String {
     let output = std::process::Command::new("git")
+        .args(["-c", "commit.gpgsign=false"])
         .arg("-C")
         .arg(cwd)
         .args(arguments)
@@ -74,6 +75,13 @@ fn repo() -> Repo {
 /// A runtime connected to one device whose session holds the repository,
 /// with that device's worktree facts already read through its helper.
 fn device_runtime(repo: &Repo) -> Arc<Mutex<Runtime>> {
+    device_runtime_with_host(repo, FakeDevice::new())
+}
+
+fn device_runtime_with_host(
+    repo: &Repo,
+    host: Arc<dyn crate::host_access::HostChannel>,
+) -> Arc<Mutex<Runtime>> {
     let mut runtime = runtime();
     let workspace_id = format!("remote:{DEVICE}:workspace:w1");
     let checkout_id = format!("remote:{DEVICE}:checkout:w1");
@@ -109,7 +117,7 @@ fn device_runtime(repo: &Repo) -> Arc<Mutex<Runtime>> {
         DEVICE.to_owned(),
         hosts::DeviceHost {
             phase: hosts::HostPhase::Ready {
-                host: FakeDevice::new(),
+                host,
                 platform: "macos aarch64".to_owned(),
                 helper_path: "/fake/hide-host-helper".to_owned(),
             },
@@ -164,6 +172,112 @@ fn last_error(shared: &Arc<Mutex<Runtime>>) -> Option<String> {
         .map(|error| error.kind.clone())
 }
 
+struct UnsupportedPreflight(Arc<FakeDevice>);
+
+impl crate::host_access::HostChannel for UnsupportedPreflight {
+    fn call(
+        &self,
+        call: hide_host::protocol::Call,
+        timeout: Duration,
+    ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
+        if matches!(call, hide_host::protocol::Call::WorktreeRemovalCheck { .. }) {
+            return Err(crate::host_access::HostCallError::Refused(
+                hide_host::HostError::new(
+                    hide_host::ErrorCode::InvalidRequest,
+                    "Unsupported worktree preflight. Reconnect to update the device helper"
+                        .to_owned(),
+                ),
+            ));
+        }
+        crate::host_access::HostChannel::call(self.0.as_ref(), call, timeout)
+    }
+}
+
+#[test]
+fn an_unsupported_device_preflight_never_falls_back_to_removal() {
+    let repo = repo();
+    let shared = device_runtime_with_host(&repo, Arc::new(UnsupportedPreflight(FakeDevice::new())));
+    dispatch(
+        &shared,
+        "remove_worktree",
+        serde_json::json!({
+            "device_id": DEVICE, "checkout_path": repo.linked,
+            "close_descendant_pane_ids": [format!("remote:{DEVICE}:pane:w1:p99")]
+        }),
+    );
+    wait(&shared, "unsupported preflight refusal", |runtime| {
+        runtime
+            .snapshot
+            .worktree_removal
+            .as_ref()
+            .is_some_and(|row| row.phase == "failed")
+    });
+    let runtime = shared.lock().unwrap();
+    let message = runtime
+        .snapshot
+        .worktree_removal
+        .as_ref()
+        .unwrap()
+        .message
+        .as_deref()
+        .unwrap();
+    assert!(
+        message.contains("Reconnect to update the device helper"),
+        "{message}"
+    );
+    assert!(message.contains("No panes were closed"), "{message}");
+    assert!(Path::new(&repo.linked).exists());
+    assert!(runtime.tree_closes.is_empty());
+}
+
+#[test]
+fn a_new_device_lock_refuses_before_even_the_outside_descendant_close_sequence() {
+    let repo = repo();
+    let shared = device_runtime(&repo);
+    // The catalog was read unlocked; only the authoritative host knows this.
+    git(
+        &repo.root,
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            "release review",
+            &repo.linked,
+        ],
+    );
+    dispatch(
+        &shared,
+        "remove_worktree",
+        serde_json::json!({
+            "device_id": DEVICE, "checkout_path": repo.linked,
+            "close_descendant_pane_ids": [format!("remote:{DEVICE}:pane:w1:p99")]
+        }),
+    );
+    wait(&shared, "preflight refusal", |runtime| {
+        runtime
+            .snapshot
+            .worktree_removal
+            .as_ref()
+            .is_some_and(|row| row.phase == "failed")
+    });
+    let runtime = shared.lock().unwrap();
+    let message = runtime
+        .snapshot
+        .worktree_removal
+        .as_ref()
+        .unwrap()
+        .message
+        .as_deref()
+        .unwrap();
+    assert!(
+        message.contains("Worktree feature is locked: release review"),
+        "{message}"
+    );
+    assert!(message.contains("No panes were closed"), "{message}");
+    assert!(Path::new(&repo.linked).exists());
+    assert!(runtime.tree_closes.is_empty());
+}
+
 /// B27, B29: this machine lists the same path with a gate that refuses it;
 /// the device's deletion is decided on the device's facts, runs on its
 /// helper, deletes the merged branch there, and its receipt names it.
@@ -201,7 +315,7 @@ fn a_device_worktree_is_deleted_by_its_helper_whatever_this_machine_lists_at_tha
             .snapshot
             .worktree_removal
             .as_ref()
-            .is_some_and(|removal| removal.phase != "closing" && removal.phase != "removing")
+            .is_some_and(|removal| matches!(removal.phase.as_str(), "finished" | "failed"))
     });
     let removal = shared
         .lock()
@@ -285,7 +399,7 @@ fn a_dirty_device_worktree_is_deleted_only_once_the_operator_accepts_the_loss() 
             .snapshot
             .worktree_removal
             .as_ref()
-            .is_some_and(|removal| removal.phase != "closing" && removal.phase != "removing")
+            .is_some_and(|removal| matches!(removal.phase.as_str(), "finished" | "failed"))
     });
     let removal = shared
         .lock()

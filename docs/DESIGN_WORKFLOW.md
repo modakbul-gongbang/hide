@@ -39,6 +39,8 @@ Every name, path and count in a scene is invented example data, so a capture of 
    The command prints the scratch path (`agents/runs/<task-slug>/design/scratch.pen`) and the exact edit command.
 2. **Edit.** Use an independent Pen CLI headless session per file: `pen interactive --in <scratch-path> --out <scratch-path>`.
    Never use the shared desktop MCP or `--app desktop` for agent editing; an explicit MCP `filePath` did not reliably isolate the active desktop document in verification.
+   `scripts/pen-cli.mjs` pins Pen CLI 0.3.10 to support SDK-authored library documents and `contain` image fitting.
+   Changing that pin requires actual import, rendering, and reopen proof with the new version.
    Inside the CLI, read `read_skill()` and its schema/execute guides, then confirm `get_app_state()` and `list_libraries()` before editing.
    `list_libraries()` returns each imported library's ID; reference a component as `<id>:<component-id>` and a variable as `$<id>:--token-name`, discovering the ID fresh in each scratch rather than reusing another task's alias.
    Only one writer edits a shared library document at a time.
@@ -54,8 +56,10 @@ Every name, path and count in a scene is invented example data, so a capture of 
    - A cross-library `ref`'s own internal `$--token` fills and strokes resolve to the imported library's own default (Light) value, regardless of any `theme: {Mode: 'Dark'}` tag anywhere in the importing document.
      A bare local `$--token` on a node the importing document authors itself, and an explicit property override placed at the ref site using the importing document's own local `$--token`, both resolve correctly per theme.
      A descendant-override key on a cross-library ref also needs the alias prefix (`hideui:btn-lb`, not `btn-lb`), not only the ref's own target.
-     `design/hide-screens.pen` carries its own local copy of every token, read live through `pen-tokens.mjs`, and `scripts/pen-screens.mjs`'s `themedOverrides()` restates a ref's colors by walking the ref's actual master in `design/hide-ui.lib.pen` and copying every `$--token` name it finds, at any depth, into a local override of the same name; a hand-typed color recipe is only for a real per-variant design decision (Button and Badge import `BUTTON_VARIANTS`/`BADGE_VARIANTS` from `pen-system.mjs` for exactly that reason), never for a master's own default.
+     `design/hide-screens.pen` carries its own local copy of every token, read live through `pen-tokens.mjs`, and `scripts/pen-screens.mjs`'s `themedOverrides()` restates a ref's effective colors by walking its actual master, nested component targets, and inherited instance patches in `design/hide-ui.lib.pen` and copying every `$--token` name it finds into a local override of the same name; a hand-typed color recipe is only for a real per-variant design decision (Button and Badge import `BUTTON_VARIANTS`/`BADGE_VARIANTS` from `pen-system.mjs` for exactly that reason), never for a master's own default.
      `scripts/check-hide-screens.mjs` refuses a ref or a descendant-override key whose colorable properties are not restated this way.
+     Nested override paths cross each referenced component instance, with an alias prefix on every imported segment; the checker resolves those paths within the owning master and rejects missing targets, active master cycles, and unrelated nodes.
+     An explicit empty paint list (`[]`) clears the imported color in both themes and counts as a local override; an absent property still fails the check.
 4. **Human approval.** Show alternatives in the task's scratch document, let the user choose and revise them, and get approval before implementing.
    Record the approved behavior and any proposed system addition in the PRD so the decision survives scratch cleanup; a scratch is not a merge deliverable.
    Keep the chosen design as a reference bundle (see Reference bundle and review run below) before anything else edits it, marked `user` when the operator chose it and `delegated` when it is a proposal made under delegated authority.
@@ -114,6 +118,7 @@ The exit status is 0 for PASS, 1 for FAIL (the static contract or a rule failed)
 An INCOMPLETE report names the cause and the command to rerun on a machine that can render; it is never read as a pass.
 A PASS covers only the rules; the comparisons and the report's judgment list are for a person.
 The run owns its dev server, browser and Pen session and closes them on every exit, including an interrupt at any step, which ends the whole run; a process it cannot close is reported, and it touches no other app, pane or server.
+Cancellation joins the pending Pen command before the review exits; its guard reaps the CLI before ending the remaining owned process group, with a five-second cleanup cap.
 
 Only the selected conditions are measured, so a change names what it touched (`--theme dark --width 240 --content long`), and a bundle frame is always captured under its own conditions so its comparison exists.
 
@@ -140,15 +145,18 @@ Each sheet carries a `Light` and a `Dark` frame and uses realistic content, incl
 Because the file is generated and several megabytes of JSON, `.gitattributes` marks it `-diff linguist-generated=true`: `git diff` reports only that it changed and GitHub folds it in a pull request, so review reads `scripts/pen-screens.mjs`; `git diff --text` still shows its lines when they are needed.
 
 The Overview of every project is `Screen / Main`, named after its web file and screen kind.
-It draws the agent and project sidebar beside the Overview, the sidebar's Home row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents, whose view is the Project Overview's graph over every project.
+It draws the agent and project sidebar beside the Overview, the sidebar's Home row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `요청 · Tasks · Agents · Projects` tabs with the count to answer on 요청 and the waiting count on Agents, whose view is the Project Overview's graph over every project.
+Its first frame is 요청 as every way in opens it, the Project Overview's request view over every project with each row's project beside its title.
 Its Tasks board holds every project's issues in `백로그 · 진행 중 · 리뷰 · 완료`, each card an issue with its project beside its id, `시작` on a backlog card under the pointer, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count.
 Below it, the Dependencies mode draws an arrow that crosses projects, with the blocker named by its repository on the lock line.
 The sidebar there is the one-device window's: the device rail with This Mac alone, and the sidebar's top line over the `Projects | Agents` strip with the Home row in the list.
-Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
+Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/RequestView.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
 
 Project Overview is `Screen / Project Overview`.
-Each frame carries its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line of worktrees, disk, behind and merged with the view's control at its right end (the filter on Agents: the status chips `내 차례 · 일하는 중 · 쉬는 중` and a search field, no device control while one device is in view), and the tiles `Agents · Issues · PRs · Sessions`, the chosen one outlined.
-Its first frame is Agents as every entry opens it: a box per checkout with its head (glyph and branch, purpose, issue and PR chips, `↑N ↓N`, files), main's box first with a box selected, delegation lines between boxes coloured by the child's state, the operator's turn as a row with its question in warning, a merged box dimmed with `정리`, a row with a tucked badge, and the fold lines.
+Each frame carries its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line of worktrees, disk, behind and merged with the view's control at its right end (the filter on Agents: the status chips `내 차례 · 일하는 중 · 쉬는 중` and a search field, no device control while one device is in view), and the tiles `요청 · Agents · Issues · PRs · Sessions`, the chosen one outlined.
+Its first frame is 요청 as every entry opens it (PRD overview-request-view): the groups in their order with 쉬는 중 folded, a row to answer with its question in warning, a failing pull request, one to review, a finished row expanded (the request as written, the agent's last words, 패널 열기), a working row whose long request is cut front and end with `이후 ci-lead`, and a parent waiting on its children expanded to its pull requests and descendants; beside it the view with no agent and the view with nothing to do.
+The request row is drawn on local tokens and library refs in this sheet, not as a `Component /` master, because it is one screen's part (`web/src/RequestView.tsx`) rather than a composite under `web/src/components`.
+Its Agents frame is the graph: a box per checkout with its head (glyph and branch, purpose, issue and PR chips, `↑N ↓N`, files), main's box first with a box selected, delegation lines between boxes coloured by the child's state, the operator's turn as a row with its question in warning, a merged box dimmed with `정리`, a row with a tucked badge, and the fold lines.
 The graph's sizes are the `--graph-*` tokens in `design/tokens.json`, and the layout reads them at run time, so a frame draws a box from the tokens and not from numbers of its own.
 The graph is three columns here: main's Observer delegates to a worktree that asks (an orange line) and, through an Implementor that waits on a reviewer (a pale blue line), to a worktree that works (a blue line with still dashes, since a Pen path has no dash animation); below it sit the line colours in words and the three fold lines `에이전트 없는 워크트리 N · 정리할 것 N · 쉬는 체크아웃 N`.
 Below the graph the box states stand side by side (the primary box, a worktree with its issue and PR chips with CI mark and `변경 요청`, a merged box dimmed with `정리`, an asking row with its question line, a row with a tucked badge, the selected box), then the filter that matches nothing: a header with `내 차례` lit and a search typed, and the one line `필터에 맞는 에이전트가 없습니다` with `필터 해제`.
@@ -157,12 +165,16 @@ Beside them are Issues › Board (PRD overview-lenses-issues), the facts line ca
 The issue panel frames stand beside the board in the width it leaves: a GitHub issue in progress (properties, 이 이슈로 한 일, the Markdown body and comments), a Local issue, a Local issue edited in place, and a GitHub issue whose read failed with `재시도`.
 The PRs frames (PRD overview-lenses-prs) are PRs with its groups, a row unfolded to its agents and icon buttons, a blocked row under the pointer with `▷ 맡기기` in the time slot and `최근 머지` folded, then 이슈 잇기's confirmation over a row whose empty issue cell has turned into the link icon.
 The issue card and panel, the pull request row and its confirmation are drawn on local tokens and library refs in this sheet, not as `Component /` masters, because each is one screen's part (`web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx`) rather than a composite under `web/src/components`.
-Its web files are `web/src/ProjectOverview.tsx`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/GraphView.tsx`, `web/src/agentGraph.ts`, `web/src/IssuesView.tsx`, `web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx` and `web/src/projectBoard.ts`; a card's agent rows are `web/src/components/agent-row.tsx`.
+Its web files are `web/src/ProjectOverview.tsx`, `web/src/RequestView.tsx`, `web/src/requestList.ts`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/GraphView.tsx`, `web/src/agentGraph.ts`, `web/src/IssuesView.tsx`, `web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx` and `web/src/projectBoard.ts`; a card's agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
-It draws the side panel (`Component / Side panel`) open at the Workspace's full height over the agent column, then the panel closed with two views still open.
-The toolbar spans only the agent column and has no tool toggles; the panel's first row holds each area's tabs and New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; its second row holds the document header and the Explorer and History tool tabs.
-A last frame draws a remote device in front: the toolbar starts with a band in `--device-remote` carrying the server glyph and the device name ahead of the path, and the agent pane is framed in the same color; This Mac in front has neither.
+It draws docked Agent Views, File Views and Tools beneath one full-width toolbar, using the Workspace columns, toolbar, toggle and divider masters in the library.
+The toolbar's right edge carries Open server, File Views and Tools, with independent pressed states, a count when open File Views are hidden, and per-control tooltip and keyboard-focus states.
+The columns start with their own tab strips; File Views carries its document header and Tools carries Explorer and History.
+The reference includes the full layout, both narrow-window fallbacks and explicit column calls, Tools without File Views, saved widths, and the divider at rest, under the pointer, focused and being dragged.
+Light and Dark frames carry Korean text and long paths, including the one-line shortened document path and its full-path tooltip.
+The server-picker comparison retains its distinct reachable endpoints, and the area-focus comparison retains two View areas with one keyboard owner and independently readable selections.
+The remote Workspace keeps the device-colored toolbar band and agent pane frame; This Mac has neither.
 Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, and `web/src/ExplorerTree.tsx`.
 
 Project Sessions is `Screen / Project Sessions`.

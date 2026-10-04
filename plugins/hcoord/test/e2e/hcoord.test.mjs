@@ -58,6 +58,8 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   process.stdout.write(JSON.stringify({result:{outcome:'shown'}}));
 } else {process.stderr.write('unexpected Herdr operation');process.exitCode=9;}
 `, { mode: 0o755 });
+  // A Codex that has the shared daemon, so a Codex spawn passes --no-daemon.
+  fs.writeFileSync(path.join(bin, "codex"), "#!/bin/sh\n[ \"$1 $2\" = 'features list' ] && echo 'daemon_auto_start    stable  false'\n", { mode: 0o755 });
   const env = { ...process.env, HOME: home, HCOORD_HOME: path.join(home, ".hcoord"), PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   delete env.HERDR_SOCKET_PATH;
   delete env.HERDR_BIN_PATH;
@@ -180,7 +182,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(optionedResult.status, 0, optionedResult.stdout);
   assert.equal(JSON.parse(optionedResult.stdout).value.participant.name, "optioned");
   const startArgs = JSON.parse(fs.readFileSync(path.join(home, "optioned.start-args.json"), "utf8"));
-  assert.deepEqual(startArgs.slice(-4), ["-m", "gpt-6-sol", "-c", "model_reasoning_effort=xhigh"]);
+  assert.deepEqual(startArgs.slice(-6), ["--", "--no-daemon", "-m", "gpt-6-sol", "-c", "model_reasoning_effort=xhigh"], "a Codex with the shared daemon starts without it");
   assert.equal(fs.existsSync(path.join(home, "optioned.initialized")), true, "first turn follows Herdr readiness");
   const taskResult = spawnSync(process.execPath, [CLI, "agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "tasked", "--intent", "spawn-tasked", "--json", "--", "-m", "gpt-6-sol", "Return blue"], { env, encoding: "utf8" });
   assert.equal(taskResult.status, 0, taskResult.stdout);

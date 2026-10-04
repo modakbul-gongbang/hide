@@ -2,7 +2,6 @@ use super::workspace_view::{layout as view_event, views_path, with_views};
 use super::*;
 use crate::view_layout::Layout as ViewLayout;
 use crate::workspace_control::{Action, Query, checkout_caller_id};
-use crate::workspace_views::PanelState;
 
 // PRD tab-view-bookmark: the View list, layout and panel are the Workspace's;
 // each Agent tab only remembers, per View area, the display that was in front
@@ -169,25 +168,18 @@ fn agent_act(runtime: &mut Runtime, directory: &Path, mut payload: serde_json::V
 }
 
 /// The operator's tab choice, then Herdr's answer that it took the focus.
-fn focus_tab(
-    runtime: &mut Runtime,
-    checkout_id: &str,
-    directory: &Path,
-    tab_id: &str,
-    in_place: bool,
-) {
-    dispatch_focus_tab(runtime, checkout_id, tab_id, in_place);
+fn focus_tab(runtime: &mut Runtime, checkout_id: &str, directory: &Path, tab_id: &str) {
+    dispatch_focus_tab(runtime, checkout_id, tab_id);
     herdr_focuses(runtime, directory, tab_id);
 }
 
-fn dispatch_focus_tab(runtime: &mut Runtime, checkout_id: &str, tab_id: &str, in_place: bool) {
+fn dispatch_focus_tab(runtime: &mut Runtime, checkout_id: &str, tab_id: &str) {
     runtime.dispatch_json(&explorer_event(
         "focus_tab",
         serde_json::json!({
             "workspace_id": "workspace:order",
             "checkout_id": checkout_id,
             "tab_id": tab_id,
-            "in_place": in_place,
         }),
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
@@ -215,12 +207,12 @@ fn bookmark(runtime: &Runtime, directory: &Path, tab: &str) -> Vec<(String, Stri
 fn a_tab_shown_again_gets_back_the_view_it_had_in_front() {
     let (mut runtime, checkout_id, directory) = setup("bookmark-switch");
     open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     assert_eq!(fronts(&runtime, &directory), ["a.md"], "no bookmark yet");
     open(&mut runtime, &checkout_id, &directory, "b.md");
     assert_eq!(fronts(&runtime, &directory), ["b.md"]);
 
-    dispatch_focus_tab(&mut runtime, &checkout_id, "w-order:t1", false);
+    dispatch_focus_tab(&mut runtime, &checkout_id, "w-order:t1");
     // B2: the same frame that shows the tab shows its View, before Herdr
     // has answered.
     assert_eq!(
@@ -247,7 +239,7 @@ fn a_tab_shown_again_gets_back_the_view_it_had_in_front() {
     herdr_focuses(&mut runtime, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["a.md"]);
 
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     assert_eq!(fronts(&runtime, &directory), ["b.md"]);
     assert_eq!(strip(&runtime, &directory), ["a.md", "b.md"], "B3");
 
@@ -259,8 +251,8 @@ fn a_tab_shown_again_gets_back_the_view_it_had_in_front() {
         &directory,
         serde_json::json!({"action": "focus", "display_id": a}),
     );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", false);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     assert_eq!(fronts(&runtime, &directory), ["a.md"]);
 }
 
@@ -285,7 +277,7 @@ fn each_view_area_restores_alone_and_a_closed_view_leaves_its_area() {
     assert_eq!(bookmark(&runtime, &directory, "w-order:t1").len(), 2);
 
     // Tab 2 puts c.md in the right area and d.md in the left one.
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     open(&mut runtime, &checkout_id, &directory, "c.md");
     let left = area_id(&runtime, &directory, 0);
     view_act(
@@ -296,7 +288,7 @@ fn each_view_area_restores_alone_and_a_closed_view_leaves_its_area() {
     open(&mut runtime, &checkout_id, &directory, "d.md");
     assert_eq!(fronts(&runtime, &directory), ["d.md", "c.md"]);
 
-    dispatch_focus_tab(&mut runtime, &checkout_id, "w-order:t1", false);
+    dispatch_focus_tab(&mut runtime, &checkout_id, "w-order:t1");
     assert_eq!(
         published_front_ids(&runtime),
         [
@@ -307,11 +299,11 @@ fn each_view_area_restores_alone_and_a_closed_view_leaves_its_area() {
     );
     herdr_focuses(&mut runtime, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["a.md", "b.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     assert_eq!(fronts(&runtime, &directory), ["d.md", "c.md"]);
 
     // Tab 3 only ever changed the right area: the left one stays.
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t3", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t3");
     let right = area_id(&runtime, &directory, 1);
     view_act(
         &mut runtime,
@@ -324,9 +316,9 @@ fn each_view_area_restores_alone_and_a_closed_view_leaves_its_area() {
         &directory,
         serde_json::json!({"action": "focus", "display_id": b}),
     );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     assert_eq!(fronts(&runtime, &directory), ["d.md", "c.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t3", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t3");
     assert_eq!(
         fronts(&runtime, &directory),
         ["d.md", "b.md"],
@@ -342,7 +334,7 @@ fn each_view_area_restores_alone_and_a_closed_view_leaves_its_area() {
     );
     assert_eq!(strip(&runtime, &directory), ["a.md", "d.md", "c.md"]);
     let before = fronts(&runtime, &directory);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(
         fronts(&runtime, &directory)[1],
         before[1],
@@ -373,7 +365,7 @@ fn moving_focus_between_side_by_side_agent_tabs_leaves_the_panel_alone() {
     open(&mut runtime, &checkout_id, &directory, "b.md");
     assert_eq!(bookmark(&runtime, &directory, "w-order:t2").len(), 1);
 
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", true);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(
         checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
         Some("w-order:t1")
@@ -386,7 +378,7 @@ fn moving_focus_between_side_by_side_agent_tabs_leaves_the_panel_alone() {
     // The next View picked belongs to the tab that has focus now.
     open(&mut runtime, &checkout_id, &directory, "c.md");
     assert_eq!(fronts(&runtime, &directory), ["c.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", true);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     assert_eq!(fronts(&runtime, &directory), ["c.md"], "still no swap");
     assert_eq!(
         bookmark(&runtime, &directory, "w-order:t1")[0].1,
@@ -440,7 +432,7 @@ fn a_restore_keeps_the_area_in_use_and_the_panel_state() {
             "edge": "right", "request_id": "split-quiet"}),
     );
     // Tab 1 remembers a.md | b.md, with the right area in use.
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     open(&mut runtime, &checkout_id, &directory, "c.md");
     let left = area_id(&runtime, &directory, 0);
     view_act(
@@ -455,23 +447,16 @@ fn a_restore_keeps_the_area_in_use_and_the_panel_state() {
         &directory,
         serde_json::json!({"action": "focus_area", "area_id": right.clone()}),
     );
-    view_event(
-        &mut runtime,
-        serde_json::json!({"panel": "open", "pinned": true}),
-    );
-
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", true);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["a.md", "b.md"]);
     assert_eq!(layout(&runtime, &directory).active_area, right);
-    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!((view.panel, view.pinned), (PanelState::Open, true));
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().views);
 
-    // From the sidebar an unpinned panel closes, and the bookmark still
-    // applies to it.
-    view_event(&mut runtime, serde_json::json!({"pinned": false}));
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
-    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(view.panel, PanelState::Closed);
+    // With File Views off the bookmark still applies, so turning it on shows
+    // the tab's front.
+    view_event(&mut runtime, serde_json::json!({"views": false}));
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().views);
     assert_eq!(fronts(&runtime, &directory), ["d.md", "c.md"]);
     assert_eq!(layout(&runtime, &directory).active_area, right);
 }
@@ -493,7 +478,7 @@ fn a_closed_tab_and_a_collapsed_area_lose_their_bookmark_entries() {
         serde_json::json!({"action": "split", "display_id": b, "area_id": first,
             "edge": "right", "request_id": "split-prune"}),
     );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     open(&mut runtime, &checkout_id, &directory, "c.md");
     assert_eq!(bookmark(&runtime, &directory, "w-order:t1").len(), 2);
     assert_eq!(bookmark(&runtime, &directory, "w-order:t2").len(), 1);
@@ -547,7 +532,7 @@ fn a_closed_tab_and_a_collapsed_area_lose_their_bookmark_entries() {
 fn bookmarks_are_saved_and_a_restarted_runtime_restores_them() {
     let (mut runtime, checkout_id, directory) = setup("bookmark-restart");
     open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     open(&mut runtime, &checkout_id, &directory, "b.md");
 
     let path = runtime.workspace_views.as_ref().unwrap().path.clone();
@@ -564,7 +549,7 @@ fn bookmarks_are_saved_and_a_restarted_runtime_restores_them() {
     runtime.workspace_views = Some(WorkspaceViewStore::open(path, panel).0);
     runtime.sync_workspace_view();
     assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["a.md"]);
 }
 
@@ -721,7 +706,7 @@ fn open_page(url: &str, reveal: bool) -> Action {
 fn an_agent_in_another_tab_opens_a_view_without_taking_the_screen() {
     let (mut runtime, checkout_id, directory) = setup("bookmark-agent-open");
     open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     open(&mut runtime, &checkout_id, &directory, "b.md");
     let strip_before = strip(&runtime, &directory);
 
@@ -740,7 +725,7 @@ fn an_agent_in_another_tab_opens_a_view_without_taking_the_screen() {
         bookmark(&runtime, &directory, "w-order:t2")[0].1,
         display_id(&runtime, &directory, "b.md")
     );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["https://example.test/a"]);
 
     // The same address again makes no second View: it is the bookmark.
@@ -750,7 +735,7 @@ fn an_agent_in_another_tab_opens_a_view_without_taking_the_screen() {
         &directory,
         serde_json::json!({"action": "focus", "display_id": a}),
     );
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     let count = strip(&runtime, &directory).len();
     control(
         &mut runtime,
@@ -761,7 +746,7 @@ fn an_agent_in_another_tab_opens_a_view_without_taking_the_screen() {
     runtime.sync_workspace_view();
     assert_eq!(strip(&runtime, &directory).len(), count);
     assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["https://example.test/a"]);
 
     // B13: the tab the operator is on opens as before, and remembers it.
@@ -773,8 +758,8 @@ fn an_agent_in_another_tab_opens_a_view_without_taking_the_screen() {
     );
     runtime.sync_workspace_view();
     assert_eq!(fronts(&runtime, &directory), ["https://example.test/own"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["https://example.test/own"]);
 
     // B14: `--reveal` puts it in front now, for the tab on screen and the
@@ -801,7 +786,7 @@ fn an_agent_in_another_tab_opens_a_view_without_taking_the_screen() {
 fn an_agents_file_open_from_another_tab_bookmarks_only_its_tab() {
     let (mut runtime, checkout_id, directory) = setup("bookmark-agent-file");
     open(&mut runtime, &checkout_id, &directory, "a.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
 
     control_file(
         &mut runtime,
@@ -814,7 +799,7 @@ fn an_agents_file_open_from_another_tab_bookmarks_only_its_tab() {
     runtime.sync_workspace_view();
     assert_eq!(fronts(&runtime, &directory), ["a.md"]);
     assert_eq!(strip(&runtime, &directory), ["a.md", "c.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["c.md"]);
 }
 
@@ -823,7 +808,7 @@ fn an_agents_file_open_from_another_tab_bookmarks_only_its_tab() {
 #[test]
 fn a_checkout_caller_and_the_first_view_of_an_empty_workspace_act_as_before() {
     let (mut runtime, checkout_id, directory) = setup("bookmark-agent-first");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
 
     // B16: nothing is open, so there is no front to keep.
     control(
@@ -863,7 +848,7 @@ fn a_view_select_from_another_tab_waits_for_its_tab_and_reveal_does_not() {
     let (mut runtime, checkout_id, directory) = setup("bookmark-agent-select");
     open(&mut runtime, &checkout_id, &directory, "a.md");
     open(&mut runtime, &checkout_id, &directory, "b.md");
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     let (a, b) = (
         display_id(&runtime, &directory, "a.md"),
         display_id(&runtime, &directory, "b.md"),
@@ -882,10 +867,10 @@ fn a_view_select_from_another_tab_waits_for_its_tab_and_reveal_does_not() {
     );
     runtime.sync_workspace_view();
     assert_eq!(fronts(&runtime, &directory), ["b.md"]);
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t1");
     assert_eq!(fronts(&runtime, &directory), ["a.md"]);
 
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     control(
         &mut runtime,
         "w-order:t1:p",
@@ -943,7 +928,7 @@ fn a_parked_select_and_open_beside_keep_the_operators_area_and_fronts() {
         serde_json::json!({"action": "focus_area", "area_id": left}),
     );
     // Tab 2 has no bookmark, so the areas stay as tab 1 left them.
-    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2", false);
+    focus_tab(&mut runtime, &checkout_id, &directory, "w-order:t2");
     assert_eq!(fronts(&runtime, &directory), ["a.md", "c.md"]);
     assert_eq!(layout(&runtime, &directory).active_area, left);
     let before = published_front_ids(&runtime);

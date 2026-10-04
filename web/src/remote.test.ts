@@ -135,18 +135,17 @@ function rest(focusedDevice: string, state = "connected"): SnapshotRest {
 }
 
 /** The device Workspace in front, its one area showing a device file. */
-function deviceViews(panel: WorkspaceView["panel"]): WorkspaceView {
+function deviceViews(views: boolean): WorkspaceView {
   const notes = { id: "d2", tab_id: "file:studio:/home/remote/app/notes.md", path: "/home/remote/app/notes.md", label: "notes.md", kind: "file" as const, committed: null, preview: false, state: "open" as const, reason: null };
   return {
     device_id: "studio",
     path: "/home/remote/app",
-    panel,
-    tools_share: null,
-    pinned: false,
-    covered: false,
-    tool: "explorer",
+    views,
     tools: false,
-    views_over_share: 0.6,
+    tool: "explorer",
+    views_width: null,
+    tools_width: null,
+    views_called: 0, views_calls: 0,
     layout: { root: { area: { id: "a1", active: "d2", displays: [notes] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: 1 },
   };
 }
@@ -241,9 +240,9 @@ describe("commands with an SSH device selected", () => {
   it("closes the device Workspace's active view with the close chord while its View area owns the keyboard, connected or not", () => {
     for (const state of ["connected", "stale"]) {
       useUiStore.setState({ notice: null, pendingClose: null });
-      seed({ ...rest("studio", state), workspace_view: deviceViews("expanded") });
+      seed({ ...rest("studio", state), workspace_view: deviceViews(true) });
       const { sent, actions } = recorder();
-      useUiStore.setState({ screen: { kind: "workspace" } });
+      useUiStore.setState({ screen: { kind: "workspace" }, shownColumns: { views: true, tools: false, step: "wide" } });
       noteKeyboardOwner({ kind: "view", workspace: frontCheckout(useShellStore.getState().rest)!.id, areaId: "a1" });
       actions.closeFocused();
       expect(sent).toHaveLength(1);
@@ -257,7 +256,7 @@ describe("commands with an SSH device selected", () => {
   });
 
   it("closes the device's Herdr tab only when its explicit control names it", () => {
-    seed({ ...rest("studio"), workspace_view: deviceViews("closed") });
+    seed({ ...rest("studio"), workspace_view: deviceViews(false) });
     const { sent, actions } = recorder();
     actions.closeTab("remote:studio:tab:w9:t1");
     expect(sent).toHaveLength(0);

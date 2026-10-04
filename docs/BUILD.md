@@ -62,6 +62,11 @@ The build regression tests in `test_verification_builds.py` use a tiny real Carg
 They check that a caller's `CARGO_TARGET_DIR` cannot move the release binaries, that output stays in the checkout, warm build reuse, a core value change, a changed failing test, and compiler and prerequisite failure propagation.
 They require macOS with Cargo.
 
+
+The Windows/Linux package smoke uses an isolated HOME and Herdr socket to check the command from a fresh shell, both configured agent hooks, and hcoord remaining absent.
+It then uses a second complete package fixture with an executable overlay that changes the daemon hash, proving replacement, refreshed command and hook paths, same-build reuse and standalone refusal.
+All test daemons and temporary files are cleaned up on failure as well as success.
+
 ## The desktop app
 
 `desktop/` is a pnpm workspace member; `pnpm install` at the root installs it with the web shell.
@@ -73,7 +78,7 @@ Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the
 | `pnpm --dir desktop typecheck`, `lint`, `test` | The desktop CI lane |
 | `pnpm --dir desktop e2e` | Playwright `_electron` against a private hided and pinned Herdr; needs `web/dist`, `target/debug/hide` and `hided`, and the pinned `herdr` as the web e2e does |
 | `pnpm --dir desktop package` | `desktop/scripts/package.mjs`: builds the release binaries and fetches the pinned Herdr, bundles `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper-macos-<arch>` and `herdr` into `Contents/Resources` with the install kit's `hcoord/`, ad-hoc signs `desktop/out/hide-darwin-<arch>/hide.app` (bundle id `me.grab.hide.desktop`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; nothing is notarized or installed. On Windows x64 and Linux x64 the same command builds that system's package, unsigned: the folder `desktop/out/hide-win32-x64/` or `hide-linux-x64/` with the same binaries (`.exe` on Windows, with Herdr's `conpty/` beside `herdr.exe`) and `hide-host-helper-<windows\|linux>-x86_64` in its `resources/`, archived to `hide-v<version>-windows-x64.zip` (the system's `tar.exe`) or `hide-v<version>-linux-x64.tar.gz` beside a `.sha256`. Each system packages only itself, and a machine of another architecture than its pinned Herdr asset is refused |
-| `node desktop/scripts/smoke-package.mjs <archive>` | On Windows or Linux only: checks a package against its `.sha256`, unpacks it into a temporary folder, and with a private home and state folder runs the bundled `herdr --version`, the device helper, `hide-agent-hooks doctor`, the bundled hcoord through Electron's Node, and `hide connect`, `/health`, the embedded shell and `hide stop`; `.github/workflows/package.yml` runs it after each package. It refuses macOS, where a daemon inside `hide.app` installs the kit and its LaunchAgent into the account |
+| `node desktop/scripts/smoke-package.mjs <archive>` | On Windows or Linux only: checks a package against its `.sha256`, unpacks it into a temporary folder, and with a private home and state folder runs the bundled `herdr --version`, the device helper, `hide-agent-hooks doctor`, the bundled hcoord through Electron's Node, and `hide connect`, `/health`, the embedded shell, first-launch CLI and hooks, a command from a fresh shell, hcoord remaining absent, replacement by a second package fixture, refreshed paths, same-build reuse, standalone refusal and `hide stop`; `.github/workflows/package.yml` runs it after each package. It refuses macOS, where a daemon inside `hide.app` installs the kit and its LaunchAgent into the account |
 
 The app attaches to whatever daemon the environment names: without `HIDE_STATE_DIR` it is the operator's own at `~/.hide/state`.
 For QA, set `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR` to private paths, as `desktop/e2e/fixture.ts` does and refuses to launch without.
@@ -86,3 +91,37 @@ The fixture also preloads `desktop/e2e/focus-guard.cjs` into the app, which reco
 The guard sees only this app, so a spec that could reach another program (a browser, Finder, the folder picker) stubs it, as the existing ones do.
 A spec that needs the key window or native input (a page holding the keyboard, a pinch, a native drag) carries the `@needs-focus` tag (`NEEDS_FOCUS` in the fixture) and focuses the window itself; `pnpm --dir desktop e2e --grep-invert @needs-focus` runs everything that leaves the operator's keyboard alone, and CI runs the whole suite.
 The suite runs the focus tests after every other one (`desktop/playwright.config.ts` puts them in a project that depends on the rest): a focus test brings its app forward and quits it, and on a machine with no other app in front, a CI runner, macOS then activates the next app that opens, which failed every background test after the first focus test.
+
+## Release asset gate
+
+The release workflow accepts only a stable `vX.Y.Z` tag whose commit is already an ancestor of protected `main`.
+It serializes runs of the same tag and waits for all three packaging jobs before `node scripts/release-draft.mjs <tag> <event-commit-sha> <directory>` prepares the draft.
+The file-only entrypoint is `node scripts/check-release-assets.mjs <tag> <directory> [release-pages.json]`.
+The directory must contain exactly that tag's macOS ARM64 ZIP, Windows x64 ZIP and Linux x64 TAR.GZ, and one SHA-256 sidecar per archive.
+The gate rejects a missing target, extra or mixed-version files, symbolic links, empty archives, an incorrectly named sidecar, and a mismatched digest; archive hashing streams bytes rather than retaining each package in memory.
+Before any release write, the writer requires GitHub's immutable-release policy to report both `enabled: true` and `enforced_by_owner: true`, and checks that the current tag still resolves to the event commit.
+The workflow passes its contents-write token as `GH_TOKEN` and a separate `RELEASE_POLICY_TOKEN` repository secret as `HIDE_RELEASE_POLICY_TOKEN`; that credential needs Administration read access for the [policy endpoint](https://docs.github.com/en/rest/repos/repos#check-if-immutable-releases-are-enabled-for-a-repository).
+A missing credential, disabled or unenforced policy, moved tag, or failed initial API read blocks preparation before writes; package workflow artifacts remain available.
+An API failure after an append may leave a partial or complete draft, including an upload whose success response was lost.
+The writer stops further preparation and preserves accepted assets; a retry validates those bytes before skipping them.
+Policy setup and credentials are operator work, and must be complete before attempting a release.
+
+The authenticated release and asset inventories are fully paginated, with a 100-page and 16 MiB limit; a tag lookup alone cannot establish that a draft is absent.
+Multiple releases for the same tag, an invalid inventory, or a published release block the run.
+A new draft records its event commit and enforced-policy origin in its body; an existing draft must have that exact provenance record.
+Legacy drafts are not automatically reused because enabling immutability does not prove coverage of an older release.
+The provenance record describes this controlled writer's origin; it is not a cryptographic attestation or a defense against administrative bypass.
+
+The writer binds to that checked release ID, uploads only missing names, and skips an existing asset only when its uploaded state, size and SHA-256 digest match the local file.
+It never changes an existing release's metadata, deletes an asset, or overwrites a name.
+Mismatched assets, incomplete `starter` uploads and duplicate-name races stop for review; a retry resumes a matching partial draft without replacing completed bytes.
+The final read must still show the complete unpublished draft and matching bytes.
+[GitHub immutability](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) supplies the server protection if publication happens between a read and upload; a GET alone is not an atomic draft-state condition.
+The operational contract excludes concurrent owner-policy disabling, manual changes to the draft, and tag moves during preparation and publication.
+Repeated tag reads do not make prepublication provenance atomic; the maintainer must confirm that the tag and draft source record still identify the tested commit before publishing.
+Each request has a 30-second bound, JSON responses are limited to 8 MiB, and the workflow job has a ten-minute bound.
+
+This gate proves the asset set and digests, not installation, terminal input/output, native first launch, signing or notarization.
+The Windows and Linux package smoke checks cover bundled tools, daemon startup, the embedded shell and daemon shutdown; actual desktop and terminal checks on each supported system still need their own evidence before a maintainer publishes the draft.
+The release workflow prepares a draft only and never publishes it automatically.
+Its source guard does not establish that policy credentials are provisioned or that any current release is immutable; verify those live operational prerequisites before release work.

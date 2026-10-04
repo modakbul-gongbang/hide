@@ -118,6 +118,8 @@ test("rename refusal and timeout preserve text for retry", async ({ page }) => {
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     const tab = page.locator(`[data-tab="${herdr.tab}"]`);
+    // The refusal preserves the established name, after automatic naming.
+    await expect(tab).toContainText("Agent one");
     const before = await tab.getAttribute("aria-label");
     await tab.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Rename…", exact: true }).click();

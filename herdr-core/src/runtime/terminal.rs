@@ -6,6 +6,132 @@ use super::*;
 const OBSERVER_RESIZE_QUIET_MS: u64 = 150;
 
 impl Runtime {
+    pub(crate) fn ingest_pane_focus_completion(
+        &mut self,
+        control: PendingPaneFocusControl,
+        result: Result<PaneLayoutSnapshot, live::ControlFailure>,
+        elapsed_ms: u128,
+    ) -> (bool, Option<(LiveContext, PendingPaneFocusControl)>) {
+        if self.pane_focus_in_flight.as_ref() != Some(&control) {
+            return (false, None);
+        }
+        self.pane_focus_in_flight = None;
+        let current_connection = control.live_generation == self.live_generation;
+        let latest = current_connection
+            && self
+                .pending_pane_focus
+                .as_ref()
+                .is_some_and(|pending| pending.pane_control_serial == Some(control.serial));
+        let unknown = result.as_ref().is_err_and(|error| error.is_ambiguous());
+        let phase = if unknown {
+            "unknown"
+        } else if !current_connection {
+            "stale_connection"
+        } else if !latest {
+            "superseded"
+        } else if result.is_ok() {
+            "confirmed"
+        } else {
+            "failed"
+        };
+        crate::diagnostic!(serde_json::json!({
+            "component": "pane_focus",
+            "kind": "pane.focus.completed",
+            "pane_id": control.target_id,
+            "serial": control.serial,
+            "connection_generation": control.live_generation,
+            "phase": phase,
+            "duration_ms": elapsed_ms,
+            "message": result.as_ref().err().map(live::ControlFailure::message),
+        }));
+        if unknown {
+            let error = result.expect_err("ambiguous focus result");
+            // A read deadline ends our wait, not Herdr's external effect.
+            // Abort this entire automatic burst instead of running a successor
+            // that the unknown older mutation might later overwrite.
+            if let Some(pending) = self.pending_pane_focus.take() {
+                let message = format!(
+                    "{}; focus for {} is unconfirmed and no queued focus was sent. Select the pane again to retry.",
+                    error.message(),
+                    pending.target_id
+                );
+                self.finish_pane_focus_request(
+                    pending.request_id.as_deref(),
+                    &pending.target_id,
+                    "failed",
+                    Some(message.clone()),
+                    true,
+                );
+                self.push_diagnostic("pane.focus.unknown", message.clone());
+                self.set_error("pane.focus_unknown", message, true);
+            } else {
+                self.push_diagnostic("pane.focus.unknown", error.message());
+            }
+            return (true, None);
+        }
+        if latest {
+            let pending = self.pending_pane_focus.take().expect("latest focus intent");
+            match result {
+                Ok(layout) => {
+                    // Update the focus memory from the authoritative reads;
+                    // geometry still belongs to the sequenced session stream.
+                    for stored in &mut self.snapshot.pane_layouts {
+                        if stored.workspace_id == layout.workspace_id {
+                            self.herdr_active_tab_ids.remove(&stored.tab_id);
+                        }
+                        if stored.tab_id == layout.tab_id {
+                            stored.focused_pane_id = layout.focused_pane_id.clone();
+                        }
+                    }
+                    self.herdr_active_tab_ids.insert(layout.tab_id);
+                    self.finish_pane_focus_request(
+                        pending.request_id.as_deref(),
+                        &pending.target_id,
+                        "succeeded",
+                        None,
+                        false,
+                    );
+                    self.push_diagnostic(
+                        "pane.focus",
+                        format!(
+                            "Pane {} focus confirmed in {elapsed_ms} ms",
+                            pending.target_id
+                        ),
+                    );
+                }
+                Err(error) => {
+                    let message = error.message().to_owned();
+                    self.finish_pane_focus_request(
+                        pending.request_id.as_deref(),
+                        &pending.target_id,
+                        "failed",
+                        Some(message.clone()),
+                        true,
+                    );
+                    self.push_diagnostic(
+                        "pane.focus.refused",
+                        format!(
+                            "Herdr did not confirm pane focus {}: {message}; Hide keeps it",
+                            pending.target_id
+                        ),
+                    );
+                    self.set_error("pane.focus_failed", message, true);
+                }
+            }
+        } else {
+            // A superseded refusal is diagnostic detail, never the newer
+            // caller's failure. An old connection cannot confirm its successor.
+            self.push_diagnostic(
+                "pane.focus.superseded",
+                format!(
+                    "Pane {} focus result {phase} in {elapsed_ms} ms",
+                    control.target_id
+                ),
+            );
+        }
+        (true, self.begin_pane_focus_control())
+    }
+
     pub(super) fn reconcile_remote_terminal_panes(
         &mut self,
         target_id: &str,
@@ -370,6 +496,24 @@ impl Runtime {
             ..PaneFindSnapshot::default()
         };
         true
+    }
+    /// Records that the operator submitted to an agent pane, for who sent
+    /// the message it writes next (PRD overview-request-view D-19). Only the
+    /// moment is kept. An Enter at an approval prompt answers Herdr's prompt,
+    /// not the conversation, and is not one.
+    pub(super) fn record_operator_submit(&self, pane_id: &str) {
+        let Some(services) = self.label_services.as_ref() else {
+            return;
+        };
+        let Some(row) = self.agent_row(pane_id) else {
+            return;
+        };
+        if row.blocked {
+            return;
+        }
+        services
+            .input
+            .record(pane_id, unix_milliseconds(), row.activity == "working");
     }
     /// The agent row for a pane on this machine or on a device.
     fn agent_row(&self, pane_id: &str) -> Option<&SidebarAgentSnapshot> {

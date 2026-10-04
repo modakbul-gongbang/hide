@@ -2348,6 +2348,7 @@ impl Runtime {
             tab_exists,
             fallback_pane_id,
             owner,
+            codex_daemon: self.codex_daemon(crate::workspace::LOCAL_DEVICE_ID),
         };
         let spawned = if let ClosedItem::File {
             workspace_id,

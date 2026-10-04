@@ -1,7 +1,7 @@
 //! Hide's install kit: the one list of what Hide puts on a machine, and how
 //! each part is installed, judged and removed.
 //!
-//! The same code runs for this Mac, inside `hided`, and for a device, inside
+//! The same code runs for this machine, inside `hided`, and for a device, inside
 //! `hide-host-helper`; only the [`KitTarget`] differs, so a device gets
 //! exactly what this Mac gets (PRD device-parity D-09, D-10). Adding a part is
 //! adding a [`ComponentId`] and its three answers here; nothing else in the
@@ -19,6 +19,7 @@
 //!   kit is not such a record (B20).
 
 mod cli;
+mod codex_per_pane;
 mod device;
 mod hcoord;
 mod hooks;
@@ -30,6 +31,7 @@ mod payload;
 pub mod process;
 mod record;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,7 +50,7 @@ pub use record::kit_state_dir;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ComponentId {
-    /// The `hide` command, linked in the account's command folder.
+    /// The `hide` command, installed in the account's command folder.
     Cli,
     /// Hide's entries in `~/.claude/settings.json`.
     ClaudeCodeHook,
@@ -56,14 +58,18 @@ pub enum ComponentId {
     CodexHook,
     /// The `hcoord` command and its daemon.
     Hcoord,
+    /// Codex's shared daemon turned off, so each Codex runs in its own pane
+    /// (PRD overview-request-view D-21).
+    CodexPerPane,
 }
 
 impl ComponentId {
-    pub const ALL: [ComponentId; 4] = [
+    pub const ALL: [ComponentId; 5] = [
         Self::Cli,
         Self::ClaudeCodeHook,
         Self::CodexHook,
         Self::Hcoord,
+        Self::CodexPerPane,
     ];
 
     /// The stable name the wire and the record carry.
@@ -73,6 +79,7 @@ impl ComponentId {
             Self::ClaudeCodeHook => "claude_code_hook",
             Self::CodexHook => "codex_hook",
             Self::Hcoord => "hcoord",
+            Self::CodexPerPane => "codex_per_pane",
         }
     }
 
@@ -83,7 +90,15 @@ impl ComponentId {
             Self::ClaudeCodeHook => "Claude Code hook",
             Self::CodexHook => "Codex hook",
             Self::Hcoord => "hcoord",
+            Self::CodexPerPane => "Codex를 pane마다 실행",
         }
+    }
+
+    /// Whether the operator can turn the part off from its row, which then
+    /// stays off until they turn it on (D-24). Every other part is taken
+    /// away by hand and brought back with Reinstall.
+    pub fn can_turn_off(self) -> bool {
+        matches!(self, Self::CodexPerPane)
     }
 
     pub fn from_code(code: &str) -> Option<Self> {
@@ -111,6 +126,9 @@ pub enum ComponentState {
     /// The machine has nothing for this part to attach to, such as an agent
     /// runtime that is not set up there.
     Absent,
+    /// The operator turned the part off, or undid it outside Hide; no pass
+    /// puts it back and nothing asks them to (D-24, B36).
+    Off,
 }
 
 impl ComponentState {
@@ -133,6 +151,10 @@ pub struct ComponentReport {
     /// The file, link or folder the part lives at on that machine.
     #[serde(default)]
     pub location: Option<String>,
+    /// The actual Codex binary supports the shared daemon setting. Unknown
+    /// on a missing or failed probe; independent of this part's switch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_daemon: Option<bool>,
 }
 
 /// Every part's state on one machine, in [`ComponentId::ALL`] order.
@@ -166,6 +188,7 @@ impl KitReport {
                     state: ComponentState::Failed,
                     reason: Some(reason.to_owned()),
                     location: None,
+                    codex_daemon: None,
                 })
                 .collect(),
             labels_retirement: Retirement::default(),
@@ -182,10 +205,10 @@ pub struct KitTarget {
     /// The folder holding this build's parts: `hide`, `hide-agent-hooks`
     /// and `hcoord/dist/`. It is the path the hooks,
     /// the `hide` link and the hcoord shim name, so it must outlive the
-    /// process: the app bundle's `Contents/Resources` on this Mac, the helper
+    /// process: the desktop package's resources on this machine, the helper
     /// root's `current` link on a device (D-11).
     pub kit_dir: PathBuf,
-    /// Where `hide` is linked (`~/.local/bin` unless the daemon was told
+    /// Where the `hide` command is installed (`~/.local/bin` unless the daemon was told
     /// otherwise).
     pub cli_dir: PathBuf,
     /// Folders whose links are Hide's own besides an app bundle's
@@ -200,6 +223,8 @@ pub struct KitTarget {
     pub herdr_bin: Option<PathBuf>,
     /// What runs hcoord on this machine, or why nothing can.
     pub hcoord: Result<HcoordRuntime, String>,
+    /// The machine's `codex`, `None` when Hide finds none.
+    pub codex: Option<PathBuf>,
     /// hcoord's relocated home (HCOORD_HOME), `None` for its default
     /// `~/.hide/hcoord`. A relocated hcoord is never moved (D-08).
     pub hcoord_home: Option<PathBuf>,
@@ -210,24 +235,59 @@ pub struct KitTarget {
     pub stop: Arc<AtomicBool>,
 }
 
-/// What an apply is allowed to do.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Scope {
-    /// The launch or connection pass: install what was never installed and
-    /// replace what is outdated, and leave alone whatever the operator took
-    /// away.
-    Automatic,
-    /// The operator pressed Reinstall: also bring back these parts when they
-    /// were taken away. Parts that are in place are not touched (B8).
-    Reinstall(Vec<ComponentId>),
+/// What an apply is allowed to do. The launch or connection pass is the
+/// empty scope: it installs what was never installed and replaces what is
+/// outdated, and leaves alone whatever the operator took away or turned off.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Scope {
+    /// Parts the operator asked back, with Reinstall or by turning one on:
+    /// they are installed again even when they were taken away. Parts that
+    /// are in place are not touched (B8).
+    pub restore: BTreeSet<ComponentId>,
+    /// Parts the operator turned off ([`ComponentId::can_turn_off`]).
+    pub turn_off: BTreeSet<ComponentId>,
 }
 
 impl Scope {
-    fn restores(&self, id: ComponentId) -> bool {
-        match self {
-            Self::Automatic => false,
-            Self::Reinstall(ids) => ids.contains(&id),
+    /// The launch or connection pass.
+    pub fn automatic() -> Self {
+        Self::default()
+    }
+
+    pub fn reinstall(parts: impl IntoIterator<Item = ComponentId>) -> Self {
+        Self {
+            restore: parts.into_iter().collect(),
+            turn_off: BTreeSet::new(),
         }
+    }
+
+    pub fn turn_off(parts: impl IntoIterator<Item = ComponentId>) -> Self {
+        Self {
+            restore: BTreeSet::new(),
+            turn_off: parts.into_iter().collect(),
+        }
+    }
+
+    pub fn is_automatic(&self) -> bool {
+        self.restore.is_empty() && self.turn_off.is_empty()
+    }
+
+    /// Two requests for one machine as one; for a part named by both, the
+    /// later choice wins.
+    pub fn merge(mut self, later: Scope) -> Scope {
+        for id in later.restore {
+            self.turn_off.remove(&id);
+            self.restore.insert(id);
+        }
+        for id in later.turn_off {
+            self.restore.remove(&id);
+            self.turn_off.insert(id);
+        }
+        self
+    }
+
+    fn restores(&self, id: ComponentId) -> bool {
+        self.restore.contains(&id)
     }
 }
 
@@ -242,6 +302,10 @@ pub(crate) enum Observed {
     Blocked(String),
     /// Nothing on the machine for the part to attach to.
     Absent(String),
+    /// A Codex was read and has no shared daemon setting.
+    Unsupported(String),
+    /// A supported Codex was read, but its account is not set up yet.
+    SupportedAbsent(String),
 }
 
 fn observe(id: ComponentId, target: &KitTarget) -> Observed {
@@ -252,6 +316,7 @@ fn observe(id: ComponentId, target: &KitTarget) -> Observed {
         }
         ComponentId::CodexHook => hooks::observe(target, hide_agent_hooks::AgentRuntime::Codex),
         ComponentId::Hcoord => hcoord::observe(target),
+        ComponentId::CodexPerPane => codex_per_pane::observe(target),
     }
 }
 
@@ -263,6 +328,19 @@ fn install(id: ComponentId, target: &KitTarget) -> Result<(), String> {
         }
         ComponentId::CodexHook => hooks::install(target, hide_agent_hooks::AgentRuntime::Codex),
         ComponentId::Hcoord => hcoord::install(target),
+        ComponentId::CodexPerPane => codex_per_pane::install(target),
+    }
+}
+
+/// Undoes a part the operator turned off; only the parts
+/// [`ComponentId::can_turn_off`] names have an undo.
+fn turn_off(id: ComponentId, target: &KitTarget) -> Result<(), String> {
+    match id {
+        ComponentId::CodexPerPane => codex_per_pane::turn_off(target),
+        ComponentId::Cli
+        | ComponentId::ClaudeCodeHook
+        | ComponentId::CodexHook
+        | ComponentId::Hcoord => Err(format!("{} cannot be turned off", id.label())),
     }
 }
 
@@ -278,6 +356,7 @@ fn location(id: ComponentId, target: &KitTarget) -> String {
             .display()
             .to_string(),
         ComponentId::Hcoord => hcoord::shim_path(target).display().to_string(),
+        ComponentId::CodexPerPane => codex_per_pane::location(target).display().to_string(),
     }
 }
 
@@ -288,26 +367,45 @@ fn report(
     recorded: bool,
     failure: Option<String>,
 ) -> ComponentReport {
+    let codex_daemon = (id == ComponentId::CodexPerPane)
+        .then_some(match &observed {
+            Observed::Current | Observed::Missing | Observed::SupportedAbsent(_) => Some(true),
+            Observed::Unsupported(_) => Some(false),
+            _ => None,
+        })
+        .flatten();
     let (state, reason) = match (failure, observed) {
         (Some(failure), _) => (ComponentState::Failed, Some(failure)),
         (None, Observed::Current) if id == ComponentId::Hcoord => {
             (ComponentState::Installed, hcoord::note(target))
         }
+        (None, Observed::Current) if id == ComponentId::CodexPerPane => {
+            (ComponentState::Installed, codex_per_pane::note(target))
+        }
         (None, Observed::Current) => (ComponentState::Installed, None),
         (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),
+        // Gone after Hide applied it: the operator turned it off or undid it
+        // by hand, and either way it is theirs now (B36).
+        (None, Observed::Missing) if recorded && id.can_turn_off() => (ComponentState::Off, None),
         (None, Observed::Missing) if recorded => (
             ComponentState::Removed,
             Some("taken out after Hide installed it; Reinstall puts it back".to_owned()),
         ),
         (None, Observed::Missing) => (ComponentState::NotInstalled, None),
         (None, Observed::Blocked(reason)) => (ComponentState::Failed, Some(reason)),
-        (None, Observed::Absent(reason)) => (ComponentState::Absent, Some(reason)),
+        (
+            None,
+            Observed::Absent(reason)
+            | Observed::Unsupported(reason)
+            | Observed::SupportedAbsent(reason),
+        ) => (ComponentState::Absent, Some(reason)),
     };
     ComponentReport {
         id,
         state,
         reason,
         location: Some(location(id, target)),
+        codex_daemon,
     }
 }
 
@@ -394,24 +492,35 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         }
         let observed = observe(id, target);
         let recorded = record.contains(id);
-        let install_now = match &observed {
-            Observed::Stale(_) => true,
-            Observed::Missing => scope.restores(id) || (!recorded && record_failure.is_none()),
-            Observed::Current | Observed::Blocked(_) | Observed::Absent(_) => false,
-        };
+        let turning_off = scope.turn_off.contains(&id);
+        let install_now = !turning_off
+            && match &observed {
+                Observed::Stale(_) => true,
+                Observed::Missing => scope.restores(id) || (!recorded && record_failure.is_none()),
+                Observed::Current
+                | Observed::Blocked(_)
+                | Observed::Absent(_)
+                | Observed::Unsupported(_)
+                | Observed::SupportedAbsent(_) => false,
+            };
+        let undo_now = turning_off && matches!(observed, Observed::Current | Observed::Stale(_));
         let mut failure = None;
         if install_now {
             match install(id, target) {
                 Ok(()) => {}
                 Err(reason) => failure = Some(reason),
             }
+        } else if undo_now {
+            failure = turn_off(id, target).err();
+        } else if turning_off {
+            // Nothing of it is in place, so it is already off.
         } else if matches!(observed, Observed::Missing) && !recorded {
             // Missing, never recorded, and the record could not be read: the
             // kit cannot tell whether the operator took it away, so it does
             // not put it back on a guess (engineering rule 4).
             failure = record_failure.clone();
         }
-        let after = if install_now {
+        let after = if install_now || undo_now {
             observe(id, target)
         } else {
             observed
@@ -419,9 +528,16 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         if failure.is_none() && matches!(after, Observed::Current) && id == ComponentId::Hcoord {
             failure = hcoord::ensure(target).err();
         }
-        if matches!(after, Observed::Current) && !record.contains(id) {
+        // A part the operator turned off is recorded too, so the next pass
+        // reads it as theirs rather than as never installed.
+        let applied = matches!(after, Observed::Current)
+            || (turning_off && matches!(after, Observed::Missing));
+        if applied && !record.contains(id) {
             record.insert(id);
             changed = true;
+        }
+        if matches!(after, Observed::Current) && id == ComponentId::Cli {
+            changed |= record.remember_cli(cli::wanted(target));
         }
         let recorded_now = record.contains(id);
         components.push(report(id, target, after, recorded_now, failure));
@@ -501,6 +617,14 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
             ComponentId::CodexHook => hooks::remove(target, hide_agent_hooks::AgentRuntime::Codex),
             ComponentId::Hcoord => RemoveOutcome::Kept {
                 reason: "hcoord stays, because other tools on this machine use it".to_owned(),
+            },
+            // Hide cannot tell its own switch from the operator's choice, and
+            // a Codex left per pane harms nothing.
+            ComponentId::CodexPerPane => RemoveOutcome::Kept {
+                reason: format!(
+                    "Codex keeps running per pane; `codex features enable {}` gives it its shared daemon back",
+                    hide_agent_hooks::codex_daemon::DAEMON_FEATURE
+                ),
             },
         };
         components.push((id, outcome));

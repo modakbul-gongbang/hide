@@ -23,7 +23,7 @@ const DEVICE = "ssh-kit";
 const ALIAS = "isolated-kit";
 const SECOND_DEVICE = "ssh-kit-second";
 const SECOND_ALIAS = "isolated-kit-second";
-const PARTS = ["cli", "claude_code_hook", "codex_hook", "hcoord"];
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "hcoord", "codex_per_pane"];
 const LABELS_ID = "hide.agent-context-labels";
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
