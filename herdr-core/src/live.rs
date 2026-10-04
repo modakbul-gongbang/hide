@@ -31,17 +31,17 @@ use crate::recent_closed::{
     PanePlacement, resume_arguments,
 };
 use crate::remote::RusshRemoteClient;
-use crate::runtime::Runtime;
+use crate::runtime::{PendingPaneFocusControl, Runtime};
 use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
 };
 use crate::workspace;
+#[cfg(test)]
+use hide_herdr_client::HERDR_PROTOCOL_REVISION;
 use hide_herdr_client::{
-    ApiConnector, ApiError, LocalSocketConnector, request_with_connector,
+    ApiConnector, ApiError, LocalSocketConnector, request_small_response, request_with_connector,
     request_with_correlation_id,
 };
-#[cfg(test)]
-use hide_herdr_client::{HERDR_PROTOCOL_REVISION, request};
 use hide_platform::process::OwnedChild;
 
 #[path = "worktree_cleanup.rs"]
@@ -57,7 +57,7 @@ pub use worktree_control::{
     spawn_existing_branch_worktree, spawn_home_link_sync, spawn_home_start, spawn_issue_write,
     spawn_local_issue_write, spawn_purpose_write, spawn_remote_purpose_write,
     spawn_task_agent_start, spawn_workspace_close, spawn_worktree_close, spawn_worktree_create,
-    spawn_worktree_open,
+    spawn_worktree_open, spawn_worktree_preflight,
 };
 
 /// Everything a terminal session spawn needs from the live configuration.
@@ -2083,6 +2083,116 @@ fn fetch_pane_layout(
     let result = control_request(connector, "pane.layout", wire::pane_layout_params(pane_id)?)?;
     let layout = wire::pane_layout(result)?;
     project_layout(&layout)
+}
+
+fn execute_pane_focus(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    execute_pane_focus_with_timeout(connector, pane_id, Duration::from_secs(5))
+}
+
+fn execute_pane_focus_with_timeout(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    response_timeout: Duration,
+) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    // These three responses share the established absolute read deadline and
+    // 64 KiB frame cap. A lost mutation response has a different outcome from
+    // an authoritative read failing after Herdr already acknowledged it.
+    request_small_response(
+        connector,
+        "pane.focus",
+        wire::pane_target_params(pane_id)?,
+        response_timeout,
+    )
+    .map_err(|error| match error {
+        ApiError::Remote { code, message } => {
+            ControlFailure::Definite(format!("pane.focus was refused: {code}: {message}"))
+        }
+        ApiError::Transport(message) | ApiError::Malformed(message) => {
+            ControlFailure::Ambiguous(format!("pane.focus result is unknown: {message}"))
+        }
+    })?;
+    confirm_pane_focus_with_timeout(connector, pane_id, response_timeout)
+}
+
+/// Read current focus without producing another focus effect. Herdr's pinned
+/// event stream has no ordering cursor, so an external move needs this same
+/// confirmation before an older queued layout can replace Hide's selection.
+pub(crate) fn confirm_pane_focus(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    confirm_pane_focus_with_timeout(connector, pane_id, Duration::from_secs(5))
+}
+
+fn confirm_pane_focus_with_timeout(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    response_timeout: Duration,
+) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    let layout = request_small_response(
+        connector,
+        "pane.layout",
+        wire::pane_layout_params(pane_id)?,
+        response_timeout,
+    )
+    .map_err(|error| format!("pane.layout failed: {error}"))?;
+    let layout = project_layout(&wire::pane_layout(layout)?)?;
+    let workspace = request_small_response(
+        connector,
+        "workspace.get",
+        wire::workspace_target_params(&layout.workspace_id)?,
+        response_timeout,
+    )
+    .map_err(|error| format!("workspace.get failed: {error}"))?;
+    let active_tab_id = wire::workspace_active_tab(workspace)?;
+    if layout.focused_pane_id != pane_id || active_tab_id != layout.tab_id {
+        return Err(ControlFailure::Definite(format!(
+            "Herdr did not confirm pane {pane_id}: pane {} is focused in tab {}, and workspace {} shows tab {active_tab_id}",
+            layout.focused_pane_id, layout.tab_id, layout.workspace_id
+        )));
+    }
+    Ok(layout)
+}
+
+/// One worker owns the complete focus burst, including its coalesced successor.
+/// Every socket read is outside the runtime lock, and only the latest intent
+/// can be settled by the result carrying its serial and connection generation.
+pub(crate) fn spawn_pane_focus(
+    mut context: LiveContext,
+    mut control: PendingPaneFocusControl,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-pane-focus".to_owned())
+        .spawn(move || {
+            loop {
+                let started = Instant::now();
+                let result = execute_pane_focus(context.api_connector.as_ref(), &control.target_id);
+                let elapsed_ms = started.elapsed().as_millis();
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let (changed, next) = match runtime.lock() {
+                    Ok(mut guard) => {
+                        guard.ingest_pane_focus_completion(control, result, elapsed_ms)
+                    }
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+                let Some((next_context, next_control)) = next else {
+                    return;
+                };
+                context = next_context;
+                control = next_control;
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("pane focus worker could not be started: {error}"))
 }
 
 pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Result<(), String> {
@@ -5368,44 +5478,130 @@ mod tests {
     }
 
     #[test]
-    fn focus_uses_the_direct_socket_contract_before_reading_authoritative_layout() {
-        let herdr = FakeHerdr::start("focus-contract", |method, params| {
-            assert_eq!(params["pane_id"], "fixture:p2");
-            match method {
-                "pane.focus" => {
-                    json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "terminal_id": "fixture-terminal", "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
+    fn focus_requires_authoritative_pane_and_owning_tab_confirmation() {
+        for (focused_pane, active_tab, confirmed) in [
+            ("fixture:p2", "fixture:t1", true),
+            ("fixture:p1", "fixture:t1", false),
+            ("fixture:p2", "fixture:t2", false),
+        ] {
+            let herdr = FakeHerdr::start("focus-contract", move |method, params| {
+                if method == "workspace.get" {
+                    assert_eq!(params["workspace_id"], "fixture");
+                } else {
+                    assert_eq!(params["pane_id"], "fixture:p2");
                 }
-                "pane.layout" => json!({
-                    "type": "pane_layout",
-                    "layout": {
-                        "workspace_id": "fixture",
-                        "tab_id": "fixture:t1",
-                        "zoomed": false,
-                        "area": {"x": 0, "y": 0, "width": 120, "height": 60},
-                        "focused_pane_id": "fixture:p2",
-                        "panes": [
-                            {"pane_id": "fixture:p1", "focused": false, "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
-                            {"pane_id": "fixture:p2", "focused": true, "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
-                        ],
-                        "splits": [
-                            {"id": "fixture:split1", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
-                        ]
+                match method {
+                    "pane.focus" => {
+                        json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "terminal_id": "fixture-terminal", "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
                     }
-                }),
-                other => panic!("unexpected {other}"),
-            }
-        });
+                    "pane.layout" => json!({
+                        "type": "pane_layout",
+                        "layout": {
+                            "workspace_id": "fixture",
+                            "tab_id": "fixture:t1",
+                            "zoomed": false,
+                            "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                            "focused_pane_id": focused_pane,
+                            "panes": [
+                                {"pane_id": "fixture:p1", "focused": focused_pane == "fixture:p1", "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
+                                {"pane_id": "fixture:p2", "focused": focused_pane == "fixture:p2", "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
+                            ],
+                            "splits": [
+                                {"id": "fixture:split1", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
+                            ]
+                        }
+                    }),
+                    "workspace.get" => json!({
+                        "type": "workspace_info",
+                        "workspace": {"workspace_id": "fixture", "number": 1, "label": "fixture", "focused": false, "pane_count": 2, "tab_count": 2, "active_tab_id": active_tab, "agent_status": "idle"}
+                    }),
+                    other => panic!("unexpected {other}"),
+                }
+            });
 
-        request(
-            herdr.socket_path(),
-            "pane.focus",
-            json!({"pane_id": "fixture:p2"}),
-        )
-        .expect("focus request");
-        let layout = fetch_pane_layout(&herdr.connector(), "fixture:p2").expect("focused layout");
-        assert_eq!(layout.focused_pane_id, "fixture:p2");
-        assert_eq!(layout.pane_ids(), ["fixture:p1", "fixture:p2"]);
-        assert_eq!(herdr.methods(), ["pane.focus", "pane.layout"]);
+            let result = execute_pane_focus(&herdr.connector(), "fixture:p2");
+            assert_eq!(
+                result.is_ok(),
+                confirmed,
+                "pane={focused_pane}, active tab={active_tab}"
+            );
+            if let Ok(layout) = result {
+                assert_eq!(layout.focused_pane_id, "fixture:p2");
+                assert_eq!(layout.pane_ids(), ["fixture:p1", "fixture:p2"]);
+            }
+            assert_eq!(
+                herdr.methods(),
+                ["pane.focus", "pane.layout", "workspace.get"]
+            );
+            // Checking a proposed stream move shares the confirmation
+            // contract and must not produce another focus mutation.
+            let readback = confirm_pane_focus(&herdr.connector(), "fixture:p2");
+            assert_eq!(readback.is_ok(), confirmed);
+            assert_eq!(
+                herdr.methods(),
+                [
+                    "pane.focus",
+                    "pane.layout",
+                    "workspace.get",
+                    "pane.layout",
+                    "workspace.get"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn pane_focus_rejects_trickling_and_over_cap_mutation_responses_as_unknown() {
+        use hide_platform::ipc::LocalListener;
+
+        for over_cap in [false, true] {
+            let root = tempfile::Builder::new().prefix("hpf-").tempdir().unwrap();
+            let socket = root.path().join("peer.sock");
+            let listener = LocalListener::bind(&socket).unwrap();
+            let closer = listener.closer();
+            let server = thread::spawn(move || {
+                let Ok(mut stream) = listener.accept() else {
+                    return None;
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = String::new();
+                BufReader::new(&mut stream).read_line(&mut request).unwrap();
+                let request: Value = serde_json::from_str(&request).unwrap();
+                if over_cap {
+                    let _ = stream.write_all(&vec![b' '; 64 * 1024 + 1]);
+                } else {
+                    // Progress defeats a per-read timeout. The peer itself is
+                    // bounded so a regressed client still ends and fails.
+                    let end = Instant::now() + Duration::from_millis(500);
+                    while Instant::now() < end && stream.write_all(b" ").is_ok() {
+                        thread::park_timeout(Duration::from_millis(5));
+                    }
+                }
+                Some(request)
+            });
+            let timeout = if over_cap {
+                Duration::from_secs(5)
+            } else {
+                Duration::from_millis(50)
+            };
+            let result = execute_pane_focus_with_timeout(
+                &LocalSocketConnector::new(&socket),
+                "w1:p2",
+                timeout,
+            );
+            closer.close();
+            let request = server.join().unwrap().expect("focus request reached peer");
+            assert_eq!(request["method"], "pane.focus");
+            let error = result.expect_err("unfinished response must be rejected");
+            assert!(error.is_ambiguous());
+            assert!(error.message().contains(if over_cap {
+                "exceeds 64 KiB"
+            } else {
+                "timed out"
+            }));
+        }
     }
 
     #[test]

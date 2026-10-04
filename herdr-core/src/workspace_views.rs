@@ -1,13 +1,14 @@
 //! Each Workspace's presentation in a shell that draws Agent and View areas
-//! side by side (PRD S6 D-10, B8, B19, B20; S7 D-09, D-10, B14, B17).
+//! side by side (PRD S6 D-10, B8, B19, B20; S7 D-09, D-10, B14, B17; PRD
+//! three-column-panel D-08, D-09).
 //!
 //! A Workspace is one checkout on one device, keyed by the device id and the
 //! checkout path, because a Herdr workspace id is not stable across a Herdr
 //! restart and one checkout can hold tabs from several Herdr workspaces. The
-//! state is Hide's own presentation - whether and how the side panel shows,
-//! which tool it holds and whether the tool column shows, the panel's width, and the View area tree with its displays
-//! ([`crate::view_layout`]) - and never a terminal layout: Herdr keeps panes,
-//! splits and zoom.
+//! state is Hide's own presentation - whether the File Views and Tools
+//! columns are on, which tool Tools holds, the two columns' widths, and the
+//! View area tree with its displays ([`crate::view_layout`]) - and never a
+//! terminal layout: Herdr keeps panes, splits and zoom.
 //!
 //! It lives in its own versioned file, apart from `core-state.json`, so a
 //! shell that does not know it never reads it and an
@@ -15,10 +16,10 @@
 //! strip of View tabs per Workspace) migrates on load into one area and is
 //! written as schema 2 by the next save. A file this build cannot read, of
 //! another version or one whose migration fails, is moved aside, never
-//! overwritten, and the defaults load. An entry written before the side
-//! panel (issue 170) restarts into the panel state that shows the same things,
-//! and one written with two independent tool flags restarts on the tool it
-//! showed.
+//! overwritten, and the defaults load. An entry written with the side panel
+//! that came before the columns (issue 170), or with the layouts before that
+//! panel, restarts with File Views on when its views showed, and one written
+//! with two independent tool flags restarts on the tool it showed.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -35,49 +36,14 @@ pub const SCHEMA_VERSION: u32 = 2;
 /// first, so the file stays bounded however many checkouts come and go.
 pub const MAX_WORKSPACES: usize = 256;
 
-/// The side panel's width while it is open, as a share of the Workspace
-/// body's (issue 170). The bounds leave the panel and the agents to its left
-/// readable; the shell also enforces a pixel minimum for both while it draws.
-pub const MIN_VIEWS_OVER_SHARE: f32 = 0.2;
-pub const MAX_VIEWS_OVER_SHARE: f32 = 0.8;
-pub const DEFAULT_VIEWS_OVER_SHARE: f32 = 0.6;
+/// The widest a stored column width may be, in CSS pixels. The shell keeps
+/// every column above its own minimum and Agent Views the rest as it draws;
+/// the core only keeps a crafted value from being absurd.
+pub const MAX_COLUMN_WIDTH: u32 = 8192;
 
-/// How a Workspace's side panel shows (issue 170). The panel holds the View
-/// areas and the tools, docked to the right edge of the body over an Agent
-/// area that always keeps the body's width, so opening, closing, resizing
-/// and expanding it never resizes a terminal; only a pinned panel narrows the
-/// agents ([`WorkspaceView::pinned`]). Changing it closes no view, document
-/// or pane. A new Workspace starts with it closed, its agents alone; a file
-/// opened into it opens the panel.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PanelState {
-    #[default]
-    Closed,
-    /// At its stored width, over the agents or docked beside them.
-    Open,
-    /// Over the whole body, the agents live underneath at their size.
-    Expanded,
-}
-
-impl PanelState {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "closed" => Some(Self::Closed),
-            "open" => Some(Self::Open),
-            "expanded" => Some(Self::Expanded),
-            _ => None,
-        }
-    }
-
-    pub fn is_shown(self) -> bool {
-        self != Self::Closed
-    }
-}
-
-/// The one tool the side panel's tool column holds (issue 170, "Side panel
-/// hierarchy, revised"): the Explorer or History, never both. Choosing one
-/// swaps it; hiding the column keeps which one comes back.
+/// The one tool the Tools column holds (issue 170, "Side panel hierarchy,
+/// revised"): the Explorer or History, never both. Choosing one swaps it;
+/// hiding the column keeps which one comes back.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tool {
@@ -97,8 +63,18 @@ impl Tool {
     }
 }
 
+/// The side panel's state an entry stored before the columns, read only to
+/// restart with File Views on when the panel showed its views (D-09).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum LegacyPanel {
+    Closed,
+    Open,
+    Expanded,
+}
+
 /// The three layouts a Workspace stored before the side panel, read only to
-/// restart into the panel state that shows the same things.
+/// restart with File Views on when its views showed.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum LegacyMode {
@@ -111,22 +87,20 @@ enum LegacyMode {
 pub struct WorkspaceView {
     pub device_id: String,
     pub path: String,
-    pub panel: PanelState,
-    /// Docked: the agents end at the panel's left edge, so pinning,
-    /// unpinning and resizing a pinned panel resize the terminals once. A
-    /// window too narrow for both floats a pinned panel without storing it.
-    pub pinned: bool,
-    /// The tool the column holds, kept while the column is hidden.
-    pub tool: Tool,
-    /// Whether the tool column shows beside the View areas, or as the whole
-    /// panel while no view is open.
+    /// Whether the File Views column is on. It is on only while it holds a
+    /// view: the last view leaving turns it off in the same transition.
+    pub views: bool,
+    /// Whether the Tools column is on.
     pub tools: bool,
-    pub views_over_share: f32,
-    /// The width of a panel that holds only the tools, as a share of the
-    /// body, once the operator resized one; until then it is the tool
-    /// column's own width.
+    /// The tool the Tools column holds, kept while the column is off.
+    pub tool: Tool,
+    /// The File Views column's width in CSS pixels once the operator resized
+    /// it; until then the shell's default.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools_share: Option<f32>,
+    pub views_width: Option<u32>,
+    /// The Tools column's width, the same way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_width: Option<u32>,
     pub last_used_unix_ms: u64,
     pub layout: Layout,
     pub agent_layout: crate::agent_layout::Layout,
@@ -137,17 +111,19 @@ pub struct WorkspaceView {
     pub view_bookmarks: Bookmarks,
 }
 
-/// A stored entry as any build since schema 2 wrote it: the side panel's
-/// fields, or the layout and boundary that came before them, with the one
-/// tool and its column or the two tool flags that came before those.
+/// A stored entry as any build since schema 2 wrote it: the columns' fields,
+/// or the side panel or the layout and boundary that came before them, with
+/// the one tool and its column or the two tool flags that came before those.
+/// Keys no longer read (`pinned`, the panel's shares) are dropped by not
+/// being named here.
 #[derive(Deserialize)]
 struct StoredView {
     device_id: String,
     path: String,
     #[serde(default)]
-    panel: Option<PanelState>,
+    views: Option<bool>,
     #[serde(default)]
-    pinned: bool,
+    panel: Option<LegacyPanel>,
     #[serde(default)]
     tool: Option<Tool>,
     #[serde(default)]
@@ -157,9 +133,9 @@ struct StoredView {
     #[serde(default)]
     changes: bool,
     #[serde(default)]
-    views_over_share: Option<f32>,
+    views_width: Option<u32>,
     #[serde(default)]
-    tools_share: Option<f32>,
+    tools_width: Option<u32>,
     #[serde(default)]
     last_used_unix_ms: u64,
     #[serde(default)]
@@ -171,58 +147,47 @@ struct StoredView {
     #[serde(default)]
     mode: Option<LegacyMode>,
     #[serde(default)]
-    agent_share: Option<f32>,
-    #[serde(default)]
     views_over_agents: bool,
 }
 
 impl StoredView {
-    fn into_view(self) -> WorkspaceView {
-        let (panel, pinned, share) = match self.panel {
-            Some(panel) => (panel, self.pinned, self.views_over_share),
-            None => {
-                let (panel, pinned, share) =
-                    legacy_panel(self.mode, self.agent_share, self.views_over_agents);
-                (panel, pinned, self.views_over_share.or(share))
-            }
+    /// The entry, and whether it was read from the keys before the columns.
+    fn into_view(self) -> (WorkspaceView, bool) {
+        let (views, upgraded) = match (self.views, self.panel) {
+            (Some(views), _) => (views, false),
+            (None, Some(panel)) => (panel != LegacyPanel::Closed, true),
+            (None, None) => (legacy_views(self.mode, self.views_over_agents), true),
         };
         let (tool, tools) = match (self.tool, self.tools) {
             (Some(tool), Some(tools)) => (tool, tools),
             _ => legacy_tool(self.explorer, self.changes),
         };
-        WorkspaceView {
+        let view = WorkspaceView {
             device_id: self.device_id,
             path: self.path,
-            panel,
-            pinned,
-            tool,
+            views,
             tools,
-            views_over_share: share.unwrap_or(DEFAULT_VIEWS_OVER_SHARE),
-            tools_share: self.tools_share,
+            tool,
+            // Widths stored before the columns were shares of a panel that
+            // floated; the columns start at their defaults (D-09).
+            views_width: if upgraded { None } else { self.views_width },
+            tools_width: if upgraded { None } else { self.tools_width },
             last_used_unix_ms: self.last_used_unix_ms,
             layout: self.layout,
             agent_layout: self.agent_layout,
             view_bookmarks: self.view_bookmarks,
-        }
+        };
+        (view, upgraded)
     }
 }
 
-/// The panel state an entry stored before the side panel restarts into:
-/// Agents only is a closed panel, or an open one when its View areas were
-/// drawn over the agents; Agents and Views is a pinned panel where the
-/// boundary stood, so the agents keep their width; Views only is expanded.
-fn legacy_panel(
-    mode: Option<LegacyMode>,
-    agent_share: Option<f32>,
-    over: bool,
-) -> (PanelState, bool, Option<f32>) {
+/// Whether an entry stored before the side panel showed its views: Agents
+/// only did not, unless its View areas were drawn over the agents; Agents
+/// and Views and Views only did.
+fn legacy_views(mode: Option<LegacyMode>, over: bool) -> bool {
     match mode {
-        None | Some(LegacyMode::Agents) if over => (PanelState::Open, false, None),
-        None | Some(LegacyMode::Agents) => (PanelState::Closed, false, None),
-        Some(LegacyMode::Together) => {
-            (PanelState::Open, true, agent_share.map(|share| 1.0 - share))
-        }
-        Some(LegacyMode::Views) => (PanelState::Expanded, false, None),
+        None | Some(LegacyMode::Agents) => over,
+        Some(LegacyMode::Together | LegacyMode::Views) => true,
     }
 }
 
@@ -242,18 +207,17 @@ fn default_explorer() -> bool {
 }
 
 impl WorkspaceView {
-    /// A Workspace seen for the first time hides the tool column, so the
-    /// first file or page it opens shows alone; ⌘E brings the Explorer.
+    /// A Workspace seen for the first time shows Agent Views alone, the
+    /// Explorer the tool ⌘E brings (B2).
     pub fn new(device_id: &str, path: &str) -> Self {
         Self {
             device_id: device_id.to_owned(),
             path: path.to_owned(),
-            panel: PanelState::default(),
-            pinned: false,
-            tool: Tool::default(),
+            views: false,
             tools: false,
-            views_over_share: DEFAULT_VIEWS_OVER_SHARE,
-            tools_share: None,
+            tool: Tool::default(),
+            views_width: None,
+            tools_width: None,
             last_used_unix_ms: 0,
             layout: Layout::default(),
             agent_layout: crate::agent_layout::Layout::default(),
@@ -265,27 +229,25 @@ impl WorkspaceView {
         self.device_id == device_id && self.path == path
     }
 
-    /// No empty panel surface: losing the last view without tools closes it.
-    pub(crate) fn close_empty_panel(&mut self) -> bool {
-        if self.panel.is_shown() && !self.tools && self.layout.displays().next().is_none() {
-            self.panel = PanelState::Closed;
+    /// File Views is never an empty column: losing the last view turns it
+    /// off, whatever Tools is (D-10, B17).
+    pub(crate) fn close_empty_views(&mut self) -> bool {
+        if self.views && self.layout.displays().next().is_none() {
+            self.views = false;
             return true;
         }
         false
     }
 
-    /// Whether the View areas are on screen: the panel that holds them shows.
+    /// Whether the View areas are on screen: the File Views column is on.
     pub fn shows_views(&self) -> bool {
-        self.panel.is_shown()
+        self.views
     }
 }
 
-pub fn clamp_views_over_share(value: f32) -> f32 {
-    if value.is_finite() {
-        value.clamp(MIN_VIEWS_OVER_SHARE, MAX_VIEWS_OVER_SHARE)
-    } else {
-        DEFAULT_VIEWS_OVER_SHARE
-    }
+/// A stored or sent column width inside what the core accepts.
+pub fn clamp_column_width(value: u32) -> u32 {
+    value.clamp(1, MAX_COLUMN_WIDTH)
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -366,8 +328,6 @@ struct V1View {
     #[serde(default)]
     changes: bool,
     #[serde(default)]
-    agent_share: Option<f32>,
-    #[serde(default)]
     tabs: Vec<V1Tab>,
     #[serde(default)]
     active: Option<V1Tab>,
@@ -407,17 +367,15 @@ impl V1View {
             area.displays = displays;
             area.active = active.or_else(|| area.displays.last().map(|display| display.id.clone()));
         }
-        let (panel, pinned, share) = legacy_panel(self.mode, self.agent_share, false);
         let (tool, tools) = legacy_tool(self.explorer, self.changes);
         WorkspaceView {
             device_id: self.device_id,
             path: self.path,
-            panel,
-            pinned,
-            tool,
+            views: legacy_views(self.mode, false),
             tools,
-            views_over_share: share.unwrap_or(DEFAULT_VIEWS_OVER_SHARE),
-            tools_share: None,
+            tool,
+            views_width: None,
+            tools_width: None,
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
             agent_layout: crate::agent_layout::Layout::default(),
@@ -430,9 +388,12 @@ impl V1View {
 pub enum LoadOutcome {
     /// Read as this version, or migrated from `migrated_from`. `repairs`
     /// says what the load had to change to hold the layout invariants.
+    /// `upgraded` counts the entries read from the side panel's or an
+    /// older layout's keys into the columns (D-09).
     Loaded {
         migrated_from: Option<u32>,
         repairs: Vec<String>,
+        upgraded: usize,
     },
     Missing,
     /// The file could not be read as this version. `preserved_as` is where
@@ -468,8 +429,17 @@ pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
         Ok(StoredVersion { schema_version: 2 }) => {
             match serde_json::from_slice::<StoredV2>(&bytes) {
                 Ok(stored) => {
-                    let views = stored.workspaces.into_iter().map(StoredView::into_view);
-                    return settle(views.collect(), None);
+                    let mut upgraded = 0;
+                    let views = stored
+                        .workspaces
+                        .into_iter()
+                        .map(|stored| {
+                            let (view, from_panel) = stored.into_view();
+                            upgraded += usize::from(from_panel);
+                            view
+                        })
+                        .collect();
+                    return settle(views, None, upgraded);
                 }
                 Err(error) => format!("the file is not valid: {error}"),
             }
@@ -477,8 +447,10 @@ pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
         Ok(StoredVersion { schema_version: 1 }) => {
             match serde_json::from_slice::<StoredV1>(&bytes) {
                 Ok(stored) => {
-                    let migrated = stored.workspaces.into_iter().map(V1View::migrate).collect();
-                    return settle(migrated, Some(1));
+                    let migrated: Vec<_> =
+                        stored.workspaces.into_iter().map(V1View::migrate).collect();
+                    let upgraded = migrated.len();
+                    return settle(migrated, Some(1), upgraded);
                 }
                 Err(error) => format!("the schema 1 file could not be migrated: {error}"),
             }
@@ -504,11 +476,12 @@ pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
 fn settle(
     mut workspaces: Vec<WorkspaceView>,
     migrated_from: Option<u32>,
+    upgraded: usize,
 ) -> (WorkspaceViews, LoadOutcome) {
     let mut repairs = Vec::new();
     for view in &mut workspaces {
-        view.views_over_share = clamp_views_over_share(view.views_over_share);
-        view.tools_share = view.tools_share.map(clamp_views_over_share);
+        view.views_width = view.views_width.map(clamp_column_width);
+        view.tools_width = view.tools_width.map(clamp_column_width);
         for note in view
             .layout
             .repair()
@@ -517,6 +490,10 @@ fn settle(
         {
             repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
         }
+        // After the repair, which can drop the last display: an entry whose
+        // panel showed only the tools, or whose views were all dropped, has
+        // no view to show.
+        view.close_empty_views();
         // A bookmark names the areas the repaired layout still has.
         let layout = &view.layout;
         view.view_bookmarks
@@ -528,6 +505,7 @@ fn settle(
         LoadOutcome::Loaded {
             migrated_from,
             repairs,
+            upgraded,
         },
     )
 }
@@ -602,12 +580,11 @@ mod tests {
         let path = root.join("workspace-views.json");
         let mut views = WorkspaceViews::default();
         let entry = views.entry("local", "/repo");
-        entry.panel = PanelState::Expanded;
-        entry.pinned = true;
+        entry.views = true;
         entry.tool = Tool::Changes;
         entry.tools = false;
-        entry.views_over_share = 0.3;
-        entry.tools_share = Some(0.25);
+        entry.views_width = Some(720);
+        entry.tools_width = Some(300);
         let layout = &mut entry.layout;
         for (path, kind, committed, preview) in [
             ("/repo/a.md", DisplayKind::File, None, false),
@@ -639,7 +616,8 @@ mod tests {
             outcome,
             LoadOutcome::Loaded {
                 migrated_from: None,
-                repairs: Vec::new()
+                repairs: Vec::new(),
+                upgraded: 0,
             }
         );
         assert_eq!(loaded, unbound(views));
@@ -700,15 +678,14 @@ mod tests {
         let view = &loaded.workspaces[0];
         assert_eq!(
             (
-                view.panel,
-                view.pinned,
+                view.views,
                 view.tool,
                 view.tools,
+                view.views_width,
                 view.last_used_unix_ms
             ),
-            (PanelState::Open, true, Tool::Changes, true, 7)
+            (true, Tool::Changes, true, None, 7)
         );
-        assert!((view.views_over_share - 0.6).abs() < 1e-6);
         assert_eq!(view.layout.area_count(), 1);
         let area = view.layout.active_area();
         let displays: Vec<_> = area
@@ -732,7 +709,8 @@ mod tests {
             outcome,
             LoadOutcome::Loaded {
                 migrated_from: None,
-                repairs: Vec::new()
+                repairs: Vec::new(),
+                upgraded: 0,
             }
         );
         assert_eq!(again, loaded);
@@ -788,31 +766,41 @@ mod tests {
         assert!(views.get("local", "/w0").is_some());
     }
 
-    /// Issue 170: an entry stored with a layout from before the side panel
-    /// restarts into the panel state that shows the same things, and the
-    /// next save writes only the panel's fields.
+    /// One View on file, as an entry's `layout` key.
+    fn one_view_layout() -> serde_json::Value {
+        let mut layout = Layout::default();
+        let display = layout.new_display("/repo/a.md", DisplayKind::File, None, false);
+        layout.insert("a1", display, 1).unwrap();
+        serde_json::to_value(&layout).unwrap()
+    }
+
+    fn stored_entry(path: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut entry =
+            serde_json::json!({"device_id": "local", "path": path, "layout": one_view_layout()});
+        entry
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        entry
+    }
+
+    /// Issue 170 and PRD three-column-panel D-09: an entry stored with a
+    /// layout from before the side panel restarts with File Views on when
+    /// its views showed, and the next save writes only the columns' keys.
     #[test]
-    fn a_workspace_stored_with_a_layout_restarts_into_its_panel_state() {
+    fn a_workspace_stored_with_a_layout_restarts_with_file_views_where_views_showed() {
         let root = scratch("legacy-layouts");
         let path = root.join("workspace-views.json");
-        let entry = |path: &str, extra: serde_json::Value| {
-            let mut entry = serde_json::json!({"device_id": "local", "path": path});
-            entry
-                .as_object_mut()
-                .unwrap()
-                .extend(extra.as_object().unwrap().clone());
-            entry
-        };
         fs::write(
             &path,
             serde_json::json!({
                 "schema_version": 2,
                 "workspaces": [
-                    entry("/agents", serde_json::json!({"mode": "agents", "agent_share": 0.3})),
-                    entry("/over", serde_json::json!({"mode": "agents", "views_over_agents": true, "views_over_share": 0.45})),
-                    entry("/together", serde_json::json!({"mode": "together", "agent_share": 0.3})),
-                    entry("/views", serde_json::json!({"mode": "views"})),
-                    entry("/none", serde_json::json!({})),
+                    stored_entry("/agents", serde_json::json!({"mode": "agents", "agent_share": 0.3})),
+                    stored_entry("/over", serde_json::json!({"mode": "agents", "views_over_agents": true, "views_over_share": 0.45})),
+                    stored_entry("/together", serde_json::json!({"mode": "together", "agent_share": 0.3})),
+                    stored_entry("/views", serde_json::json!({"mode": "views"})),
+                    stored_entry("/none", serde_json::json!({})),
                 ]
             })
             .to_string(),
@@ -821,34 +809,126 @@ mod tests {
 
         let (loaded, outcome) = load(&path, 1);
 
-        assert!(matches!(outcome, LoadOutcome::Loaded { .. }));
+        assert!(matches!(outcome, LoadOutcome::Loaded { upgraded: 5, .. }));
         let states: Vec<_> = loaded
             .workspaces
             .iter()
-            .map(|view| {
-                (
-                    view.path.as_str(),
-                    view.panel,
-                    view.pinned,
-                    (view.views_over_share * 100.0).round() as u32,
-                )
-            })
+            .map(|view| (view.path.as_str(), view.views, view.views_width))
             .collect();
         assert_eq!(
             states,
             vec![
-                ("/agents", PanelState::Closed, false, 60),
-                ("/over", PanelState::Open, false, 45),
-                ("/together", PanelState::Open, true, 70),
-                ("/views", PanelState::Expanded, false, 60),
-                ("/none", PanelState::Closed, false, 60),
+                ("/agents", false, None),
+                ("/over", true, None),
+                ("/together", true, None),
+                ("/views", true, None),
+                ("/none", false, None),
             ]
         );
         save(&path, &loaded).unwrap();
         let written = fs::read_to_string(&path).unwrap();
         assert!(!written.contains("\"mode\""));
         assert!(!written.contains("agent_share"));
+        assert!(!written.contains("views_over"));
         assert_eq!(load(&path, 2).0, loaded);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// PRD three-column-panel D-09, B30: a side panel stored open or
+    /// expanded restarts with File Views on and a closed one with it off,
+    /// pinned or not; Tools, its tool, the View tree and the bookmarks stay
+    /// as they were, both widths start at their defaults, and the next save
+    /// writes none of the panel's keys.
+    #[test]
+    fn a_stored_side_panel_restarts_as_the_file_views_column() {
+        let root = scratch("legacy-panel");
+        let path = root.join("workspace-views.json");
+        let bookmarks = serde_json::json!({"w:t1": {"a1": "d1"}});
+        fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 2,
+                "workspaces": [
+                    stored_entry("/open", serde_json::json!({"panel": "open", "pinned": false, "views_over_share": 0.45, "tool": "changes", "tools": true, "view_bookmarks": bookmarks})),
+                    stored_entry("/expanded", serde_json::json!({"panel": "expanded", "pinned": true, "tools_share": 0.3, "tool": "explorer", "tools": false})),
+                    stored_entry("/closed", serde_json::json!({"panel": "closed", "pinned": true, "tool": "explorer", "tools": true})),
+                    {"device_id": "local", "path": "/tools-only", "panel": "open", "tool": "explorer", "tools": true},
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (loaded, outcome) = load(&path, 1);
+
+        assert!(
+            matches!(outcome, LoadOutcome::Loaded { upgraded: 4, ref repairs, .. } if repairs.is_empty())
+        );
+        let states: Vec<_> = loaded
+            .workspaces
+            .iter()
+            .map(|view| {
+                (
+                    view.path.as_str(),
+                    view.views,
+                    view.tools,
+                    view.tool,
+                    view.views_width,
+                    view.tools_width,
+                    view.layout.displays().count(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                ("/open", true, true, Tool::Changes, None, None, 1),
+                ("/expanded", true, false, Tool::Explorer, None, None, 1),
+                ("/closed", false, true, Tool::Explorer, None, None, 1),
+                ("/tools-only", false, true, Tool::Explorer, None, None, 0),
+            ]
+        );
+        assert_eq!(
+            loaded.workspaces[0]
+                .view_bookmarks
+                .of("w:t1")
+                .and_then(|areas| areas.get("a1"))
+                .map(String::as_str),
+            Some("d1")
+        );
+        save(&path, &loaded).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        for retired in ["\"panel\"", "pinned", "views_over_share", "tools_share"] {
+            assert!(!written.contains(retired), "{retired} is not written again");
+        }
+        let (again, outcome) = load(&path, 2);
+        assert_eq!(again, loaded);
+        assert!(matches!(outcome, LoadOutcome::Loaded { upgraded: 0, .. }));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// B31: a panel value no build wrote makes the file unreadable, which
+    /// keeps it aside and loads the defaults.
+    #[test]
+    fn an_unknown_panel_value_takes_the_unreadable_path() {
+        let root = scratch("legacy-panel-unknown");
+        let path = root.join("workspace-views.json");
+        let body = serde_json::json!({
+            "schema_version": 2,
+            "workspaces": [{"device_id": "local", "path": "/r", "panel": "floating"}]
+        })
+        .to_string();
+        fs::write(&path, &body).unwrap();
+        let (loaded, outcome) = load(&path, 3);
+        assert!(loaded.workspaces.is_empty());
+        let LoadOutcome::Unreadable {
+            preserved_as: Some(preserved),
+            ..
+        } = outcome
+        else {
+            panic!("expected the unreadable path, got {outcome:?}");
+        };
+        assert_eq!(fs::read_to_string(preserved).unwrap(), body);
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -937,7 +1017,8 @@ mod tests {
             outcome,
             LoadOutcome::Loaded {
                 migrated_from: None,
-                repairs: Vec::new()
+                repairs: Vec::new(),
+                upgraded: 0,
             }
         );
 
@@ -962,16 +1043,17 @@ mod tests {
             outcome,
             LoadOutcome::Loaded {
                 migrated_from: None,
-                repairs: Vec::new()
+                repairs: Vec::new(),
+                upgraded: 0,
             }
         );
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn a_stored_share_outside_the_bounds_is_clamped() {
-        assert_eq!(clamp_views_over_share(0.01), MIN_VIEWS_OVER_SHARE);
-        assert_eq!(clamp_views_over_share(f32::NAN), DEFAULT_VIEWS_OVER_SHARE);
-        assert_eq!(clamp_views_over_share(0.95), MAX_VIEWS_OVER_SHARE);
+    fn a_stored_width_outside_the_bounds_is_clamped() {
+        assert_eq!(clamp_column_width(0), 1);
+        assert_eq!(clamp_column_width(u32::MAX), MAX_COLUMN_WIDTH);
+        assert_eq!(clamp_column_width(640), 640);
     }
 }

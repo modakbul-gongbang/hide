@@ -60,7 +60,6 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         request_id: "request-2".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: false,
-        in_place: false,
         request: RemoteControlRequest::CreateTab {
             workspace_id: projected_workspace_id.to_owned(),
             checkout_id: None,
@@ -831,7 +830,6 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         request_id: request_id.to_owned(),
         report_pane_focus_outcome: true,
         focus_device: false,
-        in_place: false,
         request: RemoteControlRequest::FocusPane {
             pane_id: projected_pane_id.clone(),
         },
@@ -851,7 +849,6 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         request_id: "ordinary-remote-focus".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: false,
-        in_place: false,
         request: RemoteControlRequest::FocusPane {
             pane_id: projected_pane_id.clone(),
         },
@@ -1469,7 +1466,11 @@ fn read_record_stops_following_a_pane_herdr_moved_focus_away_from() {
     assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
     // The requested focus lands, then a spawned pane takes it away.
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p3")));
+    super::session_navigation::finish_running_pane_focus(&mut runtime, Ok(()));
+    assert!(runtime.pending_pane_focus.is_none());
+    assert!(runtime.pane_focus_in_flight.is_none());
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
 
     let moved = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6031)];
     runtime.ingest_session(Ok(finished_tab_payload(&moved, "w1:p1")));

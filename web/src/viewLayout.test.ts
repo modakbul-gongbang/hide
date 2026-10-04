@@ -10,11 +10,9 @@ import {
   focusRequestArrived,
   neighbourArea,
   placeKey,
-  placementForWidth,
   ratioForFirst,
   resizeTarget,
   revealedScroll,
-  shownTool,
   splitEligibility,
   steppedRatio,
   viewAreaStepUnavailable,
@@ -348,22 +346,6 @@ describe("area commands", () => {
     expect(at(0.85, "a1", true)).toEqual({ reason: "This view area cannot grow any further." });
     expect(at(0.84, "a1", true)).toEqual({ splitId: "s1", ratio: 0.85 });
     expect(at(0.15, "a1", false)).toEqual({ reason: "This view area cannot shrink any further." });
-  });
-});
-
-describe("narrow panels", () => {
-  it("never floats the tools over the work by itself: a narrowing window closes them until asked for", () => {
-    expect(placementForWidth("column", true)).toBe("closed");
-    expect(placementForWidth("open", true)).toBe("open");
-    expect(placementForWidth("closed", true)).toBe("closed");
-    expect(placementForWidth("open", false)).toBe("column");
-    const stored = { tool: "changes", tools: true, panel: "open" };
-    expect(shownTool(stored, "column")).toBe("changes");
-    expect(shownTool(stored, "open")).toBe("changes");
-    expect(shownTool(stored, "closed")).toBeNull();
-    // A closed side panel or a hidden column shows no tool, whatever the core stores.
-    expect(shownTool({ ...stored, panel: "closed" }, "column")).toBeNull();
-    expect(shownTool({ ...stored, tools: false }, "column")).toBeNull();
   });
 });
 

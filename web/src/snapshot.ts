@@ -408,7 +408,7 @@ export type StripTab = {
 
 /** The removal gate the core computed for a linked worktree (`WorktreeDeletionGateSnapshot`). */
 export type DeletionGate = {
-  /** Only the main worktree, which offers no deletion. */
+  /** Main, locked or unavailable ignored-repository measurement. */
   blocked_reason: string | null;
   warnings: string[];
   button_label: string;
@@ -421,6 +421,9 @@ export type DeletionGate = {
 
 /** The parts of the core's worktree row the removal confirmation reads. */
 export type WorktreeRow = {
+  lock_reason?: string | null;
+  ignored_repositories?: string[];
+  ignored_scan_unavailable?: string | null;
   path: string;
   branch: string | null;
   head_sha: string | null;
@@ -1080,7 +1083,7 @@ export type RepositoryClone = {
   message: string | null;
 };
 
-/** One worktree deletion: `closing` panes, `removing` on the core's worker, then `finished` or `failed`. */
+/** One worktree deletion: `checking` before any close, `closing` panes, `removing` on the core's worker, then `finished` or `failed`. */
 export type WorktreeRemoval = {
   id: number;
   /** The device the worktree is on; null is the daemon's own machine. */

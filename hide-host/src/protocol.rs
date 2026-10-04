@@ -30,7 +30,10 @@ use crate::root::RootIdentity;
 /// overview-request-view D-21, D-24); a helper on 13 would not know them.
 /// 15: `session_activity` answers only a proven session's modification time
 /// and size, for the parent-owned inactivity watcher.
-pub const PROTOCOL_VERSION: u32 = 15;
+/// 16: worktree facts carry lock reasons and measured ignored repositories;
+/// `worktree_removal_check` measures the exact accepted deletion before any
+/// pane closes. A helper without this preflight must never remove instead.
+pub const PROTOCOL_VERSION: u32 = 16;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -171,6 +174,10 @@ pub enum Call {
     /// only as far as the operator accepted
     /// (`hide_host::worktrees::remove_confirmed`).
     WorktreeRemove {
+        removal: crate::worktrees::ConfirmedRemoval,
+    },
+    /// Non-mutating authoritative check before any pane is closed.
+    WorktreeRemovalCheck {
         removal: crate::worktrees::ConfirmedRemoval,
     },
     /// The device's install kit (`hide_host::kit`): the helper acts on the

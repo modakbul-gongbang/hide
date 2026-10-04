@@ -229,18 +229,11 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   const pageB = await viewOf(`${origin}/b.html`);
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
-  // Two View areas side by side need the Workspace's width: the side panel
-  // is expanded over it (issue 170), from the toolbar's location menu. The open
-  // panel beside the agents leaves the View area too narrow to split, and the
-  // core stores the expansion, so the menu below offers Split right only once
-  // the expanded panel is drawn: it reads the geometry drawn when it opens.
-  await page.locator("[data-workspace-location]").click({ button: "right" });
-  await page.locator('[data-menu-item="panel:expanded"]').click();
-  await expect(page.locator('[role="menu"]')).toHaveCount(0);
-  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
-  const toolsShown = page.locator('[data-tools-toggle="on"]');
-  if (await toolsShown.count()) await toolsShown.click();
-  await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
+  // Two View areas side by side need File Views' width: Tools is turned off
+  // so File Views and Agent Views share the body (PRD three-column-panel
+  // B4). The menu below reads the geometry drawn when it opens, so it offers
+  // Split right once the column has drawn without Tools.
+  await turnToolsOff(page);
 
   // Split right moves B into a new area: both pages show, neither loaded again.
   await tab(page, "Page B").click({ button: "right" });
@@ -354,7 +347,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await windowShot("browser-load-failed");
 
   // The Explorer opens an HTML file of the checkout as a page.
-  await page.locator('[data-tools-toggle="off"]').click();
+  await page.locator('[data-column-toggle="tools"]').click();
   await page.locator('[data-tool-tab="explorer"]').click();
   await page.locator(`[data-explorer-row="${path.join(checkout, "리포트 1.html")}"]`).click({ button: "right" });
   await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
@@ -367,8 +360,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // Closing B's display ends its renderer process. Without the Explorer both
   // areas show again, B's tab among them (behind Page C, which opened beside A).
-  await page.locator('[data-tools-toggle="on"]').click();
-  await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
+  await turnToolsOff(page);
   await expect(tab(page, "Page B")).toBeVisible();
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role="menu"] [data-menu-item="close_view"]').click();
@@ -390,6 +382,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   app = await relaunch(run.env);
   const again = await shellPage(app);
   await enterWorkspace(again, "fixture");
+  await showFileViews(again);
   await expect(tab(again, "Page A")).toBeVisible({ timeout: 20_000 });
   await tab(again, "Page A").click();
   await expect.poll(async () => (await views()).find((view) => view.url === `${origin}/a.html`)?.visible).toBe(true);
@@ -489,24 +482,20 @@ test("browser: a shell layer never has a page drawn over it, and a page tab's hi
   await expect(page.locator("[data-browser-still]")).toHaveCount(0);
   await app.evaluate(() => { (globalThis as unknown as { __captureProbe: { delay: number } }).__captureProbe.delay = 0; });
 
-  // A window too narrow for the tools beside the View areas floats them over
-  // the areas: the page under them gives way to its still until they close,
-  // and the keyboard goes back to the toggle that opened them.
+  // A narrow window shows one column: Tools called into it hides the page,
+  // and File Views called back puts the page on its slot again (PRD
+  // three-column-panel B25, B27).
   await fitWindow(app, { width: 720, height: WINDOW.height });
+  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-workspace-body", "narrow");
+  if ((await page.locator("[data-workspace-screen]").getAttribute("data-file-views")) !== "shown") await page.locator('[data-column-toggle="views"]').click();
   await expectOnSlot(page, url, a);
-  const toggle = page.locator('[data-tools-toggle="off"]');
-  await toggle.focus();
-  await page.keyboard.press("Enter");
-  const tools = page.locator('[data-tools-overlay="true"]');
-  await expect(tools).toBeVisible();
-  await expect.soft.poll(shown, { message: "the Tools overlay hides the page under it" }).toBe(false);
-  await expect.soft(still).toBeVisible();
-  await windowShot("browser-tools-overlay-frozen");
-  await page.keyboard.press("Escape");
-  await expect(tools).toHaveCount(0);
+  await page.locator('[data-column-toggle="tools"]').click();
+  await expect(page.locator('[data-column="tools"]')).toBeVisible();
+  await expect.poll(shown, { message: "Tools in the one column hides the page" }).toBe(false);
+  await windowShot("browser-narrow-tools");
+  await page.locator('[data-column-toggle="views"]').click();
   await expect.poll(shown).toBe(true);
-  await expect(page.locator("[data-browser-still]")).toHaveCount(0);
-  await expect(page.locator("[data-tools-toggle]")).toBeFocused();
+  await expectOnSlot(page, url, a);
 });
 
 test("browser: waiting for a hidden page does not take the operator's keyboard target", async () => {
@@ -639,11 +628,9 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
     for (const type of ["mouseDown", "mouseUp"] as const) child.webContents.sendInputEvent({ type, x: 20, y: 20, button: "left", clickCount: 1, modifiers: ["shift"] });
   }, signin);
   await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
-  // Two View areas side by side need the Workspace's width: in this run's
-  // window the side panel is expanded over it, as the first test does.
-  await page.locator("[data-workspace-location]").click({ button: "right" });
-  await page.locator('[data-menu-item="panel:expanded"]').click();
-  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  // Two View areas side by side need File Views' width: Tools is turned
+  // off, as the first test does.
+  await turnToolsOff(page);
   await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
   await expect.poll(async () => (await views()).filter((view) => view.visible).map((view) => view.url).sort()).toEqual([`${origin}/c.html`, signin].sort());
   expect(await windows()).toBe(1);
@@ -771,12 +758,8 @@ test("area cycle native: page input previews one exact area, releases once and c
   const previous = `${origin}/b.html`;
   const current = `${origin}/korean.html`;
   for (const url of [outside, previous]) expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ ok: true });
-  // Two View areas side by side need the Workspace's width: expand the side panel from the toolbar's location menu.
-  await page.locator("[data-workspace-location]").click({ button: "right" });
-  await page.locator('[data-menu-item="panel:expanded"]').click();
-  await expect(page.locator('[role="menu"]')).toHaveCount(0);
-  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
-  if (await page.locator('[data-tools-toggle="on"]').count()) await page.locator('[data-tools-toggle="on"]').click();
+  // Two View areas side by side need File Views' width: Tools is turned off.
+  await turnToolsOff(page);
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role=menu] [data-menu-item=split_right]').click();
   await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
@@ -1004,3 +987,18 @@ test("zoom: the text-size commands zoom a focused page in Chrome's steps and a p
   expect(await pinch(moved)).toBeGreaterThan(1.2);
   await windowShot("browser-zoom-pinched");
 });
+
+/** Turns the Tools column off when it is on, leaving its width to File Views and Agent Views. */
+async function turnToolsOff(page: Page): Promise<void> {
+  const on = page.locator('[data-column-toggle="tools"][aria-pressed="true"]');
+  if (await on.count()) await on.click();
+  await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
+}
+
+/** Shows File Views, calling it into the one column a narrow window draws. */
+async function showFileViews(page: Page): Promise<void> {
+  const workspace = page.locator("[data-workspace-screen]");
+  await expect(workspace).toHaveAttribute("data-file-views", /shown|hidden/, { timeout: 20_000 });
+  if ((await workspace.getAttribute("data-file-views")) === "hidden") await page.locator('[data-column-toggle="views"]').click();
+  await expect(workspace).toHaveAttribute("data-file-views", "shown");
+}

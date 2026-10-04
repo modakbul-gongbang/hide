@@ -200,29 +200,35 @@ impl<T: Serialize> Serialize for Edited<T> {
     }
 }
 
-/// What the front Workspace shows: its side panel, the panel's tools and
-/// width, and its View area tree. The editor's `active_tab_id` is the
-/// document of the active area's active display.
+/// What the front Workspace shows: whether its File Views and Tools columns
+/// are on, the Tools column's tool, the two columns' widths, and its View
+/// area tree. The editor's `active_tab_id` is the document of the active
+/// area's active display.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceViewSnapshot {
     pub device_id: String,
     pub path: String,
-    /// Whether and how the side panel shows (issue 170).
-    pub panel: crate::workspace_views::PanelState,
-    /// The panel docked beside the agents rather than over them.
-    pub pinned: bool,
-    /// The one tool the tool column holds, kept while the column is hidden.
-    pub tool: crate::workspace_views::Tool,
-    /// Whether the tool column shows.
+    /// Whether the File Views column is on (PRD three-column-panel D-08).
+    pub views: bool,
+    /// Whether the Tools column is on.
     pub tools: bool,
-    /// The open panel's width, as a share of the Workspace body's.
-    pub views_over_share: f32,
-    /// A panel holding only the tools: its width as a share of the body's,
-    /// or null for the tool column's own width until it is resized.
-    pub tools_share: Option<f32>,
-    /// The shell reported drawing this panel over the whole body (a narrow
-    /// window), so an agent chosen from elsewhere closes it even when pinned.
-    pub covered: bool,
+    /// The one tool the Tools column holds, kept while the column is off.
+    pub tool: crate::workspace_views::Tool,
+    /// The File Views column's width in CSS pixels, or null for the shell's
+    /// default until it is resized.
+    pub views_width: Option<u32>,
+    /// The Tools column's width, the same way.
+    pub tools_width: Option<u32>,
+    /// The last width request the core accepted for this Workspace. Runtime
+    /// only, so a shell can distinguish its latest intent from an older echo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_request_id: Option<String>,
+    /// The number of this Workspace's last File Views call, 0 for none since
+    /// the core started; a number past `views_calls` as the shell last read
+    /// it is a call the shell shows in a narrow body (D-07).
+    pub views_called: u64,
+    /// How many File Views calls the core has numbered, in any Workspace.
+    pub views_calls: u64,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).
@@ -3121,6 +3127,9 @@ pub struct UnpushedSnapshot {
 /// counts the row badge and the card show.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeSnapshot {
+    pub lock_reason: Option<String>,
+    pub ignored_repositories: Vec<String>,
+    pub ignored_scan_unavailable: Option<String>,
     pub head_sha: Option<String>,
     pub last_commit_subject: Option<String>,
     pub last_commit_unix_seconds: Option<u64>,
@@ -3192,7 +3201,7 @@ pub struct WorktreeAgentLineSnapshot {
 /// One policy shared by all worktree deletion surfaces.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeDeletionGateSnapshot {
-    /// Why nothing can be deleted: only ever the main worktree.
+    /// Why deletion cannot start: main, locked or unmeasured ignored folders.
     pub blocked_reason: Option<String>,
     /// What the operator should know before deleting, in the order shown.
     pub warnings: Vec<String>,
@@ -3209,7 +3218,8 @@ pub struct WorktreeDeletionGateSnapshot {
     pub discard_label: Option<String>,
 }
 
-/// Shell authorization issued only after Herdr confirms every pane is gone.
+/// The accepted deletion, measured before any pane closes and executed by
+/// the worker only after Herdr confirms every pane is gone.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorktreeRemovalSnapshot {
     pub id: u64,
@@ -3229,6 +3239,7 @@ pub struct WorktreeRemovalSnapshot {
     /// The operator accepted losing the folder's changes, so the recheck
     /// lets dirt through and Git removes with `--force`.
     pub discard_changes: bool,
+    pub expected_ignored_repositories: Vec<String>,
     pub phase: String,
     pub message: Option<String>,
 }
