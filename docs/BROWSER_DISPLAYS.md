@@ -129,6 +129,9 @@ try {
 
 Playwright uses the existing context with `noDefaults: true`; creating another context or applying its default global download configuration is unsupported.
 Page, tab and iframe target metadata carries one opaque context identifier per launch so clients can associate those targets with the existing context; it does not grant native context authority.
+The gateway attests each leased debugger's native main frame before forwarding client commands and translates protocol frame references to that display's public page target ID.
+Iframe target IDs retain their native frame identity only after attachment from that owned debugger; their session IDs remain opaque, and parent-frame references use the public page identity.
+This translation applies to protocol frame metadata and commands, never to values returned by page evaluation.
 
 ```sh
 BU_CDP_URL="$browser_ws_url" python - <<'PY'

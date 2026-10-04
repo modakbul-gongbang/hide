@@ -17,6 +17,12 @@ class ElectronDebugger extends EventEmitter {
   attach(): void { if (this.attached) throw new Error("Already attached"); this.attached = true; }
   detach(): void { this.attached = false; this.emit("detach", {}, "target closed"); }
   async sendCommand(method: string, params: Json = {}, sessionId?: string): Promise<unknown> {
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "native-owned-page", url: "https://page.example/" }, childFrames: [{ frame: { id: "real-iframe", parentId: "native-owned-page" } }] } };
+    if (method === "Page.createIsolatedWorld") {
+      if (params.frameId !== "native-owned-page") throw new Error("Unknown native frame");
+      this.emit("message", {}, "Runtime.executionContextCreated", { context: { id: 42, name: params.worldName, auxData: { frameId: params.frameId, isDefault: false } } }, sessionId ?? "");
+      return { executionContextId: 42 };
+    }
     if (method === "Runtime.evaluate") return { result: { type: "string", value: sessionId ?? "page" } };
     if (method === "Target.getTargetInfo") return { targetInfo: { targetId: "native-owned-page", type: "page" } };
     if (method === "Target.attachToTarget") {
@@ -259,12 +265,13 @@ describe("scoped desktop CDP public boundary", () => {
     const browser = await client((await capability()).browser_ws_url);
     const root = await attach(browser);
     await browser.call("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, root);
-    first.contents.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "native-iframe", targetInfo: { targetId: "real-iframe", type: "iframe", url: "https://iframe.example" } }, "");
+    first.contents.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "native-iframe", targetInfo: { targetId: "real-iframe", parentFrameId: "native-owned-page", type: "iframe", url: "https://iframe.example" } }, "");
     await new Promise((resolve) => setTimeout(resolve, 10));
     const attachment = browser.events.find((event) => event.method === "Target.attachedToTarget" && (event.params as Json).sessionId !== root && event.sessionId === root);
     expect(attachment).toBeDefined();
     const parentInfo = (await browser.call("Target.getTargetInfo", {}, root)).result as Json;
     expect(((attachment!.params as Json).targetInfo as Json).browserContextId).toBe((parentInfo.targetInfo as Json).browserContextId);
+    expect((attachment!.params as Json).targetInfo).toMatchObject({ targetId: "real-iframe", parentFrameId: "page-11" });
     const child = (attachment!.params as Json).sessionId as string;
     expect(child).not.toBe("native-iframe");
     expect((await browser.call("Runtime.evaluate", { expression: "1" }, child)).result).toEqual({ result: { type: "string", value: "native-iframe" } });
@@ -275,6 +282,23 @@ describe("scoped desktop CDP public boundary", () => {
     expect(JSON.stringify(browser.events)).not.toContain("https://secret.example");
     expect(JSON.stringify(browser.events)).not.toContain("unowned");
     expect((await browser.call("Runtime.evaluate", {}, "native-popup")).error).toBeDefined();
+  });
+
+  it("keeps public main-frame identity consistent across frame trees, commands and contexts", async () => {
+    const { first, capability, client } = await fixture();
+    const browser = await client((await capability()).browser_ws_url);
+    const session = await attach(browser);
+    const tree = (await browser.call("Page.getFrameTree", {}, session)).result as Json;
+    expect(tree.frameTree).toMatchObject({ frame: { id: "page-11" }, childFrames: [{ frame: { id: "real-iframe", parentId: "page-11" } }] });
+    const world = await browser.call("Page.createIsolatedWorld", { frameId: "page-11", worldName: "client-world" }, session);
+    expect(world.error).toBeUndefined();
+    expect(world.result).toEqual({ executionContextId: 42 });
+    expect(browser.events.find((event) => event.method === "Runtime.executionContextCreated")).toMatchObject({ sessionId: session, params: { context: { id: 42, name: "client-world", auxData: { frameId: "page-11" } } } });
+    first.contents.debugger.emit("message", {}, "Page.frameNavigated", { frame: { id: "native-owned-page", url: "https://page.example/" } }, "");
+    first.contents.debugger.emit("message", {}, "Page.frameAttached", { frameId: "real-iframe", parentFrameId: "native-owned-page" }, "");
+    await browser.call("Browser.getVersion");
+    expect(browser.events.find((event) => event.method === "Page.frameNavigated")).toMatchObject({ params: { frame: { id: "page-11" } } });
+    expect(browser.events.find((event) => event.method === "Page.frameAttached")).toMatchObject({ params: { frameId: "real-iframe", parentFrameId: "page-11" } });
   });
 
   it("limits page cookie reads to the current origin", async () => {

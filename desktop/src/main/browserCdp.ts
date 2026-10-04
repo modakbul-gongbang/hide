@@ -50,6 +50,8 @@ type Lease = {
   message: DebuggerMessage;
   detach: DebuggerDetach;
   pageAttaches: { targetId: string; flattened: boolean }[];
+  ready: Promise<void>;
+  mainFrameId: string;
 };
 type Intent = {
   fingerprint: string; issued: number; requestId: string; method: string; attempts: number;
@@ -478,7 +480,7 @@ export class BrowserCdpGateway {
     if (this.owners.has(page.contents.id) || page.contents.debugger.isAttached()) throw new ProtocolError("Target already has a debugger");
     page.contents.debugger.attach("1.3");
     const root = { id: secret(), targetId: `${kind}-${page.contents.id}`, kind, flattened } as Session;
-    const lease: Lease = { page, client, root, pageAttaches: [], message: (_event, method, params, sessionId) => this.nativeEvent(lease, method, params, sessionId), detach: () => this.release(lease, false) };
+    const lease: Lease = { page, client, root, pageAttaches: [], ready: Promise.resolve(), mainFrameId: "", message: (_event, method, params, sessionId) => this.nativeEvent(lease, method, params, sessionId), detach: () => this.release(lease, false) };
     root.lease = lease;
     page.contents.debugger.on("message", lease.message);
     page.contents.debugger.on("detach", lease.detach);
@@ -486,6 +488,22 @@ export class BrowserCdpGateway {
     client.sessions.set(root.id, root);
     this.owners.set(page.contents.id, lease);
     this.options.attached(page, true);
+    // Chromium identifies a page's main frame by its native target ID. Our
+    // public target is stable for the Hide display generation, so translate
+    // that protocol identity after this exact debugger attests its frame.
+    lease.ready = this.bounded(client, page.contents.debugger.sendCommand("Page.getFrameTree", {}), lease).then((answer) => {
+      if (!object(answer) || !object(answer.frameTree) || !object(answer.frameTree.frame)
+        || !identifier(answer.frameTree.frame.id) || answer.frameTree.frame.parentId !== undefined
+        || this.owners.get(page.contents.id) !== lease) throw new ProtocolError("The native main frame could not be identified");
+      lease.mainFrameId = answer.frameTree.frame.id;
+    }).catch((error: unknown) => {
+      this.options.log("browser.cdp_attach_failed", { display_id: page.id, reason: "main_frame" });
+      this.release(lease);
+      throw error;
+    });
+    // Auto-attach may have no pending caller when preparation fails. Release
+    // still delivers the detached event; later commands receive a typed error.
+    void lease.ready.catch(() => {});
     return root;
   }
   private attachPageChild(tab: Session): Session {
@@ -584,11 +602,39 @@ export class BrowserCdpGateway {
       })]);
     } finally { clearTimeout(timer); client.abort.signal.removeEventListener("abort", abort); }
   }
-  private native(session: Session, method: string, params: Json): Promise<unknown> {
+  /** Rewrite protocol frame references only, never evaluated page values. */
+  private frameFields(lease: Lease, value: Json, outgoing: boolean): Json {
+    if (!lease.mainFrameId) return value;
+    const from = outgoing ? lease.mainFrameId : targetId(lease.page);
+    const to = outgoing ? targetId(lease.page) : lease.mainFrameId;
+    const fields = { ...value };
+    for (const key of ["frameId", "parentFrameId"]) if (fields[key] === from) fields[key] = to;
+    return fields;
+  }
+  private nativePayload(lease: Lease, method: string, value: Json): Json {
+    const result = this.frameFields(lease, value, true);
+    const frame = (value: Json) => {
+      const from = lease.mainFrameId, to = targetId(lease.page);
+      return { ...value, ...(value.id === from ? { id: to } : {}), ...(value.parentId === from ? { parentId: to } : {}) };
+    };
+    if (method === "Page.getFrameTree" && object(value.frameTree) && object(value.frameTree.frame)) {
+      const tree = value.frameTree;
+      result.frameTree = { ...tree, frame: frame(tree.frame as Json),
+        ...(Array.isArray(tree.childFrames) ? { childFrames: tree.childFrames.map((child: unknown) => object(child) && object(child.frame) ? { ...child, frame: frame(child.frame) } : child) } : {}) };
+    }
+    if (method === "Page.frameNavigated" && object(value.frame)) result.frame = frame(value.frame);
+    if (method === "Runtime.executionContextCreated" && object(value.context) && object(value.context.auxData)) {
+      result.context = { ...value.context, auxData: this.frameFields(lease, value.context.auxData, true) };
+    }
+    return result;
+  }
+  private async native(session: Session, method: string, params: Json): Promise<unknown> {
     const { client, page } = session.lease;
+    await session.lease.ready;
     this.page(client.capability, targetId(page));
     if (this.owners.get(page.contents.id) !== session.lease) throw new ProtocolError("Debugger session was released");
-    return this.bounded(client, page.contents.debugger.sendCommand(method, params, session.nativeId), session.lease);
+    const result = await this.bounded(client, page.contents.debugger.sendCommand(method, this.frameFields(session.lease, params, false), session.nativeId), session.lease);
+    return object(result) ? this.nativePayload(session.lease, method, result) : result;
   }
   private async dispatch(client: Client, command: Command, session: Session | undefined, depth: number, intentId?: string): Promise<unknown> {
     if (client.abort.signal.aborted || client.draining || !this.available) throw new ProtocolError("CDP connection closed");
@@ -809,9 +855,10 @@ export class BrowserCdpGateway {
         void this.native(parent, "Target.detachFromTarget", { sessionId: params.sessionId }).catch(() => this.release(lease));
         return;
       }
-      const child: Session = { id: secret(), targetId: `iframe-${secret()}`, kind: "iframe", lease, parent, nativeId: params.sessionId, flattened: parent.flattened };
+      if (!identifier(info.targetId)) { this.release(lease); return; }
+      const child: Session = { id: secret(), targetId: info.targetId, kind: "iframe", lease, parent, nativeId: params.sessionId, flattened: parent.flattened };
       client.sessions.set(child.id, child);
-      this.event(client, method, { sessionId: child.id, targetInfo: { targetId: child.targetId, type: "iframe", title: typeof info.title === "string" ? info.title : "", url: typeof info.url === "string" ? info.url : "", attached: true, canAccessOpener: false, browserContextId: this.browserContextId }, waitingForDebugger: params.waitingForDebugger === true }, parent);
+      this.event(client, method, { sessionId: child.id, targetInfo: this.frameFields(lease, { targetId: child.targetId, type: "iframe", title: typeof info.title === "string" ? info.title : "", url: typeof info.url === "string" ? info.url : "", attached: true, canAccessOpener: false, browserContextId: this.browserContextId, ...(identifier(info.parentFrameId) ? { parentFrameId: info.parentFrameId } : {}) }, true), waitingForDebugger: params.waitingForDebugger === true }, parent);
     } else if (method === "Target.detachedFromTarget") {
       const child = [...client.sessions.values()].find((session) => session.lease === lease && session.nativeId === params.sessionId);
       if (child) {
@@ -821,6 +868,6 @@ export class BrowserCdpGateway {
           }
         }
       }
-    } else if (!method.startsWith("Target.") && !method.startsWith("Browser.")) this.event(client, method, params, parent);
+    } else if (!method.startsWith("Target.") && !method.startsWith("Browser.")) this.event(client, method, this.nativePayload(lease, method, params), parent);
   }
 }
