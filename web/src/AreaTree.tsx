@@ -13,9 +13,9 @@ import { RATIO_MAX, RATIO_MIN, RESIZE_STEP, areasOf, dropTarget, findArea, locat
   type DividerBox, type DropTarget, type Geometry, type LayoutSizes, type Point, type Rect, type TabFit, type TabSlot, type TabStripSizes } from "./areaLayout";
 
 /**
- * `fit` says how the tab draws its contents in its slot (`tabStripFit`): an
- * Agent tab shrinks from titled through compact to marks as its bar fills;
- * a View tab is always titled.
+ * `fit` says how the tab draws its contents in its slot (`tabStripFit`): a
+ * tab shrinks from titled through compact to marks as its bar fills, with
+ * the selected title kept longest in both Agent and View areas.
  */
 export type AreaTabInteraction = { selected: boolean; fit: TabFit; areaActive: boolean; dragging: boolean; press: (event: React.PointerEvent<HTMLElement>) => void; select: () => void };
 
@@ -40,17 +40,11 @@ export function tabFit(selected: boolean, fit: TabFit): { tab: string; title: st
 }
 
 /**
- * A View tab's slot: every tab asks for the preferred width and all shrink
- * alike down to the title minimum, then the strip scrolls.
- */
-const VIEW_TAB_SLOT = "flex w-(--size-tab-preferred) min-w-(--size-tab-title-min)";
-
-/**
- * An Agent tab's slot, at the width `tabStripFit` gave the selected tab or
+ * An area's tab slot, at the width `tabStripFit` gave the selected tab or
  * the others, which the bar writes on its tab list. A tab being renamed keeps
  * the preferred width so its field stays usable.
  */
-const AGENT_TAB_SLOT = {
+const TAB_SLOT = {
   selected: "flex shrink-0 w-(--tab-selected-width) has-data-renaming:w-(--size-tab-preferred)",
   others: "flex shrink-0 w-(--tab-other-width) has-data-renaming:w-(--size-tab-preferred)",
 };
@@ -475,18 +469,15 @@ function AreaView({ area, index, count, switcher }: { area: Area<I>; index: numb
 
 /**
  * An area's own tab bar; only the active area's shown tab carries the accent
- * indicator (B1, B20). Its New tab follows the tabs and opens the file
- * palette into this area (issue 170).
+ * indicator (B1, B20). Its New tab follows the tabs.
  */
 function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; active: boolean; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
   const shown = area.displays.find((row) => row.id === area.active) ?? null;
   const selectedId = tree.adapter.shown ? tree.adapter.shown(area)?.id : area.active;
-  // The tabs share the room left of the bar's own controls. Agent tabs shrink
-  // in stages, the selected one keeping its title longest (`tabStripFit`); a
-  // file is not told apart by its type's mark, so View tabs keep their titles
-  // and scroll. The room is the zone's, which the bar sizes, so the tabs' own
-  // widths never feed back.
+  // Both columns share the room left of the bar's own controls in stages,
+  // the selected tab keeping its title longest (`tabStripFit`). The room is
+  // the zone's, which the bar sizes, so the tabs' own widths never feed back.
   const zone = useRef<HTMLDivElement>(null);
   const newTab = useRef<HTMLButtonElement>(null);
   const strip = useRef<HTMLDivElement>(null);
@@ -496,7 +487,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
   useLayoutEffect(() => {
     const node = zone.current;
     const list = strip.current;
-    if (column !== "agent" || !node || !list) return;
+    if (!node || !list) return;
     const sizes = readTabStripSizes();
     // Fractional bounds, rounded down: the tabs fill the bar to its end and never overflow it by a sliver.
     const measure = () => tabStripFit(Math.floor(node.getBoundingClientRect().width - (newTab.current?.getBoundingClientRect().width ?? 0)), tabCount, hasSelected, sizes);
@@ -541,11 +532,11 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
               items={() => tree.menu(display.id)}
               onSelect={(id) => tree.adapter.runMenu(id, display.id)}
               onCloseAutoFocus={tree.adapter.onMenuCloseAutoFocus}
-              className={column === "agent" ? AGENT_TAB_SLOT[display.id === selectedId ? "selected" : "others"] : VIEW_TAB_SLOT}
+              className={TAB_SLOT[display.id === selectedId ? "selected" : "others"]}
               data-tab-menu={display.id}
               data-area-item={display.id}
             >
-              {tree.adapter.tab(display, { selected: display.id === selectedId, fit: column === "agent" ? fits[display.id === selectedId ? "selected" : "others"] : "titled", areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
+              {tree.adapter.tab(display, { selected: display.id === selectedId, fit: fits[display.id === selectedId ? "selected" : "others"], areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
             </EntryContextMenu>
           ))}
         </div>

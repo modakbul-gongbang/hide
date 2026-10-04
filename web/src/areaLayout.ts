@@ -295,7 +295,7 @@ export type TabStripSizes = {
 };
 
 /**
- * How an Agent tab strip shares `room` among `count` tabs, the way a browser's
+ * How an Agent or View tab strip shares `room` among `count` tabs, the way a browser's
  * tabs do: in three continuous stages, so the bar is used to its end and the
  * selected tab keeps its title longest.
  *
