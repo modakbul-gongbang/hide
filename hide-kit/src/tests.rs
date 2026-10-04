@@ -1459,6 +1459,114 @@ fn hide_waiting_requests_and_watches_block_retirement() {
     }
 }
 
+#[test]
+fn unconfirmed_or_invalid_hook_receipts_refuse_retirement_before_any_effect() {
+    for (letter, invalid) in [
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":false}),
+            false,
+        ),
+        (
+            json!({"state":"pending","waiting_answer":false,"hook_confirmed":false}),
+            false,
+        ),
+        (json!({"state":"pending","waiting_answer":false}), false),
+        (json!({"state":"acknowledged","waiting_answer":true}), false),
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":"true"}),
+            true,
+        ),
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":0}),
+            true,
+        ),
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":{}}),
+            true,
+        ),
+        (
+            json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":[]}),
+            true,
+        ),
+        (
+            json!({"state":"pending","waiting_answer":false,"hook_confirmed":true}),
+            true,
+        ),
+        (
+            json!({"state":"undelivered","waiting_answer":false,"hook_confirmed":true}),
+            true,
+        ),
+        (
+            json!({"state":"expired","waiting_answer":false,"hook_confirmed":true}),
+            true,
+        ),
+        (
+            json!({"state":"delivered","waiting_answer":false,"hook_confirmed":false}),
+            true,
+        ),
+        (
+            json!({"state":"cancelled","waiting_answer":true,"hook_confirmed":true}),
+            true,
+        ),
+        (json!({"state":"undelivered","waiting_answer":true}), true),
+        (json!({"state":"expired","waiting_answer":true}), true),
+    ] {
+        let mut fixture = Fixture::new();
+        let directory = fixture.home().join(".hide/state");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("delivery-ledger.json"),
+            json!({"version":1,"letters":[letter],"watches":[]}).to_string(),
+        )
+        .unwrap();
+        record_preflight_commands(&mut fixture);
+        let old = old_coordination(&fixture, json!({}), json!({}));
+        let daemon = UnixListener::bind(old.join("api.sock")).unwrap();
+        daemon.set_nonblocking(true).unwrap();
+        assert_preflight_refusal_preserves_fixture(&fixture, Some(&daemon));
+        let reason = retirement_preflight(&fixture.target).unwrap_err();
+        assert!(
+            reason.contains(if invalid {
+                "request status cannot be inspected"
+            } else {
+                "open requests"
+            }),
+            "{reason}"
+        );
+    }
+}
+
+#[test]
+fn confirmed_and_legacy_closed_hook_receipts_allow_read_only_retirement_preflight() {
+    for letter in [
+        json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":true}),
+        json!({"state":"acknowledged","waiting_answer":false,"hook_confirmed":null}),
+        json!({"state":"acknowledged","waiting_answer":false}),
+        json!({"state":"delivered","waiting_answer":false,"hook_confirmed":true}),
+        json!({"state":"delivered","waiting_answer":false}),
+        json!({"state":"cancelled","waiting_answer":false,"hook_confirmed":true}),
+        json!({"state":"cancelled","waiting_answer":false,"hook_confirmed":false}),
+        json!({"state":"undelivered","waiting_answer":false,"hook_confirmed":false}),
+        json!({"state":"expired","waiting_answer":false,"hook_confirmed":null}),
+    ] {
+        let mut fixture = Fixture::new();
+        let directory = fixture.home().join(".hide/state");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("delivery-ledger.json"),
+            json!({"version":1,"letters":[letter],"watches":[]}).to_string(),
+        )
+        .unwrap();
+        record_preflight_commands(&mut fixture);
+        let before = home_tree(&fixture.root);
+        retirement_preflight(&fixture.target).unwrap();
+        assert_eq!(home_tree(&fixture.root), before);
+        assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+        assert!(!fixture.home().join("service-called").exists());
+        assert!(!fixture.home().join("status-called").exists());
+    }
+}
+
 fn loaded_agent(fixture: &Fixture) {
     std::fs::write(fixture.home().join("launchctl-loaded"), "loaded").unwrap();
     executable(

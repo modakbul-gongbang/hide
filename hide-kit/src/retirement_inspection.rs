@@ -81,20 +81,43 @@ pub fn delivery_ledger(ledger: &Value) -> Result<(), String> {
         .as_array()
         .ok_or("Hide watches cannot be inspected; retirement has not begun")?;
     for letter in letters {
+        let hook_confirmed = match letter.get("hook_confirmed") {
+            None | Some(Value::Null) => None,
+            Some(Value::Bool(confirmed)) => Some(*confirmed),
+            _ => {
+                return Err(
+                    "Hide request status cannot be inspected; retirement has not begun".into(),
+                );
+            }
+        };
         if !matches!(
             letter["state"].as_str(),
             Some(
                 "pending" | "delivered" | "acknowledged" | "cancelled" | "expired" | "undelivered"
             )
         ) || !letter["waiting_answer"].is_boolean()
+            || (hook_confirmed == Some(true)
+                && matches!(
+                    letter["state"].as_str(),
+                    Some("pending" | "undelivered" | "expired")
+                ))
+            || (hook_confirmed == Some(false) && letter["state"] == "delivered")
+            || (letter["waiting_answer"] == true
+                && matches!(
+                    letter["state"].as_str(),
+                    Some("cancelled" | "undelivered" | "expired")
+                ))
         {
             return Err("Hide request status cannot be inspected; retirement has not begun".into());
         }
     }
-    if letters
-        .iter()
-        .any(|value| value["state"] == "pending" || value["waiting_answer"] == true)
-    {
+    // A legacy Ack has no intake proof, but stays closed operationally.
+    // Only an explicit unconfirmed Ack joins Pending in awaiting intake.
+    if letters.iter().any(|value| {
+        value["state"] == "pending"
+            || value["waiting_answer"] == true
+            || (value["state"] == "acknowledged" && value["hook_confirmed"] == false)
+    }) {
         return Err("Hide has open requests; finish or close them, then retry retirement".into());
     }
     if !watches.is_empty() {
