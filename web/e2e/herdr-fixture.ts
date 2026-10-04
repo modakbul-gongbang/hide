@@ -229,8 +229,8 @@ export function herdrHasFocus(fixture: HerdrFixture, pane: string): boolean {
   return listed.result.panes.find((row) => row.pane_id === pane)?.focused === true;
 }
 
-function herdr(env: NodeJS.ProcessEnv, bin: string, args: string[]): unknown {
-  const out = execFileSync(bin, args, { env, encoding: "utf8", timeout: 30_000 });
+function herdr(env: NodeJS.ProcessEnv, bin: string, args: string[], timeout = 30_000): unknown {
+  const out = execFileSync(bin, args, { env, encoding: "utf8", timeout });
   return JSON.parse(out) as unknown;
 }
 
@@ -604,19 +604,58 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       "--no-focus",
     ]) as { result: { pane: { pane_id: string } } };
     const second = split.result.pane.pane_id;
-    // The shell must have printed its prompt before agent start accepts the
-    // pane; the fixture .zshrc makes that prompt a fixed string.
-    for (const pane of [first, second]) {
+    // A printed prompt does not mean agent.start can use the shell yet.
+    // Keep the prompt and process-state wait inside the same setup deadline.
+    for (const [pane, name] of [[first, "one"], [second, "two"]] as const) {
+      const deadline = Date.now() + 10_000;
+      type ShellProcessInfo = {
+        shell_pid: number | null;
+        foreground_process_group_id: number | null;
+        foreground_processes: { pid: number }[];
+      };
+      let processInfo: ShellProcessInfo | null = null;
       await waitFor(
-        () => paneText(env, bin, pane).includes("fixture %"),
-        `a prompt in pane ${pane}`,
+        () => {
+          if (!paneText(env, bin, pane).includes("fixture %")) return false;
+          if (!agents) return true;
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) return false;
+          const answer = herdr(env, bin, ["pane", "process-info", "--pane", pane], remaining) as {
+            result: { process_info: ShellProcessInfo };
+          };
+          processInfo = answer.result.process_info;
+          const shell = processInfo.shell_pid;
+          return shell !== null && shell > 1
+            && processInfo.foreground_process_group_id === shell
+            && processInfo.foreground_processes.every((process) => process.pid === shell);
+        },
+        `a prompt with an available shell in pane ${pane}`,
         10_000,
-        () => JSON.stringify(paneRead(env, bin, pane)),
+        () => JSON.stringify({ pane: paneRead(env, bin, pane), processInfo }),
       );
+      if (agents && process.platform === "win32") {
+        // v0.9.1 reports cmd as foreground even with a non-agent child,
+        // but agent.start requires no descendants. Observe that condition
+        // directly, with one bounded child and no retry of agent.start.
+        const shell = (processInfo as ShellProcessInfo | null)?.shell_pid;
+        if (!Number.isSafeInteger(shell) || !shell || shell <= 1) throw new Error(`fixture shell PID is unavailable in pane ${pane}`);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error(`timed out waiting for shell children in pane ${pane}`);
+        execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `
+          $ErrorActionPreference = 'Stop'
+          $fixtureUntil = [DateTime]::UtcNow.AddMilliseconds(${remaining})
+          do {
+            $fixtureProcesses = @(Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${shell} OR ParentProcessId = ${shell}' -Property ProcessId, ParentProcessId)
+            if (@($fixtureProcesses | Where-Object { $_.ProcessId -eq ${shell} }).Count -ne 1) { throw 'fixture shell exited before agent start' }
+            if (@($fixtureProcesses | Where-Object { $_.ParentProcessId -eq ${shell} }).Count -eq 0) { exit 0 }
+            Start-Sleep -Milliseconds 100
+          } while ([DateTime]::UtcNow -lt $fixtureUntil)
+          throw 'fixture shell still has child processes before agent start'
+        `], { env, encoding: "utf8", timeout: remaining, maxBuffer: 64 * 1024, windowsHide: true });
+      }
+      if (agents) herdr(env, bin, ["agent", "start", name, "--kind", "claude", "--pane", pane]);
     }
     if (agents) {
-      herdr(env, bin, ["agent", "start", "one", "--kind", "claude", "--pane", first]);
-      herdr(env, bin, ["agent", "start", "two", "--kind", "claude", "--pane", second]);
       // Distinct row labels, made by the core from each pane's transcript.
       for (const [pane, task] of [
         [first, "Agent one"],

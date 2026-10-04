@@ -66,6 +66,9 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
 - Set `terminal.default_shell` in the private Herdr config, because Windows Herdr does not select its shell from `SHELL`.
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
+  Before each initial agent start, the fixture waits for the prompt and the shell to hold the foreground within the existing ten-second setup bound.
+  On Windows, the pinned Herdr can report the shell as foreground while a non-agent child remains, so one bounded, noninteractive PowerShell read also waits for that shell to have no children; a missing shell or failed read fails setup.
+  The fixture sends each `agent.start` once and retains the original input and PTY-log assertions.
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.
   On Windows the interactive shim writes its readiness line after console setup; provider/auth replies return before that line, and input logs record only received input.
