@@ -15,26 +15,49 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use hide_agent_hooks::counters;
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::report;
 use hide_agent_hooks::runtime::{AgentRuntime, HookEvent, hook_stdout};
+use hide_platform::process::{OwnedChild, OwnerWatch};
+
+const PROMPT_BUDGET: Duration = Duration::from_millis(1_850);
+const INTAKE_BUDGET: Duration = Duration::from_millis(1_650);
 
 #[path = "../workspace_context.rs"]
 mod workspace_context;
 
 fn main() -> ExitCode {
+    let started = Instant::now();
+    // Guarded launches acknowledge ownership before parsing, filesystem work
+    // or runtime stdin. Keep this guard until all output and intake finish.
+    let owner_watch = match OwnerWatch::from_launch() {
+        Ok(watch) => watch,
+        Err(_) => return ExitCode::from(2),
+    };
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
         Some("hook") => {
-            run_hook(&arguments);
+            if argument_value("--event", &arguments).as_deref()
+                == Some(HookEvent::UserPromptSubmit.name())
+            {
+                run_prompt_hook(&arguments, started + PROMPT_BUDGET);
+            } else {
+                run_hook(&arguments, started);
+            }
             // A hook that could not report is not a failed turn. Its visible
             // outcome is the pane reading as uninstrumented (PRD B32).
             ExitCode::SUCCESS
         }
+        Some("hook-inner") if owner_watch.is_some() => {
+            run_hook(&arguments, started);
+            ExitCode::SUCCESS
+        }
+        // An internal operation must never bypass its parent deadline.
+        Some("hook-inner") => ExitCode::from(2),
         Some("doctor") => match run_doctor(&arguments) {
             Ok(text) => {
                 println!("{text}");
@@ -59,8 +82,27 @@ fn usage() -> String {
         .to_owned()
 }
 
-fn run_hook(arguments: &[String]) {
-    let started = Instant::now();
+fn run_prompt_hook(arguments: &[String], deadline: Instant) {
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let mut command = Command::new(executable);
+    command
+        .arg("hook-inner")
+        .args(&arguments[1..])
+        .stdin(Stdio::inherit())
+        // The inner flush must reach the runtime before it confirms intake.
+        // Buffering and re-emitting here would acknowledge undelivered output.
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if let Ok(mut child) = OwnedChild::spawn_guarded(command, deadline) {
+        let _ = child.capture_until(deadline, 64 * 1024);
+    }
+    // No filesystem or stream write follows the deadline. Failure keeps the
+    // manual-inbox fallback; diagnostics run inside the supervised operation.
+}
+
+fn run_hook(arguments: &[String], started: Instant) {
     let Some(event) =
         argument_value("--event", arguments).and_then(|value| HookEvent::parse(&value))
     else {
@@ -70,7 +112,7 @@ fn run_hook(arguments: &[String]) {
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
     let Some(home) = home_directory() else { return };
     let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
-    let delivery_deadline = started + Duration::from_millis(1_900);
+    let delivery_deadline = started + INTAKE_BUDGET;
     let mut output = if let Some(runtime) = runtime.filter(|_| {
         arguments
             .iter()
