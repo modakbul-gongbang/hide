@@ -36,6 +36,9 @@ pub struct ListeningSocket {
 /// resource limits fail the entire sample. Only owners demonstrably no longer
 /// listening at the final bounded table read can be excluded. No subprocess,
 /// privilege elevation, process mutation or executable-directory guess.
+/// The synchronous read checks a ten-second work budget between bounded
+/// native calls; it does not preempt a kernel call. It leaves no pending work
+/// to cancel, and the caller observes its own cancellation after it returns.
 /// On Unix the core retains its established `lsof` reader; this API explicitly
 /// returns `Unsupported` there.
 pub fn read() -> io::Result<Vec<ListeningSocket>> {
