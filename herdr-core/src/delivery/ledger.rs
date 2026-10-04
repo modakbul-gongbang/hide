@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -203,13 +203,14 @@ pub fn load(path: &Path) -> Result<Ledger, String> {
 pub enum SaveError {
     Validation(String),
     Persistence(hide_platform::fs::atomic::DurableWriteError),
+    Bootstrap(hide_platform::fs::private::DirectoryDurabilityError),
 }
 
 impl SaveError {
     pub fn code(&self) -> &str {
         match self {
             Self::Validation(code) => code,
-            Self::Persistence(_) => "ledger_unavailable",
+            Self::Persistence(_) | Self::Bootstrap(_) => "ledger_unavailable",
         }
     }
 
@@ -219,6 +220,8 @@ impl SaveError {
             Self::Persistence(
                 hide_platform::fs::atomic::DurableWriteError::ReplacementUncertain { .. }
                     | hide_platform::fs::atomic::DurableWriteError::ReplacedNotDurable { .. }
+            ) | Self::Bootstrap(
+                hide_platform::fs::private::DirectoryDurabilityError::Uncertain { .. }
             )
         )
     }
@@ -227,6 +230,18 @@ impl SaveError {
         use hide_platform::fs::atomic::DurableWriteError;
         let (phase, source, cleanup) = match self {
             Self::Validation(code) => return serde_json::json!({"phase":"validation","code":code}),
+            Self::Bootstrap(error) => {
+                use hide_platform::fs::private::DirectoryDurabilityError;
+                let (phase, source) = match error {
+                    DirectoryDurabilityError::BeforeCreate { source } => {
+                        ("bootstrap_refused", source)
+                    }
+                    DirectoryDurabilityError::Uncertain { source, .. } => {
+                        ("bootstrap_uncertain", source)
+                    }
+                };
+                return serde_json::json!({"phase":phase,"io_kind":format!("{:?}",source.kind())});
+            }
             Self::Persistence(DurableWriteError::BeforeReplace { source, cleanup }) => {
                 ("before_replace", source, cleanup.is_some())
             }
@@ -253,6 +268,7 @@ impl std::error::Error for SaveError {
         match self {
             Self::Validation(_) => None,
             Self::Persistence(source) => Some(source),
+            Self::Bootstrap(source) => Some(source),
         }
     }
 }
@@ -269,9 +285,57 @@ pub fn save(path: &Path, ledger: &Ledger) -> Result<(), SaveError> {
 /// Startup runs before Runtime is placed behind its mutex. Re-read the
 /// actual installed version and establish a new barrier before any effect.
 /// Corrupt or inaccessible bytes are preserved and never repaired by guess.
-pub fn recover(path: &Path) -> Result<Ledger, String> {
-    let ledger = load(path)?;
-    save(path, &ledger).map_err(|error| error.code().to_owned())?;
+pub fn recover(path: &Path) -> Result<Ledger, SaveError> {
+    let refused = || SaveError::Validation("ledger_unavailable".into());
+    let parent = path.parent().ok_or_else(refused)?;
+    if !path.is_absolute()
+        || path.components().count() > 66
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err(refused());
+    }
+    match std::fs::symlink_metadata(parent) {
+        Ok(metadata) => {
+            if !metadata.is_dir()
+                || metadata.file_type().is_symlink()
+                || !hide_platform::fs::private::is_private(parent).map_err(|_| refused())?
+            {
+                return Err(refused());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(refused()),
+    }
+    let ledger = load(path).map_err(SaveError::Validation)?;
+    let mut ancestor = parent;
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if missing.len() == 64 {
+                    return Err(refused());
+                }
+                missing.push(ancestor.file_name().ok_or_else(refused)?);
+                ancestor = ancestor.parent().ok_or_else(refused)?;
+            }
+            Err(_) => return Err(refused()),
+        }
+    }
+    let anchor = hide_platform::fs::private::establish_dir_durability(ancestor)
+        .map_err(SaveError::Bootstrap)?;
+    let mut canonical_parent = anchor.clone();
+    for part in missing.into_iter().rev() {
+        canonical_parent.push(part);
+    }
+    hide_platform::fs::private::create_dir_all_durable(&canonical_parent, &anchor)
+        .map_err(SaveError::Bootstrap)?;
+    if !hide_platform::fs::private::is_private(&canonical_parent).map_err(|_| refused())? {
+        return Err(refused());
+    }
+    save(path, &ledger)?;
     Ok(ledger)
 }
 
@@ -397,7 +461,7 @@ mod tests {
         save(&path, &ledger).unwrap();
         assert_eq!(recover(&path).unwrap(), ledger);
         std::fs::write(&path, b"private damaged bytes").unwrap();
-        assert_eq!(recover(&path).unwrap_err(), "ledger_unavailable");
+        assert_eq!(recover(&path).unwrap_err().code(), "ledger_unavailable");
         assert_eq!(std::fs::read(&path).unwrap(), b"private damaged bytes");
         // A missing parent is not implicitly bootstrapped by a transaction.
         let missing = root.path().join("absent/ledger.json");
@@ -411,6 +475,38 @@ mod tests {
                 .to_string()
                 .contains(&root.path().display().to_string())
         );
+    }
+
+    #[test]
+    fn startup_bootstraps_private_sibling_state_and_preserves_refused_or_corrupt_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        hide_platform::fs::private::create_dir(&home).unwrap();
+        let state = root.path().join("new/state");
+        let path = state.join("ledger.json");
+        assert_eq!(recover(&path).unwrap(), Ledger::default());
+        assert!(hide_platform::fs::private::is_private(&state).unwrap());
+        assert!(hide_platform::fs::private::is_private(&path).unwrap());
+        assert!(home.is_dir());
+        std::fs::write(&path, b"private corruption").unwrap();
+        assert_eq!(recover(&path).unwrap_err().code(), "ledger_unavailable");
+        assert_eq!(std::fs::read(&path).unwrap(), b"private corruption");
+        #[cfg(unix)]
+        {
+            let link = root.path().join("linked-state");
+            std::os::unix::fs::symlink(&state, &link).unwrap();
+            assert_eq!(
+                recover(&link.join("ledger.json")).unwrap_err().code(),
+                "ledger_unavailable"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), b"private corruption");
+            assert!(
+                std::fs::symlink_metadata(&link)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+        }
     }
 
     #[test]
