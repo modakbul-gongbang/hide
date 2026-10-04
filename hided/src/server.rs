@@ -2553,7 +2553,12 @@ fn browser_url(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Val
     let Some((path, suffix)) = crate::file_url::file_path(&raw) else {
         return Some(refused(kind, &raw, Refusal::InvalidPath));
     };
-    match boundary.resolve_target(&path) {
+    let checked = if kind == "browser_state" {
+        boundary.resolve_browser_report(&path)
+    } else {
+        boundary.resolve_target(&path)
+    };
+    match checked {
         Ok(real) => {
             let url = crate::file_url::file_url(&hide_platform::path::to_wire_lossy(&real), suffix);
             event["payload"]["url"] = Value::String(url);
@@ -3280,11 +3285,18 @@ mod tests {
         std::fs::create_dir(&checkout).unwrap();
         std::fs::write(checkout.join("manual.html"), "<title>Manual file</title>").unwrap();
         let boundary = Boundary::new(home.path()).unwrap();
-        boundary.set_roots(vec![crate::boundary::Root {
-            workspace_id: "w1".to_owned(),
-            checkout_id: "c1".to_owned(),
-            path: checkout.clone(),
-        }]);
+        boundary.set_roots(vec![
+            crate::boundary::Root {
+                workspace_id: "w0".to_owned(),
+                checkout_id: "c0".to_owned(),
+                path: alias.clone(),
+            },
+            crate::boundary::Root {
+                workspace_id: "w1".to_owned(),
+                checkout_id: "c1".to_owned(),
+                path: checkout.clone(),
+            },
+        ]);
         let native = checkout.join("manual.html").canonicalize().unwrap();
         let native_url = crate::file_url::file_url(&native.display().to_string(), "#loaded");
         let checked_url = crate::file_url::file_url(
@@ -3301,16 +3313,28 @@ mod tests {
         assert_eq!(report["payload"]["load"], 7);
         assert_eq!(report["payload"]["loading"], false);
 
+        // Report spelling support grants no new file-open authority.
+        let mut open = json!({"schema_version": 2, "kind": "browser_open", "payload": {
+            "url": native_url,
+        }});
+        assert!(apply_boundary(&boundary, &mut open).is_some());
+
         // An unrelated path still cannot become a browser load report.
         std::fs::write(home.path().join("secret.html"), "outside").unwrap();
-        let outside = crate::file_url::file_url(
-            &home.path().join("secret.html").display().to_string(),
-            "",
-        );
-        std::os::unix::fs::symlink(home.path().join("secret.html"), checkout.join("escape.html"))
-            .unwrap();
+        let outside =
+            crate::file_url::file_url(&home.path().join("secret.html").display().to_string(), "");
+        std::os::unix::fs::symlink(
+            home.path().join("secret.html"),
+            checkout.join("escape.html"),
+        )
+        .unwrap();
         let escape = crate::file_url::file_url(
-            &native.parent().unwrap().join("escape.html").display().to_string(),
+            &native
+                .parent()
+                .unwrap()
+                .join("escape.html")
+                .display()
+                .to_string(),
             "",
         );
         for url in [outside, escape] {
@@ -3319,7 +3343,8 @@ mod tests {
             assert_eq!(answer["payload"]["reason"], Refusal::OutsideCheckout.code());
         }
 
-        // Resolving a native spelling cannot revive a replaced root.
+        // Resolving a native spelling cannot revive a replaced root, even
+        // when its still-current parent is registered too.
         std::fs::rename(&checkout, alias.join("retired")).unwrap();
         std::fs::create_dir(&checkout).unwrap();
         std::fs::write(checkout.join("manual.html"), "replacement").unwrap();

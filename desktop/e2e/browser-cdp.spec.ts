@@ -131,7 +131,7 @@ async function fromPane(args: string[], succeeds = true): Promise<Record<string,
       }))).catch(() => [{ unavailable: true }]);
     const page = reply.page as { state?: string; load?: number } | undefined;
     console.log("Workspace page failure", JSON.stringify({ reason, state: page?.state, load: page?.load, native,
-      events: hostLog(run.env).filter((row) => row.event.startsWith("browser.")).slice(-12).map((row) => ({ event: row.event, reason: row.reason, protocol: row.protocol })) }));
+      events: hostLog(run.env).filter((row) => row.event.startsWith("browser.")).slice(-12).map((row) => ({ event: row.event, reason: row.reason, protocol: row.protocol, method: row.method, code: row.code })) }));
   }
   expect(Number(fs.readFileSync(status, "utf8")) === 0, `isolated Workspace command result (${reason})`).toBe(succeeds);
   return reply;

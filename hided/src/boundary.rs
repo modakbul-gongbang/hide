@@ -515,6 +515,30 @@ impl Boundary {
         self.walk(&root, rest, Refusal::OutsideCheckout)
     }
 
+    /// A native browser may report the physical spelling of a file loaded
+    /// through a registered checkout alias. Map only a pinned root's physical
+    /// prefix back to its source spelling, then run the ordinary boundary.
+    /// Never canonicalize an untrusted path or retry a refused source spelling.
+    pub fn resolve_browser_report(&self, raw: &str) -> Result<PathBuf, Refusal> {
+        let raw = self.expand(raw)?;
+        let path = Path::new(&raw);
+        if self.strip_root(path).is_some() {
+            return self.resolve_target(&raw);
+        }
+        let checked = self
+            .roots_for_read()
+            .iter()
+            .filter_map(|root| {
+                path.strip_prefix(&root.real_path)
+                    .ok()
+                    .map(|rest| (root, rest))
+            })
+            .max_by_key(|(root, _)| root.real_path.components().count())
+            .map(|(root, rest)| root.source.path.join(rest))
+            .ok_or(Refusal::OutsideCheckout)?;
+        self.resolve_target(checked.to_str().ok_or(Refusal::InvalidPath)?)
+    }
+
     /// A regular file under a registered checkout root, with its size. The
     /// file-bytes read is the only caller: a viewer asks for bytes, so a
     /// directory, a symlink to one, and anything else that is not a file is
