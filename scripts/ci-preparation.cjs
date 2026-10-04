@@ -34,9 +34,8 @@ async function identity(root, command) {
   await command('git',['diff','--quiet','HEAD','--']);
   if(process.env.GITHUB_SHA && process.env.GITHUB_SHA!==sha) throw Error('preparation checkout differs from tested SHA');
   const shellVersion=await command(shell,['--version']);
-  if(process.platform==='win32' && !shellVersion.includes('pc-msys')) throw Error('preparation requires the Actions Git Bash, not WSL');
   return {sha,os:process.platform,arch:process.arch,command:COMMAND,
-    shell:{path:shell,version:shellVersion,digest:digest(shell)},
+    shell:{path:shell,source:process.env.CI_FIXTURE_BASH?'CI_FIXTURE_BASH':'unix-default',version:shellVersion,digest:digest(shell)},
     rust:await command('rustc',['-vV']),node:process.version,pnpm:await command('pnpm',['--version']),
     rustflags:process.env.CARGO_ENCODED_RUSTFLAGS || process.env.RUSTFLAGS || '',
     cargoLock:digest(path.join(root,'Cargo.lock')).sha256,pnpmLock:digest(path.join(root,'pnpm-lock.yaml')).sha256,

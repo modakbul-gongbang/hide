@@ -170,7 +170,8 @@ Collection runs even after an artifact download action fails, retains that downl
 
 Preparation has its own atomic ledger before Playwright starts, with the build/create/verify invocation, command phase, actual shell, original error and separately bounded stdout/stderr diagnostics.
 `CI_FIXTURE_BASH` names the absolute verification shell; Actions supplies its current `$BASH` in native Windows spelling, and Windows refuses a missing value instead of searching for another Bash.
-The command identity also records that shell's digest and version, and Windows requires Git Bash's `pc-msys` build.
+The command identity records that supplied executable's native path, source, digest and version, and each invocation records its actual native launch and confirmed exit.
+Windows uses the current Actions shell supplied by the workflow; a Bash version triplet does not establish or reject its distribution.
 Each tool probe retains its five-second bound and runs through `scripts/ci-owned-command.cjs` and the existing native `fixture-owner` group/job supervisor.
 Output alone does not establish success: the original target receipt and supervisor exit must confirm zero owned survivors, including descendants, before release.
 Timeout or caller loss closes the caller-only owner pipe, retaining the original tool failure and every secondary termination error; unconfirmed exit preserves the command home and an unknown partial outcome.

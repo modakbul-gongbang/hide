@@ -102,6 +102,7 @@ class FixtureOwner(unittest.TestCase):
             'sha': os.environ.get('GITHUB_SHA', 'local'), 'os': sys.platform}
         try:
             selected = os.environ.get('CI_FIXTURE_BASH')
+            record['shellSource'] = 'CI_FIXTURE_BASH' if selected else 'PATH'
             if os.name == 'nt' and not selected:
                 raise RuntimeError('Windows native controls require CI_FIXTURE_BASH from the Actions Git Bash shell')
             selected = selected or shutil.which('bash')
@@ -111,8 +112,6 @@ class FixtureOwner(unittest.TestCase):
             record['shell'] = cls.shell
             version = subprocess.run([cls.shell, '--version'], check=True, capture_output=True, text=True, timeout=5)
             record['shellVersion'] = version.stdout.splitlines()[0]
-            if os.name == 'nt' and 'pc-msys' not in record['shellVersion']:
-                raise RuntimeError('Windows native controls require the installed Git Bash, not WSL')
             record['phase'] = 'native-supervisor-build'
             result = subprocess.run([cls.shell, 'scripts/verify-cargo.sh', 'build', '-p', 'hide-platform', '--example', 'fixture-owner'], cwd=ROOT)
             if result.returncode:
