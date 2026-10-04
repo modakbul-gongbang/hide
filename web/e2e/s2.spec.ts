@@ -416,19 +416,20 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     const keysBeforeSheet = sent.get("key") ?? 0;
     await page.keyboard.press(chord("shortcuts"));
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
-    // On macOS the S5 Settings row (⌥, in place of Chrome's ⌘,) is a move
-    // and Add project (desktop app only) no longer is; Toggle Tools is the 28th row, and the two numbered
-    // families (Select tab 1-9, Select agent 1-9) fold into one row each,
-    // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
-    // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st,
-    // Toggle device rail (no default chord, bindable) the 32nd, the
-    // focused-area cycle pair the 33rd and 34th (they carry ⌥` and its Chrome
-    // move; the global Recent Panels pair has no default chord), and the eight
-    // Agent and View area commands (no default chord either) the 35th to 42nd.
+    // The complete command set includes the three direct Overview/sidebar commands.
+    // The two numbered families each fold into one row and have no browser chord;
+    // they never carry a Chrome move note (electron-digit-shortcuts-hints B3).
     await expect(page.locator("[data-shortcut]")).toHaveCount(43);
     for (const title of ["Overview", "Projects sidebar", "Agents sidebar"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
-    // Chrome keeps seven desktop chords on macOS and five on Windows and Linux.
-    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(SYSTEM === "mac" ? 7 : 5);
+    // #349's Agents chord also moves on PC: Chrome reserves Alt+Shift+A.
+    // Assert the exact moved commands, including the unchanged platform exceptions.
+    const movedCommands = [
+      "new_tab", "close_tab", "reopen_closed_tab", "recent_area_tab", "previous_recent_area_tab",
+      ...(SYSTEM === "mac" ? ["close_pane", "settings"] : ["sidebar_agents"]),
+    ];
+    const movedRows = page.locator("[data-shortcut]").filter({ hasText: "moved for Chrome" });
+    await expect(movedRows).toHaveCount(movedCommands.length);
+    expect(await movedRows.evaluateAll((rows) => rows.map((row) => row.getAttribute("data-shortcut")).sort())).toEqual(movedCommands.sort());
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-shortcut-sheet]")).toHaveCount(0);
