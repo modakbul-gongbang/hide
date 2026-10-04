@@ -330,7 +330,7 @@ mod memory {
                 Self::Bits32 => 4,
                 Self::Bits64 => 8,
             };
-            if address % alignment != 0 {
+            if !address.is_multiple_of(alignment) {
                 return Err(unsupported("unaligned remote process record"));
             }
             Ok(())
@@ -402,10 +402,10 @@ mod memory {
         // bytes. Neither a remote length nor an address controls an unbounded
         // allocation. No environment, image name or command line is read.
         if cwd.length == 0
-            || cwd.length % 2 != 0
-            || cwd.maximum_length % 2 != 0
+            || !cwd.length.is_multiple_of(2)
+            || !cwd.maximum_length.is_multiple_of(2)
             || cwd.length > cwd.maximum_length
-            || cwd.address % 2 != 0
+            || !cwd.address.is_multiple_of(2)
         {
             return Err(unsupported("invalid cwd string descriptor"));
         }
@@ -447,8 +447,10 @@ mod memory {
             ));
         }
         let units: Vec<_> = text
-            .chunks_exact(2)
-            .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_le_bytes(*unit))
             .collect();
         if units.contains(&0) {
             return Err(unsupported("cwd contains an embedded nul"));
