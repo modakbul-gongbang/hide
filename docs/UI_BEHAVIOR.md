@@ -482,6 +482,7 @@ A request that does not fit keeps its end, up to 40% of the width from a word bo
 A later request from another agent adds `이후 <보낸 이>`.
 Its third line is the label's line when there is one, else the agent's last words, all of them on one line while it works and their last line once it has stopped; it is the warning colour on a row to answer.
 At that line's end stand up to three open chips, the addresses and existing paths of the agent's last words other than its own pull requests, opened as a terminal link opens them; a device's row offers addresses only.
+When the pane's working folder or checkout root changes, its path chips hide until checked in that current context; a late answer from the previous context cannot restore them.
 The pull request chip is the core's first live pull request in its lifecycle colour with its CI mark, `+N` for the other live ones; it opens its row on the PRs tab, ⌘-click GitHub, and while GitHub cannot be read it is dimmed with the value's age in its tooltip.
 The issue chip is the issue the chip's pull request closes, else the checkout's, with `+N`; it opens the issue's panel and never changes the row's group.
 Open issues remain eligible for that chip; a closed issue appears only when its actual closure followed the row's last operator request, as for a settled pull request.

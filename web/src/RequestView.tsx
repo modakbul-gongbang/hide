@@ -35,7 +35,7 @@ import {
   type OpenCandidate,
   type RequestRow,
 } from "./requestList";
-import type { AgentPullRequest, AgentRow, PullRequest, Workspace } from "./snapshot";
+import type { AgentPullRequest, AgentRow, PullRequest, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { ChecksMark, PR_TONE } from "./TaskBoards";
 import { paneContext, pathLookups, probePaths, type FoundPath } from "./terminalLinkProvider";
@@ -422,19 +422,37 @@ function openTarget(target: ResolvedTarget, event: MouseEvent, actions: Actions)
 /**
  * The row's open targets: every URL, and each path the host says exists
  * under the pane's folder or its checkout (B49). Asked again only when the
- * agent's words change; the host's answers are cached for a while.
+ * words or that pane context change; the host's answers stay bounded by
+ * the terminal link cache. Previous contexts cannot supply visible chips.
  */
 function useOpenTargets(agent: AgentRow, reply: string, pulls: readonly AgentPullRequest[], local: boolean): ResolvedTarget[] {
   const exclude = useMemo(() => pulls.map((pull) => pull.url), [pulls]);
   const candidates = useMemo(() => openCandidates(reply, exclude, local && hostBridge() !== null), [reply, exclude, local]);
-  const [found, setFound] = useState<ReadonlyMap<string, FoundPath>>(new Map());
   const paneId = agent.pane_id;
+  const paths = useMemo(() => candidates.filter((candidate) => candidate.target.kind === "path"), [candidates]);
+  const needsContext = paths.length > 0;
+  const selectContext = useMemo(() => {
+    let workspaces: Workspace[] | undefined;
+    let remote: NonNullable<SnapshotRest["status"]>["remote"];
+    let cached: ReturnType<typeof paneContext> | undefined;
+    return ({ rest }: { rest: SnapshotRest | null }) => {
+      if (!needsContext) return null;
+      const nextWorkspaces = rest?.navigator?.workspaces;
+      const nextRemote = rest?.status?.remote;
+      // Unrelated snapshot updates do not scan topology or render a row.
+      if (cached !== undefined && workspaces === nextWorkspaces && remote === nextRemote) return cached;
+      workspaces = nextWorkspaces;
+      remote = nextRemote;
+      const next = paneContext(rest, paneId);
+      if (cached === undefined || cached === null || next === null || cached.cwd !== next.cwd || cached.root !== next.root) cached = next;
+      return cached;
+    };
+  }, [paneId, needsContext]);
+  const context = useShellStore(selectContext);
+  const [found, setFound] = useState<{ candidates: readonly OpenCandidate[]; context: typeof context; paths: ReadonlyMap<string, FoundPath> } | null>(null);
   useEffect(() => {
     const bridge = hostBridge();
-    const paths = candidates.filter((candidate) => candidate.target.kind === "path");
-    if (!bridge || paths.length === 0) return;
-    const context = paneContext(useShellStore.getState().rest, paneId);
-    if (!context) return;
+    if (!bridge || paths.length === 0 || !context) return;
     const lookups = new Map(paths.map((candidate) => [candidate.key, candidate.target.kind === "path" ? pathLookups(candidate.target.path, context.cwd, context.root) : []]));
     let current = true;
     void probePaths([...lookups.values()].flat(), (batch) => bridge.probePaths(batch)).then((answers) => {
@@ -449,20 +467,20 @@ function useOpenTargets(agent: AgentRow, reply: string, pulls: readonly AgentPul
           }
         }
       }
-      setFound(next);
+      setFound({ candidates, context, paths: next });
     });
     return () => {
       current = false;
     };
-  }, [candidates, paneId]);
+  }, [candidates, paths, context]);
   return useMemo(
     () =>
       candidates.flatMap((candidate): ResolvedTarget[] => {
         if (candidate.target.kind === "url") return [{ ...candidate, found: null }];
-        const path = found.get(candidate.key);
+        const path = found?.candidates === candidates && found.context === context ? found.paths.get(candidate.key) : null;
         return path ? [{ ...candidate, found: path }] : [];
       }),
-    [candidates, found],
+    [candidates, context, found],
   );
 }
 

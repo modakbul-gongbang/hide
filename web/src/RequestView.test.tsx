@@ -4,12 +4,15 @@ import { createRoot } from "react-dom/client";
 import { afterAll, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
+import type { HostBridge, ProbedPath } from "./host";
 import { lensHandlers } from "./OverviewLenses";
 import { RequestView, type RequestViewProps } from "./RequestView";
 import type { RequestRow } from "./requestList";
 import type { AgentRow, Checkout, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { clearProbeCache } from "./terminalLinkProvider";
 import { NO_REQUEST_LENS } from "./ui";
+import type { DispatchFn } from "./ws";
 
 // Count calls through the real row's mark, retaining its implementation.
 // Native verification independently observes React commits without this seam.
@@ -17,6 +20,103 @@ const observation = vi.hoisted(() => {
   const canvas = HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.getContext = () => null;
   return { rows: 0, restore: () => { HTMLCanvasElement.prototype.getContext = canvas; } };
+});
+
+// Only the operating system's asynchronous path answers are replaced. The
+// renderer, snapshot subscription and reveal_path action are the real ones.
+async function pathRow() {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const saved = useShellStore.getState();
+  const savedHost = window.hideHost;
+  clearProbeCache();
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const checkout = { id: "main", workspace_id: "project", path: "/checkout", exists: true, label: "main", branch: "main", tabs: [] } as unknown as Checkout;
+  const project: Workspace = { id: "project", label: "Studio", path: "/checkout", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
+  const agent: AgentRow = { id: "agent", pane_id: "pane", identity_label: "결과물", agent_kind: "codex", symbol: "●", group: "working", status_label: "Working", changed_at_unix_ms: null, emphasized: false, unread: false,
+    request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: "[report](./report.md) https://example.test/result", cut: false, at_unix_ms: 0 }, pull_requests: [] } };
+  const row: RequestRow = { lens: { agent, bucket: "working", project, checkout, device: null, task: null }, verb: "working", children: [] };
+  const events: Parameters<DispatchFn>[0][] = [];
+  const actions = createActions((event) => { events.push(event); return true; });
+  const pending: { paths: string[]; resolve: (answers: ProbedPath[]) => void }[] = [];
+  let probes = 0;
+  window.hideHost = {
+    kind: "electron", platform: "darwin",
+    probePaths: async (paths: string[]) => {
+      probes++;
+      if (paths.every((path) => !path.endsWith("/report.md"))) return paths.map((real) => ({ real, kind: "directory" as const }));
+      return new Promise<ProbedPath[]>((resolve) => pending.push({ paths, resolve }));
+    },
+  } as HostBridge;
+  const context = async (cwd: string | null, path: string) => act(async () => {
+    // The row and its request/reply remain the same objects throughout.
+    const current = { ...checkout, path, tabs: [{ panes: [{ id: "pane", cwd }] }] } as unknown as Checkout;
+    useShellStore.setState({ connection: "live", rest: { navigator: { workspaces: [{ ...project, checkouts: [current] }] } } });
+  });
+  const answer = async (directory: string) => {
+    const path = `${directory}/report.md`;
+    const index = pending.findIndex((batch) => batch.paths.includes(path));
+    expect(index, `host query for ${path}`).toBeGreaterThanOrEqual(0);
+    const batch = pending.splice(index, 1)[0]!;
+    await act(async () => batch.resolve(batch.paths.map((real) => real === path ? { real, kind: "file" } : null)));
+  };
+  const chip = () => container.querySelector('[data-request-open="./report.md"]') as HTMLButtonElement | null;
+  const open = async () => {
+    expect(chip()).not.toBeNull();
+    await act(async () => chip()!.click());
+    return events.filter((event) => event.kind === "reveal_path").at(-1);
+  };
+  const render = async () => act(async () => root.render(<TooltipProvider><RequestView rows={[row]} scope="all" lens={NO_REQUEST_LENS} onLens={() => {}} handlers={lensHandlers(actions, { openIssue: () => {}, toggleFold: () => {} })} actions={actions} /></TooltipProvider>));
+  const cleanup = async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    if (savedHost) window.hideHost = savedHost;
+    else delete window.hideHost;
+    useShellStore.setState(saved, true);
+    clearProbeCache();
+    vi.unstubAllGlobals();
+  };
+  return { container, context, answer, chip, open, render, cleanup, probeCount: () => probes };
+}
+
+it.each(["cwd", "checkout"] as const)("opens the current %s path when only the pane context changes", async (changed) => {
+  const view = await pathRow();
+  const context = (directory: string) => changed === "cwd" ? view.context(directory, "/checkout") : view.context(null, directory);
+  try {
+    await context("/checkout/one");
+    await view.render();
+    await view.answer("/checkout/one");
+    expect((await view.open())?.payload.path).toBe("/checkout/one/report.md");
+    const probes = view.probeCount();
+    const renders = observation.rows;
+    await act(async () => useShellStore.setState({ rest: { ...useShellStore.getState().rest, focused: { pane_id: "unrelated" } } }));
+    expect(view.probeCount()).toBe(probes);
+    expect(observation.rows).toBe(renders);
+    await context("/checkout/two");
+    expect(view.chip()).toBeNull();
+    expect(view.container.querySelector('[data-request-open="https://example.test/result"]')).not.toBeNull();
+    await view.answer("/checkout/two");
+    expect((await view.open())?.payload.path).toBe("/checkout/two/report.md");
+  } finally {
+    await view.cleanup();
+  }
+});
+
+it("ignores a late path answer from the previous pane context", async () => {
+  const view = await pathRow();
+  try {
+    await view.context(null, "/checkout/old");
+    await view.render();
+    await view.context(null, "/checkout/current");
+    await view.answer("/checkout/current");
+    expect((await view.open())?.payload.path).toBe("/checkout/current/report.md");
+    await view.answer("/checkout/old");
+    expect((await view.open())?.payload.path).toBe("/checkout/current/report.md");
+  } finally {
+    await view.cleanup();
+  }
 });
 vi.mock("./AgentMark", async (original) => {
   const actual = await original<typeof import("./AgentMark")>();
