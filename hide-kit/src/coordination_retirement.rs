@@ -43,7 +43,7 @@ fn homes(target: &KitTarget) -> Vec<PathBuf> {
 }
 
 fn read_json(path: &Path, limit: u64) -> Result<Option<Value>, String> {
-    let file = match fs::File::open(path) {
+    let file = match hide_platform::fs::private::open_own_file(path, false) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
@@ -432,20 +432,32 @@ fn stop_daemon(home: &Path) -> Result<(), String> {
         }
         Err(error) => return Err(format!("daemon socket cannot be reached: {error}")),
     };
-    socket
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|error| error.to_string())?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
     socket
         .write_all(b"{\"version\":1,\"operation\":\"daemon.stop\",\"args\":{}}\n")
         .map_err(|error| error.to_string())?;
-    let mut reader = std::io::BufReader::new(socket).take(64 * 1024 + 1);
     let mut response = Vec::new();
-    use std::io::BufRead;
-    reader
-        .read_until(b'\n', &mut response)
-        .map_err(|error| error.to_string())?;
-    if response.len() > 64 * 1024 {
-        return Err("daemon stop response exceeded the size bound".into());
+    let mut chunk = [0_u8; 1024];
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("daemon stop response deadline reached".into());
+        }
+        socket
+            .set_read_timeout(Some(remaining))
+            .map_err(|error| error.to_string())?;
+        let count = socket.read(&mut chunk).map_err(|error| error.to_string())?;
+        if count == 0 {
+            return Err("daemon closed before acknowledging stop".into());
+        }
+        response.extend_from_slice(&chunk[..count]);
+        if response.len() > 64 * 1024 {
+            return Err("daemon stop response exceeded the size bound".into());
+        }
+        if let Some(newline) = response.iter().position(|byte| *byte == b'\n') {
+            response.truncate(newline);
+            break;
+        }
     }
     let value: Value = serde_json::from_slice(&response).map_err(|error| error.to_string())?;
     if value["ok"] != true || value["value"]["stopped"] != true {
