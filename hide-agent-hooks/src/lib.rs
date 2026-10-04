@@ -18,6 +18,7 @@
 //! the pane tokens its ordinary snapshot already carries. Nothing subscribes
 //! or polls.
 
+pub mod codex_daemon;
 pub mod counters;
 pub mod diagnosis;
 pub mod install;

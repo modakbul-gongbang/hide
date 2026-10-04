@@ -567,7 +567,7 @@ export type PrRow = {
   /** The checkout on its branch, a worktree whose folder is gone included. */
   checkout: Checkout | null;
   issue: PrIssue | null;
-  /** The checkout's agents, the ones that need the operator first, for the marks (B4). */
+  /** The checkout's agents and the agent whose session made it (overview-request-view D-45), the ones that need the operator first, for the marks (B4). */
   agents: AgentRow[];
   /** The checkout's agents with their ancestors, root first, for the unfolded row (B5). */
   lineage: BoardRow[];
@@ -656,14 +656,19 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
     const checkout = workspace.checkouts.find((row) => row.branch === branch && (row.is_worktree || row.exists)) ?? null;
     const boardRows = checkout ? (rowsByCheckout.get(checkout.id) ?? []) : [];
     const panes = new Set(checkout?.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id)) ?? []);
-    const agentsHere = agents.filter((agent) => panes.has(agent.pane_id)).sort((a, b) => PR_ATTENTION(a) - PR_ATTENTION(b));
+    // The agent whose session made it is on its row too, wherever it works
+    // (overview-request-view D-45): the request view and this board share the link.
+    const made = (agent: AgentRow) => agent.request?.pull_requests.some((pull) => pull.created && pull.url === pr.url) === true;
+    const agentsHere = agents.filter((agent) => panes.has(agent.pane_id) || made(agent)).sort((a, b) => PR_ATTENTION(a) - PR_ATTENTION(b));
+    // Whose move it is stays the branch's: the maker may be at other work by now.
+    const onBranch = agentsHere.filter((agent) => panes.has(agent.pane_id));
     const chip = prChip(pr);
     const merged = pr.badge === "merged";
     const checks = chip.checks;
     const review = merged ? null : pr.review;
     const group: PrGroup = merged
       ? "merged"
-      : agentsHere.some(isWorking)
+      : onBranch.some(isWorking)
         ? "fixing"
         : checks === "failed" || review === "changes_requested"
           ? "blocked"
@@ -683,7 +688,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       issue,
       agents: agentsHere,
       lineage: checkout ? prLineage(boardRows, agents) : [],
-      needsLook: agentsHere.some((agent) => agent.group === "done"),
+      needsLook: onBranch.some((agent) => agent.group === "done"),
       checks,
       review,
       at: merged ? (pr.merged_at_unix_ms ?? null) : (pr.updated_at_unix_ms ?? null),

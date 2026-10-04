@@ -101,6 +101,10 @@ struct StoredUiState {
     /// schema version and discarding the rest of the operator's state.
     #[serde(default)]
     pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// Absent in a store written before the request view; loads empty, and
+    /// each row's wait starts over once.
+    #[serde(default)]
+    request_verbs: BTreeMap<String, crate::request_view::VerbRecord>,
     /// Each pane's last reported terminal size, as (rows, cols). Herdr sizes
     /// a pane's PTY from the attach, so a launch that already knows a pane's
     /// size attaches at it and takes one full frame instead of one at a guess
@@ -284,6 +288,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             editor_text_scale: stored.editor_text_scale,
             conversation_pane_ids: Default::default(),
             pane_read_records: stored.pane_read_records,
+            request_verbs: stored.request_verbs,
             agent_sleep_after_hours: stored
                 .agent_sleep_after_hours
                 .filter(|hours| crate::agent_sleep::valid_after_hours(Some(*hours))),
@@ -364,6 +369,7 @@ pub fn save(
         pane_text_scales: state.pane_text_scales.clone(),
         editor_text_scale: state.editor_text_scale,
         pane_read_records: state.pane_read_records.clone(),
+        request_verbs: state.request_verbs.clone(),
         pane_terminal_sizes: pane_terminal_sizes.clone(),
         agent_sleep_after_hours: state.agent_sleep_after_hours,
         project_issue_sources: state.project_issue_sources.clone(),
@@ -512,11 +518,21 @@ mod tests {
                 .collect(),
             },
         );
+        // How long each row has waited survives too (PRD overview-request-view D-40).
+        state.request_verbs.insert(
+            "w1:p1".to_owned(),
+            crate::request_view::VerbRecord {
+                verb: crate::request_view::RequestVerb::Answer,
+                since_unix_ms: 1_790_000_000_000,
+                result_opened_unix_ms: Some(1_790_000_100_000),
+            },
+        );
         save(&path, &state, &PaneTerminalSizes::new()).expect("state saves");
 
         let (reloaded, _sizes, disposition) = load(&path);
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(reloaded.pane_read_records, state.pane_read_records);
+        assert_eq!(reloaded.request_verbs, state.request_verbs);
         let _ = fs::remove_dir_all(&root);
     }
 

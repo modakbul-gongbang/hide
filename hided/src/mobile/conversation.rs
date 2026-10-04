@@ -290,6 +290,10 @@ fn messages_in(agent: Agent, contents: &str, start_offset: u64) -> Vec<Message> 
                 EventKind::Injected => return None,
             };
             let text = event.text.trim();
+            // A message of images alone has no text a phone can show.
+            if text.is_empty() {
+                return None;
+            }
             let truncated = text.chars().nth(MESSAGE_CHARS).is_some();
             let text = if truncated {
                 text.chars().take(MESSAGE_CHARS).collect()

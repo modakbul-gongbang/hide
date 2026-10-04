@@ -248,6 +248,7 @@ fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
             }
             None
         }
+        Agent::OpenCode => None,
     }
 }
 
