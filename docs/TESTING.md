@@ -32,6 +32,10 @@ Pick the cheapest layer that can observe the result.
 | End to end | A flow that crosses a process boundary a user depends on: browser to hided to the core to Herdr to the PTY, or the desktop window and its native integration | `web/e2e/`, `desktop/e2e/` |
 
 An e2e spec is for a flow that crosses a boundary, not for a rule a unit or core test can state.
+The external crate-boundary lane in `herdr-core/tests/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
+It verifies real helper attestation and reverse-forward mailbox intake, the two-second disconnected hook boundary, and reconnect without duplicate delivery.
+Its explicit ignore marks the external prerequisites; the macOS desktop CI job builds those binaries and runs this lane with `--ignored`.
+The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory.
 Each spec starts its own Herdr, hided and browser, so a rule restated end to end costs runner minutes on every pull request and fails for reasons that have nothing to do with the rule.
 Keep one representative journey per user-visible flow; when a long spec carries an independent contract, split that contract into a small spec that still runs against the real pinned Herdr and hided rather than adding steps to the journey.
 

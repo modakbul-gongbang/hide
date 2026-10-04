@@ -78,7 +78,11 @@ Package smoke and simulated hooks prove private fixture behavior; physical IME/c
 Run the macOS set after the web build with `bash scripts/verify-web.sh web e2e --grep @platform`.
 Press an editor or clipboard chord in a spec with `ControlOrMeta`: Playwright binds its editing commands (copy, start of document) to the host system, so a `Meta` press only works on macOS.
 
-The gates that read a running Herdr server, drive the built app, or reach the network are local steps and are not required in CI.
+The remote mailbox crate-boundary lane runs in the macOS desktop CI job after candidate CLI builds and the pinned Herdr fetch.
+Run it locally with `HIDE_E2E_HERDR_BIN=<pinned-binary> bash scripts/verify-cargo.sh test-scoped -p herdr-core --test remote_delivery -- --ignored`.
+It starts only private Herdr servers and a loopback SSH account, with no external device.
+
+The additional gates that read an existing Herdr server, drive an installed app, or reach an external device are local steps and are not required in CI.
 They are listed under "Local gates" below; every script in `scripts/` is either a required gate above, a local gate there, or a generator named in [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md).
 The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs`, `node --test scripts/tests/pen-gallery.test.mjs`, `node --test scripts/tests/pen-transplant.test.mjs`, `node --test scripts/tests/design-scratch.test.mjs`, `node --test scripts/tests/design-review.test.mjs`, and `node --test scripts/tests/hide-screens.test.mjs`.
 The shared entrypoint runs `check-pen.mjs` (the Pen library against what the token generator would write: token values, the Foundations sheet, the `System /`/`Component /` sheet-naming band, and one id per node), `check-pen-gallery.mjs` (the library's `System /` sheets against `web/src/gallery/manifest.ts`, part by part and state by state), `check-web-tokens.mjs` (every web source reaching a color, size, or radius through a token rather than a literal), and `check-hide-screens.mjs` (`design/hide-screens.pen` against the library it imports: `Screen /` sheets with Light and Dark frames, resolving references, locally restated colors, and variables matching `design/tokens.json`); it performs static checks, not desktop interaction. See [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md) for what each one refuses.
