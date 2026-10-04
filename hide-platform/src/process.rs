@@ -694,7 +694,7 @@ mod sys {
             owner.read_exact(&mut ready)
         })()
         .and_then(|()| {
-            if ready == [b'R'] && Instant::now() < deadline {
+            if ready == *b"R" && Instant::now() < deadline {
                 Ok(())
             } else {
                 Err(io::Error::new(
