@@ -26,11 +26,11 @@ const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_SSH_PORT, "an isolated SSH server is required");
 
-/** Shows the Workspace in front's View areas, opening its side panel if a background open left it closed. */
+/** Shows the Workspace in front's View areas, turning File Views on if a background open left it off. */
 async function showViews(page: Page): Promise<void> {
-  const toggle = page.locator('[data-panel-toggle="off"]');
-  if (await toggle.count()) await toggle.click();
-  await expect(page.locator("[data-workspace-screen]")).not.toHaveAttribute("data-panel", "closed");
+  const off = page.locator('[data-column-toggle="views"][aria-pressed="false"]');
+  if (await off.count()) await off.click();
+  await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-file-views", "shown");
 }
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }

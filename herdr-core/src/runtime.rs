@@ -47,7 +47,7 @@ use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
 use events::*;
 use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
-use workspace_view::{AreaIntent, PanelCoversPayload, WorkspaceViewPayload, WorkspaceViewStore};
+use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
 use crate::checkout_owner::{OwnerOpen, TabHost};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
@@ -1933,6 +1933,9 @@ impl Runtime {
                 && self.snapshot.status.last_error.is_none()
             {
                 self.apply_area_intent(intent);
+                // The call is numbered even when nothing else moved (an
+                // open of the view already shown), and the shell must hear it.
+                changed = true;
             }
             if chooses_workspace && self.snapshot.status.last_error.is_none() {
                 self.mark_front_chosen();

@@ -61,29 +61,29 @@
     ]
   },
   "workspace-servers": {
-    "description": "Globe remains reachable with the panel open; picker shows distinct reachable IPv4/IPv6 endpoints without a redundant footer.",
+    "description": "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "workspace-servers",
     "selector": "[data-gallery-scene=\"workspace-servers\"]",
     "frames": [
       {
-        "node": "ws-wrap-lc",
+        "node": "ewWtp",
         "theme": "light",
         "width": 1440,
         "scale": 1,
         "content": "reference",
         "state": "server-picker",
-        "referenceNode": "aOb4w"
+        "referenceNode": "ewWtp"
       },
       {
-        "node": "ws-wrap-dc",
+        "node": "es3RE",
         "theme": "dark",
         "width": 1440,
         "scale": 1,
         "content": "reference",
         "state": "server-picker",
-        "referenceNode": "g1JuxO"
+        "referenceNode": "es3RE"
       }
     ],
     "conditions": {
@@ -104,14 +104,14 @@
     },
     "states": {
       "rest": "Initial screen.",
-      "server-picker": "Globe remains reachable with the panel open; picker shows distinct reachable IPv4/IPv6 endpoints without a redundant footer."
+      "server-picker": "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
     },
     "rules": {
       "noOverlap": true,
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Globe remains reachable with the panel open; picker shows distinct reachable IPv4/IPv6 endpoints without a redundant footer."
+      "Open server remains in the shared Workspace toolbar with File Views and Tools off; the picker distinguishes reachable IPv4/IPv6 endpoints without a redundant footer."
     ]
   },
   "session-search": {

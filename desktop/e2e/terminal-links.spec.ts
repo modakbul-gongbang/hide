@@ -129,6 +129,39 @@ async function metaClick(page: Page, point: { x: number; y: number }): Promise<v
   await page.keyboard.up("Meta");
 }
 
+/**
+ * Turns File Views on and waits for the pane's grid to settle. File Views is
+ * docked beside Agent Views (PRD three-column-panel D-02) and a link that
+ * opens a file or page turns it on (B4), so the first open would narrow the
+ * pane and Herdr would rewrap what it printed; with the column already on,
+ * the printed rows stay where the probe reads them.
+ */
+async function showFileViews(page: Page, paneId: string): Promise<void> {
+  const before = await paneCols(page, paneId);
+  await page.locator('[data-column-toggle="views"][aria-pressed="false"]').click();
+  await expect(page.locator('[data-column="views"]')).toBeVisible();
+  await narrowed(page, paneId, before);
+}
+
+function paneCols(page: Page, paneId: string): Promise<number> {
+  return page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)?.cols ?? 0, paneId);
+}
+
+/** Waits for the pane to narrow from `before`, then to hold its new width across two reads. */
+async function narrowed(page: Page, paneId: string, before: number): Promise<void> {
+  const cols = () => paneCols(page, paneId);
+  await expect.poll(cols, { timeout: 10_000 }).toBeLessThan(before);
+  let seen = -1;
+  await expect
+    .poll(async () => {
+      const now = await cols();
+      const settled = now === seen;
+      seen = now;
+      return settled;
+    }, { intervals: [300], timeout: 10_000 })
+    .toBe(true);
+}
+
 /** A View tab by what its label carries. */
 function viewTab(page: Page, text: string) {
   return page.locator(`[data-view-tab-bar] [role="tab"][data-display][aria-label*="${text}"]`);
@@ -170,14 +203,16 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
 
   ({ app } = await launch(run.env));
   // The window is the size a CI screen allows (macOS keeps it within the
-  // screen), and the shell is zoomed out so its layout is wide enough that an
-  // open View sits beside the pane rather than over it (UI_BEHAVIOR, Narrow windows).
+  // screen), and the shell is zoomed out so its body is wide enough for File
+  // Views beside the pane, and for Tools too once a folder link shows the
+  // Explorer, with the pane still wide enough that no printed line wraps
+  // (UI_BEHAVIOR, Narrow windows; PRD three-column-panel D-02, D-07).
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 681));
   const page = await shellPage(app);
   // Counted from the reload on, so the socket it opens is heard.
   const sent = countSent(page);
   await withProbe(page);
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.7));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.4));
   await enterWorkspace(page, "fixture");
   const dialogs: string[] = [];
   page.on("dialog", (dialog) => {
@@ -186,6 +221,7 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   });
   await recordMacOS();
   const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await showFileViews(page, paneId);
   const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
 
   // A path longer than the pane is wide, so the terminal wraps it.
@@ -228,6 +264,8 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await page.mouse.click(point.x, point.y);
   await expect(viewTab(page, "linked.ts")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".cm-activeLine").first()).toHaveText("// line 42");
+  // The file opens in File Views and leaves Tools off (PRD three-column-panel B4).
+  await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
   await screenshot(page, "terminal-link-file-at-line");
   expect(sent.get("reveal_path")).toBe(1);
   point = await pointOf(page, paneId, "missing/nothing.ts", { offset: 2 });
@@ -269,11 +307,16 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   await expect(page.locator(".cm-activeLine").first()).toHaveText("// line 7", { timeout: 20_000 });
   expect(sent.get("reveal_path")).toBe(2);
 
-  // A folder is revealed in the Explorer.
+  // A folder is revealed in the Explorer: Tools turns on beside the pane,
+  // which narrows and rewraps once before the next row is read (PRD
+  // three-column-panel D-02).
   point = await pointOf(page, paneId, "./src", { offset: 1 });
   await hoverLink(page, paneId, point);
+  const beforeFolder = await paneCols(page, paneId);
   await page.mouse.click(point.x, point.y);
   await expect(page.locator(`[data-explorer-row="${path.join(checkout, "src")}"][data-selected="true"]`)).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-column="tools"]')).toBeVisible();
+  await narrowed(page, paneId, beforeFolder);
   expect(sent.get("reveal_path")).toBe(3);
 
   // A path the terminal wrapped is one link from its second row.
@@ -330,9 +373,10 @@ test("Korean prose links only the real path and opens that file", async () => {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 681));
   const page = await shellPage(app);
   await withProbe(page);
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.7));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.4));
   await enterWorkspace(page, "fixture");
   const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await showFileViews(page, paneId);
   await print(page, paneId, ["보드 보기 (docs/README.md)에 C안을 추가했습니다.", "KOREAN-END"], "KOREAN-END");
   const lines = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneText(id).split("\n"), paneId);
   const row = lines.findIndex((line) => line.startsWith("보드 보기"));

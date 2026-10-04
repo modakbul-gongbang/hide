@@ -1458,7 +1458,7 @@ fn a_quit_mid_restore_keeps_the_stored_layout_byte_for_byte() {
     // and a.txt in the area beside it, which was in use.
     let mut views = crate::workspace_views::WorkspaceViews::default();
     let entry = views.entry(DEVICE, &f.root.to_string_lossy());
-    entry.panel = crate::workspace_views::PanelState::Open;
+    entry.views = true;
     let layout = &mut entry.layout;
     let diff = layout.new_display(&f.path("a.txt"), DisplayKind::Diff, Some(false), false);
     layout.insert("a1", diff, 1).unwrap();

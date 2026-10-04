@@ -7,53 +7,56 @@ Each rule below names the code that owns it: a web owner in `web/src/` and, wher
 
 ## Web Workspace
 
-The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its side panel follows the operator's decisions on issue 170, the newest ("Side panel hierarchy, revised") first: every control sits once, on the container it changes.
+The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its body follows PRD three-column-panel (`agents/prd/three-column-panel/prd.md`, issue 321): three docked columns, every control sitting once, on the container it changes.
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
-The toolbar spans only the agent column and holds the path back (`Home / Project / Workspace`, where `Home` opens the Overview), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `Home / ~/hide`, since Home is no project. It has no tool toggles.
-The globe at the path’s right edge is `Open server`: one known listener opens directly in the Workspace’s existing Browser View beside the agent, and multiple listeners open a compact keyboard picker.
+The toolbar spans the Workspace's full width and holds the path back (`Home / Project / Workspace`, where `Home` opens the Overview), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `Home / ~/hide`, since Home is no project.
+Its right end holds three icons and nothing else, in this order: `Open server`, File Views and Tools.
+`Open server` (a globe): one known listener opens directly as a page in File Views, and multiple listeners open a compact keyboard picker.
 The picker shows each real bind address and port, preserves IPv4/IPv6 scope, and supports arrows, Home, End, Enter and Escape.
 An empty, loading, disconnected, failed or stale catalog gives small feedback in the same popover; a remote Workspace explicitly has no local discovery.
 Discovery never starts or stops a server, and an opened page retains the Browser View’s own connection failure and recovery controls.
-The side panel toggle sits at the Workspace's top right in both states: at the toolbar's right end while the panel is closed, and at the right end of the panel's first row while it shows.
-It is drawn pressed while the panel shows, and ⌘⇧B toggles the panel too, restoring its views and the tool column as they were before hiding; while the panel is closed with views open, the toggle carries a badge with their count, also given as its accessible description.
-The toggle, the tool column's toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
-A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, Copy Workspace path, and Open Project Overview; the other two states, Pin or Unpin, and Show or Hide Explorer and History are on the toolbar, ⌘E and the panel's own controls.
+The File Views and Tools icons are drawn pressed while their column shows, and each keeps one accessible name with its state as pressed or not.
+Hovering or focusing an icon shows its name and chord in a tooltip, `File Views ⌘⇧B` and `Tools ⌘E`, with a rebound chord shown as bound; `Open server` has no chord.
+While File Views is not on screen with views open, its icon carries a badge with their count, also given as its accessible description.
+A right-click or the menu key on the toolbar offers Show or Hide File Views, Show or Hide Tools, Copy Workspace path, and Open Project Overview.
 An empty Agent area offers New tab.
 The area is empty only when the checkout has no tab: a checkout whose only tab holds delegated children keeps that tab off the strip and still draws it on the canvas, so the agent chosen from the sidebar there opens on its pane.
 
-### The side panel
+### The three columns
 
-The Workspace holds the agent column (the toolbar, then the Agent area), always the Workspace's full width, and the side panel on its right edge at the Workspace's full height, up to the toolbar's row, over the agents.
-The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed with the tool column hidden, so the first file or page it opens shows alone and ⌘E brings the Explorer.
-Open, the panel floats over the right part of the agent column and the Agent area keeps its full size underneath, so opening, closing, resizing and expanding the panel never resizes a terminal.
-The panel is a `--card` surface with a `--border` hairline and a `--radius-lg` top-left corner, and no shadow; a `--spacing-sm` gap in `--background` on its left separates it from the agents.
-Everything inside it sits on `--card`: the tabs, the document header, the editor, the diff, a page and a loading view, with the keyboard area's selection accent and the other areas' readable selected-tab background described under View areas.
-The pane header actions and the right part of an agent's lines under an open panel stay under it; Pin is the remedy.
-Pin docks the panel instead: the agents end at its left edge and their terminals resize once to fit, and Unpin gives them the body's width back.
-Pin is not a fourth state: it is stored per Workspace with the width, and a pinned panel still closes, opens, and expands, its agents keeping their docked width under an expanded panel so expanding and restoring resize nothing.
-The gap on the panel's left is its resize grip (`Component / Side panel grip`): nothing at rest, and on hover, keyboard focus and while dragging a hairline centred in the gap with a small ⇆ pill at its middle that overlaps the card's edge; the grip travels with the pointer as the guide and lands once on release, one step per arrow key while focused, and neither the panel nor the agents to its left narrower than the area minimum.
-Every panel that has a width resizes this way, floating or pinned, the tools-only panel included; the tools-only panel keeps a width of its own, the tool column's until it is first resized, and both widths are the Workspace's shares of the body and survive a restart.
-The agents left of the panel are live: clicking a pane or a tab there focuses it and typing goes to it while the panel stays up, and chords such as ⌘F, ⌘T and ⌥W act where the keyboard is, the panel's View area or the pane.
-While an expanded panel covers them, the agents take no pointer or keyboard, so Tab never walks into a terminal out of sight.
+The Workspace body, under the toolbar, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (the Explorer or History).
+No column floats over another, carries a shadow or covers the agents; a column that is off takes no room, and Agent Views takes whatever File Views and Tools leave.
+File Views and Tools are each on or off, stored per Workspace with the tool and both widths, and survive a restart; a Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
+Each column's first row is its tab row, level with the others: the Agent tab strip, each top View area's tab strip with its own New tab (a new browser display in that area, see Browser displays), and the Explorer and History icon tabs, the shown one marked, named Explorer and History in their tooltips and accessible names.
+No column has a title row, a close button or panel actions; the toolbar's icons and their chords are the only column controls.
+The second row of File Views is level with the agents' first pane header: the active document's header over each View area, naming a file from its checkout and cutting a long path at its start so the file name stays.
+With stacked View areas each area keeps its own tab strip.
 
-The panel's first row sits at the toolbar row's height and holds each top area's View tabs with their kind marks, each area's tabs followed by its own New tab (a new browser display in that area, see Browser displays), and, at its right end, the panel actions: the tool column's toggle (pressed while the tools show), Expand (only while a view is open), Pin, and the panel toggle.
-Its second row is level with the agents' tab strip: the active document's header over each View area, naming a file from its checkout and cutting a long path at its start so the file name stays, and over the tool column the Explorer and History icon tabs, the shown one marked, named Explorer and History in their tooltips and accessible names.
-The tool column holds one tool at a time, with no title row and no close: a tab swaps the tool, and the column's toggle hides and shows it, keeping the tool it held.
-With stacked View areas each area keeps its own tab strip, and the first row holds the top area's tabs and the panel actions.
-With no view open and the tools shown, the panel is only the tool column, including after the last view closes, and its first row holds the tool tabs, Pin, and the panel toggle, so the tools alone can be pinned beside the agents.
-⌘E opens a closed panel with tools shown, closes a tools-only panel, and toggles the tool column beside views, keeping the chosen tool.
+⌘⇧B and the File Views icon toggle File Views only, and ⌘E and the Tools icon toggle Tools only: a column on screen turns off, and one that is not turns on.
+Each sends the value the column should end at, so the same press arriving twice lands where it did once.
+Turning File Views back on brings its areas, tabs, preview and active view back as they were; turning Tools on or off keeps its tool and leaves File Views and its views alone.
+The desktop app's View menu names the two commands `Toggle File Views` and `Toggle Tools`, and a chord bound to either in Settings, Shortcuts before the change keeps toggling the same column.
 The sidebar's Projects | Agents switch has no default chord and can be bound in Settings, Shortcuts; a bound chord shows in the tabs' hint.
 `Toggle device rail` has no default chord either and is bound the same way; it shows or hides the device rail.
-Panel content is views or tools only; closing the last view with tools hidden closes the panel in the core, and hiding the tools-only column does the same.
-There is no empty panel body or empty-panel New tab button.
-Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
 
-Opening a file, a diff, or a page while the panel is closed opens it, with the active View area focused; revealing a file shows the tool column on the Explorer, and opens a closed panel.
-Choosing an agent or a tab from the sidebar, the palette, or a tab cycle closes an unpinned panel and brings a pinned expanded panel back to its width, so the chosen agent is in sight; a pinned open panel stays beside the agents (in a window too narrow for both it closes too; see Narrow windows), and a choice made in the Agent area on screen beside the panel moves nothing.
-Closing the panel closes no view, document, or pane, and the keyboard goes back to the focused pane.
-Changing the panel's state only changes space, and expanding never makes a split; a split comes only from a split command or a drop on an edge.
-Inside the panel the View areas behave as they do anywhere else: tabs, splits, preview, dirty state and browser displays, each page inside the panel's bounds.
+File Views is never empty: closing its last view turns it off in the same transition, Agent Views takes its width, and Tools stays as it was.
+With no view open, ⌘⇧B or the File Views icon turns File Views on holding one New tab page (Open with File ⌘P, and Diff when the checkout has changes); closing that untouched tab turns File Views off again.
+Tools alone is an ordinary state.
+Opening a file, a diff or a page from the Explorer, History, ⌘P, a terminal link, Open in Browser or Open server turns File Views on with the opened tab in its active View area and leaves Tools as it was; revealing a file turns Tools on with the Explorer and leaves File Views as it was, and a terminal link that names a folder shows it in the Explorer the same way.
+Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another device focuses it in Agent Views and changes no column in a window wide enough for them all.
+
+The column edges are dividers: Agent Views | File Views, and the edge left of Tools.
+Each divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each divider a separator that reports its width.
+Fast arrow presses retain every step before the preceding width has been confirmed, and reloading restores the final width.
+The divider between File Views and Tools trades width between the two, so the agents keep theirs; the others change one column's width against Agent Views.
+No column gets narrower than its minimum: Agent Views 480px, File Views 360px, Tools 260px; File Views starts at 640px and Tools at its usual tool width until first resized.
+Turning File Views or Tools on or off, or landing a divider that moves Agent Views' edge, resizes the agents' terminals once; a drag in progress, an open, close or tab change inside File Views, a split or a drag of a view, and choosing an agent resize nothing.
+Changing Workspace or column geometry during a column drag cancels its guide without saving a width, and releasing the old pointer cannot change the new Workspace.
+
+Agent Views is always live: clicking a pane or a tab focuses it and typing goes to it, and chords such as ⌘F, ⌘T and ⌥W act where the keyboard is, a View area, Tools or a pane.
+Hiding the column the keyboard is in hands the keyboard to File Views' active area while File Views shows, else to the focused pane, and Tab never walks into a column out of sight.
+Inside File Views the View areas behave as they do anywhere else: tabs, splits, preview, dirty state and browser displays, each page inside its area's bounds.
 
 An Agent tab shows the focused pane's status mark, provider logo, then title, using the sidebar row's title and mark rules.
 A custom Herdr label wins; an empty, numeric, or `Tab N` label instead follows the focused pane's agent title (its task, or its provider's name), foreground process name, then `Tab N` using Herdr's stable number; a Herdr workspace label is never a tab or agent name.
@@ -79,7 +82,7 @@ An unavailable or retired keyboard target never falls through to closing a diffe
 When a connected pane selects, splits, moves, or closes a View through `hide view`, the same View layout rules apply to that pane's Workspace even while another Workspace is in front.
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 `hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
-An explicit local `--reveal` brings that Workspace and the opened View forward, opening its side panel if it was closed; without it, the side panel keeps its state.
+An explicit local `--reveal` brings that Workspace and the opened View forward and turns File Views on, showing it in a window too narrow for every column; without it, File Views keeps its state and its icon's badge counts the new view.
 A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, adds or selects the View for its own tab's bookmark and leaves the front of every View area as the operator left it (see View bookmarks per Agent tab).
 Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front as before and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
 `hide view split`, `move` and `close` change the shared layout, so they apply at once from any tab.
@@ -97,7 +100,7 @@ External tabs beyond the cap remain in Herdr topology, with their waiting count 
 A waiting tab cannot take Hide's keyboard or active-tab selection.
 This boundary is an Observer-approved, user-vetoable implementation assumption from the Agent groups contract.
 
-The Agent column has its own area tree, separate from the side panel's View tree.
+Agent Views has its own area tree, separate from File Views' View tree.
 Each area has a tab bar, a New tab button and the active tab's live pane canvas; dividers separate areas.
 Only the area holding the keyboard carries the foreground-colored selected-tab underline, across both Agent and View columns.
 Clicking a tab or pane activates its area and sends the keyboard to that pane.
@@ -144,14 +147,14 @@ Retry close reuses that intent's shell, while Dismiss ends the failed intent; de
 
 ### View areas
 
-The side panel holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
+File Views holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
 A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
 Each layout keeps its own active area for opening and layout actions.
 The recorded keyboard owner alone gives one Agent or View area the foreground-colored selected-tab underline.
 Every other area's tab bar uses the card background, and its selected tab keeps a foreground title and secondary background without the underline.
 Areas have no visible focus perimeter; their transparent content border reserves the same space as before.
 The content stays readable and unfiltered; focus adds no content blur, opacity reduction, capture loop or geometry change.
-The same rule applies to floating, pinned and expanded View panels, narrow single-area presentation and both themes.
+The same rule applies at every File Views width, in the narrow single-area presentation and in both themes.
 An area's tabs each ask for the preferred width and shrink alike down to the title minimum; a file's type mark does not tell files apart, so a View tab keeps its title and never turns to marks the way an Agent tab does.
 An area whose tabs outrun its width even at that minimum scrolls its own strip so the shown view's tab stays in sight whenever the shown view changes or the area is resized.
 Clicking a tab or a view, or moving focus to another area with a focus-area command, makes that area active.
@@ -159,18 +162,18 @@ The divider between two areas turns accent-colored on hover and keyboard focus, 
 A focused divider moves with the arrow keys along its axis, one step and one change per press.
 No area gets narrower or shorter than its minimum, a divider stops where either neighbour would, and each side of a split keeps between 15 and 85 percent of it.
 An area whose last view leaves disappears, and its neighbour takes the space.
-When the last view closes, tools stay visible if enabled; otherwise the panel closes, with that state saved for the Workspace.
+When the last view closes, File Views turns off and Tools stays as it was, with that state saved for the Workspace.
 
 ### View bookmarks per Agent tab
 
-The View list, the layout, the side panel's state, pin and width, and every document's text belong to the Workspace, so they are the same whichever Agent tab is in front.
+The View list, the layout, the columns' state and widths, and every document's text belong to the Workspace, so they are the same whichever Agent tab is in front.
 Each Agent tab remembers, for every View area, the View that was in front while that tab was the active one, and gets it back when it is shown again.
 Showing a tab that no Agent area of the Workspace showed a moment before makes each area that still holds that tab's bookmarked View show it, in the same frame that shows the tab.
 A tab strip click, a sidebar agent or tab choice, the palette, a tab cycle, a pane in another checkout and a tab that Herdr's own focus moved to all do this; the tab's own bookmark applies to the Workspace it belongs to.
 Nothing opens, closes or splits: an area whose bookmarked View has closed or moved to another area keeps what it shows, and a tab with no bookmark changes nothing.
 A new tab, a delegated child moved to its own tab and every tab right after an update have none.
-The area in use, the keyboard and the panel's open, closed and pin state stay where they were; while the panel is closed the bookmark still applies, so opening it shows the tab's front.
-Moving focus between Agent areas that already show their tabs, or between the panes of one tab, restores nothing, so two agents side by side never swap the panel under the operator.
+The area in use, the keyboard and the columns stay where they were; while File Views is off the bookmark still applies, so turning it on shows the tab's front.
+Moving focus between Agent areas that already show their tabs, or between the panes of one tab, restores nothing, so two agents side by side never swap File Views under the operator.
 When the front of a View area changes, the active tab remembers the new front.
 The View that went behind when another tab came forward stays in the strip, one click away, and choosing it is that tab's new bookmark.
 A bookmark points at a View, not at a file, so a preview View that another tab retargeted shows the new document when it returns; a pinned View is unaffected, and there is no preview View per tab.
@@ -190,7 +193,7 @@ A single click on an Explorer file or a History row opens it in the active area'
 Each area has at most one preview, and a click never touches another area or a pinned view.
 A double-click on the row or the tab, Keep open, or the first edit pins the preview where it is, including a double-click that lands while the file's first read is still running; because the first edit pins, a document that is dirty, saving, or whose save failed is never a preview in any area that shows it.
 Opening a file that is already shown moves to its view instead of adding a tab, choosing the one used last when several views show it.
-Opening a file while the side panel is closed opens the panel first.
+Opening a file while File Views is off turns it on first.
 Diffs are placed by the same rules.
 
 Open to the side (from the Explorer's file menu, a History row's menu, or ⌘↵ on a ⌘P result) is the only way to show one file twice.
@@ -230,10 +233,10 @@ A view whose file is being read shows `Opening…`.
 A restored view whose device or root is not ready says what it waits for (such as `Waiting for <device> to connect`) and reads its file by itself once that is ready.
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
-After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the side panel's state, width and Pin, and the tools; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
+After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, whether File Views and Tools are on, their widths, and the tool; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on the Overview.
 A layout file that cannot be read is kept aside and the app starts on the Overview, where the operator picks a Workspace and continues with a new layout.
-A Workspace stored before the side panel, with a layout instead of a panel state, restarts into the nearest panel state: Agents only as a closed panel (an open one when its View areas floated over the agents), Agents and Views as a pinned open panel as wide as its View region was, and Views only as an expanded panel.
+A Workspace stored with the side panel that came before the columns restarts with File Views on when its panel was open or expanded and off when it was closed, docked whether or not it was pinned, its tools, tool, views, tabs and areas as they were and both widths at their defaults; one stored before the side panel, with a layout instead of a panel state, restarts with File Views on unless it showed the agents alone.
 
 ### Browser displays
 
@@ -252,32 +255,38 @@ On a connected SSH device, the native page uses that device's localhost or conse
 Opening an address the Workspace already shows moves to that view and loads it again instead of adding a second one.
 The view's own toolbar holds Back, Forward, Reload (Stop while the page loads) and the address, which shows a web address without its scheme until it is focused; focusing it selects the whole address, Return loads what was typed, and Escape puts the page's address back.
 A page that cannot load says so in its place with the address and the reason, and Reload tries again; nothing else on screen changes.
-While the palette, a menu, a dialog, or a narrow window's tool overlay covers a page, the page is shown as a still picture of itself from its first frame, so the overlay draws over it and the page is never seen on top; a page with no picture yet is blank for a moment until one arrives, and an older picture turns to the page as it is now within a few frames; the page comes back live when the overlay closes.
+While the palette, a menu or a dialog covers a page, the page is shown as a still picture of itself from its first frame, so the overlay draws over it and the page is never seen on top; a page with no picture yet is blank for a moment until one arrives, and an older picture turns to the page as it is now within a few frames; the page comes back live when the overlay closes.
 A tooltip never turns a page into a picture; a tooltip, such as a tab's or a page toolbar button's, opens on the side of its trigger where the whole of it shows clear of every page, and keeps its usual side when no side is clear.
-While the shell drags something (a tab, a divider, the side panel's edge, an Explorer item), every page is shown as its still, so the guide or preview draws over it and a drop lands in the shell rather than the page; the pages come back live at release, and a drag inside a page is the page's own.
+While the shell drags something (a tab, a divider, a column divider, an Explorer item), every page is shown as its still, so the guide or preview draws over it and a drop lands in the shell rather than the page; the pages come back live at release, and a drag inside a page is the page's own.
 In a plain browser tab the view keeps its address on the toolbar row, level with a document header beside it, and below it reads `Pages open in the hide desktop app.`; a web address offers Open in browser, and nothing else is drawn in its place.
 [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md) owns which addresses a page may hold, the `file:` boundary, and the page's lifetime.
 
 ### Narrow windows
 
-When the body cannot give the agents their minimum beside the open panel, the panel takes the whole Workspace as if expanded, without Expand or Pin, and a pinned panel floats there instead of docking; it then covers the agents like an unpinned one, so an agent or a tab of that Workspace chosen from the sidebar, the palette, or a tab cycle closes it and uncovers the chosen agent, the Pin kept for when the panel opens again.
-Only the Workspace on screen is affected: another Workspace's panel stays as it was, so an agent chosen in another Workspace whose pinned panel is open lands under that panel in a narrow window until the toggle or ⌘⇧B closes it.
-From the Overview or a project's Overview, an agent of the Workspace last on screen is treated as that Workspace last was: if the window was narrowed meanwhile, the agent lands under its pinned panel until the toggle closes it, and if it was widened, its pinned panel closes once, the Pin kept.
-In a narrow window the tool opens as a temporary overlay over the View area's right side, below the first row, instead of a column, drawn with a border and no shadow and carrying the tool tabs; it is closed until the tool column's toggle, a tool command, or ⌘E asks for it, including the press that opened a closed panel, and the toggle reads pressed while it shows; Escape, the toggle again, or a click outside closes it and returns focus to what opened it.
-Hiding and restoring the whole panel keeps whether its temporary tool overlay was open.
+How many columns show depends on the Workspace body's width, not the window's, so hiding the sidebar with ⌘B can bring a column back.
+The steps are where the column minimums and the 8px dividers between them fit: 1100px of columns (1116px of body with both dividers) and 840px (848px).
+At the wide step every column that is on shows.
+Between the two steps, Agent Views shows with one more column: File Views when both are on, Tools hidden first.
+Calls made at a different width step do not override this fallback; entering a new step clears only the temporary column choice, and a call made in that step keeps its effect until the step changes.
+Calling Tools there (⌘E, its icon, a reveal) puts Tools in File Views' place with its icon pressed and File Views' not, and opening a file or ⌘⇧B brings File Views back.
+Under the lower step one column shows, Agent Views first; calling File Views or Tools, or opening a file, gives that column the whole body, with Agent Views kept at its size out of sight and taking no pointer or keyboard.
+Choosing an agent from the sidebar, the palette or a tab cycle, or pressing the shown column's icon or chord again, gives the body back to Agent Views; that press sends nothing, so the column stays on.
+A narrower body starts on Agent Views each time it drops under the lower step and each time another Workspace comes in front, unless that Workspace was just called, as a `--reveal` does.
+No column ever floats over another.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
-Widening the window brings back the panel's stored state, width and Pin, the area sizes, and the tool column, because none of these narrow arrangements is stored; the core is told only whether the panel covers the whole body, and only when that changes.
+Widening the window brings back what the Workspace stores, whether each column is on, their widths, the tool and the area sizes, because none of these narrow arrangements is stored, and another Workspace's columns never change while one is narrow.
 
 ### Library masters
 
-The side panel's masters in `design/hide-ui.lib.pen` are on `Component / Side panel`: `Component / Side panel toggle` with its open-view count, `Component / Side panel tool tabs`, `Component / Side panel actions` in each of its states (tools hidden, pinned, expanded, no view open, narrow), and the panel itself over the agents, pinned with the grip hovered, with the tools hidden, and as the tool column alone; `Screen / Workspace` in `design/hide-screens.pen` draws it open and closed in Dark and Light.
+PRD three-column-panel D-13 requires a real `Screen / Workspace` board and column masters replacing the old `Component / Side panel` sheets through the design workflow.
+The operator delegated final design judgment within the approved direction; delivery requires that review to compare the board with actual native captures in both themes and to confirm B35.
 The View area masters in `design/hide-ui.lib.pen` are `Component / View tab`, `Component / View insertion line`, `Component / View split overlay`, `Component / View tab menu`, and `Component / View area message`.
 Their sheets draw every state as refs: the View tab sheet draws preview, pinned, hover, active-in-the-active-area, active-in-another-area, dirty, unavailable, diff, a long title, and the floating drag copy; the placement sheet draws a reorder, a move into another area, a right and a down split, and an ineligible target; the tab menu sheet draws a preview's menu and a pinned view's menu with a disabled Split and its reason; the area states sheet draws each view's opening, waiting, and unavailable states.
 The browser display's toolbar and its loading, load failed, and plain browser tab states are on `Component / Browser file diff toolbars`.
 
 ### Agent panes and the Agents explorer
 
-Several View areas leave the Agent side as it was already drawn: the side panel toggle, the tool column, and the child chips below behave the same with one area or six.
+Several View areas leave Agent Views as it was already drawn: the toolbar's icons, Tools, and the child chips below behave the same with one area or six.
 
 A pane header reads, left to right: the Return mark of a child pane, the agent's status mark and provider mark under the sidebar row's rules (a plain shell has the neutral `>_` mark and no status mark), the title, the zoom control, the status caption, then the overflow control and ×.
 While the tab is zoomed, the zoomed pane's header carries a zoom control that names how many panes it hides (`+1`) and unzooms the tab when pressed; an unzoomed header has none.
@@ -1344,8 +1353,8 @@ A command marked none has no chord until the operator binds one in Settings, Sho
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |
 | Toggle sidebar view | none | none | none | none |
 | Toggle device rail | none | none | none | none |
-| Toggle tools | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
-| Toggle side panel | `⇧⌘B` | `Alt+Shift+B` | `⇧⌘B` | `Alt+Shift+B` |
+| Toggle Tools | `⌘E` | `Ctrl+Shift+E` | `⌘E` | `Ctrl+Shift+E` |
+| Toggle File Views | `⇧⌘B` | `Alt+Shift+B` | `⇧⌘B` | `Alt+Shift+B` |
 | Find in pane | `⌘F` | `Ctrl+Shift+F` | `⌘F` | `Ctrl+Shift+F` |
 | Save file | `⌘S` | `Ctrl+Shift+S` | `⌘S` | `Ctrl+Shift+S` |
 | Keep open | `⇧⌘K` | `Alt+Shift+K` | `⇧⌘K` | `Alt+Shift+K` |

@@ -205,7 +205,20 @@ fn bind_keeps_a_regular_file_at_the_path() {
 /// passes over a stream whose client already left.
 fn serve_lines(listener: LocalListener) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        while let Ok(mut stream) = listener.accept() {
+        loop {
+            let mut stream = match listener.accept() {
+                Ok(stream) => stream,
+                Err(error) => {
+                    // A later refused connect must retain the accept loop's
+                    // reason for ending, rather than silently dropping it.
+                    eprintln!(
+                        "ipc.test.accept_failed kind={:?} raw_os_error={:?}",
+                        error.kind(),
+                        error.raw_os_error()
+                    );
+                    break;
+                }
+            };
             let line = read_line(&mut stream);
             if !line.is_empty() {
                 stream.write_all(line.to_uppercase().as_bytes()).unwrap();
