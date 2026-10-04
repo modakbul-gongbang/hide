@@ -8,16 +8,40 @@
 // the source has not answered for is left out rather than drawn as zero
 // (design 10).
 
+import type { TFunction } from "i18next";
+import { formatDateTime } from "./i18n/format";
+import type { MessageKey } from "./i18n/catalogs";
+import { requireInterfaceLanguage } from "./i18n/locale";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 export type Stage = "backlog" | "working" | "review" | "done";
 
-export const STAGES: readonly { stage: Stage; label: string }[] = [
-  { stage: "backlog", label: "백로그" },
-  { stage: "working", label: "진행 중" },
-  { stage: "review", label: "리뷰" },
-  { stage: "done", label: "완료" },
+export const STAGES: readonly { stage: Stage; labelKey: MessageKey }[] = [
+  { stage: "backlog", labelKey: "board.stage.backlog" },
+  { stage: "working", labelKey: "board.stage.working" },
+  { stage: "review", labelKey: "board.stage.review" },
+  { stage: "done", labelKey: "board.stage.done" },
 ];
+
+/**
+ * A source that could not be read, as data: the words are written where it
+ * is drawn, in the interface language. `value` says how the last value
+ * stands: left out of the line, `last` known without an age, `none` ever
+ * read, or `minutes` old. The reason is in the diagnostic log (design 13).
+ */
+export type ReadFailure = {
+  /** The Project's name, only where the scope holds several. */
+  project: string | null;
+  /** The source that failed: `GitHub`, `Local`. */
+  source: string;
+  value: "omitted" | "last" | "none" | { minutes: number };
+};
+
+export function readFailureText(failure: ReadFailure, t: TFunction<"translation">): string {
+  const value = failure.value;
+  const stands = value === "omitted" ? null : value === "last" ? t("board.lastValue") : value === "none" ? t("board.noValue") : t("board.valueMinutes", { count: value.minutes });
+  return [failure.project, t("board.sourceReadFailed", { source: failure.source }), stands, t("board.reasonLogged")].filter(Boolean).join(" · ");
+}
 
 /** A checkout's stage: only an issue nobody works on is in the backlog. */
 export type GitStage = Exclude<Stage, "backlog">;
@@ -67,7 +91,7 @@ export type CheckoutChip = {
 /** Where a card or agent lives: its Project, for All projects' cards. */
 export type BoardPlace = { projectId: string; projectLabel: string };
 
-/** What a card's hover slot offers first (B6): 시작 on the backlog, the Workspace in progress, the pull request in review. */
+/** What a card's hover slot offers first (B6): Start on the backlog, the Workspace in progress, the pull request in review. */
 export type FirstAction = "start" | "workspace" | "pull_request" | null;
 
 /**
@@ -99,7 +123,7 @@ export type TaskCard = {
   more: number;
   /** An agent asks or finished and was not looked at: the only coloured card (B5). */
   needsYou: boolean;
-  /** An open backlog issue of a project on this Mac: 시작 opens the Start dialog. */
+  /** An open backlog issue of a project on this Mac: Start opens the Start dialog. */
   canStart: boolean;
   first: FirstAction;
   /** A Local issue: its title and body are edited in its panel (D-41). */
@@ -107,17 +131,17 @@ export type TaskCard = {
   /** The id's hint: where the issue comes from and the branch working on it. */
   idHelp: string;
   /** Why the card's source could not be read and how old its value is (B17). */
-  sourceFailure: string | null;
+  sourceFailure: ReadFailure | null;
   /** The open tasks this one waits on, the lock line: each by its id, else its title when the scope has it. */
   blockedBy: Blocker[];
   /** When the issue last changed, or null; the backlog's order. */
   updatedAt: number | null;
 };
 
-/** A worktree with no issue, one of `이슈 없는 워크트리 N` under 진행 중 (B4). */
+/** A worktree with no issue, one of `N worktrees without an issue` under In progress (B4). */
 export type LooseWorktree = { branch: string };
 
-/** An open pull request with no issue, one of `이슈 없는 PR N` under 리뷰 (B4). */
+/** An open pull request with no issue, one of `N PRs without an issue` under Review (B4). */
 export type LoosePullRequest = { owner: Workspace; number: number };
 
 export type Blocker = { key: string; label: string };
@@ -131,8 +155,8 @@ export type BoardScope = "project" | "all";
 export type SourceState = {
   /** A source is still answering its first read. */
   reading: boolean;
-  /** That a source could not be read (the first one), for a mark beside 백로그; the reason is in the diagnostic log (design 13). */
-  failure: string | null;
+  /** That a source could not be read (the first one), for a mark beside Backlog; the reason is in the diagnostic log (design 13). */
+  failure: ReadFailure | null;
   /** Open issues across the scope, once every source has answered. */
   openIssues: number | null;
   /** The one source label when the scope has one (`GitHub`, `Local`). */
@@ -228,11 +252,11 @@ function chipOf(checkout: Checkout | null, stage: Stage): CheckoutChip | null {
 }
 
 /** What a failed source read says, with the value's age (B17); the reason is in the diagnostic log. */
-function sourceFailure(workspace: Workspace, now: number): string | null {
+function sourceFailure(workspace: Workspace, now: number): ReadFailure | null {
   const source = workspace.tasks?.source;
   if (!source?.failure) return null;
   const age = source.last_read_at_unix_ms == null ? null : Math.max(0, Math.floor((now - source.last_read_at_unix_ms) / 60_000));
-  return [`${source.label} 읽기 실패`, age === null ? "마지막 값" : `${age}분 전 값`, "이유는 로그에"].join(" · ");
+  return { project: null, source: source.label, value: age === null ? "last" : { minutes: age } };
 }
 
 function firstAction(stage: Stage, canStart: boolean, checkout: Checkout | null, pr: PrChip | null): FirstAction {
@@ -299,7 +323,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
   const pullRequests: LoosePullRequest[] = [];
   let overflow = false;
   let reading = false;
-  let failure: string | null = null;
+  let failure: ReadFailure | null = null;
   let openIssues = 0;
   const labels = new Set<string>();
   const titles = new Map<string, string>();
@@ -310,7 +334,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
     if (source) {
       labels.add(source.label);
       reading ||= source.reading;
-      failure ??= source.failure ? [scope === "all" ? workspace.label : null, `${source.label} 읽기 실패`, "이유는 로그에"].filter(Boolean).join(" · ") : null;
+      failure ??= source.failure ? { project: scope === "all" ? workspace.label : null, source: source.label, value: "omitted" } : null;
     }
     const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
     overflow ||= workspace.tasks?.overflow ?? false;
@@ -513,10 +537,9 @@ export function allProjectsStats(workspaces: readonly (Workspace | null)[]): All
   return { projects: workspaces.length, openPullRequests: known ? openPullRequests : null, merged: known ? merged : null };
 }
 
-/** A day the way an issue states it, by this machine's calendar: `9월 27일`. */
-export function issueDate(unixMs: number): string {
-  const date = new Date(unixMs);
-  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+/** A day the way an issue states it, by this machine's calendar: `Sep 27`, `9월 27일`. */
+export function issueDate(unixMs: number, language: string): string {
+  return formatDateTime(requireInterfaceLanguage(language), unixMs, { month: "short", day: "numeric" });
 }
 
 /** A size the way the Overview writes it: `812 MB`, `1.4 GB`, binary units. */
@@ -537,12 +560,14 @@ export function formatBytes(bytes: number): string {
 /** Whose move a pull request waits on (D-11, D-32): the operator's, an agent fixing it, nobody though it is blocked, or merged. */
 export type PrGroup = "turn" | "fixing" | "blocked" | "merged";
 
-const PR_GROUPS: readonly { group: PrGroup; label: string }[] = [
-  { group: "turn", label: "내 차례" },
-  { group: "fixing", label: "에이전트가 고치는 중" },
-  { group: "blocked", label: "CI 실패 · 맡은 에이전트 없음" },
-  { group: "merged", label: "최근 머지" },
-];
+export const PR_GROUP_LABEL: Record<PrGroup, MessageKey> = {
+  turn: "board.prGroup.turn",
+  fixing: "board.prGroup.fixing",
+  blocked: "board.prGroup.blocked",
+  merged: "board.prGroup.merged",
+};
+
+const PR_GROUPS: readonly PrGroup[] = ["turn", "fixing", "blocked", "merged"];
 
 /** An agent at work, a parent waiting on its working children included (status-model's activity axis, PRD Risks). */
 function isWorking(agent: AgentRow): boolean {
@@ -552,7 +577,7 @@ function isWorking(agent: AgentRow): boolean {
 /** The issue a pull request works on: the task when the source lists it, else the reference its body closes. */
 export type PrIssue = { key: string; label: string; url: string | null; task: Task | null };
 
-/** What `정리` on a merged row removes (B20): the worktree with its folder, or only its record. */
+/** What `Clean up` on a merged row removes (B20): the worktree with its folder, or only its record. */
 export type PrCleanup = "worktree" | "record";
 
 /** One pull request row of the PRs tab (B3-B8). */
@@ -571,27 +596,27 @@ export type PrRow = {
   agents: AgentRow[];
   /** The checkout's agents with their ancestors, root first, for the unfolded row (B5). */
   lineage: BoardRow[];
-  /** An agent there finished and was not looked at yet: the yellow `확인` (D-48). */
+  /** An agent there finished and was not looked at yet: the yellow `Review` (D-48). */
   needsLook: boolean;
   checks: "passing" | "failed" | "pending" | null;
   review: "review_required" | "changes_requested" | "approved" | null;
   /** When it last changed, or merged, for the time column. */
   at: number | null;
-  /** `▷ 맡기기` stands in the hover slot (B6, B15). */
+  /** `▷ Assign` stands in the hover slot (B6, B15). */
   delegate: boolean;
-  /** The issue cell offers 이슈 잇기 (B7, B9): an open pull request with no issue, where its source can link one. */
+  /** The issue cell offers Link issue (B7, B9): an open pull request with no issue, where its source can link one. */
   linkable: boolean;
   cleanup: PrCleanup | null;
 };
 
 export type PrBoard = {
-  groups: { group: PrGroup; label: string; rows: PrRow[] }[];
+  groups: { group: PrGroup; rows: PrRow[] }[];
   /** Open pull requests, or null until GitHub has answered (B22). */
   open: number | null;
   /** `gh` has not answered yet for this project (B22). */
   reading: boolean;
-  /** Why the last read failed, with the value's age; the reason is in the log (B22). */
-  failure: string | null;
+  /** That the last read failed, with the value's age; the reason is in the log (B22). */
+  failure: ReadFailure | null;
 };
 
 const PR_ATTENTION = (agent: AgentRow) => (agent.group === "needs_you" ? 0 : agent.group === "done" ? 1 : isWorking(agent) ? 2 : 3);
@@ -638,10 +663,10 @@ function prIssue(workspace: Workspace, checkout: Checkout | null, pr: PullReques
 
 /**
  * The PRs tab (D-11, D-32, D-52) for one project: its pull requests grouped
- * by whose move it is. A merged one is `최근 머지`, newest merge first; an
- * open one whose branch's checkout has a working agent is `에이전트가 고치는
- * 중`; otherwise failed checks or a change request make it `CI 실패 · 맡은
- * 에이전트 없음`, and every other open one (asking for review, approved, an
+ * by whose move it is. A merged one is `Recently merged`, newest merge first; an
+ * open one whose branch's checkout has a working agent is `Agent is fixing`;
+ * otherwise failed checks or a change request make it `CI failed · no agent
+ * assigned`, and every other open one (asking for review, approved, an
  * agent finished there, a draft) is the operator's. A group with no row is
  * not drawn. The core sends only the pull requests the tab shows.
  */
@@ -701,7 +726,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
     });
   }
   const byRecent = (a: PrRow, b: PrRow) => (b.at ?? 0) - (a.at ?? 0) || b.number - a.number;
-  const groups = PR_GROUPS.map(({ group, label }) => ({ group, label, rows: rows.filter((row) => row.group === group).sort(byRecent) })).filter((entry) => entry.rows.length > 0);
+  const groups = PR_GROUPS.map((group) => ({ group, rows: rows.filter((row) => row.group === group).sort(byRecent) })).filter((entry) => entry.rows.length > 0);
   const status = workspace.checkouts.find((checkout) => checkout.github)?.github ?? null;
   // A repository with no GitHub remote has no pull requests, which is an answer, not a failure (design 13).
   const noRemote = status?.failure_category === "no GitHub remote";
@@ -712,6 +737,6 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
     groups,
     open: answered ? rows.filter((row) => row.group !== "merged").length : null,
     reading: !answered && !failed,
-    failure: failed ? ["GitHub 읽기 실패", age === null ? "읽은 값 없음" : `${age}분 전 값`, "이유는 로그에"].join(" · ") : null,
+    failure: failed ? { project: null, source: "GitHub", value: age === null ? "none" : { minutes: age } } : null,
   };
 }

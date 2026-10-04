@@ -1,9 +1,10 @@
 // The request view's rules (PRD overview-request-view): which rows it draws
-// and in what order, the `요청` tile, the one-line request (D-42), and the
+// and in what order, the Requests tile, the one-line request (D-42), and the
 // chips. The expected answers are the PRD's Behaviors and the operator
 // requests measured for D-42, read against small fixtures.
 
 import { describe, expect, it } from "vitest";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import type { LensAgent } from "./overviewLens";
 import {
   childrenSummary,
@@ -14,6 +15,7 @@ import {
   requestLine,
   requestRows,
   requestsTile,
+  senderWords,
   resultLine,
   rowIssues,
   rowIssueChips,
@@ -23,6 +25,9 @@ import {
 import type { AgentPullRequest, AgentRequest, AgentRow, Checkout, RequestVerb, Task, Workspace } from "./snapshot";
 
 const NOW = new Date(2026, 9, 3, 15, 0, 0).getTime();
+
+const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
 const PROJECT = {
   id: "project",
@@ -71,20 +76,20 @@ function pull(number: number, extra: Partial<AgentPullRequest> = {}): AgentPullR
 
 describe("the request line (D-42, B52)", () => {
   it("joins lines with a middle dot, drops blank lines and runs of spaces, and ends with the image count", () => {
-    expect(requestLine("고쳐 줘\n\n  그리고   테스트도 [Image #1]\n[Image #2]", 2)).toBe("고쳐 줘 · 그리고 테스트도 · 이미지 2");
+    expect(requestLine("고쳐 줘\n\n  그리고   테스트도 [Image #1]\n[Image #2]", 2, t)).toBe("고쳐 줘 · 그리고 테스트도 · 이미지 2");
   });
 
   it("shows a request of images alone as the image mark alone", () => {
-    expect(requestLine("[Image #1]", 1)).toBe("이미지 1");
+    expect(requestLine("[Image #1]", 1, t)).toBe("이미지 1");
   });
 
   it("names paths and addresses by their last name, so a home folder never shows", () => {
-    expect(requestLine("/Users/example/projects/app/docs/README.md 읽고 https://github.com/acme/project/pull/336 리뷰", 0)).toBe("README.md 읽고 #336 리뷰");
-    expect(requestLine("~/work/notes/today.txt 봐", 0)).toBe("today.txt 봐");
+    expect(requestLine("/Users/example/projects/app/docs/README.md 읽고 https://github.com/acme/project/pull/336 리뷰", 0, t)).toBe("README.md 읽고 #336 리뷰");
+    expect(requestLine("~/work/notes/today.txt 봐", 0, t)).toBe("today.txt 봐");
   });
 
   it("keeps a long name's first twelve characters and its extension", () => {
-    expect(requestLine("src/components/request-row-expanded-detail.tsx", 0)).toBe("request-row-….tsx");
+    expect(requestLine("src/components/request-row-expanded-detail.tsx", 0, t)).toBe("request-row-….tsx");
   });
 
   it("drops characters that would reverse or hide part of a chip's name", () => {
@@ -93,12 +98,12 @@ describe("the request line (D-42, B52)", () => {
   });
 
   it("names an address whose last part is not valid percent-encoding as written", () => {
-    expect(requestLine("세일 https://example.com/files/sale-50% 확인", 0)).toBe("세일 sale-50% 확인");
+    expect(requestLine("세일 https://example.com/files/sale-50% 확인", 0, t)).toBe("세일 sale-50% 확인");
     expect(openCandidates("보고서 https://example.com/x/%zz 를 보세요", [], false).map((target) => target.label)).toEqual(["%zz"]);
   });
 
   it("keeps a slash between two words of a sentence", () => {
-    expect(requestLine("PR/이슈 둘 다 봐줘", 0)).toBe("PR/이슈 둘 다 봐줘");
+    expect(requestLine("PR/이슈 둘 다 봐줘", 0, t)).toBe("PR/이슈 둘 다 봐줘");
   });
 });
 
@@ -159,8 +164,8 @@ describe("the rows and groups (D-06, D-30, D-40)", () => {
     const rows = requestRows([lens(parent), lens(child), lens(grandchild), lens(orphan)], [parent, child, grandchild, orphan]);
     expect(rows.map((row) => row.lens.agent.pane_id)).toEqual(["parent", "orphan"]);
     expect(rows[0]!.children.map((row) => row.pane_id)).toEqual(["child", "grandchild"]);
-    expect(childrenSummary(rows[0]!)).toEqual({ text: "자식 2 · 일하는 중 1", asking: 2 });
-    expect(childrenSummary(rows[1]!)).toBeNull();
+    expect(childrenSummary(rows[0]!, t)).toEqual({ text: "자식 2 · 일하는 중 1", asking: 2 });
+    expect(childrenSummary(rows[1]!, t)).toBeNull();
   });
 
   it("reads a row the core has not laid a block on by its group", () => {
@@ -169,20 +174,20 @@ describe("the rows and groups (D-06, D-30, D-40)", () => {
   });
 });
 
-describe("the 요청 tile (B2)", () => {
+describe("the Requests tile (B2)", () => {
   it("counts the rows to do, badges the ones to answer, and draws zero as zero", () => {
     const rows = requestRows([lens(agent("a", "answer")), lens(agent("b", "review")), lens(agent("c", "result")), lens(agent("d", "working"))], []);
-    const tile = requestsTile(rows, { state: "ready" });
+    const tile = requestsTile(rows, { state: "ready" }, t);
     expect(tile.value).toBe(3);
     expect(tile.badge).toEqual({ count: 1, label: "답할 것", parts: [] });
     expect(tile.bar?.map((segment) => `${segment.key}:${segment.count}`)).toEqual(["answer:1", "fix:0", "review:1", "stopped:0", "result:1"]);
-    const quiet = requestsTile(requestRows([lens(agent("d", "idle"))], []), { state: "ready" });
+    const quiet = requestsTile(requestRows([lens(agent("d", "idle"))], []), { state: "ready" }, t);
     expect(quiet.value).toBe(0);
     expect(quiet.badge).toBeNull();
   });
 
   it("has no count while the device has not answered", () => {
-    expect(requestsTile([], { state: "loading", text: "…" }).value).toBeNull();
+    expect(requestsTile([], { state: "loading", text: "…" }, t).value).toBeNull();
   });
 });
 
@@ -201,10 +206,10 @@ describe("the result line (D-12, B5, B10)", () => {
   });
 
   it("reads the label's verdict in the expanded row, and nothing without a label (B6)", () => {
-    expect(verdictLine(block("answer", { end: "question", line: "어느 쪽으로 할까요?" }))).toBe("AI 판정 · 질문 · 어느 쪽으로 할까요?");
-    expect(verdictLine(block("stopped", { end: "unfinished" }))).toBe("AI 판정 · 덜 끝남");
-    expect(verdictLine(block("result", { reply }))).toBeNull();
-    expect(verdictLine(undefined)).toBeNull();
+    expect(verdictLine(block("answer", { end: "question", line: "어느 쪽으로 할까요?" }), t)).toBe("AI 판정 · 질문 · 어느 쪽으로 할까요?");
+    expect(verdictLine(block("stopped", { end: "unfinished" }), t)).toBe("AI 판정 · 덜 끝남");
+    expect(verdictLine(block("result", { reply }), t)).toBeNull();
+    expect(verdictLine(undefined, t)).toBeNull();
   });
 });
 
@@ -266,5 +271,33 @@ describe("open targets (D-39, B49)", () => {
       "https://example.com/report", "/repo/report.md", "docs/local notes.md", "https://example.com/a_(b)",
     ]);
     expect(openCandidates(markdown, [], false).every((candidate) => candidate.target.kind === "url")).toBe(true);
+  });
+});
+
+describe("the words of a row follow the interface language", () => {
+  it("writes the image count, the sender and the verdict in English", () => {
+    expect(requestLine("fix it [Image #1]", 1, english)).toBe("fix it · 1 image");
+    expect(requestLine("[Image #1] [Image #2]", 2, english)).toBe("2 images");
+    expect(senderWords({ kind: "operator" }, english)).toBe("Me");
+    expect(senderWords({ kind: "named", name: "Planner" }, english)).toBe("Planner");
+    expect(senderWords({ kind: "agent" }, english)).toBe("Agent");
+    expect(verdictLine(block("answer", { end: "question", line: "Which one?" }), english)).toBe("AI assessment · Question · Which one?");
+    expect(verdictLine(block("stopped", { end: "unfinished" }), english)).toBe("AI assessment · Unfinished");
+  });
+
+  it("counts descendants with the language's plural and joins the working count", () => {
+    const parent = agent("parent", "waiting", { close_descendant_pane_ids: ["child"], descendant_counts: { error: 0, approval: 0, question: 0, working: 1, done: 0 } });
+    const child = agent("child", "working", { delegated: true, lineage_parent_pane_id: "parent" });
+    const [row] = requestRows([lens(parent), lens(child)], [parent, child]);
+    expect(childrenSummary(row!, english)).toEqual({ text: "1 descendant · Working 1", asking: 0 });
+  });
+
+  it("names the tile and its segments in English and carries the device's reason as data", () => {
+    const rows = requestRows([lens(agent("a", "answer")), lens(agent("b", "fix"))], []);
+    const tile = requestsTile(rows, { state: "ready" }, english);
+    expect(tile.label).toBe("Requests");
+    expect(tile.badge?.label).toBe("To answer");
+    expect(tile.bar?.map((segment) => segment.label)).toEqual(["To answer", "To fix", "Review · Merge", "Stopped", "View results"]);
+    expect(requestsTile([], { state: "unavailable", text: "ssh refused", retry: "connect" }, english).failure).toBe("Couldn't read agents · ssh refused");
   });
 });

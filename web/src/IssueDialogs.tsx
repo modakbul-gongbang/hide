@@ -16,6 +16,7 @@ import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Hint } from "./components/ui/tooltip";
+import { useInterfaceTranslation } from "./i18n/client";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
@@ -75,10 +76,11 @@ export function sourcePlace(workspace: Workspace): string {
 
 /**
  * New issue: in the named project's source, or another project picked from
- * the list; `만들고 바로 시작` goes on to the Start dialog with the new issue
+ * the list; `Create and start immediately` goes on to the Start dialog with the new issue
  * once the source has it.
  */
 export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
+  const { t } = useInterfaceTranslation();
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const projects = useMemo(() => issueProjects(workspaces), [workspaces]);
   const [projectId, setProjectId] = useState(workspace.id);
@@ -91,7 +93,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
   const answer = request && create && create.id > request.after && create.workspace_id === request.projectId ? create : null;
   const refused = useErrorSince(request?.at ?? null, ["issue_create."]);
   const working = request !== null && refused === null && (answer === null || answer.phase === "working");
-  const failure = answer?.phase === "failed" ? (answer.message ?? "이슈를 만들지 못했습니다.") : refused;
+  const failure = answer?.phase === "failed" ? (answer.message ?? t("issue.createFailed")) : refused;
 
   useEffect(() => {
     if (answer?.phase !== "ready" || !request) return;
@@ -112,13 +114,13 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
       <DialogContent data-new-issue={projectId}>
         <form className="flex min-h-0 flex-1 flex-col" onKeyDown={submitOnCommandEnter} onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <DialogHeader>
-            <DialogTitle>새 이슈</DialogTitle>
-            <DialogDescription className="sr-only">프로젝트의 이슈 출처에 새 이슈를 만듭니다.</DialogDescription>
+            <DialogTitle>{t("issue.newTitle")}</DialogTitle>
+            <DialogDescription className="sr-only">{t("issue.newDescription")}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-sm">
-            <Field label="어디에">
+            <Field label={t("issue.place")}>
               <Select value={projectId} disabled={working} onValueChange={setProjectId}>
-                <SelectTrigger className="w-full" aria-label="어디에" data-new-issue-project="true">
+                <SelectTrigger className="w-full" aria-label={t("issue.place")} data-new-issue-project="true">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -130,24 +132,24 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="제목">
+            <Field label={t("issue.title")}>
               <Input value={title} autoFocus disabled={working} maxLength={256} onChange={(event) => setTitle(event.target.value.replace(/[\r\n]+/g, " "))} data-new-issue-title="true" />
             </Field>
-            <Field label="내용">
+            <Field label={t("issue.content")}>
               <TextArea value={body} rows={4} disabled={working} onChange={(event) => setBody(event.target.value)} data-new-issue-body="true" />
             </Field>
             <label className="inline-flex items-center gap-xs text-body text-foreground">
               <Checkbox checked={thenStart} disabled={working} onCheckedChange={(checked) => setThenStart(checked === true)} data-new-issue-start="true" />
-              만들고 바로 시작
+              {t("issue.createAndStart")}
             </label>
             {project?.tasks?.source?.failure ? <Note tone="warn">{`${project.tasks.source.label}: ${project.tasks.source.failure}`}</Note> : null}
             {failure ? <Note tone="error" data-new-issue-error="true">{failure}</Note> : null}
-            {working ? <Status tone="pending">이슈를 만드는 중…</Status> : null}
+            {working ? <Status tone="pending">{t("issue.creating")}</Status> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="secondary" onClick={onClose}>{working ? "숨기기" : "취소"}</Button>
+            <Button variant="secondary" onClick={onClose}>{t(working ? "issue.hide" : "common.cancel")}</Button>
             <Button type="submit" disabled={working || !project || !title.trim()} data-new-issue-create="true">
-              {thenStart ? "만들고 시작…" : "이슈 만들기"}
+              {t(thenStart ? "issue.createStart" : "issue.create")}
               <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>
           </DialogFooter>
@@ -169,19 +171,20 @@ function NameNote({
   edited: boolean;
   onRestore: () => void;
 }) {
+  const { t } = useInterfaceTranslation();
   if (!ai) return null;
   if (!answer || answer.phase === "working") {
     return (
       <span className="text-muted-foreground" data-name-state="working">
-        AI가 이름 짓는 중…
+        {t("issue.name.working")}
       </span>
     );
   }
   if (answer.phase === "failed") {
     return (
-      <Hint label={answer.message ?? "AI가 답하지 않았습니다."}>
+      <Hint label={answer.message ?? t("issue.name.unanswered")}>
         <span className="text-muted-foreground" tabIndex={0} data-name-state="failed">
-          AI 이름을 못 지어 기본 이름
+          {t("issue.name.defaultFallback")}
         </span>
       </Hint>
     );
@@ -189,15 +192,15 @@ function NameNote({
   if (edited && answer.name) {
     return (
       <button type="button" onClick={onRestore} className="inline-flex items-center gap-xxs rounded-xs text-primary outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" data-name-state="edited">
-        직접 고침 · <RotateCcwIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-        AI 이름으로
+        {t("issue.name.edited")} <RotateCcwIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+        {t("issue.name.restore")}
       </button>
     );
   }
   return (
     <span className="inline-flex items-center gap-xxs text-muted-foreground" data-name-state="ai">
       <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) text-primary" />
-      AI 지음 · 고칠 수 있음
+      {t("issue.name.aiEditable")}
     </span>
   );
 }
@@ -211,6 +214,7 @@ function NameNote({
  * the agent starts in the folder with the prompt.
  */
 export function StartIssueDialog({ actions, workspace, task, onClose }: { actions: Actions; workspace: Workspace; task: Task; onClose: () => void }) {
+  const { t } = useInterfaceTranslation();
   const settings = useShellStore((s) => s.rest?.ui_state?.issue_settings) ?? DEFAULT_SETTINGS;
   const git = workspace.is_git === true;
   const branches = workspace.branches ?? [];
@@ -219,7 +223,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const [edited, setEdited] = useState(false);
   const [base, setBase] = useState(workspace.default_branch && branches.includes(workspace.default_branch) ? workspace.default_branch : (branches[0] ?? ""));
   const [agent, setAgent] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
-  const [prompt, setPrompt] = useState(() => firstPrompt(task, null, settings.closes_instruction));
+  const [prompt, setPrompt] = useState(() => firstPrompt(task, null, settings.closes_instruction, t));
   const promptEdited = useRef(false);
   const detail = useShellStore((s) => (s.rest?.issue_work?.detail?.task_key === task.key ? s.rest.issue_work.detail : null));
   const nameAnswer = useShellStore((s) => (s.rest?.issue_work?.name?.request_id === requestId ? s.rest.issue_work.name : null));
@@ -237,8 +241,8 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const bodyKnown = detail !== null && detail.phase !== "reading";
   useEffect(() => {
     if (!bodyKnown || promptEdited.current) return;
-    setPrompt(firstPrompt(task, detail?.body ?? null, settings.closes_instruction));
-  }, [bodyKnown, detail?.body, task, settings.closes_instruction]);
+    setPrompt(firstPrompt(task, detail?.body ?? null, settings.closes_instruction, t));
+  }, [bodyKnown, detail?.body, task, settings.closes_instruction, t]);
   // The AI names the worktree once the body is known, so the name can use it.
   useEffect(() => {
     if (!git || !settings.ai_worktree_name || !bodyKnown || asked.current) return;
@@ -259,7 +263,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const problem = git ? branchProblem(branch) : null;
   const existing = git && branches.includes(branch) ? (workspace.checkouts.find((checkout) => checkout.branch === branch) ?? null) : null;
   const taken = git && branches.includes(branch);
-  const failure = created?.phase === "failed" ? (created.message ?? "워크트리를 만들지 못했습니다.") : refused;
+  const failure = created?.phase === "failed" ? (created.message ?? t("issue.worktreeFailed")) : refused;
 
   const submit = () => {
     if (working) return;
@@ -300,7 +304,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
           <DialogHeader>
             <DialogTitle className="flex items-center gap-xs">
               <Glyph aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />
-              {task.id ?? "이슈"} 작업 시작
+              {t("issue.startTitle", { issue: task.id ?? t("issue.label") })}
             </DialogTitle>
             <DialogDescription className="line-clamp-2 break-words">{task.title}</DialogDescription>
           </DialogHeader>
@@ -308,7 +312,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
             {git ? (
               <>
                 <Field
-                  label="워크트리 · 브랜치"
+                  label={t("issue.worktreeBranch")}
                   aside={
                     <NameNote
                       ai={settings.ai_worktree_name}
@@ -335,12 +339,12 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
                     data-start-name="true"
                   />
                 </Field>
-                {taken ? <Note tone="error" data-start-name-taken="true">이미 있는 브랜치입니다. 다른 이름을 쓰거나 {existing ? "기존 워크트리를 여세요." : "그 브랜치를 먼저 정리하세요."}</Note> : problem ? <Note tone="warn">{problem}</Note> : null}
+                {taken ? <Note tone="error" data-start-name-taken="true">{t(existing ? "issue.branchTakenExisting" : "issue.branchTakenNoCheckout")}</Note> : problem ? <Note tone="warn">{problem}</Note> : null}
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-md">
-                  <Field label="기준">
+                  <Field label={t("issue.base")}>
                     <Select value={base || undefined} disabled={working || branches.length === 0} onValueChange={setBase}>
-                      <SelectTrigger className="w-full" aria-label="기준 브랜치" data-start-base="true">
-                        <SelectValue placeholder="아직 브랜치를 읽지 못함" />
+                      <SelectTrigger className="w-full" aria-label={t("issue.baseBranch")} data-start-base="true">
+                        <SelectValue placeholder={t("issue.branchesUnread")} />
                       </SelectTrigger>
                       <SelectContent>
                         {branches.map((row) => (
@@ -357,7 +361,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
             ) : (
               <AgentField agent={agent} actions={actions} disabled={working} onChange={setAgent} />
             )}
-            <Field label="첫 지시" aside={<span className="text-muted-foreground">{detail?.phase === "reading" ? "이슈 본문 읽는 중…" : "이슈 본문에서 채움 · 고칠 수 있음"}</span>}>
+            <Field label={t("issue.firstPrompt")} aside={<span className="text-muted-foreground">{t(detail?.phase === "reading" ? "issue.bodyReading" : "issue.bodyPrefilled")}</span>}>
                 <TextArea
                   value={prompt}
                   rows={5}
@@ -369,14 +373,14 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
                   data-start-prompt="true"
                 />
               </Field>
-            {detail?.phase === "failed" ? <Note tone="warn">{`본문을 읽지 못해 제목만 넣었습니다: ${detail.message ?? ""}`}</Note> : null}
+            {detail?.phase === "failed" ? <Note tone="warn">{t("issue.bodyReadFailed", { message: detail.message ?? "" })}</Note> : null}
             {failure ? <Note tone="error" data-start-error="true">{failure}</Note> : null}
-            {working ? <Status tone="pending">워크트리를 만드는 중…</Status> : null}
+            {working ? <Status tone="pending">{t("issue.creatingWorktree")}</Status> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="secondary" onClick={onClose}>{working ? "숨기기" : "취소"}</Button>
+            <Button variant="secondary" onClick={onClose}>{t(working ? "issue.hide" : "common.cancel")}</Button>
             <Button type="submit" disabled={working || (git && !existing && (taken || problem !== null))} data-start-submit={existing ? "open" : "start"}>
-              {existing ? "기존 워크트리 열기" : working ? "시작하는 중…" : "시작"}
+              {t(existing ? "issue.openExisting" : working ? "issue.starting" : "common.start")}
               <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>
           </DialogFooter>
@@ -388,9 +392,10 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
 
 /** The kind and model to start with, the same control ⌘N's panel has (PRD home-device-rail B35). */
 export function AgentField({ agent, actions, disabled, onChange }: { agent: AgentSelection; actions: Actions; disabled: boolean; onChange: (agent: AgentSelection) => void }) {
+  const { t } = useInterfaceTranslation();
   return (
     <div className="text-body text-subtle-foreground">
-      에이전트
+      {t("common.agent")}
       <AgentPicker actions={actions} value={agent} onChange={onChange} disabled={disabled} className="mt-xxs" />
     </div>
   );

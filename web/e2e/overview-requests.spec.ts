@@ -3,7 +3,7 @@ import { openProjectOverview } from "./overview-entry";
 // overview-request-view): a Git project whose main agent was asked a long,
 // many-line request with an image and delegated a working child, a
 // worktree agent asking for approval, one that finished unseen and one
-// resting. Every way in opens the view (B1); the `요청` tile counts what is
+// resting. Every way in opens the view (B1); the Requests tile counts what is
 // the operator's (B2); the groups stand in the PRD's order with the resting
 // one folded (B3, B40); a row shows who asked, the request on one line, the
 // result and its open chips, the descendants (B4, B13, B42, B49, B52);
@@ -163,7 +163,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
 
     // The resting group is one folded line until it is opened (B3).
     const restingHead = overview.locator('[data-request-group-head="idle"]');
-    await expect(restingHead).toHaveText(/쉬는 중 1 · 펼치기/);
+    await expect(restingHead).toHaveText(/Resting 1 · Expand/);
     await expect(row(restingPane)).toHaveCount(0);
     await restingHead.click();
     await expect(row(restingPane)).toBeVisible();
@@ -172,13 +172,13 @@ test("the request view: what each agent was asked, what came of it, and what is 
     // line with its paths and address by their last names and the image
     // counted, the descendants, and the address its answer names as a chip.
     const mainRow = row(mainPane);
-    await expect(mainRow.locator("[data-request-sender]")).toHaveText("나 ›");
+    await expect(mainRow.locator("[data-request-sender]")).toHaveText("Me ›");
     await expect(mainRow.locator("[data-request-text]")).toHaveAttribute(
       "data-request-text",
-      "Overview 요청 보기에서 긴 요청을 한 줄로 보여 주세요 · request-row-….md 를 참고하고 · #336 리뷰도 함께 · 끝쪽 단어는 남겨 둘 것 · 이미지 1",
+      "Overview 요청 보기에서 긴 요청을 한 줄로 보여 주세요 · request-row-….md 를 참고하고 · #336 리뷰도 함께 · 끝쪽 단어는 남겨 둘 것 · 1 image",
     );
     await expect(mainRow.locator("[data-request-line]")).not.toContainText("/Users/example");
-    await expect(mainRow.locator("[data-request-children]")).toHaveText("자식 1 · 일하는 중 1");
+    await expect(mainRow.locator("[data-request-children]")).toHaveText("1 descendant · Working 1");
     await expect(mainRow.locator('[data-request-open="https://example.com/report"]')).toBeVisible();
     // One line at the default width and at a narrow one, and no sideways scroll (B42, B52).
     for (const width of [1600, 900]) {
@@ -197,9 +197,9 @@ test("the request view: what each agent was asked, what came of it, and what is 
     const detail = mainRow.locator(`[data-request-detail="${mainPane}"]`);
     await expect(detail).toBeVisible();
     expect(await detail.locator("[data-request-full]").innerText()).toContain("/Users/example/projects/app/docs/request-row-expanded-detail.md 를 참고하고\nhttps://github.com/acme/repo/pull/336");
-    await expect(detail.locator(`[data-request-child="${childPane}"]`)).toContainText("일하는 중");
+    await expect(detail.locator(`[data-request-child="${childPane}"]`)).toContainText("Working");
     // The label's verdict sits with the rest while summaries are on (B6, D-28).
-    await expect(detail.locator("[data-request-verdict]")).toContainText("AI 판정 · 끝남 · ");
+    await expect(detail.locator("[data-request-verdict]")).toContainText("AI assessment · Done · ");
     await mainRow.locator(`[data-request-toggle="${mainPane}"]`).click();
     await expect(detail).toHaveCount(0);
 
@@ -209,7 +209,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     expect((await popup).url()).toBe("https://example.com/report");
     await (await popup).close();
 
-    // Expanding the finished row reads it: it leaves 결과 볼 것 (B15, D-29).
+    // Expanding the finished row reads it: it leaves View results (B15, D-29).
     await restingHead.click();
     await expect(row(restingPane)).toHaveCount(0);
     const before = sent.get("overview_open_result") ?? 0;
@@ -252,7 +252,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await expect(page.locator(`[data-pane-view="${askingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect.poll(() => last.get("request_view")?.observing).toBe(false);
 
-    // ⌘⇧H comes back to the request view; Home opens All projects on its 요청 tab (B1).
+    // ⌘⇧H comes back to the request view; Home opens All projects on its Requests tab (B1).
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await page.locator("[data-go-main]").click();
     await page.getByRole("tab", { name: "repo", exact: true }).click();
@@ -284,7 +284,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await summary(false);
     await expect(main.locator('[data-request-group="stopped"]')).toHaveCount(0, { timeout: 15_000 });
     const mainResting = main.locator('[data-request-group-head="idle"]');
-    if ((await mainResting.innerText()).includes("펼치기")) await mainResting.click();
+    if ((await mainResting.innerText()).includes("Expand")) await mainResting.click();
     await expect(stoppedRow).toHaveAttribute("data-request-verb", "idle");
     await expect(stoppedRow.locator("[data-request-title]")).toHaveText("Claude");
     await expect(stoppedRow.locator("[data-request-result]")).not.toHaveText("테스트 환경이 없어 멈췄어요");

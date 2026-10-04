@@ -30,6 +30,12 @@ export const prWorkEnglish = {
   "prWork.feedbackReadFailed": "Could not read checks and review comments: {{message}}",
   "prWork.readAgain": "Read again",
   "prWork.startingAgent": "Starting the agent…",
+  "prWork.cancelCreate": "Cancel",
+  "prWork.startFailed": "The agent was not started.",
+  "prWork.prompt.fix": "Fix the failed CI and change requests of PR #{{number}} ({{branch}}): {{title}}",
+  "prWork.prompt.failedChecks": "Failed checks:",
+  "prWork.prompt.changeRequests": "Change requests:",
+  "prWork.prompt.reviewer": "reviewer",
 } as const;
 
 const ko = {
@@ -62,6 +68,12 @@ const ko = {
   "prWork.feedbackReadFailed": "검사 · 리뷰 코멘트를 읽지 못했습니다: {{message}}",
   "prWork.readAgain": "다시 읽기",
   "prWork.startingAgent": "에이전트를 시작하는 중…",
+  "prWork.cancelCreate": "그만두기",
+  "prWork.startFailed": "에이전트를 시작하지 못했습니다.",
+  "prWork.prompt.fix": "PR #{{number}} ({{branch}})의 CI 실패와 변경 요청을 고쳐줘: {{title}}",
+  "prWork.prompt.failedChecks": "실패한 검사:",
+  "prWork.prompt.changeRequests": "변경 요청:",
+  "prWork.prompt.reviewer": "리뷰어",
 } satisfies Catalog<typeof prWorkEnglish>;
 
 const zhCN = {
@@ -94,6 +106,12 @@ const zhCN = {
   "prWork.feedbackReadFailed": "未能读取检查和审查评论：{{message}}",
   "prWork.readAgain": "重新读取",
   "prWork.startingAgent": "正在启动智能体…",
+  "prWork.cancelCreate": "取消",
+  "prWork.startFailed": "未能启动智能体。",
+  "prWork.prompt.fix": "请修复 PR #{{number}}（{{branch}}）中失败的 CI 和修改请求：{{title}}",
+  "prWork.prompt.failedChecks": "失败的检查：",
+  "prWork.prompt.changeRequests": "修改请求：",
+  "prWork.prompt.reviewer": "审查者",
 } satisfies Catalog<typeof prWorkEnglish>;
 
 const ja = {
@@ -126,6 +144,12 @@ const ja = {
   "prWork.feedbackReadFailed": "チェックとレビューコメントを読み込めませんでした: {{message}}",
   "prWork.readAgain": "再度読み込む",
   "prWork.startingAgent": "エージェントを起動中…",
+  "prWork.cancelCreate": "キャンセル",
+  "prWork.startFailed": "エージェントを起動できませんでした。",
+  "prWork.prompt.fix": "PR #{{number}}（{{branch}}）の CI 失敗と変更リクエストを修正してください: {{title}}",
+  "prWork.prompt.failedChecks": "失敗したチェック:",
+  "prWork.prompt.changeRequests": "変更リクエスト:",
+  "prWork.prompt.reviewer": "レビュアー",
 } satisfies Catalog<typeof prWorkEnglish>;
 
 export const prWorkCatalogs = { en: prWorkEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof prWorkEnglish>;

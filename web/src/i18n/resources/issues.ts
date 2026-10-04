@@ -54,6 +54,15 @@ export const issuesEnglish = {
   "issue.commentsEmpty": "No comments · write on GitHub",
   "issue.writeCommentsOnGitHub": "Write comments on GitHub",
   "issue.saveFailed": "The issue was not saved",
+  "issue.hide": "Hide",
+  "issue.creatingWorktree": "Creating the worktree…",
+  "issue.worktreeFailed": "The worktree was not created.",
+  "issue.base": "Base",
+  "issue.baseBranch": "Base branch",
+  "issue.branchesUnread": "Branches have not been read yet",
+  "issue.prompt.local": "Solve local issue {{id}}: {{title}}",
+  "issue.prompt.github": "Solve issue {{id}}: {{title}}",
+  "issue.prompt.closes": "When done, open a PR that closes this issue (put Closes {{id}} in the PR body).",
 } as const;
 
 const ko = {
@@ -110,6 +119,15 @@ const ko = {
   "issue.commentsEmpty": "댓글 없음 · 쓰기는 GitHub에서",
   "issue.writeCommentsOnGitHub": "쓰기는 GitHub에서",
   "issue.saveFailed": "저장하지 못함",
+  "issue.hide": "숨기기",
+  "issue.creatingWorktree": "워크트리를 만드는 중…",
+  "issue.worktreeFailed": "워크트리를 만들지 못했습니다.",
+  "issue.base": "기준",
+  "issue.baseBranch": "기준 브랜치",
+  "issue.branchesUnread": "아직 브랜치를 읽지 못함",
+  "issue.prompt.local": "로컬 이슈 {{id}}를 해결해줘: {{title}}",
+  "issue.prompt.github": "Issue {{id}}를 해결해줘: {{title}}",
+  "issue.prompt.closes": "완료되면 이 이슈를 닫는 PR을 열어줘 (PR 본문에 Closes {{id}}).",
 } satisfies Catalog<typeof issuesEnglish>;
 
 const zhCN = {
@@ -166,6 +184,15 @@ const zhCN = {
   "issue.commentsEmpty": "暂无评论 · 请在 GitHub 上发表评论",
   "issue.writeCommentsOnGitHub": "请在 GitHub 上发表评论",
   "issue.saveFailed": "未能保存议题",
+  "issue.hide": "隐藏",
+  "issue.creatingWorktree": "正在创建工作树…",
+  "issue.worktreeFailed": "未能创建工作树。",
+  "issue.base": "基准",
+  "issue.baseBranch": "基准分支",
+  "issue.branchesUnread": "尚未读取分支",
+  "issue.prompt.local": "请解决本地议题 {{id}}：{{title}}",
+  "issue.prompt.github": "请解决议题 {{id}}：{{title}}",
+  "issue.prompt.closes": "完成后请提交一个会关闭此议题的 PR（在 PR 正文中写入 Closes {{id}}）。",
 } satisfies Catalog<typeof issuesEnglish>;
 
 const ja = {
@@ -222,6 +249,15 @@ const ja = {
   "issue.commentsEmpty": "コメントなし · 投稿は GitHub で",
   "issue.writeCommentsOnGitHub": "投稿は GitHub で",
   "issue.saveFailed": "課題を保存できませんでした",
+  "issue.hide": "非表示",
+  "issue.creatingWorktree": "ワークツリーを作成中…",
+  "issue.worktreeFailed": "ワークツリーを作成できませんでした。",
+  "issue.base": "ベース",
+  "issue.baseBranch": "ベースブランチ",
+  "issue.branchesUnread": "ブランチをまだ読み込んでいません",
+  "issue.prompt.local": "ローカル課題 {{id}} を解決してください: {{title}}",
+  "issue.prompt.github": "課題 {{id}} を解決してください: {{title}}",
+  "issue.prompt.closes": "完了したら、この課題を閉じる PR を作成してください（PR 本文に Closes {{id}} を記載）。",
 } satisfies Catalog<typeof issuesEnglish>;
 
 export const issuesCatalogs = { en: issuesEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof issuesEnglish>;
