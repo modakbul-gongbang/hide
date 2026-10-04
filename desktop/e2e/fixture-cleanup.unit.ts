@@ -75,6 +75,7 @@ test.skipIf(process.platform === "win32")("a private coordinator socket can bind
   // beforeEach supplies a long temporary directory, like macOS's per-user
   // TMPDIR. The kit must be able to probe the coordinator's real socket.
   const run = privateHome("server-search");
+  fs.mkdirSync(run.env.HCOORD_HOME!, { recursive: true, mode: 0o700 });
   const server = net.createServer();
   try {
     await new Promise<void>((resolve, reject) => {
