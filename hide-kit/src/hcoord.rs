@@ -446,8 +446,8 @@ fn stable_spelling(chosen: PathBuf, links: &[PathBuf]) -> PathBuf {
 
 /// The Node a device runs hcoord with: the one an existing hcoord shim
 /// already names (the operator's choice), in hcoord's home or else in the
-/// old `~/.hcoord` it has not moved from yet, then the first on `PATH`, then
-/// the usual install folders; each must exit successfully within five
+/// old `~/.hcoord` it has not moved from yet, then each on `PATH` in order,
+/// then the usual install folders; each must exit successfully within five
 /// seconds with a version of at least [`NODE_MINIMUM`]. Why each one before
 /// it was turned down is logged, or, when none is found, given in the error.
 /// The one found is named by a stable link when one leads to it
@@ -470,6 +470,15 @@ pub fn find_node(home: &Path, hcoord_home: &Path, stop: &AtomicBool) -> Result<P
         candidates.extend(std::env::split_paths(&path).map(|folder| folder.join("node")));
     }
     candidates.extend(stable_links(home));
+    choose_node(candidates, home, stop)
+}
+
+/// The first of `candidates` that counts as hcoord's Node, in order.
+fn choose_node(
+    candidates: Vec<PathBuf>,
+    home: &Path,
+    stop: &AtomicBool,
+) -> Result<PathBuf, String> {
     let mut seen = Vec::new();
     let mut too_old = None;
     // Why each candidate before the chosen one was turned down, so a shim's
@@ -517,16 +526,14 @@ pub fn find_node(home: &Path, hcoord_home: &Path, stop: &AtomicBool) -> Result<P
         }
     }
     let (major, minor, patch) = NODE_MINIMUM;
-    let reason = match too_old {
-        Some(found) => {
-            format!("hcoord needs Node {major}.{minor}.{patch} or later; this machine has {found}")
-        }
-        None => format!("hcoord needs Node {major}.{minor}.{patch} or later; none was found"),
-    };
-    Err(if rejected.is_empty() {
-        reason
-    } else {
-        format!("{reason} ({})", rejected.join("; "))
+    let needs = format!("hcoord needs Node {major}.{minor}.{patch} or later");
+    Err(match too_old {
+        Some(found) => format!(
+            "{needs}; this machine has {found} ({})",
+            rejected.join("; ")
+        ),
+        None if rejected.is_empty() => format!("{needs}; none was found"),
+        None => format!("{needs}; no Node found works ({})", rejected.join("; ")),
     })
 }
 
@@ -688,31 +695,30 @@ mod tests {
         );
     }
 
-    /// A shim's Node that prints a version but exits unsuccessfully is not
-    /// the Node: another may be chosen, but never that one, and when none
-    /// is, the failure names why the shim's was turned down.
+    /// A Node that prints a version but exits unsuccessfully does not
+    /// count: the next one is chosen, and when none counts, the error says
+    /// why it was turned down. The candidates are given rather than found,
+    /// so the host's own Node cannot stand in.
     #[cfg(unix)]
     #[test]
-    fn a_shim_node_whose_probe_fails_is_not_chosen() {
+    fn a_node_whose_probe_fails_does_not_count() {
         let stop = AtomicBool::new(false);
         let home = tempfile::tempdir().unwrap();
-        let chosen = home.path().join("tools/node/bin/node");
-        fake_node(&chosen);
-        std::fs::write(&chosen, "#!/bin/sh\necho v26.7.0\nexit 3\n").unwrap();
-        shim_naming(home.path(), &chosen);
-        // The host's own Node on `PATH` or a stable link may supply the
-        // fallback, so only the shim's Node is ruled out.
-        match find_node(
-            home.path(),
-            &layout::default_hcoord_home(home.path()),
-            &stop,
-        ) {
-            Ok(found) => assert_ne!(found, chosen),
-            Err(reason) => assert!(
-                reason.contains(&format!("{} exited with 3", chosen.display())),
-                "{reason}"
-            ),
-        }
+        let failing = home.path().join("tools/node/bin/node");
+        fake_node(&failing);
+        std::fs::write(&failing, "#!/bin/sh\necho v26.7.0\nexit 3\n").unwrap();
+        let working = home.path().join("other/bin/node");
+        fake_node(&working);
+
+        assert_eq!(
+            choose_node(vec![failing.clone(), working.clone()], home.path(), &stop),
+            Ok(working)
+        );
+        let reason = choose_node(vec![failing.clone()], home.path(), &stop).unwrap_err();
+        assert!(
+            reason.contains(&format!("{} exited with 3", failing.display())),
+            "{reason}"
+        );
     }
 
     #[test]
