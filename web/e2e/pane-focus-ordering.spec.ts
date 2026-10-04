@@ -193,7 +193,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     await screenshot(page, "pane-focus-ordering-last-click");
 
     // With the local burst confirmed, a real external Herdr focus is followed.
-    herdr.run(["pane", "focus", second]);
+    herdr.run(["pane", "focus", "--direction", "right", "--pane", first]);
     await expect(panes[1]).toHaveAttribute("data-focused", "true");
     await expect.poll(() => diagnostics().some((entry) => entry.kind === "pane.focus.followed")).toBe(true);
   } finally {
