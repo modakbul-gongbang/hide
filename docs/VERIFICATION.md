@@ -29,6 +29,14 @@ A readable file or legacy `sync_dir` success alone proves no durable acknowledge
 The public bootstrap regressions check the 64-component bound, refusal of escape and untrusted paths, retained partial chains after real mkdir or barrier failure, and recovery that checks existing levels again; the supplied ancestor's established durability remains a caller precondition.
 Windows's pre-mutation `Unsupported` is fail-closed interim behavior, not cross-OS bootstrap completion, and callers must not become ready without an established parent-chain boundary.
 
+`python3 scripts/check-herdr-schema.py --herdr-bin <pinned binary>` compares the binary's own schema and version with the committed contract and manifest on macOS, Linux and Windows.
+It clears inherited `HERDR_*` and needs no server; the full zsh contract check delegates this same comparison before its live-server checks.
+The schema digest is canonical JSON (sorted keys, UTF-8, two-space indentation and a trailing newline).
+A configured nightly matrix proves no executed job, native input or package launch by itself.
+Record the actual head, attempt, job URLs, failures and skips; a package smoke with a private HOME or simulated hook does not prove a physical IME, an operator PATH or a real agent session.
+The macOS nightly package lane extracts and checks the actual archive, then runs the existing isolated install-kit and packaged-app session-search tests.
+The Windows/Linux package lanes check the real archive's headless daemon/kit behavior; their actual GUI and physical input still need device evidence.
+
 A scenario someone would check by hand becomes a spec when it can.
 Playwright drives the renderer over its own connection rather than through OS input, so a spec needs no keyboard focus and cannot type into another app.
 Manual QA covers what a spec cannot reach yet, and the pull request's Evidence says the check was manual.
