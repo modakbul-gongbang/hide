@@ -53,6 +53,8 @@ pub struct OwnedChild {
     reaped: bool,
     /// Ownership was given up: the drop ends nothing.
     released: bool,
+    /// A deadline-bound run must never block in its destructor.
+    bounded_drop: bool,
 }
 
 impl OwnedChild {
@@ -68,6 +70,7 @@ impl OwnedChild {
             ended: false,
             reaped: false,
             released: false,
+            bounded_drop: false,
         })
     }
 
@@ -140,12 +143,13 @@ impl Drop for OwnedChild {
         if !self.ended && !self.reaped {
             self.ended = sys::kill_tree_of(&mut self.child, &self.tie, false).is_ok();
         }
-        if self.ended || self.reaped {
+        if (self.ended || self.reaped) && !self.bounded_drop {
             // The kill is a signal away from the child exiting; reaping here
             // leaves no zombie and costs microseconds.
             let _ = self.child.wait();
         } else {
-            // The kill failed: waiting would block on a live child.
+            // A failed kill or a deadline-bound run cannot wait on a live
+            // child here. The run reports uncertainty and retains ownership.
             let _ = self.child.try_wait();
         }
     }
@@ -196,6 +200,8 @@ impl Finished {
 #[derive(Debug)]
 pub enum RunFailure {
     Start(io::Error),
+    /// A wait, pipe read or cleanup failed; cleanup uncertainty retains a
+    /// [`RunCleanupFailure`] inside this error for explicit recovery.
     Wait(io::Error),
     /// The deadline passed first.
     TimedOut,
@@ -203,72 +209,163 @@ pub enum RunFailure {
     Stopped,
 }
 
-/// Runs `command` as an [`OwnedChild`] with no input and both outputs read
-/// (each capped at [`RUN_OUTPUT_CAP`]), and waits at most `deadline`, or until
-/// `stop` is raised; nothing it started outlives the call. The caller sets the
-/// program, arguments and environment.
+/// Cleanup could not be confirmed. The original answer and child ownership
+/// remain available through `RunFailure::Wait`'s I/O error, never a fake exit.
+#[derive(Debug)]
+pub struct RunCleanupFailure {
+    pub outcome: Result<Finished, RunFailure>,
+    pub cleanup: io::Error,
+    pub child: OwnedChild,
+}
+
+impl std::fmt::Display for RunCleanupFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "child {} cleanup unconfirmed: {}; original ",
+            self.child.id(),
+            self.cleanup
+        )?;
+        match &self.outcome {
+            Ok(finished) => write!(formatter, "exit code {:?}", finished.code)?,
+            Err(failure) => write!(formatter, "failure {failure:?}")?,
+        }
+        write!(formatter, "; recover the retained child before proceeding")
+    }
+}
+
+impl std::error::Error for RunCleanupFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cleanup)
+    }
+}
+
+const RUN_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Runs `command` as an [`OwnedChild`] with no input and capped outputs.
+/// The original deadline and stop apply through pipe draining, including after
+/// normal exit. Cleanup precedes that drain on every exit; reaping gets at most
+/// one existing poll interval and uncertainty retains ownership in the error.
 pub fn run_to_end(
     command: &mut Command,
     deadline: std::time::Duration,
     stop: &std::sync::atomic::AtomicBool,
 ) -> Result<Finished, RunFailure> {
     use std::process::Stdio;
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
+    let end = Instant::now().checked_add(deadline).ok_or_else(|| {
+        RunFailure::Start(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid run deadline",
+        ))
+    })?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = OwnedChild::spawn(command).map_err(RunFailure::Start)?;
-    let stdout = child.take_stdout().map(drain_capped);
-    let stderr = child.take_stderr().map(drain_capped);
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) if stop.load(Ordering::Relaxed) => break Err(RunFailure::Stopped),
-            Ok(None) if started.elapsed() >= deadline => break Err(RunFailure::TimedOut),
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(error) => break Err(RunFailure::Wait(error)),
-        }
-    };
-    if status.is_err() {
-        let _ = child.kill_tree();
-        let _ = child.wait();
-    }
-    // The tree is gone either way, so the pipes close and the readers end.
-    let stdout = stdout
-        .map(|reader| reader.join().unwrap_or_default())
-        .unwrap_or_default();
-    let stderr = stderr
-        .map(|reader| reader.join().unwrap_or_default())
-        .unwrap_or_default();
-    let status = status?;
-    // A grandchild left behind after a normal exit is ended too; a child run
-    // to its end never means to leave anything running.
-    let _ = child.kill_tree();
-    Ok(Finished {
-        code: status.code(),
-        stdout,
-        stderr,
-    })
-}
-
-fn drain_capped(mut stream: impl io::Read + Send + 'static) -> std::thread::JoinHandle<String> {
-    std::thread::spawn(move || {
-        let mut kept = Vec::new();
-        let mut buffer = [0u8; 8192];
+    child.bounded_drop = true;
+    let outcome = capture_run(&mut child, end, stop);
+    let cleanup = child.kill_tree().and_then(|_| {
+        let reap_end = Instant::now() + RUN_POLL;
         loop {
-            match stream.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(read) => {
-                    let room = RUN_OUTPUT_CAP.saturating_sub(kept.len());
-                    kept.extend_from_slice(&buffer[..read.min(room)]);
+            match child.try_wait()? {
+                Some(_) => return Ok(()),
+                None if Instant::now() >= reap_end => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "child exit was not confirmed within the cleanup bound",
+                    ));
                 }
+                None => std::thread::sleep(
+                    reap_end
+                        .saturating_duration_since(Instant::now())
+                        .min(RUN_POLL),
+                ),
             }
         }
-        String::from_utf8_lossy(&kept).into_owned()
-    })
+    });
+    match cleanup {
+        Ok(()) => outcome,
+        Err(cleanup) => Err(RunFailure::Wait(io::Error::other(RunCleanupFailure {
+            outcome,
+            cleanup,
+            child,
+        }))),
+    }
+}
+
+fn capture_run(
+    child: &mut OwnedChild,
+    end: std::time::Instant,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Result<Finished, RunFailure> {
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+    let mut stdout = child
+        .take_stdout()
+        .ok_or_else(|| RunFailure::Wait(io::Error::other("missing stdout pipe")))?;
+    let mut stderr = child
+        .take_stderr()
+        .ok_or_else(|| RunFailure::Wait(io::Error::other("missing stderr pipe")))?;
+    sys::nonblocking(&stdout).map_err(RunFailure::Wait)?;
+    sys::nonblocking(&stderr).map_err(RunFailure::Wait)?;
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let (mut out_end, mut err_end) = (false, false);
+    let mut status = None;
+    loop {
+        if status.is_none() {
+            status = child.try_wait().map_err(RunFailure::Wait)?;
+            if status.is_some() {
+                // Even exit 0 can leave a descendant holding either pipe.
+                // End the owned tree before waiting for those pipes to close.
+                child.kill_tree().map_err(RunFailure::Wait)?;
+            }
+        }
+        if stop.load(Ordering::Relaxed) {
+            return Err(RunFailure::Stopped);
+        }
+        if Instant::now() >= end {
+            return Err(RunFailure::TimedOut);
+        }
+        let out_read =
+            drain_available(&mut stdout, &mut out, &mut out_end).map_err(RunFailure::Wait)?;
+        let err_read =
+            drain_available(&mut stderr, &mut err, &mut err_end).map_err(RunFailure::Wait)?;
+        if let Some(status) = status.filter(|_| out_end && err_end) {
+            return Ok(Finished {
+                code: status.code(),
+                stdout: String::from_utf8_lossy(&out).into_owned(),
+                stderr: String::from_utf8_lossy(&err).into_owned(),
+            });
+        }
+        if !out_read && !err_read {
+            std::thread::sleep(end.saturating_duration_since(Instant::now()).min(RUN_POLL));
+        }
+    }
+}
+
+fn drain_available<P: io::Read + sys::PipeHandle>(
+    stream: &mut P,
+    kept: &mut Vec<u8>,
+    ended: &mut bool,
+) -> io::Result<bool> {
+    if *ended {
+        return Ok(false);
+    }
+    let mut buffer = [0u8; 8192];
+    match sys::read_available(stream, &mut buffer)? {
+        Some(0) => {
+            *ended = true;
+            Ok(false)
+        }
+        Some(read) => {
+            let room = RUN_OUTPUT_CAP.saturating_sub(kept.len());
+            kept.extend_from_slice(&buffer[..read.min(room)]);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 /// Makes `command` start a child that no signal sent to this process's group,
@@ -426,6 +523,36 @@ mod sys {
     pub(super) fn spawn(command: &mut Command) -> io::Result<(Child, Tie)> {
         command.process_group(0);
         command.spawn().map(|child| (child, Tie))
+    }
+
+    pub(super) use std::os::fd::AsRawFd as PipeHandle;
+
+    pub(super) fn nonblocking(pipe: &impl PipeHandle) -> io::Result<()> {
+        let fd = pipe.as_raw_fd();
+        // SAFETY: fd is borrowed and open; no ownership changes.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn read_available<P: io::Read + PipeHandle>(
+        pipe: &mut P,
+        bytes: &mut [u8],
+    ) -> io::Result<Option<usize>> {
+        match pipe.read(bytes) {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(None)
+            }
+            result => result.map(Some),
+        }
     }
 
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
@@ -942,6 +1069,46 @@ mod sys {
             more = unsafe { Thread32Next(snapshot.0, &mut entry) } != 0;
         }
         Err(io::Error::other("the new process has no thread to start"))
+    }
+
+    pub(super) use std::os::windows::io::AsRawHandle as PipeHandle;
+
+    // Anonymous Windows pipes cannot be made O_NONBLOCK. The sole reader
+    // peeks first and reads no more bytes than are already available.
+    pub(super) fn nonblocking(_: &impl PipeHandle) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub(super) fn read_available<P: io::Read + PipeHandle>(
+        pipe: &mut P,
+        bytes: &mut [u8],
+    ) -> io::Result<Option<usize>> {
+        use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+        let mut available = 0;
+        // SAFETY: the handle is borrowed and the only output is writable.
+        let peeked = unsafe {
+            PeekNamedPipe(
+                pipe.as_raw_handle(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        };
+        if peeked == 0 {
+            let error = io::Error::last_os_error();
+            return if matches!(error.raw_os_error(), Some(109 | 232 | 233)) {
+                Ok(Some(0))
+            } else {
+                Err(error)
+            };
+        }
+        if available == 0 {
+            return Ok(None);
+        }
+        let count = bytes.len().min(available as usize);
+        pipe.read(&mut bytes[..count]).map(Some)
     }
 
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
