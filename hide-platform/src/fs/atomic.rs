@@ -72,10 +72,7 @@ pub enum DurableWriteError {
     },
     /// Replacement succeeded but its parent barrier failed. The installed
     /// file has this identity; its crash persistence has not been confirmed.
-    ReplacedNotDurable {
-        file_id: FileId,
-        source: io::Error,
-    },
+    ReplacedNotDurable { file_id: FileId, source: io::Error },
 }
 
 impl DurableWriteError {
@@ -739,7 +736,9 @@ mod os_faults {
     pub(super) struct Scope(u8);
 
     pub(super) fn install(points: &[Point]) -> Scope {
-        let mask = points.iter().fold(0, |mask, point| mask | (1 << *point as u32));
+        let mask = points
+            .iter()
+            .fold(0, |mask, point| mask | (1 << *point as u32));
         Scope(FAULTS.with(|faults| faults.replace(mask)))
     }
 
@@ -941,7 +940,10 @@ mod tests {
 
         assert!(!strict.exists());
         assert_eq!(fs::read(&legacy).unwrap(), b"legacy");
-        assert_eq!(fs::read(folder.path().join("other-thread")).unwrap(), b"other");
+        assert_eq!(
+            fs::read(folder.path().join("other-thread")).unwrap(),
+            b"other"
+        );
         assert_eq!(
             identity::file_id(&folder.path().join("other-thread")).unwrap(),
             other_id

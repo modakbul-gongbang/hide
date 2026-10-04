@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use super::Handle;
 
@@ -36,6 +36,274 @@ pub fn create_dir_all(path: &Path) -> io::Result<()> {
         // Another process made it between the look and the make.
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
         made => made,
+    }
+}
+
+/// A bootstrap failure, with the last directory whose entries were synced.
+/// An uncertain component is retained, including one this call created;
+/// recovery revalidates and syncs the chain rather than assuming rollback.
+#[derive(Debug)]
+pub enum DirectoryDurabilityError {
+    /// Validation failed before any directory creation was attempted.
+    BeforeCreate { source: io::Error },
+    /// A component was attempted but its durability was not established.
+    Uncertain {
+        completed: PathBuf,
+        path: PathBuf,
+        source: io::Error,
+    },
+}
+
+impl std::fmt::Display for DirectoryDurabilityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BeforeCreate { source } => {
+                write!(formatter, "before directory creation: {source}")
+            }
+            Self::Uncertain {
+                completed,
+                path,
+                source,
+            } => write!(
+                formatter,
+                "directory durability unconfirmed at {} after {}: {source}",
+                path.display(),
+                completed.display(),
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DirectoryDurabilityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(match self {
+            Self::BeforeCreate { source } | Self::Uncertain { source, .. } => source,
+        })
+    }
+}
+
+/// Creates at most 64 private descendant directories and checks their
+/// persistence barriers. `durable_ancestor` must be an absolute, existing,
+/// trusted directory whose ancestor durability the caller already knows.
+/// Neither a successful read nor `AlreadyExists` establishes that fact.
+/// The caller must keep the entire namespace stable, with no competing writer.
+///
+/// On Unix, each new or existing child and its containing directory are
+/// synced before proceeding. Links and directories another account can
+/// modify are refused. Existing permissions are left unchanged, so a caller
+/// requiring privacy also checks any existing directory's access.
+/// Failures retain the partial chain and identify its uncertain component;
+/// a later explicit recovery checks all existing levels again.
+///
+/// Windows currently returns `Unsupported` before creating anything: the
+/// legacy directory-sync no-op is not a persistence barrier. This is not a
+/// cross-platform bootstrap guarantee or a physical power-loss promise.
+pub fn create_dir_all_durable(
+    path: &Path,
+    durable_ancestor: &Path,
+) -> Result<(), DirectoryDurabilityError> {
+    let before = |source| DirectoryDurabilityError::BeforeCreate { source };
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid durable directory chain",
+        )
+    };
+    if !durable_ancestor.is_absolute()
+        || durable_ancestor
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err(before(invalid()));
+    }
+    let relative = path
+        .strip_prefix(durable_ancestor)
+        .map_err(|_| before(invalid()))?;
+    for (count, part) in relative.components().enumerate() {
+        if !matches!(part, Component::Normal(_)) || count == 64 {
+            return Err(before(invalid()));
+        }
+    }
+    #[cfg(windows)]
+    {
+        Err(before(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "directory-chain persistence is not established on Windows",
+        )))
+    }
+    #[cfg(unix)]
+    {
+        let mut parent = trusted_dir(durable_ancestor).map_err(before)?;
+        let mut completed = durable_ancestor.to_path_buf();
+        for part in relative.components() {
+            let child_path = completed.join(part.as_os_str());
+            let step: io::Result<fs::File> = (|| {
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::Create)?;
+                match create_dir(&child_path) {
+                    Ok(()) => {
+                        #[cfg(test)]
+                        bootstrap_faults::fail(bootstrap_faults::Point::Created)?;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => return Err(error),
+                }
+                let child = trusted_dir(&child_path)?;
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::ChildSync)?;
+                super::atomic::sync_dir(&child)?;
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::ParentSync)?;
+                super::atomic::sync_dir(&parent)?;
+                Ok(child)
+            })();
+            parent = step.map_err(|source| DirectoryDurabilityError::Uncertain {
+                completed: completed.clone(),
+                path: child_path.clone(),
+                source,
+            })?;
+            completed = child_path;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn trusted_dir(path: &Path) -> io::Result<fs::File> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "not a real trusted directory",
+        ));
+    }
+    let directory = super::open_dir(path)?;
+    if !handle_owned_by_current_user(&directory)? || others_can_modify(path)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "directory can be modified by another account",
+        ));
+    }
+    Ok(directory)
+}
+
+// Only the external syscall boundary is faulted; the public bootstrap,
+// directory validation and sync helpers remain real.
+#[cfg(all(test, unix))]
+mod bootstrap_faults {
+    use std::cell::Cell;
+    use std::io;
+
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) enum Point {
+        Create,
+        Created,
+        ChildSync,
+        ParentSync,
+    }
+
+    thread_local! {
+        static FAULT: Cell<Option<(Point, usize)>> = const { Cell::new(None) };
+    }
+
+    pub(super) struct Scope(Option<(Point, usize)>);
+
+    pub(super) fn install(point: Point, skip: usize) -> Scope {
+        Scope(FAULT.replace(Some((point, skip))))
+    }
+
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            FAULT.set(self.0);
+        }
+    }
+
+    pub(super) fn fail(point: Point) -> io::Result<()> {
+        if let Some((wanted, skip)) = FAULT.get() {
+            if wanted == point {
+                if skip == 0 {
+                    return Err(io::Error::from_raw_os_error(libc::EIO));
+                }
+                FAULT.set(Some((wanted, skip - 1)));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod bootstrap_tests {
+    use super::bootstrap_faults::{self, Point};
+    use super::*;
+
+    #[test]
+    fn failed_creation_retains_the_completed_chain_and_reports_the_os_cause() {
+        for point in [Point::Create, Point::Created] {
+            let root = tempfile::tempdir().unwrap();
+            let first = root.path().join("first");
+            let second = first.join("second");
+            let end = second.join("last");
+            let fault = bootstrap_faults::install(point, 1);
+            let error = create_dir_all_durable(&end, root.path()).unwrap_err();
+            match error {
+                DirectoryDurabilityError::Uncertain {
+                    completed,
+                    path,
+                    source,
+                } => {
+                    assert_eq!(completed, first);
+                    assert_eq!(path, second);
+                    assert_eq!(source.raw_os_error(), Some(libc::EIO));
+                }
+                other => panic!("unexpected outcome: {other:?}"),
+            }
+            assert!(first.is_dir());
+            assert_eq!(second.is_dir(), point == Point::Created);
+            assert!(!end.exists());
+            drop(fault);
+            create_dir_all_durable(&end, root.path()).unwrap();
+            assert!(is_private(&end).unwrap());
+        }
+    }
+
+    #[test]
+    fn failed_barriers_retain_real_directories_and_recovery_checks_existing_levels() {
+        for point in [Point::ChildSync, Point::ParentSync] {
+            let root = tempfile::tempdir().unwrap();
+            let first = root.path().join("first");
+            let second = first.join("second");
+            let end = second.join("last");
+            let fault = bootstrap_faults::install(point, 1);
+            let error = create_dir_all_durable(&end, root.path()).unwrap_err();
+            match error {
+                DirectoryDurabilityError::Uncertain {
+                    completed,
+                    path,
+                    source,
+                } => {
+                    assert_eq!(completed, first);
+                    assert_eq!(path, second);
+                    assert_eq!(source.raw_os_error(), Some(libc::EIO));
+                }
+                other => panic!("unexpected outcome: {other:?}"),
+            }
+            assert!(first.is_dir());
+            assert!(second.is_dir());
+            assert!(is_private(&second).unwrap());
+            assert!(!end.exists());
+            drop(fault);
+            // Existing directories must not let recovery bypass a barrier.
+            let fault = bootstrap_faults::install(point, 0);
+            assert!(matches!(
+                create_dir_all_durable(&end, root.path()),
+                Err(DirectoryDurabilityError::Uncertain { path, source, .. })
+                    if path == first && source.raw_os_error() == Some(libc::EIO)
+            ));
+            assert!(!end.exists());
+            drop(fault);
+            create_dir_all_durable(&end, root.path()).unwrap();
+            assert!(is_private(&end).unwrap());
+        }
     }
 }
 
