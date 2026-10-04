@@ -137,6 +137,17 @@ fn run_coordinator(
                     reconnect_delay = RECONNECT_INITIAL_DELAY;
                     next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
                     next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
+                    if let Some(writer) = lineage_writer.as_mut()
+                        && let Some(runtime) = context.runtime.upgrade()
+                    {
+                        let state = runtime
+                            .lock()
+                            .ok()
+                            .and_then(|guard| guard.delivery_state().ok());
+                        if let Some(state) = state {
+                            writer.observe(&state, &replica.as_ref().unwrap().state.agents, true);
+                        }
+                    }
                     if replica
                         .as_ref()
                         .is_some_and(SessionReplica::ready_to_publish)
@@ -146,7 +157,6 @@ fn run_coordinator(
                             &mut catalog_cache,
                             &mut purpose_mirror,
                             &mut labels,
-                            &mut lineage_writer,
                         )
                     {
                         stop_subscription(&mut subscription);
@@ -188,8 +198,8 @@ fn run_coordinator(
                     let current = replica
                         .as_mut()
                         .expect("active subscription always has a replica");
-                    let requested =
-                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
+                    let (native_changed, requested) =
+                        agent_tick_changes(current, &agents, catalog_cache.as_ref());
                     if let Some(writer) = lineage_writer.as_mut()
                         && let Some(runtime) = context.runtime.upgrade()
                     {
@@ -198,7 +208,7 @@ fn run_coordinator(
                             .ok()
                             .and_then(|guard| guard.delivery_state().ok());
                         if let Some(state) = state {
-                            writer.observe(&state, &agents, requested);
+                            writer.observe(&state, &agents, native_changed);
                         }
                     }
                     if requested {
@@ -212,7 +222,6 @@ fn run_coordinator(
                                         &mut catalog_cache,
                                         &mut purpose_mirror,
                                         &mut labels,
-                                        &mut lineage_writer,
                                     ) =>
                             {
                                 stop_subscription(&mut subscription);
@@ -278,7 +287,6 @@ fn run_coordinator(
                     &mut catalog_cache,
                     &mut purpose_mirror,
                     &mut labels,
-                    &mut lineage_writer,
                 )
             {
                 stop_subscription(&mut subscription);
@@ -296,7 +304,6 @@ fn run_coordinator(
                             &mut catalog_cache,
                             &mut purpose_mirror,
                             &mut labels,
-                            &mut lineage_writer,
                         ) {
                             stop_subscription(&mut subscription);
                             return;
@@ -333,7 +340,6 @@ fn run_coordinator(
                             &mut catalog_cache,
                             &mut purpose_mirror,
                             &mut labels,
-                            &mut lineage_writer,
                         );
                     }
                     Ok(false) => {}
@@ -420,7 +426,6 @@ fn run_coordinator(
                         &mut catalog_cache,
                         &mut purpose_mirror,
                         &mut labels,
-                        &mut lineage_writer,
                     )
                 {
                     stop_subscription(&mut subscription);
@@ -543,7 +548,6 @@ fn run_coordinator(
                                         &mut catalog_cache,
                                         &mut purpose_mirror,
                                         &mut labels,
-                                        &mut lineage_writer,
                                     )
                                 {
                                     stop_subscription(&mut subscription);
@@ -562,7 +566,6 @@ fn run_coordinator(
                                                 &mut catalog_cache,
                                                 &mut purpose_mirror,
                                                 &mut labels,
-                                                &mut lineage_writer,
                                             ) {
                                                 stop_subscription(&mut subscription);
                                                 return;
@@ -673,7 +676,6 @@ fn run_coordinator(
                         &mut catalog_cache,
                         &mut purpose_mirror,
                         &mut labels,
-                        &mut lineage_writer,
                     )
                 {
                     stop_subscription(&mut subscription);
@@ -701,13 +703,24 @@ fn run_coordinator(
 /// `publish_replica` on its own refresh window, and on an idle session this
 /// tick is the only thing that calls it, so a skip that ignored the window
 /// would freeze every branch and dirty mark in the navigator.
+fn agent_tick_changes(
+    replica: &SessionReplica,
+    agents: &[ProjectedAgent],
+    catalog_cache: Option<&CatalogCache>,
+) -> (bool, bool) {
+    let native_changed = replica.state.agents != agents;
+    let publish = native_changed
+        || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL);
+    (native_changed, publish)
+}
+
+#[cfg(test)]
 pub(crate) fn agent_tick_needs_publish(
     replica: &SessionReplica,
     agents: &[ProjectedAgent],
     catalog_cache: Option<&CatalogCache>,
 ) -> bool {
-    replica.state.agents != agents
-        || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+    agent_tick_changes(replica, agents, catalog_cache).1
 }
 
 /// Drops the subagent counts of panes Herdr no longer lists.
@@ -786,19 +799,7 @@ fn publish_replica(
     catalog_cache: &mut Option<CatalogCache>,
     purpose_mirror: &mut Option<live::PurposeMirror>,
     labels: &mut Option<LabelWorker>,
-    lineage_writer: &mut Option<crate::coordination::lineage::Writer>,
 ) -> bool {
-    if let Some(writer) = lineage_writer.as_mut()
-        && let Some(runtime) = context.runtime.upgrade()
-    {
-        let state = runtime
-            .lock()
-            .ok()
-            .and_then(|guard| guard.delivery_state().ok());
-        if let Some(state) = state {
-            writer.observe(&state, &replica.state.agents, true);
-        }
-    }
     let mut payload = replica.project();
     // Observe native state before label overlays add UI timestamps. This is
     // bounded memory work; no delivery I/O or notifier is started here.
