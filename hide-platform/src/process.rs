@@ -48,8 +48,11 @@ pub const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 /// standalone commands, required by a guarded Unix launch. The value names
 /// one inherited stream-socket descriptor >= 3; malformed values fail before
 /// work starts. Missing metadata means no Unix watch (the parent then cannot
-/// acknowledge a guarded launch). Windows uses its job, with no such key.
-pub const OWNER_LAUNCH_KEYS: &[&str] = &["HIDE_PROCESS_OWNER_FD"];
+/// acknowledge a guarded launch). Windows instead injects a private Local
+/// job name; the receiver verifies its own membership and closes the query
+/// handle before returning. Neither key is a security authority for callers
+/// that control this account's launch environment.
+pub const OWNER_LAUNCH_KEYS: &[&str] = &["HIDE_PROCESS_OWNER_FD", "HIDE_PROCESS_OWNER_JOB"];
 
 /// A cooperative Unix child's independent watch of its owning process.
 /// Hold it until all work and output are finished. It uses its own channel,
@@ -62,11 +65,23 @@ pub struct OwnerWatch {
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     #[cfg(unix)]
     reader: Option<std::thread::JoinHandle<()>>,
+    #[cfg(windows)]
+    active: bool,
 }
 
 impl OwnerWatch {
     pub fn from_launch() -> io::Result<Option<Self>> {
-        match std::env::var_os(OWNER_LAUNCH_KEYS[0]) {
+        #[cfg(unix)]
+        let (key, foreign) = (OWNER_LAUNCH_KEYS[0], OWNER_LAUNCH_KEYS[1]);
+        #[cfg(windows)]
+        let (key, foreign) = (OWNER_LAUNCH_KEYS[1], OWNER_LAUNCH_KEYS[0]);
+        if std::env::var_os(foreign).is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "owner launch metadata belongs to another operating system",
+            ));
+        }
+        match std::env::var_os(key) {
             None => Ok(None),
             Some(value) => sys::watch_owner(value).map(Some),
         }
@@ -95,6 +110,11 @@ impl OwnerWatch {
             sys::watch_closed();
             shutdown?;
             joined?;
+        }
+        #[cfg(windows)]
+        if self.active {
+            self.active = false;
+            sys::watch_closed();
         }
         Ok(())
     }
@@ -634,7 +654,9 @@ mod sys {
         command: &mut Command,
         deadline: Option<Instant>,
     ) -> io::Result<(Child, Tie)> {
-        command.env_remove(OWNER_LAUNCH_KEYS[0]);
+        for key in OWNER_LAUNCH_KEYS {
+            command.env_remove(key);
+        }
         command.process_group(0);
         let Some(deadline) = deadline else {
             return command.spawn().map(|child| (child, Tie { _owner: None }));
@@ -1215,8 +1237,8 @@ mod sys {
     use std::os::windows::process::CommandExt;
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, FILETIME, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, STILL_ACTIVE,
-        SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, ERROR_ALREADY_EXISTS, FILETIME, GetLastError, HANDLE, HANDLE_FLAG_INHERIT,
+        INVALID_HANDLE_VALUE, STILL_ACTIVE, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::System::Console::{
         GetConsoleCP, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
@@ -1226,9 +1248,10 @@ mod sys {
         TH32CS_SNAPPROCESS, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_QUERY,
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+        JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, OpenJobObjectW,
         QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
     };
     use windows_sys::Win32::System::Pipes::PeekNamedPipe;
@@ -1237,7 +1260,7 @@ mod sys {
     };
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, DETACHED_PROCESS,
-        GetExitCodeProcess, GetProcessTimes, OpenProcess, OpenThread,
+        GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess, OpenThread,
         PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
         TerminateProcess, WaitForSingleObject,
     };
@@ -1295,19 +1318,45 @@ mod sys {
         command: &mut Command,
         deadline: Option<Instant>,
     ) -> io::Result<(Child, Tie)> {
-        command.env_remove(OWNER_LAUNCH_KEYS[0]);
+        for key in OWNER_LAUNCH_KEYS {
+            command.env_remove(key);
+        }
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Err(io::ErrorKind::TimedOut.into());
         }
         // SAFETY: an all-zero limit structure is a valid value.
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        // SAFETY: both arguments may be null; a null result is the failure.
-        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        static NEXT_JOB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let name = deadline.map(|_| {
+            format!(
+                "Local\\hide-owner-{}-{}",
+                std::process::id(),
+                NEXT_JOB.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )
+        });
+        let wide = name
+            .as_ref()
+            .map(|name| name.encode_utf16().chain(Some(0)).collect::<Vec<_>>());
+        // SAFETY: attributes may be null; the optional name is terminated
+        // and lives through the call. Never adopt a pre-existing named job.
+        let job = unsafe {
+            CreateJobObjectW(
+                std::ptr::null(),
+                wide.as_ref().map_or(std::ptr::null(), |name| name.as_ptr()),
+            )
+        };
         if job.is_null() {
             return Err(io::Error::last_os_error());
         }
         let job = Owned(job);
+        // SAFETY: read immediately after successful CreateJobObjectW.
+        if name.is_some() && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        if let Some(name) = name {
+            command.env(OWNER_LAUNCH_KEYS[1], name);
+        }
         // SAFETY: `limits` is valid for the size passed.
         let set = unsafe {
             SetInformationJobObject(
@@ -1388,11 +1437,82 @@ mod sys {
         Ok((child, tie))
     }
 
-    pub(super) fn watch_owner(_: std::ffi::OsString) -> io::Result<OwnerWatch> {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Unix owner launch metadata is not valid on Windows",
-        ))
+    static WATCH_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    pub(super) fn watch_closed() {
+        WATCH_OPEN.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(super) fn watch_owner(value: std::ffi::OsString) -> io::Result<OwnerWatch> {
+        let name = value
+            .to_str()
+            .filter(|name| name.len() <= 96)
+            .and_then(|name| name.strip_prefix("Local\\hide-owner-"))
+            .and_then(|suffix| suffix.split_once('-'))
+            .filter(|(pid, sequence)| {
+                pid.parse::<u32>().is_ok() && sequence.parse::<u64>().is_ok()
+            });
+        if name.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid owner launch job",
+            ));
+        }
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = value.encode_wide().chain(Some(0)).collect();
+        // SAFETY: the validated name is terminated; the handle is not
+        // inherited and is kept only for this membership query.
+        let handle = unsafe { OpenJobObjectW(JOB_OBJECT_QUERY, 0, wide.as_ptr()) };
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let job = Owned(handle);
+        let mut member = 0;
+        // SAFETY: current-process pseudo handle and query handle are valid,
+        // and member is writable. An unrelated inherited CI job is no proof.
+        if unsafe { IsProcessInJob(GetCurrentProcess(), job.0, &mut member) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if member == 0 {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        // SAFETY: the query-only handle is open, and the limits buffer is
+        // valid for its declared size. Membership alone is not a lifetime
+        // boundary if a different launcher created a job without this flag.
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe {
+            QueryInformationJobObject(
+                job.0,
+                JobObjectExtendedLimitInformation,
+                (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "owner job has no lifetime boundary",
+            ));
+        }
+        // Closing this proof handle before returning keeps the parent the
+        // sole persistent handle owner: the child cannot keep the job alive.
+        drop(job);
+        if WATCH_OPEN
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        Ok(OwnerWatch { active: true })
     }
 
     pub(super) use std::os::windows::io::AsRawHandle as PipeHandle;

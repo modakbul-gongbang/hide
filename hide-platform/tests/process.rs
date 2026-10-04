@@ -41,6 +41,7 @@ fn child_role() {
     };
     let _watch = OwnerWatch::from_launch().unwrap();
     match role.as_str() {
+        "proof" => println!("GUARDED {}", _watch.is_some()),
         "echo" => {
             let mut input = Vec::new();
             std::io::stdin().read_to_end(&mut input).unwrap();
@@ -82,6 +83,7 @@ fn child_role() {
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
                 .env_remove(OWNER_LAUNCH_KEYS[0])
+                .env_remove(OWNER_LAUNCH_KEYS[1])
                 .stdout(Stdio::null())
                 .spawn()
                 .unwrap();
@@ -96,6 +98,7 @@ fn child_role() {
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
                 .env_remove(OWNER_LAUNCH_KEYS[0])
+                .env_remove(OWNER_LAUNCH_KEYS[1])
                 .stdout(Stdio::null());
             #[cfg(unix)]
             std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -109,6 +112,7 @@ fn child_role() {
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "tree")
                 .env_remove(OWNER_LAUNCH_KEYS[0])
+                .env_remove(OWNER_LAUNCH_KEYS[1])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -129,6 +133,7 @@ fn child_role() {
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
                 .env_remove(OWNER_LAUNCH_KEYS[0])
+                .env_remove(OWNER_LAUNCH_KEYS[1])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
@@ -149,6 +154,7 @@ fn role_command(role: &str) -> Command {
         .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
         .env(ROLE, role)
         .env_remove(OWNER_LAUNCH_KEYS[0])
+        .env_remove(OWNER_LAUNCH_KEYS[1])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     command
@@ -234,6 +240,29 @@ fn guarded_capture_keeps_stdin_payload_and_both_output_streams() {
     assert_eq!(output.stderr, b"ERROR-MARKER");
     assert!(started.elapsed() < Duration::from_millis(1850));
     assert!(child.try_wait().unwrap().is_some(), "success confirms exit");
+}
+
+#[test]
+fn only_a_guarded_launch_returns_startup_proof() {
+    let _serial = serial();
+    let deadline = Instant::now() + Duration::from_millis(1850);
+    let mut guarded = OwnedChild::spawn_guarded(role_command("proof"), deadline).unwrap();
+    let output = guarded.capture_until(deadline, 64 * 1024).unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("GUARDED true")
+    );
+    let deadline = Instant::now() + Duration::from_millis(1850);
+    let mut standalone = OwnedChild::spawn(&mut role_command("proof")).unwrap();
+    let output = standalone.capture_until(deadline, 64 * 1024).unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("GUARDED false")
+    );
 }
 
 #[test]
