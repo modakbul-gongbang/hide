@@ -12,6 +12,7 @@ import { explorerEnglish } from "./resources/explorer";
 import { panesEnglish } from "./resources/panes";
 import { sessionsEnglish } from "./resources/sessions";
 import { searchEnglish } from "./resources/search";
+import { documentsEnglish } from "./resources/documents";
 import { issuesEnglish } from "./resources/issues";
 import { mobileEnglish } from "./resources/mobile";
 import { mobileSetupEnglish } from "./resources/mobileSetup";
@@ -31,6 +32,7 @@ describe("interface resources", () => {
 
   it("keeps domain keys separate so composition cannot overwrite a message", () => {
     const keys = [
+      documentsEnglish,
       searchEnglish,
       panesEnglish,
       explorerEnglish,

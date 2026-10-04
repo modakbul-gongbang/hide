@@ -10,6 +10,7 @@ import { explorerCatalogs, explorerEnglish } from "./resources/explorer";
 import { panesCatalogs, panesEnglish } from "./resources/panes";
 import { sessionsCatalogs, sessionsEnglish } from "./resources/sessions";
 import { searchCatalogs, searchEnglish } from "./resources/search";
+import { documentsCatalogs, documentsEnglish } from "./resources/documents";
 import { issuesCatalogs, issuesEnglish } from "./resources/issues";
 import { mobileCatalogs, mobileEnglish } from "./resources/mobile";
 import { mobileSetupCatalogs, mobileSetupEnglish } from "./resources/mobileSetup";
@@ -23,6 +24,7 @@ import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
 
 export const english = {
+  ...documentsEnglish,
   ...searchEnglish,
   ...panesEnglish,
   ...explorerEnglish,
@@ -52,6 +54,7 @@ export type MessageKey = keyof typeof english;
 export const catalogs = {
   en: english,
   ko: {
+    ...documentsCatalogs.ko,
     ...searchCatalogs.ko,
     ...panesCatalogs.ko,
     ...explorerCatalogs.ko,
@@ -76,6 +79,7 @@ export const catalogs = {
     ...overviewCatalogs.ko,
   },
   "zh-CN": {
+    ...documentsCatalogs["zh-CN"],
     ...searchCatalogs["zh-CN"],
     ...panesCatalogs["zh-CN"],
     ...explorerCatalogs["zh-CN"],
@@ -100,6 +104,7 @@ export const catalogs = {
     ...overviewCatalogs["zh-CN"],
   },
   ja: {
+    ...documentsCatalogs.ja,
     ...searchCatalogs.ja,
     ...panesCatalogs.ja,
     ...explorerCatalogs.ja,
