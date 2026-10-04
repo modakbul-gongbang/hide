@@ -309,7 +309,7 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
     fs.mkdirSync(repo);
     git(repo, ["init"]);
     fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
-    fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\ndist/\n");
+    fs.writeFileSync(path.join(repo, ".gitignore"), "target/\nnode_modules/\ndist/\nagents/runs/\n");
     git(repo, ["add", "."]);
     git(repo, ["commit", "-m", "initial"]);
     const origin = path.join(herdr.root, "origin.git");
@@ -357,8 +357,18 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
 
     // Once its turn is over, the same worktree is chosen and the sheet counts the pane that closes with it.
     await setFixtureLifecycle(herdr, pane, "idle");
-    await open();
-    await expect(row().locator("[data-disk-in-use]")).toHaveCount(0);
+    // The core hears Herdr's status change a moment after Herdr reports it, so a review opened too early still reads
+    // the approval: review again until the row is free, and the poll is the wait.
+    await expect(async () => {
+      await open();
+      try {
+        await expect(row().locator("[data-disk-in-use]")).toHaveCount(0, { timeout: 1000 });
+      } catch (error) {
+        await sheet.locator("[data-disk-cancel]").click();
+        await expect(sheet).toHaveCount(0);
+        throw error;
+      }
+    }).toPass({ timeout: 30_000 });
     await expect(row().locator('[data-disk-cell$=":worktree"]')).toHaveAttribute("data-disk-cell-state", "selectable");
     await expect(row().locator("[data-disk-panes]")).toHaveAttribute("data-disk-panes", "1");
     await row().locator('[data-disk-check$=":worktree"]').click();
