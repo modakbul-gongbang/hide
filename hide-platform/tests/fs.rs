@@ -1097,16 +1097,24 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
     thread::scope(|scope| {
         let current = &current;
         let completed = &completed;
-        let reader = scope.spawn(move || -> Result<(), String> {
+        let reader = scope.spawn(move || -> Result<usize, String> {
             // Baseline proves scheduling but is never counted as overlap.
             assert_eq!(follow(&current.join("hide"))?, "version-1");
             observed.send(0).map_err(|error| error.to_string())?;
+            let mut overlapping = 0;
             for round in 1..=40 {
                 let admitted = phases
                     .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                     .map_err(|error| format!("reader phase {round} admission: {error}"))?;
                 assert_eq!(admitted, round);
-                follow(&current.join("hide"))?;
+                // Keep an actual native read phase alive across publication.
+                // Prefix is read before ready; suffix is read only after the
+                // writer published. Descheduling cannot turn this into two
+                // unrelated, already-closed reads around a replacement.
+                let mut held = File::open(current.join("hide")).map_err(|error| format!("link reader held open failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error()))?;
+                let mut prefix = [0_u8; 1];
+                held.read_exact(&mut prefix).map_err(|error| format!("link reader prefix read failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error()))?;
+                assert_eq!(completed.load(Ordering::Acquire), round - 1);
                 ready.send(round).map_err(|error| error.to_string())?;
                 loop {
                     if Instant::now() >= deadline {
@@ -1120,16 +1128,26 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
                         Err(error) => return Err(format!("link reader open failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error())),
                     };
                     let mut text = String::new();
-                    file.read_to_string(&mut text).map_err(|error| format!("link reader read failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error()))?;
+                    match file.read_to_string(&mut text) {
+                        Ok(_) => {},
+                        Err(error) if cfg!(windows) && error.kind() == ErrorKind::PermissionDenied => continue,
+                        Err(error) => return Err(format!("link reader read failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error())),
+                    }
                     assert!(text == "version-1" || text == "version-2");
                     if completed.load(Ordering::Acquire) == round {
+                        let mut suffix = String::new();
+                        held.read_to_string(&mut suffix).map_err(|error| format!("link reader suffix read failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error()))?;
+                        let straddled = format!("{}{suffix}", char::from(prefix[0]));
+                        assert!(straddled == "version-1" || straddled == "version-2");
+                        overlapping += 1;
+                        drop(held);
                         follow(&current.join("hide"))?;
                         observed.send(round).map_err(|error| error.to_string())?;
                         break;
                     }
                 }
             }
-            Ok(())
+            Ok(overlapping)
         });
         let writer_result = (|| -> Result<(), String> {
             assert_eq!(
@@ -1176,8 +1194,12 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
         // Join explicitly. A reader's native error is primary, and its channel
         // disconnection is secondary detail rather than a masking panic.
         let reader_result = reader.join().unwrap();
-        if let Err(error) = reader_result {
-            panic!("{error}; writer observation: {writer_result:?}");
+        match reader_result {
+            Err(error) => panic!("{error}; writer observation: {writer_result:?}"),
+            Ok(overlapping) => assert_eq!(
+                overlapping, 40,
+                "each native read phase must straddle its replacement"
+            ),
         }
         writer_result.unwrap();
     });
