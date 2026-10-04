@@ -3,6 +3,23 @@ use serde::{Deserialize, Serialize};
 use super::ledger::Ledger;
 use super::{Actor, FILE_LIMIT, INACTIVITY_MS, SECOND_WARNING_MS, WATCH_LIMIT};
 
+/// The inactivity episode and external notification reservation survive the
+/// watch itself, so stopping/restarting or sibling watches cannot resend.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WarningReceipt {
+    pub target: Actor,
+    pub activity_at_unix_ms: u64,
+    pub ordinal: u8,
+    #[serde(default)]
+    pub parent_notified: bool,
+}
+
+impl WarningReceipt {
+    pub(crate) fn valid(&self) -> bool {
+        self.target.valid() && matches!(self.ordinal, 1 | 2)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Watch {
     pub id: String,
@@ -288,7 +305,7 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         let letters_before = ledger.letters.len();
         let sequence_before = ledger.next_id;
         let outcome = (|| {
-            super::mailbox::send(
+            let letter = super::mailbox::send(
                 ledger,
                 &before.parent,
                 &before.parent,
@@ -301,6 +318,17 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
                 None,
                 now,
             )?;
+            let letter = ledger
+                .letters
+                .iter_mut()
+                .find(|stored| stored.id == letter.id)
+                .ok_or("ledger_unavailable")?;
+            letter.watch_warning = Some(WarningReceipt {
+                target: before.target.clone(),
+                activity_at_unix_ms: before.last_activity_at_unix_ms,
+                ordinal: count,
+                parent_notified: false,
+            });
             let watch = &mut ledger.watches[index];
             watch.first_warning_at_unix_ms.get_or_insert(now);
             watch.warning_count = count;
@@ -595,6 +623,7 @@ mod tests {
             bell_sent: false,
             bell_attempts: Some(0),
             human_notified: false,
+            watch_warning: None,
         }
     }
 

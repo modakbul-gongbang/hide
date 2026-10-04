@@ -37,6 +37,8 @@ pub struct Letter {
     pub bell_attempts: Option<u8>,
     #[serde(default)]
     pub human_notified: bool,
+    #[serde(default)]
+    pub watch_warning: Option<super::watch::WarningReceipt>,
 }
 
 impl Letter {
@@ -119,6 +121,10 @@ impl Ledger {
                 || letter.body.trim().is_empty()
                 || letter.bell_errors > 3
                 || letter.bell_attempts.is_some_and(|attempts| attempts > 3)
+                || letter
+                    .watch_warning
+                    .as_ref()
+                    .is_some_and(|warning| letter.kind != "watch" || !warning.valid())
                 || (!letter.open() && letter.finished_at_unix_ms.is_none())
                 || (matches!(
                     letter.state,

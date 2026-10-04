@@ -466,18 +466,7 @@ pub(crate) fn now() -> u64 {
 fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, bool), String> {
     let (actor, target, command) = match &request.effect {
         Effect::HumanClaim => {
-            let notices = ledger.letters.iter_mut()
-                .filter(|letter| letter.state == super::ledger::State::Undelivered && !letter.human_notified)
-                .take(8)
-                .map(|letter| {
-                    letter.human_notified = true;
-                    HumanNotice {
-                        id: letter.id.clone(),
-                        actor: letter.sender.clone(),
-                        title: "Hide: letter undelivered".into(),
-                        body: format!("{} did not receive {} within 60 minutes. Inspect it with hide request show {}.", letter.recipient.name, letter.id, letter.id),
-                    }
-                }).collect::<Vec<_>>();
+            let notices = super::human::claim(ledger, now);
             return Ok((json!(notices), false));
         }
         Effect::Agents {
