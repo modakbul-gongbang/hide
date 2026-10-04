@@ -98,6 +98,18 @@ export const cleanupEnglish = {
   "cleanup.selectedWorktrees_one": "{{count}} worktree",
   "cleanup.selectedWorktrees_other": "{{count}} worktrees",
   "cleanup.worktreeRemoval": "Worktree removal",
+  "cleanup.rowLayer": "{{name}} {{layer}}",
+  "cleanup.rowLayerSize": "{{name}} {{layer}} {{size}}",
+  "cleanup.folderDetail_one": "{{count}} folder · Largest folder {{name}}",
+  "cleanup.folderDetail_other": "{{count}} folders · Largest folder {{name}}",
+  "cleanup.otherNamedFolder": "Largest folder {{name}}\nHide leaves folders it doesn't recognize",
+  "cleanup.smallSummary_one": "{{count}} small checkout · {{size}}",
+  "cleanup.smallSummary_other": "{{count}} small checkouts · {{size}}",
+  "cleanup.clearingProgress": "Clearing · {{done}}/{{total}}",
+  "cleanup.freeChange": "Free {{before}} → {{after}}",
+  "cleanup.allocatedHint": "{{size}} allocated · click to clean up",
+  "cleanup.freeAndReclaimable": "{{free}} free · {{reclaimable}} can be reclaimed",
+  "cleanup.projectSize": "This project {{size}}",
 } as const;
 
 const ko = {
@@ -198,6 +210,18 @@ const ko = {
   "cleanup.selectedWorktrees_one": "워크트리 {{count}}",
   "cleanup.selectedWorktrees_other": "워크트리 {{count}}",
   "cleanup.worktreeRemoval": "워크트리 삭제",
+  "cleanup.rowLayer": "{{name}} {{layer}}",
+  "cleanup.rowLayerSize": "{{name}} {{layer}} {{size}}",
+  "cleanup.folderDetail_one": "폴더 {{count}}개 · 가장 큰 폴더 {{name}}",
+  "cleanup.folderDetail_other": "폴더 {{count}}개 · 가장 큰 폴더 {{name}}",
+  "cleanup.otherNamedFolder": "가장 큰 폴더 {{name}}\nhide가 모르는 폴더라 지우지 않아요",
+  "cleanup.smallSummary_one": "작은 체크아웃 {{count}} · {{size}}",
+  "cleanup.smallSummary_other": "작은 체크아웃 {{count}} · {{size}}",
+  "cleanup.clearingProgress": "비우는 중 · {{done}}/{{total}}",
+  "cleanup.freeChange": "여유 {{before}} → {{after}}",
+  "cleanup.allocatedHint": "할당 {{size}} · 눌러서 정리",
+  "cleanup.freeAndReclaimable": "여유 {{free}} · {{reclaimable}} 비울 수 있음",
+  "cleanup.projectSize": "이 프로젝트 {{size}}",
 } satisfies Catalog<typeof cleanupEnglish>;
 
 const zhCN = {
@@ -298,6 +322,18 @@ const zhCN = {
   "cleanup.selectedWorktrees_one": "{{count}} 个工作树",
   "cleanup.selectedWorktrees_other": "{{count}} 个工作树",
   "cleanup.worktreeRemoval": "删除工作树",
+  "cleanup.rowLayer": "{{name}} {{layer}}",
+  "cleanup.rowLayerSize": "{{name}} {{layer}} {{size}}",
+  "cleanup.folderDetail_one": "{{count}} 个文件夹 · 最大的文件夹 {{name}}",
+  "cleanup.folderDetail_other": "{{count}} 个文件夹 · 最大的文件夹 {{name}}",
+  "cleanup.otherNamedFolder": "最大的文件夹 {{name}}\nHide 不会删除无法识别的文件夹",
+  "cleanup.smallSummary_one": "{{count}} 个小检出目录 · {{size}}",
+  "cleanup.smallSummary_other": "{{count}} 个小检出目录 · {{size}}",
+  "cleanup.clearingProgress": "正在清理 · {{done}}/{{total}}",
+  "cleanup.freeChange": "可用空间 {{before}} → {{after}}",
+  "cleanup.allocatedHint": "已分配 {{size}} · 点击清理",
+  "cleanup.freeAndReclaimable": "可用空间 {{free}} · 可释放 {{reclaimable}}",
+  "cleanup.projectSize": "此项目 {{size}}",
 } satisfies Catalog<typeof cleanupEnglish>;
 
 const ja = {
@@ -398,6 +434,18 @@ const ja = {
   "cleanup.selectedWorktrees_one": "ワークツリー{{count}}個",
   "cleanup.selectedWorktrees_other": "ワークツリー{{count}}個",
   "cleanup.worktreeRemoval": "ワークツリーの削除",
+  "cleanup.rowLayer": "{{name}} {{layer}}",
+  "cleanup.rowLayerSize": "{{name}} {{layer}} {{size}}",
+  "cleanup.folderDetail_one": "{{count}} 個のフォルダー · 最大のフォルダー {{name}}",
+  "cleanup.folderDetail_other": "{{count}} 個のフォルダー · 最大のフォルダー {{name}}",
+  "cleanup.otherNamedFolder": "最大のフォルダー {{name}}\nHide が認識できないフォルダーは削除しません",
+  "cleanup.smallSummary_one": "小さいチェックアウト {{count}} 個 · {{size}}",
+  "cleanup.smallSummary_other": "小さいチェックアウト {{count}} 個 · {{size}}",
+  "cleanup.clearingProgress": "削除中 · {{done}}/{{total}}",
+  "cleanup.freeChange": "空き容量 {{before}} → {{after}}",
+  "cleanup.allocatedHint": "使用量 {{size}} · クリックして整理",
+  "cleanup.freeAndReclaimable": "空き容量 {{free}} · {{reclaimable}} を解放可能",
+  "cleanup.projectSize": "このプロジェクト {{size}}",
 } satisfies Catalog<typeof cleanupEnglish>;
 
 export const cleanupCatalogs = { en: cleanupEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof cleanupEnglish>;
