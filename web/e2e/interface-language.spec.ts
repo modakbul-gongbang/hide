@@ -1,0 +1,113 @@
+import { expect, test, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
+import { startHerdr } from "./herdr-fixture";
+import { startHided, type Daemon } from "./hided-fixture";
+import { screenshot } from "./wire";
+
+async function openSettings(page: Page, daemon: Daemon) {
+  // A hash-only navigation after restart does not remount the connection.
+  if (page.url().startsWith(daemon.origin)) await page.goto("about:blank");
+  await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+  await page.locator("[data-open-settings]").click();
+  await expect(page.locator("[data-interface-language]")).toBeEnabled();
+}
+
+async function choose(page: Page, language: string) {
+  await page.locator("[data-interface-language]").click();
+  await page.locator(`[data-language-option="${language}"]`).click();
+  await expect(page.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", language);
+  await expect(page.locator("[data-interface-language]")).toBeEnabled();
+}
+
+test("one confirmed choice follows every window, persists, and resets to each system language", async ({ browser }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  const korean = await browser.newContext({ locale: "ko-KR" });
+  const japanese = await browser.newContext({ locale: "ja-JP" });
+  try {
+    daemon = await startHided(herdr, "interface-language");
+    const left = await korean.newPage();
+    const right = await japanese.newPage();
+    await openSettings(left, daemon);
+    await openSettings(right, daemon);
+    await expect(left.locator("html")).toHaveAttribute("lang", "ko");
+    await expect(right.locator("html")).toHaveAttribute("lang", "ja");
+    await expect(left.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "system");
+    // The answers are product copy, independent of the translation catalog.
+    for (const [language, heading, general] of [
+      ["en", "Settings", "General"], ["ko", "설정", "일반"],
+      ["zh-CN", "设置", "常规"], ["ja", "設定", "一般"],
+    ]) {
+      await choose(left, language!);
+      for (const page of [left, right]) {
+        await expect(page.locator("html")).toHaveAttribute("lang", language!);
+        await expect(page.locator("[data-settings] h2")).toHaveText(heading!);
+        await expect(page.locator('[data-settings-tab="general"]')).toHaveText(general!);
+      }
+      // User-owned names and paths remain byte-for-byte unchanged.
+      await expect(left.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
+      await expect(left.locator("[data-settings]")).toContainText(path.join(daemon.stateDir, "core-state.json"));
+      await screenshot(left, `interface-${language}`);
+    }
+    await right.reload();
+    await expect(right.locator("html")).toHaveAttribute("lang", "ja");
+    daemon = await daemon.restart();
+    await openSettings(left, daemon);
+    await openSettings(right, daemon);
+    await expect(left.locator("html")).toHaveAttribute("lang", "ja");
+    await choose(right, "system");
+    await expect(left.locator("html")).toHaveAttribute("lang", "ko");
+    await expect(right.locator("html")).toHaveAttribute("lang", "ja");
+    // Reset is durable as an absent explicit choice, not a cached resolved language.
+    daemon = await daemon.restart();
+    await openSettings(left, daemon);
+    await expect(left.locator("html")).toHaveAttribute("lang", "ko");
+  } finally {
+    try {
+      await korean.close();
+      await japanese.close();
+    } finally {
+      daemon?.stop();
+      herdr.stop();
+    }
+  }
+});
+
+test("unsupported systems use English, and an invalid stored preference is diagnosed and retained", async ({ browser }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  const context = await browser.newContext({ locale: "fr-FR" });
+  try {
+    daemon = await startHided(herdr, "interface-language-invalid");
+    const page = await context.newPage();
+    await openSettings(page, daemon);
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await choose(page, "ko");
+    daemon = await daemon.restart((directory) => {
+      const file = path.join(directory, "core-state.json");
+      const stored = JSON.parse(fs.readFileSync(file, "utf8"));
+      stored.interface_language = "unsupported";
+      fs.writeFileSync(file, JSON.stringify(stored));
+    });
+    await openSettings(page, daemon);
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await expect(page.locator("[data-diagnostics]")).toContainText("ui_state.interface_language_invalid");
+    await expect(page.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "en");
+    expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).interface_language).toBe("unsupported");
+    // Choosing English repairs an invalid value even though English was already drawn.
+    await choose(page, "system");
+    await choose(page, "en");
+    daemon = await daemon.restart();
+    await openSettings(page, daemon);
+    await expect(page.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "en");
+    expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).interface_language).toBe("en");
+  } finally {
+    try {
+      await context.close();
+    } finally {
+      daemon?.stop();
+      herdr.stop();
+    }
+  }
+});
