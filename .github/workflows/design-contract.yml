@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request replaces that pull request's run; main's runs
+# and other pull requests' runs are never cancelled.
+concurrency:
+  group: design-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   static-design:
     runs-on: ubuntu-latest

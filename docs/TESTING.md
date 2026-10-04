@@ -124,6 +124,29 @@ The first Windows runs of the web e2e fixtures found three differences the helpe
 - Delete a fixture's root only after every process that used it has confirmed exit; when exit cannot be confirmed, keep the root and name it in the error, as `desktop/e2e/fixture.ts` does.
   `desktop/e2e/fixture.ts`'s `AggregateError` is the reference for reporting several cleanup failures at once.
 
+## Which lanes a pull request runs
+
+`pr.yml`'s `plan` job reads the paths a pull request changes against the base it merges into and plans the lanes they need; `scripts/ci-plan.py` is the one place the rules live, and `scripts/tests/test_ci_plan.py` checks them against real paths.
+Every lane is a job whose `if:` asks the plan, and `verify` passes only when every planned lane succeeded and every other lane was skipped.
+A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong `if:` shows up as a red check rather than a lane quietly left out.
+
+| Change | Lanes |
+| --- | --- |
+| Only `docs/`, root Markdown, or any `AGENTS.md`/`CLAUDE.md` | `policy` (the script suite and the repository invariants) |
+| `design/` | `policy`; `design-contract.yml` checks the library |
+| `web/src`, `web/public`, `web/index.html`, `web/mobile.html` | `web-checks` and the Linux `web-e2e` |
+| Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-checks`, `desktop-e2e`, and the `@platform` lanes on macOS and Windows |
+| A `web/e2e` spec | `web-checks` and `web-e2e`; a spec tagged `@platform` also runs the macOS and Windows `@platform` lanes |
+| `desktop/src`, `desktop/static`, a `desktop/e2e` spec | `desktop-checks` and `desktop-e2e`; `desktop/src/main` also runs `windows-check`, where the main process's unit suite runs on Windows |
+| A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), and the Linux `web-e2e`, since every crate reaches `hided` |
+| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract`, `windows-check`, `windows-e2e`, the macOS `@platform` lane and `desktop-e2e` |
+| `.github/`, `scripts/`, `contracts/` (the Herdr pin and schemas), `plugins/`, shared e2e fixtures, any `package.json`, configuration or lockfile, the workspace `Cargo.toml`, a type change, and any path no row above claims | every lane |
+
+A push to main plans every lane, and so does a comparison that cannot be computed: a missing base, a checkout that is not the merge commit, or a diff that does not parse.
+Main's full run is the net under a pull request that left out a lane it needed; when one does, fix the rule in `scripts/ci-plan.py` with a case in its test.
+`os-contract` always brings `desktop-e2e`, which holds the OS contract's macOS leg.
+The `plan` job's summary lists each lane with the paths that chose it.
+
 ## Flaky tests
 
 A test is flaky when it both fails and passes on the same SHA; Playwright retries are off, so this shows up as a rerun or a nightly that disagrees with the pull request.
@@ -133,7 +156,7 @@ A failure on a different SHA is not evidence of flakiness by itself, and the sam
   Group failures by assertion signature, not by title, so two causes under one name are not read as one.
 - A web or desktop e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that is the only way a test leaves a required gate.
   Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required web shards and the required desktop step skip it with `--grep-invert @flaky`, and web shard 1 and the desktop job each still run every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
-  Pull-request quarantined web tests run only in shard 1 of the Linux lane, never in the macOS `@platform` job; nightly runs `@flaky` tests in their normal shards and blocking suites.
+  Pull-request quarantined web tests run only in shard 1 of the Linux lane, never in the macOS or Windows `@platform` jobs; nightly runs `@flaky` tests in their normal shards and blocking suites.
 - Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
 - Quarantine does not decide the cause.
   A failure that shows lost or misrouted input, a broken OS contract, or a missing tab the user asked for is a product defect candidate, and is investigated as one rather than tagged and left.
