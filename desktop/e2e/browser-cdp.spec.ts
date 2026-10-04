@@ -112,8 +112,12 @@ async function fromPane(args: string[], succeeds = true): Promise<Record<string,
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0]!, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status).toBe(0);
   await expect.poll(() => fs.existsSync(status), { timeout: 30_000 }).toBe(true);
-  expect(Number(fs.readFileSync(status, "utf8")) === 0, "isolated Workspace command result").toBe(succeeds);
-  return JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) ?? "null") as Record<string, unknown>;
+  expect(fs.statSync(output).size, "bounded isolated Workspace reply").toBeLessThanOrEqual(64 * 1024);
+  const reply = JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) ?? "null") as Record<string, unknown>;
+  // Report only the finite reason identifier, never capability-bearing output.
+  const reason = typeof reply.reason === "string" && /^[a-z_]{1,64}$/.test(reply.reason) ? reply.reason : "unclassified";
+  expect(Number(fs.readFileSync(status, "utf8")) === 0, `isolated Workspace command result (${reason})`).toBe(succeeds);
+  return reply;
 }
 async function coreViews(): Promise<CoreView[]> {
   return ((await fromPane(["view", "list"])).result as { views: CoreView[] }).views;
