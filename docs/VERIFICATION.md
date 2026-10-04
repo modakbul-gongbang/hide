@@ -56,6 +56,8 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
   The exit callback cannot run after SIGKILL, an OOM kill or host loss; these require separate recovery and are not proven by a `process.exit()` regression.
 - `desktop/e2e/fixture.ts` owns each `isolate` home through both automatic test teardown and worker exit, with at most sixteen unclosed homes per worker.
+  On Unix its private HOME sits under `/tmp`, resolved to its native path, so macOS's longer per-user `TMPDIR` cannot prevent hcoord from probing `HOME/.hcoord/api.sock` before starting its private LaunchAgent.
+  Windows uses its native temporary directory; `desktop/e2e/fixture-cleanup.unit.ts` checks real Unix socket binding with a long system temporary directory.
   Each home records at most sixteen live or pending candidate launches; a launch over that cap fails before starting another process.
   Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided, unloading only the hashed hcoord labels for that home's legacy and adopted directories, and confirming each label absent before deleting the home.
   An unconfirmed candidate exit, stop, launchctl query or unload failure fails teardown and retains the home for recovery; the error names the retained path and recovery action.
