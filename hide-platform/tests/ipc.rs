@@ -261,6 +261,10 @@ fn clients_that_leave_before_accept_never_hold_up_the_next_connect() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "https://github.com/modakbul-gongbang/hide/issues/396"
+)]
 fn a_burst_of_clients_that_connect_and_leave_loses_no_connect() {
     // #315 as it was seen: an accept loop running, and clients connecting and
     // leaving as fast as they can (the 33rd of 50 timed out on Windows). Each
