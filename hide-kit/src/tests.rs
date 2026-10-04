@@ -11,6 +11,35 @@ use serde_json::{Value, json};
 
 use super::*;
 
+type IndexReadHook = Box<dyn FnOnce(&Path)>;
+std::thread_local! {
+    static SUPERVISOR_INDEX_READ_HOOK: std::cell::RefCell<Option<IndexReadHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn before_supervisor_index_read(path: &Path) {
+    if let Some(hook) = SUPERVISOR_INDEX_READ_HOOK.with(|slot| slot.borrow_mut().take()) {
+        hook(path);
+    }
+}
+
+struct ArmedIndexReadHook;
+
+impl ArmedIndexReadHook {
+    fn new(hook: impl FnOnce(&Path) + 'static) -> Self {
+        SUPERVISOR_INDEX_READ_HOOK.with(|slot| {
+            assert!(slot.borrow_mut().replace(Box::new(hook)).is_none());
+        });
+        Self
+    }
+}
+
+impl Drop for ArmedIndexReadHook {
+    fn drop(&mut self) {
+        SUPERVISOR_INDEX_READ_HOOK.with(|slot| slot.borrow_mut().take());
+    }
+}
+
 /// A Herdr that keeps a plugin registry in memory and answers `plugin.list`
 /// and `plugin.unlink` the way Herdr 0.9.1 does.
 struct FakeHerdr {
@@ -1173,6 +1202,200 @@ fn supervisor_revision_head_and_unreadable_referenced_runs_block_before_mutation
         assert_eq!(home_tree(fixture.home()), before);
         assert!(fixture.herdr.calls.lock().unwrap().is_empty());
     }
+}
+
+#[test]
+fn an_absent_sasu_index_stays_empty_without_creating_a_registry() {
+    for has_folder in [false, true] {
+        let fixture = Fixture::new();
+        let registry = fixture.home().join(".sasu/supervisor");
+        if has_folder {
+            std::fs::create_dir_all(&registry).unwrap();
+        }
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "{report:?}"
+        );
+        assert!(!registry.join("index.json").exists());
+        if has_folder {
+            assert!(home_tree(&registry).is_empty());
+        } else {
+            assert!(!registry.exists());
+        }
+    }
+}
+
+#[test]
+fn current_sasu_registry_allows_empty_and_retired_runs_without_importing_it() {
+    for scenario in ["empty", "retired null", "retired recipient"] {
+        let fixture = Fixture::new();
+        let registry = fixture.home().join(".sasu/supervisor");
+        std::fs::create_dir_all(&registry).unwrap();
+        let entries = if scenario != "empty" {
+            let path = fixture.home().join("project/agents/runs/task/state.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, json!({"status":"retired"}).to_string()).unwrap();
+            let mut entry = current_registry_entry(&path);
+            if scenario == "retired recipient" {
+                entry["recipientAuthorityKey"] = json!("a".repeat(64));
+            }
+            vec![entry]
+        } else {
+            Vec::new()
+        };
+        // A previous revision is history, not the current occupancy authority.
+        std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1","entries":[{"statePath":"legacy"}],"coordinated":[]}).to_string()).unwrap();
+        std::fs::write(
+            registry.join("index.json.revision-000000000002"),
+            current_registry(entries).to_string(),
+        )
+        .unwrap();
+        let before = home_tree(&registry);
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "{report:?}"
+        );
+        assert_eq!(home_tree(&registry), before);
+    }
+}
+
+fn current_registry_entry(path: &Path) -> Value {
+    json!({"statePath":path,"runInstanceId":"run-1","registrationId":"registration-1","recipientAuthorityKey":null,"addedAt":"2026-10-03T00:00:00.000Z"})
+}
+
+fn current_registry(entries: Vec<Value>) -> Value {
+    json!({"schema":"sasu.supervisor.index.v2.hide","entries":entries,"appliedWrites":["write-1"]})
+}
+
+#[test]
+fn current_sasu_registry_refuses_active_missing_unknown_and_malformed_records() {
+    for problem in [
+        "active",
+        "missing state",
+        "unknown state",
+        "malformed state",
+        "unknown schema",
+        "missing entries",
+        "invalid write history",
+        "missing identity",
+        "invalid recipient",
+        "too many entries",
+        "too many writes",
+        "long write",
+    ] {
+        let mut fixture = Fixture::new();
+        let registry = fixture.home().join(".sasu/supervisor");
+        let path = fixture.home().join("project/agents/runs/task/state.json");
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if problem != "missing state" {
+            let bytes = match problem {
+                "active" => json!({"status":"active"}).to_string(),
+                "unknown state" => json!({"status":"unknown"}).to_string(),
+                "malformed state" => "not json".to_owned(),
+                _ => json!({"status":"retired"}).to_string(),
+            };
+            std::fs::write(&path, bytes).unwrap();
+        }
+        let mut index = current_registry(vec![current_registry_entry(&path)]);
+        match problem {
+            "unknown schema" => index["schema"] = json!("sasu.supervisor.index.v3"),
+            "missing entries" => index
+                .as_object_mut()
+                .unwrap()
+                .remove("entries")
+                .map(|_| ())
+                .unwrap(),
+            "invalid write history" => index["appliedWrites"] = json!([null]),
+            "missing identity" => index["entries"][0]["registrationId"] = json!(""),
+            "invalid recipient" => {
+                index["entries"][0]["recipientAuthorityKey"] = json!("unreadable")
+            }
+            "too many entries" => {
+                index["entries"] = json!(vec![current_registry_entry(&path); 1025])
+            }
+            "too many writes" => index["appliedWrites"] = json!(vec!["write"; 1025]),
+            "long write" => index["appliedWrites"] = json!(["w".repeat(129)]),
+            _ => {}
+        }
+        std::fs::write(
+            registry.join("index.json"),
+            current_registry(Vec::new()).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            registry.join("index.json.revision-000000000002"),
+            index.to_string(),
+        )
+        .unwrap();
+        record_preflight_commands(&mut fixture);
+        assert_preflight_refusal_preserves_fixture(&fixture, None);
+    }
+}
+
+#[test]
+fn legacy_sasu_registry_keeps_tick_and_registered_legacy_run_refusals() {
+    for (entries, tick) in [
+        (json!([{"statePath":"old run"}]), Value::Null),
+        (json!([]), json!({"pid":1})),
+    ] {
+        let mut fixture = Fixture::new();
+        let registry = fixture.home().join(".sasu/supervisor");
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::write(registry.join("index.json"), json!({"schema":"sasu.supervisor.index.v1","entries":entries,"coordinated":[],"tickExecutor":tick}).to_string()).unwrap();
+        record_preflight_commands(&mut fixture);
+        assert_preflight_refusal_preserves_fixture(&fixture, None);
+    }
+}
+
+#[test]
+fn a_selected_sasu_revision_disappearing_refuses_instead_of_using_the_empty_base() {
+    let mut fixture = Fixture::new();
+    let registry = fixture.home().join(".sasu/supervisor");
+    std::fs::create_dir_all(&registry).unwrap();
+    std::fs::write(
+        registry.join("index.json"),
+        current_registry(Vec::new()).to_string(),
+    )
+    .unwrap();
+    let revision = registry.join("index.json.revision-000000000002");
+    std::fs::write(&revision, current_registry(Vec::new()).to_string()).unwrap();
+    record_preflight_commands(&mut fixture);
+    let observed = Arc::new(Mutex::new(None));
+    let expected = Arc::clone(&observed);
+    let root = fixture.root.clone();
+    let saved = fixture.root.join("pruned-revision.json");
+    let _hook = ArmedIndexReadHook::new(move |selected| {
+        assert_eq!(selected, revision);
+        std::fs::rename(selected, &saved).unwrap();
+        *expected.lock().unwrap() = Some(home_tree(&root));
+    });
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Failed,
+        "{report:?}"
+    );
+    assert!(
+        report
+            .component(ComponentId::CoordinationRetirement)
+            .unwrap()
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("selected sasu registry revision disappeared")
+    );
+    assert_eq!(
+        home_tree(&fixture.root),
+        observed.lock().unwrap().take().unwrap()
+    );
+    assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+    assert!(!fixture.home().join("service-called").exists());
+    assert!(!fixture.home().join("status-called").exists());
 }
 
 #[test]

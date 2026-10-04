@@ -310,8 +310,14 @@ fn sasu_preflight(target: &KitTarget) -> Result<(), String> {
             ));
         }
     }
+    #[cfg(all(test, unix))]
+    crate::tests::before_supervisor_index_read(&latest);
     let Some(index) = read_json(&latest, MAX_STATE_BYTES)? else {
-        return Ok(());
+        return if revision.is_some() {
+            Err("the selected sasu registry revision disappeared; retry retirement against the current registry; nothing was changed".into())
+        } else {
+            Ok(())
+        };
     };
     for state_path in retirement_inspection::supervisor_states(&index)? {
         let path = Path::new(state_path);

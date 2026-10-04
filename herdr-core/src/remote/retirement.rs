@@ -270,7 +270,13 @@ pub(super) async fn preflight(
             latest = entry.filename;
         }
     }
-    if let Some(index) = json(raw, &format!("{registry}/{latest}"), owner, MAX_STATE_BYTES).await? {
+    let index = json(raw, &format!("{registry}/{latest}"), owner, MAX_STATE_BYTES).await?;
+    if index.is_none() && revision.is_some() {
+        return Err(refused(
+            "the selected sasu registry revision disappeared; retry against the current registry",
+        ));
+    }
+    if let Some(index) = index {
         for path in predicates::supervisor_states(&index).map_err(refused)? {
             let path = absolute(path, home)?;
             predicates::inspection_root(
@@ -330,6 +336,7 @@ mod tests {
         files: BTreeMap<String, (FileAttributes, Vec<u8>)>,
         listed: HashSet<String>,
         mutations: Arc<AtomicUsize>,
+        vanished_revision: Option<String>,
     }
 
     impl Account {
@@ -338,6 +345,7 @@ mod tests {
                 files: BTreeMap::new(),
                 listed: HashSet::new(),
                 mutations: Arc::new(AtomicUsize::new(0)),
+                vanished_revision: None,
             };
             account
                 .files
@@ -381,6 +389,10 @@ mod tests {
             })
         }
         async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+            if self.vanished_revision.as_deref() == Some(&path) {
+                self.files.remove(&path);
+                self.vanished_revision = None;
+            }
             let attrs = self
                 .files
                 .get(&path)
@@ -510,6 +522,159 @@ mod tests {
             result
         });
         (result, mutations.load(Ordering::SeqCst))
+    }
+
+    #[test]
+    fn an_absent_sasu_index_is_empty_even_when_its_remote_folder_exists() {
+        for has_folder in [false, true] {
+            let mut account = Account::new();
+            if has_folder {
+                account.files.insert(
+                    "/fixture-home/.sasu".into(),
+                    (attributes(true, 0), Vec::new()),
+                );
+                account.files.insert(
+                    "/fixture-home/.sasu/supervisor".into(),
+                    (attributes(true, 0), Vec::new()),
+                );
+            }
+            let (result, mutations) = inspect(account, &[], false);
+            result.unwrap();
+            assert_eq!(mutations, 0);
+        }
+    }
+
+    #[test]
+    fn current_sasu_registry_allows_empty_and_retired_entries_read_only() {
+        for scenario in ["empty", "retired null", "retired recipient"] {
+            let mut account = Account::new();
+            let entries = if scenario != "empty" {
+                account.add(
+                    "/checkout/agents/runs/task/state.json",
+                    serde_json::json!({"status":"retired"}),
+                );
+                let mut entry = current_registry_entry("/checkout/agents/runs/task/state.json");
+                if scenario == "retired recipient" {
+                    entry["recipientAuthorityKey"] = serde_json::json!("a".repeat(64));
+                }
+                vec![entry]
+            } else {
+                Vec::new()
+            };
+            account.add("/fixture-home/.sasu/supervisor/index.json", serde_json::json!({"schema":"sasu.supervisor.index.v1","entries":[{"statePath":"legacy"}],"coordinated":[]}));
+            account.add(
+                "/fixture-home/.sasu/supervisor/index.json.revision-000000000002",
+                current_registry(entries),
+            );
+            let (result, mutations) = inspect(account, &["/checkout".into()], false);
+            result.unwrap();
+            assert_eq!(mutations, 0);
+        }
+    }
+
+    fn current_registry_entry(path: &str) -> Value {
+        serde_json::json!({"statePath":path,"runInstanceId":"run-1","registrationId":"registration-1","recipientAuthorityKey":null,"addedAt":"2026-10-03T00:00:00.000Z"})
+    }
+
+    fn current_registry(entries: Vec<Value>) -> Value {
+        serde_json::json!({"schema":"sasu.supervisor.index.v2.hide","entries":entries,"appliedWrites":["write-1"]})
+    }
+
+    #[test]
+    fn current_sasu_registry_blockers_refuse_before_remote_install_mutation() {
+        for problem in [
+            "active",
+            "missing state",
+            "unknown state",
+            "malformed state",
+            "unknown schema",
+            "missing entries",
+            "invalid write history",
+            "missing identity",
+            "invalid recipient",
+            "too many entries",
+            "too many writes",
+            "long write",
+        ] {
+            let mut account = Account::new();
+            let path = "/checkout/agents/runs/task/state.json";
+            if problem != "missing state" {
+                account.add(path, serde_json::json!({"status":if problem == "active" {"active"} else if problem == "unknown state" {"unknown"} else {"retired"}}));
+                if problem == "malformed state" {
+                    let (attrs, bytes) = account.files.get_mut(path).unwrap();
+                    *bytes = b"not json".to_vec();
+                    attrs.size = Some(bytes.len() as u64);
+                }
+            }
+            let mut index = current_registry(vec![current_registry_entry(path)]);
+            match problem {
+                "unknown schema" => index["schema"] = serde_json::json!("sasu.supervisor.index.v3"),
+                "missing entries" => {
+                    index.as_object_mut().unwrap().remove("entries");
+                }
+                "invalid write history" => index["appliedWrites"] = serde_json::json!([null]),
+                "missing identity" => index["entries"][0]["registrationId"] = serde_json::json!(""),
+                "invalid recipient" => {
+                    index["entries"][0]["recipientAuthorityKey"] = serde_json::json!("unreadable")
+                }
+                "too many entries" => {
+                    index["entries"] = serde_json::json!(vec![current_registry_entry(path); 1025])
+                }
+                "too many writes" => {
+                    index["appliedWrites"] = serde_json::json!(vec!["write"; 1025])
+                }
+                "long write" => index["appliedWrites"] = serde_json::json!(["w".repeat(129)]),
+                _ => {}
+            }
+            account.add(
+                "/fixture-home/.sasu/supervisor/index.json",
+                current_registry(Vec::new()),
+            );
+            account.add(
+                "/fixture-home/.sasu/supervisor/index.json.revision-000000000002",
+                index,
+            );
+            let (result, mutations) = inspect(account, &["/checkout".into()], true);
+            assert!(result.is_err(), "{problem}");
+            assert_eq!(
+                mutations, 0,
+                "{problem}: a write preceded preflight refusal"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_sasu_tick_and_entries_still_refuse_before_remote_install_mutation() {
+        for (entries, tick) in [
+            (serde_json::json!([{"statePath":"old run"}]), Value::Null),
+            (serde_json::json!([]), serde_json::json!({"pid":1})),
+        ] {
+            let mut account = Account::new();
+            account.add("/fixture-home/.sasu/supervisor/index.json", serde_json::json!({"schema":"sasu.supervisor.index.v1","entries":entries,"coordinated":[],"tickExecutor":tick}));
+            let (result, mutations) = inspect(account, &[], true);
+            assert!(result.is_err());
+            assert_eq!(mutations, 0);
+        }
+    }
+
+    #[test]
+    fn a_vanished_selected_registry_revision_refuses_before_remote_upload() {
+        let mut account = Account::new();
+        account.add(
+            "/fixture-home/.sasu/supervisor/index.json",
+            current_registry(Vec::new()),
+        );
+        let revision = "/fixture-home/.sasu/supervisor/index.json.revision-000000000002";
+        account.add(revision, current_registry(Vec::new()));
+        account.vanished_revision = Some(revision.into());
+        let (result, mutations) = inspect(account, &[], true);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("selected sasu registry revision disappeared")
+        );
+        assert_eq!(mutations, 0);
     }
 
     #[test]

@@ -195,6 +195,7 @@ The operator chooses a time with no active sasu runs, open requests or active wa
 The kit retains this stage for one release on each machine, with its result shown in Settings > Devices.
 
 Before changing anything, the stage checks the legacy ledgers, Hide's delivery ledger and the sasu run registry and registered checkout run state.
+Both the legacy v1 and current Hide-only v2 registries are inspected read-only; a selected revision that disappears causes a refusal and a retry instruction, never an empty-registry assumption.
 An open item, an unreadable or unknown record, or a capacity limit stops the pass, names the reason and recovery action, and leaves the machine unchanged.
 Every local directory below the selected HOME or registered checkout must be a real directory owned by the account and unwritable by other accounts; an alias at or above that selected root remains valid.
 A relocated legacy home must stay below HOME and cannot overlap the active Hide state or kit; an indexed run outside HOME needs its owning checkout registered before inspection.

@@ -105,9 +105,14 @@ pub fn delivery_ledger(ledger: &Value) -> Result<(), String> {
 
 /// State paths from the authoritative latest supervisor revision.
 pub fn supervisor_states(index: &Value) -> Result<Vec<&str>, String> {
-    if index["schema"] != "sasu.supervisor.index.v1" {
-        return Err("sasu registry has an unknown schema; inspect it before retirement".into());
+    match index["schema"].as_str() {
+        Some("sasu.supervisor.index.v1") => legacy_supervisor_states(index),
+        Some("sasu.supervisor.index.v2.hide") => registered_supervisor_states(index),
+        _ => Err("sasu registry has an unknown schema; inspect it before retirement".into()),
     }
+}
+
+fn legacy_supervisor_states(index: &Value) -> Result<Vec<&str>, String> {
     if !index["tickExecutor"].is_null() {
         return Err(
             "sasu supervisor still has an active tick; stop it and retry retirement".into(),
@@ -141,6 +146,61 @@ pub fn supervisor_states(index: &Value) -> Result<Vec<&str>, String> {
             entry["statePath"].as_str().ok_or_else(|| {
                 "sasu run has no state path; inspect its registry before retirement".into()
             })
+        })
+        .collect()
+}
+
+fn registered_supervisor_states(index: &Value) -> Result<Vec<&str>, String> {
+    let entries = index["entries"]
+        .as_array()
+        .ok_or("sasu indexed runs cannot be inspected")?;
+    if entries.len() > MAX_ENTRIES {
+        return Err("sasu runs exceed the preflight entry bound".into());
+    }
+    // Write identities only fence the registry's optimistic updates. They
+    // are not runs and are never imported or interpreted as occupancy.
+    let writes = index["appliedWrites"]
+        .as_array()
+        .ok_or("sasu registry write history cannot be inspected")?;
+    if writes.len() > MAX_ENTRIES
+        || writes.iter().any(|value| {
+            value
+                .as_str()
+                .is_none_or(|write| write.is_empty() || write.len() > 128)
+        })
+    {
+        return Err("sasu registry write history cannot be inspected".into());
+    }
+    entries
+        .iter()
+        .map(|entry| {
+            let required = |field: &str| {
+                entry[field]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        format!("sasu run has no {field}; inspect its registry before retirement")
+                    })
+            };
+            let path = required("statePath")?;
+            let identity = required("runInstanceId")?;
+            required("registrationId")?;
+            required("addedAt")?;
+            if path.len() > 4096 || identity.len() > 256 {
+                return Err("sasu run identity exceeds the preflight size bound".into());
+            }
+            if !entry.get("recipientAuthorityKey").is_some_and(|value| {
+                value.is_null()
+                    || value.as_str().is_some_and(|key| {
+                        key.len() == 64
+                            && key
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    })
+            }) {
+                return Err("sasu run recipient authority cannot be inspected".into());
+            }
+            Ok(path)
         })
         .collect()
 }

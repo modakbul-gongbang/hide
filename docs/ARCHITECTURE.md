@@ -521,6 +521,7 @@ The following table describes Hide's current macOS startup path, not an operator
 
 The local executable authorities are `desktop/src/main/{host,herdr,spawn}.ts`, `hided/src/{cli,env,lib,server}.rs`, `herdr-core/src/remote/host.rs` and `hide-host/src/{serve.rs,bin/hide-host-helper.rs}`.
 The one-release kit retirement stage is `hide-kit/src/coordination_retirement.rs`; it does not start a resident service.
+It reads legacy v1 and current Hide-only v2 Sasu registries without importing them, checks their retained run states, and refuses if the authoritative revision disappears after selection.
 After reboot, hided and its watches start with the app; no login automatic start is added.
 Herdr's [CLI reference](https://herdr.dev/docs/cli-reference/) and [Socket API](https://herdr.dev/docs/socket-api/) define its public stop and session boundary; the bundled contract remains the files named in [The Herdr wire boundary](#the-herdr-wire-boundary).
 In the bundled upstream `src/session.rs`, `stop_session_with_timeout` selects the named session's API/client sockets and sends `server.stop` through the same routine as `stop_active_server`; an unnamed session stop targets the default session.
