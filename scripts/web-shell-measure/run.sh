@@ -57,7 +57,7 @@ cleanup() {
   if $server_started; then
     kill_owned "${server_pid:-}"
     [[ -n "${server_pid:-}" ]] && wait "$server_pid" 2>/dev/null
-    rm -f "$HERDR_SOCKET_PATH" "${HERDR_SOCKET_PATH%.sock}-client.sock"
+    rm -f "$HERDR_SOCKET_PATH" "${HERDR_SOCKET_PATH%.sock}-client.sock" "$HERDR_SOCKET_PATH.hide-label-generator.lock"
   fi
   for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && wait "$pid" 2>/dev/null; done
   rmdir "$MEASURE_SOCKET_DIR"
@@ -163,6 +163,10 @@ created="$("$HERDR_BIN_PATH" workspace create --cwd "$MEASURE_FIXTURE" --label m
 export MEASURE_PANE_ID="$("$HERDR_BIN_PATH" api snapshot | python3 "$measure_dir/pane-id.py")"
 measure_workspace="$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["workspace"]["workspace_id"])')"
 measure_tab="$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
+# The current checkout-owner contract requires an explicit owner before
+# Hide can reuse this fixture's existing workspace and cat pane.
+measure_owner="$(python3 -c 'import hashlib,os; print(hashlib.sha256(("local\0"+os.path.realpath(os.environ["MEASURE_FIXTURE"])).encode()).hexdigest()[:32])')"
+"$HERDR_BIN_PATH" workspace report-metadata "$measure_workspace" --source performance-fixture --token "hide_owner=$measure_owner" --token purpose="Isolated performance fixture" >/dev/null
 wait_prompt() {
   # The pane shell has printed its fixed prompt before it takes a command.
   local deadline=$((SECONDS+20))
@@ -225,8 +229,8 @@ export MEASURE_CDP_PORT="$(head -n 1 "$port_file")"
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
 printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
 # A first run opens on Main (PRD S6 D-11). Open the one fixture checkout
-# through the Projects sidebar, one click per poll until its Workspace shows.
-wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-pressed') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { checkout.click(); return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
+# through the Projects sidebar once its checkout row appears.
+wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-selected') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { if (!window.__measureCheckoutOpened) { window.__measureCheckoutOpened = true; checkout.click(); } return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
 wait_js "window.__hideProbe?.paneId() === '$MEASURE_PANE_ID'"
 sleep 2
 if [[ "$scenario" == areas* ]]; then

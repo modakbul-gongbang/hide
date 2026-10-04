@@ -53,6 +53,9 @@ The brand line, approved owl mark, palette and voice come from [BRAND.md](../doc
 `assets/hide-mark.png` is an unchanged copy of `design/brand/hide-mark.png`; keep its full square and proportions.
 The workflow and feature descriptions follow [UI_BEHAVIOR.md](../docs/UI_BEHAVIOR.md), with current main's agent launcher, project overview and Workspace components as implementation references.
 Supported platforms, signing limitations, prerequisites and installation links follow [INSTALL.md](../docs/INSTALL.md).
+Performance copy quotes only the dated candidate measurements in [PERFORMANCE_RESULTS.md](../docs/PERFORMANCE_RESULTS.md), with sample counts and boundaries beside the figures.
+Refresh that report and both the site and repository README together when changing a performance figure; internal buffer/frame endpoints must not be described as physical display latency.
+The recorded comparison attempt did not complete a matching Orca workload, so the site makes no relative performance claim.
 The site has its own small CSS scale and brand palette; it does not consume or replace the product's generated UI tokens.
 The explanatory workflow is explicitly labelled as a diagram.
 It is not a screenshot, a product mockup, a recorded demo, or evidence of a running application.
