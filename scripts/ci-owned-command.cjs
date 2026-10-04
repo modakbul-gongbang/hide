@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const {spawn} = require('node:child_process');
 const MAX_OWNERS = 256, MAX_FILES = 10000, MAX_RECEIPT = 16 * 1024;
 const SHUTDOWN = 2000;
+const MAX_FILE_BYTES = 512 * 1024 * 1024;
 const active = new Set();
 const ENV = {CI_FIXTURE_BASH: {scope: 'verification-only', requirement: 'required on Windows; optional on Unix',
   shape: 'absolute existing Bash executable', fallback: '/bin/bash on Unix only',
@@ -35,6 +36,17 @@ function readReceipt(file) {
   return {phase, pid: Number(pid), birth, code: Number(code), survivors: Number(survivors), error: Buffer.from(detail, 'hex').toString('utf8')};
 }
 
+// Shared with preparation's manifest inventory. Stream hashing has a fixed
+// allocation, including the native supervisor copied for each invocation.
+function digest(file) {
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw Error('invalid preparation file: ' + file);
+  const hash = crypto.createHash('sha256'), buffer = Buffer.alloc(64 * 1024), fd = fs.openSync(file, 'r');
+  try { let count; while ((count = fs.readSync(fd, buffer, 0, buffer.length, null))) hash.update(buffer.subarray(0, count)); }
+  finally { fs.closeSync(fd); }
+  return {size: stat.size, sha256: hash.digest('hex')};
+}
+
 async function run(root, executable, args, {timeout = 5000, maxBuffer = 64 * 1024, subject = path.basename(executable), env, onOwner, onStderr} = {}) {
   if (!Number.isSafeInteger(timeout) || timeout <= 0 || !Number.isSafeInteger(maxBuffer) || maxBuffer <= 0) throw new Error('invalid preparation command bound');
   if (active.size >= MAX_OWNERS) throw new Error('preparation native owner cap exceeded');
@@ -42,20 +54,37 @@ async function run(root, executable, args, {timeout = 5000, maxBuffer = 64 * 102
   if (!fs.statSync(helper).isFile()) throw new Error('build this worktree\'s fixture-owner before preparation commands');
   const directory = path.join(root, 'agents/runs/ci-preparation/owners');
   fs.mkdirSync(directory, {recursive: true});
-  if (fs.readdirSync(directory).length >= MAX_FILES - 2) throw new Error('preparation owner receipt file cap exceeded');
+  if (fs.readdirSync(directory).length >= MAX_FILES - 4) throw new Error('preparation owner receipt file cap exceeded');
   const name = crypto.randomBytes(16).toString('hex');
   const owner = {receipt: path.join(directory, name + '.receipt'), home: path.join(directory, name + '.home'), executable, args, subject};
-  fs.mkdirSync(owner.home, {mode: 0o700});
-  const homeIdentity = fs.lstatSync(owner.home);
-  active.add(owner);
+  const image = path.join(directory, name + '.supervisor' + (process.platform === 'win32' ? '.exe' : ''));
+  let homeIdentity, imageIdentity;
   let child;
   try {
-    child = spawn(helper, [owner.receipt, owner.home, executable, ...args], {
+    fs.mkdirSync(owner.home, {mode: 0o700});
+    homeIdentity = fs.lstatSync(owner.home);
+    // Cargo may replace its own example output during build. A running
+    // Windows image cannot be replaced, so this invocation executes its
+    // private immutable copy outside the home that the supervisor releases.
+    const source = digest(helper);
+    fs.copyFileSync(helper, image, fs.constants.COPYFILE_EXCL);
+    imageIdentity = fs.lstatSync(image);
+    if (JSON.stringify(digest(image)) !== JSON.stringify(source) || JSON.stringify(digest(helper)) !== JSON.stringify(source)) {
+      throw new Error('preparation supervisor changed during immutable launch copy');
+    }
+    owner.supervisorImage = {path: image, source: helper, digest: source};
+    active.add(owner);
+    child = spawn(image, [owner.receipt, owner.home, executable, ...args], {
       cwd: root, env, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe']
     });
   } catch (error) {
     active.delete(owner);
-    fs.rmdirSync(owner.home);
+    for (const release of [() => {if (imageIdentity) fs.unlinkSync(image);}, () => {if (homeIdentity) fs.rmdirSync(owner.home);}]) {
+      try { release(); } catch (secondary) {
+        (error.secondary ||= []).push({message: secondary.message, stack: secondary.stack, code: secondary.code});
+        error.owner = owner;
+      }
+    }
     throw error;
   }
   owner.supervisorPid = child.pid;
@@ -110,6 +139,11 @@ async function run(root, executable, args, {timeout = 5000, maxBuffer = 64 * 102
           }
         }
         catch (error) { note(error); }
+        try {
+          const current = fs.lstatSync(image);
+          if (!current.isFile() || current.dev !== imageIdentity.dev || current.ino !== imageIdentity.ino) throw new Error('preparation supervisor image identity changed; preserve entry');
+          fs.unlinkSync(image);
+        } catch (error) { note(error); }
       }
       // A stalled supervisor remains the original owner. EOF stays closed,
       // its retained receipt/home report unknown exit, and it cannot keep this
@@ -150,4 +184,4 @@ async function run(root, executable, args, {timeout = 5000, maxBuffer = 64 * 102
   });
 }
 
-module.exports = {run, shell, readReceipt, ENV};
+module.exports = {run, shell, readReceipt, digest, ENV};

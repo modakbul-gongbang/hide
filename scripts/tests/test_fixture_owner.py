@@ -299,6 +299,9 @@ while time.monotonic() < deadline:
                 ids = None
                 try:
                     data = until(lambda: json.loads(launch.read_text()) if launch.exists() else None)
+                    self.assertNotEqual(Path(data['supervisorImage']['path']), HELPER)
+                    self.assertEqual(Path(data['supervisorImage']['source']), HELPER)
+                    self.assertEqual(data['supervisorImage']['digest']['sha256'], hashlib.sha256(HELPER.read_bytes()).hexdigest())
                     if mode != 'complete':
                         ids = until(lambda: json.loads(proof.read_text()) if proof.exists() else None)
                         running = until(lambda: value if (value:=receipt(Path(data['receipt']))) and value['phase']=='running' else None)
@@ -309,6 +312,7 @@ while time.monotonic() < deadline:
                         self.assertGreater(running['pid'],0)
                         self.assertGreater(int(running['birth']),0)
                         self.assertTrue(all(not target.exited() for target in observations))
+                        self.assertTrue(Path(data['supervisorImage']['path']).is_file())
                     if mode == 'worker-hard-kill':
                         process.kill()  # End only the Node caller; no /T or group signal.
                         process.wait(timeout=5)
@@ -316,7 +320,8 @@ while time.monotonic() < deadline:
                         self.assertEqual(final['survivors'],0)
                         self.assertFalse(Path(data['home']).exists())
                         self.assertFalse(outcome.exists())
-                        facts.append({'mode':mode,'launch':data,'targets':ids,'finished':final,'ownedSurvivors':0})
+                        facts.append({'mode':mode,'launch':data,'targets':ids,'finished':final,'ownedSurvivors':0,
+                            'imageRetainedAfterCallerLoss':Path(data['supervisorImage']['path']).is_file()})
                     else:
                         code = process.wait(timeout=10)
                         result = json.loads(outcome.read_text())
@@ -326,6 +331,7 @@ while time.monotonic() < deadline:
                         self.assertTrue(result['owner']['supervisorExited'])
                         self.assertEqual(result['owner']['observed']['survivors'],0)
                         self.assertFalse(Path(data['home']).exists())
+                        self.assertFalse(Path(data['supervisorImage']['path']).exists())
                         if mode=='timeout':
                             self.assertEqual(result['code'],'ETIMEDOUT')
                             self.assertIn('5000ms',result['message'])
@@ -333,6 +339,13 @@ while time.monotonic() < deadline:
                         facts.append({'mode':mode,'launch':data,'outcome':result,'ownedSurvivors':0})
                     until(lambda: all(target.exited() for target in observations))
                     owned.confirmed = True
+                    if mode == 'worker-hard-kill':
+                        # Windows cannot remove its own running image, and the
+                        # Node caller has been killed. This independent owner
+                        # releases only our verified copy after observing exit.
+                        image = Path(data['supervisorImage']['path'])
+                        self.assertEqual(hashlib.sha256(image.read_bytes()).hexdigest(), data['supervisorImage']['digest']['sha256'])
+                        image.unlink()
                 except BaseException as failure:
                     facts.append({'mode': mode, 'status': 'failed', 'error': str(failure),
                         'stack': traceback.format_exc(), 'launch': data, 'targets': ids})
@@ -360,6 +373,48 @@ while time.monotonic() < deadline:
 
     def test_wrong_launch_identity_refuses_a_real_live_target(self):
         self.exercise('identity-refusal')
+
+    def test_running_supervisor_does_not_lock_its_mutable_build_output(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        with OwnedControlRoot(artifacts) as owned:
+            root = owned.path
+            helper = root / 'target/debug/examples' / HELPER.name
+            helper.parent.mkdir(parents=True)
+            shutil.copy2(HELPER, helper)
+            source_hash = hashlib.sha256(helper.read_bytes()).hexdigest()
+            target, worker = root / 'replace-output.cjs', root / 'worker.cjs'
+            proof, launch, outcome = [root / name for name in ['replacement.json', 'owner.json', 'outcome.json']]
+            target.write_text("const fs=require('node:fs'),crypto=require('node:crypto');\n"
+                "const [helper,proof]=process.argv.slice(2);const displaced=helper+'.displaced';\n"
+                "fs.renameSync(helper,displaced);fs.copyFileSync(displaced,helper,fs.constants.COPYFILE_EXCL);\n"
+                "const sha256=crypto.createHash('sha256').update(fs.readFileSync(helper)).digest('hex');\n"
+                "fs.unlinkSync(displaced);fs.writeFileSync(proof,JSON.stringify({pid:process.pid,sha256,replaced:true}));\n")
+            worker.write_text("const fs=require('node:fs');const owned=require(" + json.dumps(str(ROOT/'scripts/ci-owned-command.cjs')) + ");\n"
+                "const [root,target,helper,proof,launch,outcome]=process.argv.slice(2);\n"
+                "owned.run(root,process.execPath,[target,helper,proof],{subject:'mutable-supervisor-output',\n"
+                "onOwner:owner=>fs.writeFileSync(launch,JSON.stringify(owner))}).then(\n"
+                "value=>fs.writeFileSync(outcome,JSON.stringify({status:'passed',...value})),\n"
+                "error=>{fs.writeFileSync(outcome,JSON.stringify({status:'failed',message:error.message,owner:error.owner}));process.exitCode=1;});\n")
+            result = subprocess.run([shutil.which('node'), str(worker), str(root), str(target), str(helper), str(proof), str(launch), str(outcome)],
+                cwd=ROOT, capture_output=True, text=True, timeout=10)
+            actual = json.loads(outcome.read_text())
+            owner = actual['owner']
+            # A failed replacement can still have a confirmed, safely releasable
+            # native owner. Record it before asserting publication success.
+            owned.confirmed = owner.get('supervisorExited') and owner.get('observed', {}).get('survivors') == 0
+            publish(artifacts/'preparation-supervisor-image.json', json.dumps({'status':result.returncode,
+                'outcome':actual,'launch':json.loads(launch.read_text()),
+                'replacement':json.loads(proof.read_text()) if proof.exists() else None}, indent=2)+'\n')
+            self.assertTrue(owned.confirmed)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(actual['status'], 'passed')
+            self.assertEqual(json.loads(proof.read_text())['sha256'], source_hash)
+            self.assertEqual(hashlib.sha256(helper.read_bytes()).hexdigest(), source_hash)
+            self.assertNotEqual(Path(owner['supervisorImage']['path']), helper)
+            self.assertEqual(owner['supervisorImage']['digest']['sha256'], source_hash)
+            self.assertFalse(Path(owner['supervisorImage']['path']).exists())
+            self.assertFalse(Path(owner['home']).exists())
+            self.assertEqual(owner['observed']['code'], 0)
 
     def test_late_preparation_probe_preserves_primary_and_unknown_exit_receipts(self):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'

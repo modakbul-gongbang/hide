@@ -6,15 +6,8 @@ const MANIFEST='agents/runs/ci-preparation/manifest.json';
 const BUILD='agents/runs/ci-preparation/build.json';
 const COMMAND=['build','-p','hided','--bins','-p','hide-platform','--example','fixture-owner','--message-format=json-render-diagnostics'];
 const TARGETS=[['hided','bin'],['hide','bin'],['fixture-owner','example']];
-const MAX_FILES=10000, MAX_FILE_BYTES=512*1024*1024, MAX_TOTAL_BYTES=2*1024*1024*1024;
-function digest(file) {
-  const stat=fs.lstatSync(file);
-  if(!stat.isFile() || stat.size>MAX_FILE_BYTES) throw Error('invalid preparation file: '+file);
-  const hash=crypto.createHash('sha256'), buffer=Buffer.alloc(64*1024), fd=fs.openSync(file,'r');
-  try { let count; while((count=fs.readSync(fd,buffer,0,buffer.length,null))) hash.update(buffer.subarray(0,count)); }
-  finally { fs.closeSync(fd); }
-  return {size:stat.size,sha256:hash.digest('hex')};
-}
+const MAX_FILES=10000, MAX_TOTAL_BYTES=2*1024*1024*1024;
+const digest=owned.digest;
 function refuseOverrides() {
   // This lane has exactly one supported native build recipe. Cargo accepts
   // profile/target overrides from the environment even when argv is unchanged.

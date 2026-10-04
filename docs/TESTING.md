@@ -179,6 +179,10 @@ Preparation has its own atomic ledger before Playwright starts, with the build/c
 The command identity records that supplied executable's native path, source, digest and version, and each invocation records its actual native launch and confirmed exit.
 Windows uses the current Actions shell supplied by the workflow; a Bash version triplet does not establish or reject its distribution.
 Each tool probe retains its five-second bound and runs through `scripts/ci-owned-command.cjs` and the existing native `fixture-owner` group/job supervisor.
+Each owned invocation executes an exclusive private copy whose digest is checked against the worktree's supervisor before launch and recorded with its source path.
+The running image is separate from Cargo's mutable example output, so preparation can rebuild that output on Windows without replacing its own live supervisor.
+The copy is outside the command home; a surviving caller releases it after confirmed supervisor exit.
+Caller loss or unconfirmed exit retains the copy as a bounded ownership artifact, and the worker-loss control independently observes exit before removing its own copy.
 Output alone does not establish success: the original target receipt and supervisor exit must confirm zero owned survivors, including descendants, before release.
 Timeout or caller loss closes the caller-only owner pipe, retaining the original tool failure and every secondary termination error; unconfirmed exit preserves the command home and an unknown partial outcome.
 A failed end-of-operation probe keeps its original command error rather than being reported as source drift; only two completed identities establish a source/toolchain mismatch.
