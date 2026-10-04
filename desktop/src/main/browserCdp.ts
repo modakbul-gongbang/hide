@@ -161,6 +161,8 @@ export class BrowserCdpGateway {
   private readonly capabilities = new Map<string, Capability>();
   private readonly owners = new Map<number, Lease>();
   private readonly controlToken = secret();
+  // Client metadata for the existing context, never native context authority.
+  private readonly browserContextId = secret();
   private endpoint = "";
   private listening: Promise<{ endpoint: string; token: string }> | null = null;
   private rejectStart: ((error: Error) => void) | null = null;
@@ -266,7 +268,7 @@ export class BrowserCdpGateway {
     return page;
   }
   private info(page: CdpPage, kind: "page" | "tab" = "page"): Json {
-    return { targetId: `${kind}-${page.contents.id}`, type: kind, title: page.contents.getTitle(), url: page.contents.getURL(), attached: this.owners.has(page.contents.id), canAccessOpener: false };
+    return { targetId: `${kind}-${page.contents.id}`, type: kind, title: page.contents.getTitle(), url: page.contents.getURL(), attached: this.owners.has(page.contents.id), canAccessOpener: false, browserContextId: this.browserContextId };
   }
   private validHeaders(request: IncomingMessage): boolean {
     if (!this.endpoint || request.headers.host !== new URL(this.endpoint).host || request.headers["x-forwarded-host"] || request.headers["x-forwarded-for"]) return false;
@@ -637,7 +639,7 @@ export class BrowserCdpGateway {
     if (method === "Target.getTargets") return { targetInfos: this.eligible(client.capability).flatMap((page) => [this.info(page), this.info(page, "tab")]) };
     if (method === "Target.getTargetInfo") {
       if (params.targetId === undefined) return { targetInfo: parent
-        ? { targetId: parent.targetId, type: parent.kind, url: parent.lease.page.contents.getURL(), title: parent.lease.page.contents.getTitle(), attached: true, canAccessOpener: false }
+        ? { targetId: parent.targetId, type: parent.kind, url: parent.lease.page.contents.getURL(), title: parent.lease.page.contents.getTitle(), attached: true, canAccessOpener: false, browserContextId: this.browserContextId }
         : { targetId: "scoped-browser", type: "browser", title: "", url: "", attached: true, canAccessOpener: false } };
       const id = text(params, "targetId");
       return { targetInfo: this.info(this.page(client.capability, id), id.startsWith("tab-") ? "tab" : "page") };
@@ -809,7 +811,7 @@ export class BrowserCdpGateway {
       }
       const child: Session = { id: secret(), targetId: `iframe-${secret()}`, kind: "iframe", lease, parent, nativeId: params.sessionId, flattened: parent.flattened };
       client.sessions.set(child.id, child);
-      this.event(client, method, { sessionId: child.id, targetInfo: { targetId: child.targetId, type: "iframe", title: typeof info.title === "string" ? info.title : "", url: typeof info.url === "string" ? info.url : "", attached: true, canAccessOpener: false }, waitingForDebugger: params.waitingForDebugger === true }, parent);
+      this.event(client, method, { sessionId: child.id, targetInfo: { targetId: child.targetId, type: "iframe", title: typeof info.title === "string" ? info.title : "", url: typeof info.url === "string" ? info.url : "", attached: true, canAccessOpener: false, browserContextId: this.browserContextId }, waitingForDebugger: params.waitingForDebugger === true }, parent);
     } else if (method === "Target.detachedFromTarget") {
       const child = [...client.sessions.values()].find((session) => session.lease === lease && session.nativeId === params.sessionId);
       if (child) {

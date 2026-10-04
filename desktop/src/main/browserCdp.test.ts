@@ -199,7 +199,12 @@ describe("scoped desktop CDP public boundary", () => {
     expect(list.map((page) => page.id)).toEqual(["page-11", "page-12"]);
     const browser = await client(cap.browser_ws_url);
     const reply = await browser.call("Target.getTargets");
-    expect(((reply.result as Json).targetInfos as Json[]).filter((page) => page.type === "page").map((page) => page.targetId)).toEqual(["page-11", "page-12"]);
+    const targets = (reply.result as Json).targetInfos as Json[];
+    expect(targets.filter((page) => page.type === "page").map((page) => page.targetId)).toEqual(["page-11", "page-12"]);
+    expect(typeof targets[0]!.browserContextId).toBe("string");
+    expect(targets[0]!.browserContextId).not.toBe("");
+    expect(targets.every((page) => page.browserContextId === targets[0]!.browserContextId)).toBe(true);
+    expect((await browser.call("Target.getBrowserContexts")).result).toEqual({ browserContextIds: [] });
     const display = await capability({ workspace: "local\0/checkout", area_id: "a1", display_id: "d1" });
     expect(display.display_id).toBe("d1");
     expect((await (await fetch(`${display.cdp_http_url}/json`)).json() as Json[]).map((page) => page.id)).toEqual(["page-11"]);
@@ -258,6 +263,8 @@ describe("scoped desktop CDP public boundary", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     const attachment = browser.events.find((event) => event.method === "Target.attachedToTarget" && (event.params as Json).sessionId !== root && event.sessionId === root);
     expect(attachment).toBeDefined();
+    const parentInfo = (await browser.call("Target.getTargetInfo", {}, root)).result as Json;
+    expect(((attachment!.params as Json).targetInfo as Json).browserContextId).toBe((parentInfo.targetInfo as Json).browserContextId);
     const child = (attachment!.params as Json).sessionId as string;
     expect(child).not.toBe("native-iframe");
     expect((await browser.call("Runtime.evaluate", { expression: "1" }, child)).result).toEqual({ result: { type: "string", value: "native-iframe" } });

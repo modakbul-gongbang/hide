@@ -128,6 +128,7 @@ try {
 ```
 
 Playwright uses the existing context with `noDefaults: true`; creating another context or applying its default global download configuration is unsupported.
+Page, tab and iframe target metadata carries one opaque context identifier per launch so clients can associate those targets with the existing context; it does not grant native context authority.
 
 ```sh
 BU_CDP_URL="$browser_ws_url" python - <<'PY'
