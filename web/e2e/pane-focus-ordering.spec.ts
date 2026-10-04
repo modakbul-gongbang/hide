@@ -163,7 +163,6 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
         && last.occurred_at >= lastClickAt;
     };
 
-    const requestedBeforeBurst = diagnostics().filter((entry) => entry.kind === "pane.focus.requested").length;
     const held = gate.arm();
     await click(1);
     await held;
@@ -172,10 +171,15 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
       await click(0);
     }
     await expect(panes[0]).toHaveAttribute("data-focused", "true");
-    // The first pane can still be drawn from an earlier click while the
-    // last click is in transit. Keep the gate held until core has accepted
-    // all 40 alternating intents; the repeated initial click shares its intent.
-    await expect.poll(() => diagnostics().filter((entry) => entry.kind === "pane.focus.requested").length).toBe(requestedBeforeBurst + 40);
+    // An earlier first-pane snapshot can still be drawn while the last
+    // click is in transit. Wait for that click's core acceptance before
+    // releasing the held request, just as confirmation is correlated below.
+    await expect.poll(() => {
+      const last = diagnostics().filter((entry) => entry.kind.startsWith("pane.focus")).at(-1);
+      return last?.kind === "pane.focus.requested"
+        && last.message === `Focusing pane ${first}`
+        && last.occurred_at >= lastClickAt;
+    }).toBe(true);
     await gate.release();
     await expect.poll(confirmed).toBe(true);
     expect(gate.requests).toEqual([second, first]);
