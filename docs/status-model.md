@@ -18,6 +18,24 @@ Ownership is not stored anywhere.
 It is read back off the row: a row whose lineage depth is greater than zero is delegated, and every other row, including an orphan whose parent is gone, is the operator's.
 `ownership_of` is the only function that makes that judgement, and `apply_lineage` reapplies every derived value once the lineage is known.
 
+## agent_status provenance and background waits
+
+Herdr owns the raw `agent_status`; Hide reads it through `agent.list`/`agent.get`, converts it at `herdr-core/src/wire.rs` and derives its axes in `sidebar.rs`.
+For Claude Code and Codex, Herdr's [official agent reference](https://herdr.dev/docs/agents/) describes terminal-screen inference as the lifecycle source, rather than lifecycle state reported by their session hooks.
+A native session reference or display-only hook token does not prove that a tool is running or that its command completed.
+Other integrations can have full lifecycle reporting, so this screen-inference statement is specific to those two agents, not every agent Herdr supports.
+
+Hide's current mapping calls raw `done` a reported completion and `idle` a ready stopped pane, as specified below.
+That is a presentation signal supplied by Herdr, not a verified task outcome, successful test, exited background command or durable delivery receipt.
+The current upstream documentation also distinguishes semantic state waits from arbitrary command completion; its display/attention descriptions must not replace Hide's pinned wire mapping without checking the bundled schema and adapter.
+Use a command's own exit/result or an explicit coordination receipt when a workflow needs completion evidence, rather than treating a quiet pane or Done group as that evidence.
+
+[Issue #348](https://github.com/modakbul-gongbang/hide/issues/348) records one actual run in which an agent waiting for a background command was read as `done`.
+This is a known screen-inference limitation: a prompt-like quiet screen can cease to look working while background work is still outstanding.
+It is one observed case, not a guarantee that every background wait produces `done` or that Hide detects outstanding commands independently.
+The corresponding behavior for Monitor and for Codex's background terminal has not been verified by that observation.
+The existing [waiting-on-descendants rule](#a-quiet-root-waiting-on-its-children) uses proven lineage and child axes; it is not a general background-command detector.
+
 ## Hide owns the read axis, at pane level
 
 Herdr's seen is tab-scoped.
