@@ -11,7 +11,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import {
-  bootoutTestLabel, claudeSettings, codexHooks, deviceHome, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL,
+  claudeSettings, codexHooks, deviceHome,
   proveDeviceHome, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
 } from "./device-home";
 import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
@@ -23,7 +23,7 @@ const DEVICE = "ssh-kit";
 const ALIAS = "isolated-kit";
 const SECOND_DEVICE = "ssh-kit-second";
 const SECOND_ALIAS = "isolated-kit-second";
-const PARTS = ["cli", "claude_code_hook", "codex_hook", "hcoord", "codex_per_pane"];
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "coordination_retirement", "codex_per_pane"];
 const LABELS_ID = "hide.agent-context-labels";
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
@@ -72,17 +72,15 @@ async function startDeviceRun(name: string, aliases: string[]) {
   run.env.HIDE_HOST_HELPER_ROOT = helper;
   run.env.HIDE_HOST_CLI_DIR = cliDir;
   writeSshConfig(run.env.HOME!, aliases);
-  const hcoordHome = proveDeviceHome(run.env, aliases[0]!, home);
-  const label = hcoordLabel(hcoordHome);
-  const operatorDaemon = launchdPid(OPERATOR_HCOORD_LABEL);
-  const original = resetDeviceHome(home, label);
+  proveDeviceHome(run.env, aliases[0]!, home);
+  const original = resetDeviceHome(home);
   const build = stageBuild(run.root);
   const daemonLog = path.join(run.root, "daemon.log");
   const daemonOutput = fs.openSync(daemonLog, "w");
   const daemon = spawn(path.join(build, "hided"), [], { env: run.env, stdio: ["ignore", daemonOutput, daemonOutput] });
   fs.closeSync(daemonOutput);
   await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
-  return { home, local, device, run, bridge, helper, cliDir, hcoordHome, label, operatorDaemon, original, daemonLog, daemon };
+  return { home, local, device, run, bridge, helper, cliDir, original, daemonLog, daemon };
 }
 
 function stopDeviceRun(setup: DeviceRun): void {
@@ -91,8 +89,6 @@ function stopDeviceRun(setup: DeviceRun): void {
   if (evidence) fs.copyFileSync(setup.daemonLog, path.join(evidence, `${path.basename(setup.run.root)}-daemon.jsonl`));
   setup.run.cleanup();
   if (setup.daemon.exitCode === null) setup.daemon.kill("SIGTERM");
-  bootoutTestLabel(setup.label);
-  expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(setup.operatorDaemon);
   fs.rmSync(setup.bridge, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   setup.device.stop();
   setup.local.stop();
@@ -134,7 +130,7 @@ async function inDevicePane(herdr: HerdrFixture, line: string, label: string): P
 
 test("a device gets this Mac's kit, keeps a part the operator removed out until Reinstall, and gives the kit back on removal", async () => {
   const setup = await startDeviceRun("kit", [ALIAS]);
-  const { home, device, run, bridge, helper, cliDir, hcoordHome, label, operatorDaemon, original, daemonLog } = setup;
+  const { home, device, run, bridge, helper, cliDir, original, daemonLog } = setup;
   let app: ElectronApplication | undefined;
   try {
     app = await relaunch(run.env);
@@ -163,9 +159,6 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     }
     // Labels for device panes are made on this Mac; the kit links no plugin there (PRD labels-in-hided B2).
     expect(devicePlugins(device)).not.toContain(LABELS_ID);
-    expect(fs.readFileSync(path.join(home, ".hcoord", "bin", "hcoord"), "utf8")).toContain(`HCOORD_HOME=${quote(hcoordHome)}`);
-    expect(launchdPid(label)).not.toBeNull();
-    expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operatorDaemon);
 
     await page.locator("[data-open-settings]").click();
     await expect(page.locator('[data-settings="true"]')).toBeVisible();
@@ -201,7 +194,7 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     // B22, B23: removal says what comes off and what stays, then takes only Hide's parts off.
     await page.locator(`[data-device-remove="${DEVICE}"]`).click();
     await expect(page.locator(`[data-device-remove-confirm="${DEVICE}"]`)).toBeVisible();
-    await expect(page.locator(`[data-device-remove-kit="${DEVICE}"]`)).toContainText("hcoord stays");
+    await expect(page.locator(`[data-device-remove-kit="${DEVICE}"]`)).toContainText("records in ~/.hide stay");
     await screenshot(page, "device-remove-confirm");
     const beforeRemoval = daemonEvents(daemonLog).length;
     await page.locator('[data-device-remove-go="true"]').click();
@@ -212,10 +205,6 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     expect(fs.lstatSync(path.join(cliDir, "hide"), { throwIfNoEntry: false })).toBeUndefined();
     expect(fs.existsSync(helper)).toBe(false);
     expect(devicePlugins(device)).not.toContain(LABELS_ID);
-    // hcoord stays: other tools on the device drive agents through it.
-    expect(fs.existsSync(path.join(home, ".hcoord", "bin", "hcoord"))).toBe(true);
-    expect(launchdPid(label)).not.toBeNull();
-    expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operatorDaemon);
   } catch (error) {
     console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
     console.log(fs.readFileSync(daemonLog, "utf8"));

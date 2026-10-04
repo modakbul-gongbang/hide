@@ -1,6 +1,6 @@
 // The desktop app against a private Herdr server and a private hided state
 // directory. Nothing here can reach the operator's daemon: the app is
-// refused a launch unless HIDE_STATE_DIR, HOME, HCOORD_HOME, HERDR_SOCKET_PATH and its
+// refused a launch unless HIDE_STATE_DIR, HOME, HERDR_SOCKET_PATH and its
 // own userData all sit under this run's temporary directory.
 
 import { _electron as electron, test as base, expect, type ElectronApplication, type Page } from "@playwright/test";
@@ -10,7 +10,6 @@ import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
-import { bootoutTestLabel, hcoordLabel } from "./launchd";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
@@ -41,6 +40,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
   const home = path.join(root, "home");
   fs.mkdirSync(path.join(home, "projects"), { recursive: true });
   if (herdr.root) linkFixtureTranscripts({ root: herdr.root }, home);
+  // Retired coordination overrides must not route a fixture into operator state.
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] =>
@@ -50,8 +50,6 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
   const env: Record<string, string> = {
     ...inherited,
     HOME: home,
-    // HOME relocates files; HCOORD_HOME also gives launchd a private label.
-    HCOORD_HOME: path.join(home, ".hcoord"),
     XDG_CONFIG_HOME: path.join(home, ".config"),
     XDG_STATE_HOME: path.join(home, ".local", "state"),
     HIDE_STATE_DIR: path.join(root, "state"),
@@ -88,13 +86,6 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       const stopped = spawnSync(HIDE_CLI, ["stop"], { env: { ...cleanupEnv, HIDE_STATE_DIR: state }, encoding: "utf8", timeout: 20_000 });
       if (stopped.error || stopped.status !== 0) errors.push(new Error(`private hided stop failed for ${state}: ${stopped.error?.message ?? (stopped.stderr || stopped.stdout || stopped.status)}`));
     }
-    // The kit may adopt the legacy home into the default home. Both belong
-    // to this fixture, regardless of environment changes a spec makes later.
-    if (process.platform === "darwin") {
-      for (const data of [path.join(home, ".hcoord"), path.join(home, ".hide", "hcoord")]) {
-        try { bootoutTestLabel(hcoordLabel(data)); } catch (error) { errors.push(error); }
-      }
-    }
     if (errors.length) throw new AggregateError(errors, `fixture cleanup incomplete; preserve ${root} and resolve the reported stop/unload failure`);
     // No process can recreate files now; only transient filesystem removal is retried.
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -113,12 +104,11 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
 export function assertIsolated(env: Record<string, string>): void {
   // The Herdr fixture keeps its socket directly under /tmp for the path length limit.
   const roots = [fs.realpathSync(os.tmpdir()), ...(process.platform === "win32" ? [] : [fs.realpathSync("/tmp")])];
-  for (const key of ["HOME", "HCOORD_HOME", "HIDE_STATE_DIR", "HIDE_DESKTOP_USER_DATA_DIR", "HERDR_SOCKET_PATH"]) {
+  for (const key of ["HOME", "HIDE_STATE_DIR", "HIDE_DESKTOP_USER_DATA_DIR", "HERDR_SOCKET_PATH"]) {
     const value = env[key];
     const parent = value ? fs.realpathSync(path.dirname(value)) : null;
     if (!parent || !roots.some((root) => parent.startsWith(root))) throw new Error(`${key} is not isolated under ${roots.join(" or ")}`);
   }
-  if (env.HCOORD_HOME !== path.join(env.HOME!, ".hcoord")) throw new Error("HCOORD_HOME must name this fixture's private coordinator");
 }
 
 /**

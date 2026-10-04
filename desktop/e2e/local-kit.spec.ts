@@ -3,8 +3,7 @@
 // every part there at launch and writes nothing when it launches again.
 // HIDE_E2E_APP names a packaged hide.app (`pnpm --dir desktop package`),
 // never the operator's /Applications copy; the window is this checkout's
-// desktop host, attached to that daemon. HCOORD_HOME inside the private HOME
-// gives the kit's hcoord daemon a LaunchAgent label of its own.
+// desktop host, attached to that daemon.
 
 import { expect, type ElectronApplication } from "@playwright/test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -13,14 +12,14 @@ import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import {
-  bootoutTestLabel, claudeSettings, codexHooks, hcoordLabel, launchdPid, OPERATOR_HCOORD_LABEL, readSettings, seedAgentFiles,
+  claudeSettings, codexHooks, readSettings, seedAgentFiles,
 } from "./device-home";
 import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_APP, "a packaged hide.app is required");
 
-const PARTS = ["cli", "claude_code_hook", "codex_hook", "hcoord", "codex_per_pane"];
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "coordination_retirement", "codex_per_pane"];
 const LABELS_ID = "hide.agent-context-labels";
 
 type Applied = { kind?: string; device_id?: string; components?: { id: string; state: string; reason: string | null }[] };
@@ -36,12 +35,8 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
   if (bundle.startsWith("/Applications/")) throw new Error("HIDE_E2E_APP must name a build, never the operator's installed app");
   const resources = path.join(bundle, "Contents", "Resources");
   const local = await startHerdr({ agents: false });
-  // A short label keeps hcoord's socket under the private HOME within the Unix path limit.
   const run = isolate(local, "lk");
   const home = run.env.HOME!;
-  run.env.HCOORD_HOME = path.join(home, ".hcoord");
-  const label = hcoordLabel(run.env.HCOORD_HOME);
-  const operatorDaemon = launchdPid(OPERATOR_HCOORD_LABEL);
   const original = seedAgentFiles(home);
   const daemonLog = path.join(run.root, "daemon.log");
   const startDaemon = (): ChildProcess => {
@@ -69,11 +64,6 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     // Labels are hided's own now; the kit links no plugin (PRD labels-in-hided B2).
     expect(plugins.status, plugins.stderr).toBe(0);
     expect(plugins.stdout).not.toContain(LABELS_ID);
-    const shim = fs.readFileSync(path.join(home, ".hcoord", "bin", "hcoord"), "utf8");
-    expect(shim).toContain("ELECTRON_RUN_AS_NODE='1'");
-    expect(shim).toContain(path.join(bundle, "Contents", "MacOS"));
-    expect(launchdPid(label)).not.toBeNull();
-    expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operatorDaemon);
 
     app = await relaunch(run.env);
     const page = await shellPage(app);
@@ -98,7 +88,6 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     await expect.poll(() => applied(daemonLog).length, { timeout: 120_000 }).toBe(2);
     expect(applied(daemonLog)[1]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
     expect([claudeSettings(home), codexHooks(home)].map((file) => fs.statSync(file).mtimeMs)).toEqual(written);
-    expect(launchdPid(OPERATOR_HCOORD_LABEL)).toBe(operatorDaemon);
   } catch (error) {
     console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
     console.log(fs.readFileSync(daemonLog, "utf8"));
@@ -107,7 +96,6 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     await app?.close().catch(() => undefined);
     run.cleanup();
     if (daemon.exitCode === null) daemon.kill("SIGTERM");
-    bootoutTestLabel(label);
     local.stop();
   }
 });

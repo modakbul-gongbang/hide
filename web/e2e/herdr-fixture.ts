@@ -186,7 +186,6 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
     // would drop it. macOS has no such file.
     skip_global_compinit: "1",
     HOME: path.join(root, "home"),
-    HCOORD_HOME: path.join(root, "home", ".hcoord"),
     HERDR_SESSION: `hide-e2e-${path.basename(root)}`,
     HERDR_SOCKET_PATH: socket,
     HERDR_CONFIG_PATH: config,
@@ -334,9 +333,9 @@ function declareFixtureSession(env: NodeJS.ProcessEnv, bin: string, pane: string
 }
 
 /**
- * Declares `child` as spawned by `parent` the way hcoord writes it: the
+ * Declares `child` as spawned by `parent` the way hided writes it: the
  * parent's pane and the digest of each pane's session, which Hide compares with
- * the session each pane reports now (docs: plugins/hcoord/docs/pane-tokens.md).
+ * the session each pane reports now (docs: docs/status-model.md#where-a-parent-comes-from).
  * Both panes must already hold an agent session; `herdr agent list` names it.
  */
 export function declareParent(fixture: Pick<HerdrFixture, "bin" | "env">, child: string, parent: string): void {
@@ -572,7 +571,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
 
 /**
  * A workspace of its own at `cwd` with one agent in it, recorded as spawned
- * by `parent` the way hcoord records it (`declareParent`) when one is named.
+ * by `parent` the way hided records it (`declareParent`) when one is named.
  * With `named`, the agent runs a session labelled so before the relationship
  * is written for it, since a later session is no longer that child's.
  * Returns the new pane.

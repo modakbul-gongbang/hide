@@ -18,10 +18,7 @@
 # compiles the workspace and runs the daemon's and the app's suites there,
 # beside the OS contract's Windows leg (issue #293).
 #
-# Every job and every long step has a timeout a few times its usual length
-# (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that
-# usually takes two minutes hung for 48 and for 156 in two runs, holding a
-# required check, and a job without a timeout runs for six hours.
+# Every job and every long step has a timeout to bound a stalled required check.
 name: verify
 
 on:
@@ -96,13 +93,6 @@ jobs:
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
       - name: Install dependencies
         run: bash scripts/verify-web.sh install
-      - name: hcoord typecheck, build, unit test, and end-to-end test
-        timeout-minutes: 10
-        run: |
-          bash scripts/verify-web.sh hcoord typecheck
-          bash scripts/verify-web.sh hcoord build
-          bash scripts/verify-web.sh hcoord test
-          bash scripts/verify-web.sh hcoord test:e2e
       - name: Web shell typecheck, lint, unit test, and build
         run: |
           bash scripts/verify-web.sh web typecheck
@@ -270,10 +260,6 @@ jobs:
       - name: Build the web shell
         # The desktop app serves web/dist through the hided it starts.
         run: bash scripts/verify-web.sh web build
-      - name: Build hcoord
-        # The staged app carries plugins/hcoord/dist, which the kit installs
-        # at ~/.hide/hcoord; the home-layout spec stages it like a package.
-        run: bash scripts/verify-web.sh hcoord build
       - name: Install Playwright Chromium
         # The browser spec opens a page in Chromium beside the Electron app.
         run: bash scripts/verify-web.sh desktop playwright-install

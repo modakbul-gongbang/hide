@@ -322,7 +322,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await folderToggle.click();
     await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
 
-    // sidebar-readability B12, B13, B9 and hcoord-plugin B20, B22: a parent in
+    // sidebar-readability B12, B13, B9 and lineage session contract: a parent in
     // Projects folds its children with the core's lineage state, the one
     // Agents folds by. The worktree's agent becomes the primary agent's child:
     // folded by default, its other-checkout child is a C line rather than a

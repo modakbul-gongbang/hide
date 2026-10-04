@@ -83,7 +83,7 @@ class EntryPoints(unittest.TestCase):
         self.assertEqual(self.run_entry("verify-web.sh", "install", "--ignore-scripts").returncode, 0)
         self.assertEqual(self.records()[0]["argv"], ["install", "--frozen-lockfile", "--ignore-scripts"])
         for args in [("install", "--no-frozen-lockfile"), ("elsewhere", "test"),
-                     ("web", "package"), ("web", "test:e2e"), ("hcoord", "e2e"), ("desktop", "unknown")]:
+                     ("web", "package"), ("web", "test:e2e"), ("retired", "e2e"), ("desktop", "unknown")]:
             with self.subTest(args=args):
                 self.assertEqual(self.run_entry("verify-web.sh", *args).returncode, 2)
         self.assertEqual(len(self.records()), 1)

@@ -91,7 +91,7 @@ jobs:
           echo "HIDE_VERSION=${version:-0.0.0-ci.${{ github.run_number }}}" >> "$GITHUB_ENV"
       - run: bash scripts/verify-web.sh install
       - name: Package the unsigned app and its checksum
-        # The packager builds the web shell, hcoord and the release binaries,
+        # The packager builds the web shell and the release binaries,
         # fetches the pinned Herdr and refuses when any of them cannot run.
         timeout-minutes: 50
         run: bash scripts/verify-web.sh desktop package
