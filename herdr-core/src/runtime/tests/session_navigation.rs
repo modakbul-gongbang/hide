@@ -1001,7 +1001,7 @@ fn view_authority_a_stale_herdr_tab_does_not_undo_an_unconfirmed_switch() {
     assert!(runtime.pending_tab_focus.is_none());
 }
 
-/// Issue #303. The operator drops a tab into a new area (t2) and clicks back
+/// Issue #413. The operator drops a tab into a new area (t2) and clicks back
 /// into the first area (t1) before Herdr has answered the drop. Herdr's
 /// session still names t1 from before the drop, which looks like the answer
 /// to the click, and only then does Herdr's answer to the drop arrive. That
