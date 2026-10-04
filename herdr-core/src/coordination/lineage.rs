@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const KEYS: [&str; 4] = [
     "parent_pane",
@@ -24,12 +24,29 @@ struct Patch {
     tokens: BTreeMap<String, Value>,
 }
 
+#[derive(Debug)]
+struct Batch {
+    generation: u64,
+    patches: Vec<Patch>,
+}
+#[derive(Debug)]
+struct Completion {
+    signature: String,
+    generation: u64,
+    succeeded: bool,
+    finished_at: Instant,
+}
+
 pub(crate) struct Writer {
-    sender: Option<mpsc::SyncSender<Vec<Patch>>>,
+    sender: Option<mpsc::SyncSender<Batch>>,
     worker: Option<JoinHandle<()>>,
     device: String,
-    queued: HashSet<String>,
-    completed: mpsc::Receiver<(String, bool)>,
+    // Only signatures still missing from the latest snapshot are retained.
+    // Generation checks keep obsolete batch completions from changing a retry.
+    in_flight: HashMap<String, u64>,
+    acknowledged: HashMap<String, Instant>,
+    generation: u64,
+    completed: mpsc::Receiver<Completion>,
     // Registration identities are append-only. Ending one changes no token
     // identity, so unrelated delivery writes cannot trigger reconciliation.
     observed_registrations: Option<usize>,
@@ -43,20 +60,25 @@ impl Writer {
         connector: Arc<dyn ApiConnector>,
         runtime: Weak<Mutex<Runtime>>,
     ) -> Result<Self, String> {
-        let (sender, receiver) = mpsc::sync_channel::<Vec<Patch>>(1);
+        let (sender, receiver) = mpsc::sync_channel::<Batch>(1);
         let (done, completed) = mpsc::sync_channel(super::AGENT_LIMIT * 2);
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
         let worker = thread::Builder::new()
             .name("hide-lineage".into())
             .spawn(move || {
-                while let Ok(patches) = receiver.recv() {
-                    for patch in patches {
+                while let Ok(batch) = receiver.recv() {
+                    for patch in batch.patches {
                         if stop.load(Ordering::Acquire) || runtime.upgrade().is_none() {
                             return;
                         }
                         let result = write(connector.as_ref(), &patch);
-                        let _ = done.try_send((signature(&patch), result.is_ok()));
+                        let _ = done.try_send(Completion {
+                            signature: signature(&patch),
+                            generation: batch.generation,
+                            succeeded: result.is_ok(),
+                            finished_at: Instant::now(),
+                        });
                         if let Err(error) = result {
                             crate::diagnostic!(
                                 json!({"component":"lineage","kind":"write_failed","message":error})
@@ -70,7 +92,9 @@ impl Writer {
             sender: Some(sender),
             worker: Some(worker),
             device,
-            queued: HashSet::new(),
+            in_flight: HashMap::new(),
+            acknowledged: HashMap::new(),
+            generation: 0,
             completed,
             observed_registrations: None,
             stopping,
@@ -83,17 +107,25 @@ impl Writer {
         ledger: &Arc<Ledger>,
         agents: &[ProjectedAgent],
         changed: bool,
+        snapshot_started_at: Instant,
     ) {
         let mut failed = false;
-        while let Ok((signature, ok)) = self.completed.try_recv() {
-            if !ok {
-                self.queued.remove(&signature);
+        while let Ok(completion) = self.completed.try_recv() {
+            if self.in_flight.get(&completion.signature) != Some(&completion.generation) {
+                continue;
+            }
+            self.in_flight.remove(&completion.signature);
+            if completion.succeeded {
+                self.acknowledged
+                    .insert(completion.signature, completion.finished_at);
+            } else {
                 failed = true;
             }
         }
         if !changed
             && !failed
             && !self.pending_retry
+            && self.acknowledged.is_empty()
             && self.observed_registrations == Some(ledger.agents.len())
         {
             return;
@@ -102,21 +134,43 @@ impl Writer {
         self.observed_registrations = Some(ledger.agents.len());
         let patches = plan(ledger, &self.device, agents);
         let current = patches.iter().map(signature).collect::<HashSet<_>>();
-        self.queued.retain(|signature| current.contains(signature));
+        self.in_flight
+            .retain(|signature, _| current.contains(signature));
+        // An ACK does not prove that a subsequent snapshot still has the
+        // tokens. Suppress only reads that began before that ACK; any newer
+        // snapshot (including reconnect bootstrap) may repair the same patch.
+        self.acknowledged.retain(|signature, finished_at| {
+            current.contains(signature) && snapshot_started_at < *finished_at
+        });
         let fresh = patches
             .into_iter()
-            .filter(|patch| !self.queued.contains(&signature(patch)))
+            .filter(|patch| {
+                let signature = signature(patch);
+                !self.in_flight.contains_key(&signature)
+                    && !self.acknowledged.contains_key(&signature)
+            })
             .collect::<Vec<_>>();
         if fresh.is_empty() {
             return;
         }
         let signatures = fresh.iter().map(signature).collect::<Vec<_>>();
-        if self
-            .sender
-            .as_ref()
-            .is_some_and(|sender| sender.try_send(fresh).is_ok())
-        {
-            self.queued.extend(signatures);
+        let Some(generation) = self.generation.checked_add(1) else {
+            return;
+        };
+        if self.sender.as_ref().is_some_and(|sender| {
+            sender
+                .try_send(Batch {
+                    generation,
+                    patches: fresh,
+                })
+                .is_ok()
+        }) {
+            self.generation = generation;
+            self.in_flight.extend(
+                signatures
+                    .into_iter()
+                    .map(|signature| (signature, generation)),
+            );
         } else {
             self.pending_retry = true;
         }
@@ -362,5 +416,136 @@ mod tests {
                 .values()
                 .all(Value::is_null)
         );
+    }
+    type WriterFixture = (
+        Writer,
+        mpsc::Receiver<Batch>,
+        mpsc::SyncSender<Completion>,
+        Arc<Ledger>,
+        Vec<ProjectedAgent>,
+    );
+    fn writer_fixture() -> WriterFixture {
+        let (sender, batches) = mpsc::sync_channel(1);
+        let (done, completed) = mpsc::sync_channel(super::super::AGENT_LIMIT * 2);
+        let parent = record("agent-1", "w1:p1", "parent", None);
+        let child = record("agent-2", "w2:p1", "child", Some(&parent.id));
+        let agents = vec![agent(&child, BTreeMap::new())];
+        let ledger = Arc::new(Ledger {
+            next_id: 3,
+            agents: vec![parent, child],
+            ..Default::default()
+        });
+        (
+            Writer {
+                sender: Some(sender),
+                worker: None,
+                device: "local".into(),
+                in_flight: HashMap::new(),
+                acknowledged: HashMap::new(),
+                generation: 0,
+                completed,
+                observed_registrations: None,
+                stopping: Arc::new(AtomicBool::new(false)),
+                pending_retry: false,
+            },
+            batches,
+            done,
+            ledger,
+            agents,
+        )
+    }
+
+    fn completion(batch: &Batch, succeeded: bool, finished_at: Instant) -> Completion {
+        Completion {
+            signature: signature(&batch.patches[0]),
+            generation: batch.generation,
+            succeeded,
+            finished_at,
+        }
+    }
+
+    #[test]
+    fn successful_unseen_tokens_are_repaired_by_a_fresh_snapshot_or_reconnect() {
+        for reconnect in [false, true] {
+            let (mut writer, batches, done, ledger, missing) = writer_fixture();
+            let before = Instant::now();
+            writer.observe(&ledger, &missing, true, before);
+            let first = batches.try_recv().unwrap();
+            let finished = before + Duration::from_millis(1);
+            done.try_send(completion(&first, true, finished)).unwrap();
+            // This read began before the ACK. Its missing values cannot prove
+            // a reset, so the successful write is not duplicated yet.
+            writer.observe(&ledger, &missing, false, before);
+            assert!(batches.try_recv().is_err());
+            assert!(writer.in_flight.is_empty());
+            assert_eq!(writer.acknowledged.len(), 1);
+            // Tokens were reset before we ever observed a matched snapshot.
+            // Both the next regular read and a reconnect repair that state.
+            writer.observe(&ledger, &missing, reconnect, finished);
+            let repair = batches.try_recv().unwrap();
+            assert_eq!(repair.patches, first.patches);
+            assert!(repair.generation > first.generation);
+            done.try_send(completion(&repair, true, finished)).unwrap();
+            let mut matched = missing.clone();
+            matched[0].tokens = repair.patches[0].tokens.clone();
+            writer.observe(&ledger, &matched, true, finished);
+            assert!(writer.in_flight.is_empty());
+            assert!(writer.acknowledged.is_empty());
+            writer.observe(&ledger, &matched, false, finished);
+            assert!(batches.try_recv().is_err());
+        }
+    }
+
+    #[test]
+    fn obsolete_completion_cannot_cancel_a_new_write_of_the_same_signature() {
+        let (mut writer, batches, done, ledger, missing) = writer_fixture();
+        let observed = Instant::now();
+        writer.observe(&ledger, &missing, true, observed);
+        let old = batches.try_recv().unwrap();
+        let mut matched = missing.clone();
+        matched[0].tokens = old.patches[0].tokens.clone();
+        writer.observe(&ledger, &matched, true, observed);
+        writer.observe(&ledger, &missing, true, observed);
+        let current = batches.try_recv().unwrap();
+        done.try_send(completion(&old, true, observed)).unwrap();
+        writer.observe(&ledger, &missing, false, observed);
+        assert!(batches.try_recv().is_err());
+        assert!(writer.acknowledged.is_empty());
+        assert_eq!(
+            writer.in_flight.get(&signature(&current.patches[0])),
+            Some(&current.generation)
+        );
+        done.try_send(completion(&current, false, observed))
+            .unwrap();
+        writer.observe(&ledger, &missing, false, observed);
+        let retry = batches.try_recv().unwrap();
+        assert!(retry.generation > current.generation);
+        assert_eq!(writer.in_flight.len(), 1);
+    }
+
+    #[test]
+    fn a_full_pending_batch_is_retried_without_duplicating_in_flight_patches() {
+        let (mut writer, batches, _, ledger, missing) = writer_fixture();
+        let observed = Instant::now();
+        writer
+            .sender
+            .as_ref()
+            .unwrap()
+            .try_send(Batch {
+                generation: 0,
+                patches: Vec::new(),
+            })
+            .unwrap();
+        writer.observe(&ledger, &missing, true, observed);
+        assert!(writer.pending_retry);
+        assert!(writer.in_flight.is_empty());
+        batches.try_recv().unwrap();
+        writer.observe(&ledger, &missing, false, observed);
+        let submitted = batches.try_recv().unwrap();
+        assert_eq!(submitted.patches.len(), 1);
+        assert!(!writer.pending_retry);
+        writer.observe(&ledger, &missing, false, observed);
+        assert!(batches.try_recv().is_err());
+        assert_eq!(writer.in_flight.len(), 1);
     }
 }

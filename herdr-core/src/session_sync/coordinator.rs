@@ -114,6 +114,7 @@ fn run_coordinator(
 
         if subscription.is_none() && Instant::now() >= reconnect_at {
             let has_projection = replica.is_some();
+            let snapshot_started_at = Instant::now();
             match connect(
                 &context,
                 &sender,
@@ -145,7 +146,12 @@ fn run_coordinator(
                             .ok()
                             .and_then(|guard| guard.delivery_state().ok());
                         if let Some(state) = state {
-                            writer.observe(&state, &replica.as_ref().unwrap().state.agents, true);
+                            writer.observe(
+                                &state,
+                                &replica.as_ref().unwrap().state.agents,
+                                true,
+                                snapshot_started_at,
+                            );
                         }
                     }
                     if replica
@@ -193,6 +199,7 @@ fn run_coordinator(
 
         if subscription.is_some() && Instant::now() >= next_agent_refresh {
             next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+            let snapshot_started_at = Instant::now();
             match fetch_agents(&context) {
                 Ok(agents) => {
                     let current = replica
@@ -208,7 +215,7 @@ fn run_coordinator(
                             .ok()
                             .and_then(|guard| guard.delivery_state().ok());
                         if let Some(state) = state {
-                            writer.observe(&state, &agents, native_changed);
+                            writer.observe(&state, &agents, native_changed, snapshot_started_at);
                         }
                     }
                     if requested {
