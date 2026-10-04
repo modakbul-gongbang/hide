@@ -43,9 +43,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request replaces that pull request's run. Main's runs
+# queue instead: each merge's full run is the net under the lanes a pull
+# request's plan left out, so a later merge must not cancel it.
 concurrency:
   group: verify-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:

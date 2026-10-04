@@ -77,12 +77,30 @@ SHARED_WEB = (
 )
 SHARED_WEB_LANES = ("desktop-checks", "desktop-e2e", "web-e2e-platform", "windows-e2e")
 
+# Files a lane outside their own directory reads: a change to one also plans
+# that lane, and the Rust crates whose tests read it. An entry ending in `/`
+# is a folder. Keep this beside the test that reads the file.
+READERS = (
+    # herdr-core/src/runtime/tests/snapshot_delta.rs asserts the agent notes.
+    ("AGENTS.md", {"rust"}, {"herdr-core"}),
+    ("CLAUDE.md", {"rust"}, {"herdr-core"}),
+    # herdr-core's structure tests scan the shell (runtime/tests.rs, sidebar.rs)
+    # and the daemon (runtime/tests/snapshot_delta.rs).
+    ("web/src/", {"rust"}, {"herdr-core"}),
+    ("hided/src/", {"rust"}, {"herdr-core"}),
+    # web/e2e/s2, s3 and s7 import the wire path conversion.
+    ("desktop/src/main/wirePath.ts", {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e"}, set()),
+    # web/src/settings.test.ts, theme.test.ts and web/e2e/theme.spec.ts read the tokens.
+    ("design/tokens.json", {"web-checks", "web-e2e"}, set()),
+)
+
 
 def cargo_crates(root=ROOT):
     """Each workspace crate's directory, mapped to the crates that consume it."""
     raw = subprocess.check_output(
         ["bash", "scripts/verify-cargo.sh", "metadata", "--format-version", "1", "--no-deps"],
         cwd=root,
+        stderr=subprocess.PIPE,
     )
     metadata = json.loads(raw)
     workspace = PurePosixPath(Path(metadata["workspace_root"]).as_posix())
@@ -137,7 +155,8 @@ def classify(path, status, crates, root):
     crate = crates.get(parts[0])
     if crate is not None:
         packages = reverse_closure(crates, crate["name"])
-        lanes = {"rust"}
+        # Every crate compiles into the Windows workspace `windows check` builds.
+        lanes = {"rust", "windows-check"}
         # Every end-to-end lane drives hided, so a crate it links reaches them.
         if "hided" in packages:
             lanes.add("web-e2e")
@@ -191,6 +210,10 @@ def select(entries, crates, root=ROOT, full_reason=None):
         if lanes is None:
             full.append(reason)
             continue
+        for reader, extra_lanes, extra_packages in READERS:
+            if name == reader or (reader.endswith("/") and name.startswith(reader)):
+                lanes |= extra_lanes
+                reached = reached | extra_packages
         packages |= reached
         reasons["policy"].append(reason)
         for lane in lanes:
@@ -222,7 +245,13 @@ def changed_entries(base, head, root=ROOT):
 
 
 def plan(event, base, head, root=ROOT, crates=None):
-    crates = cargo_crates(root) if crates is None else crates
+    if crates is None:
+        try:
+            crates = cargo_crates(root)
+        except (subprocess.CalledProcessError, ValueError, KeyError) as error:
+            # Without the crate graph no Rust change can be narrowed; the full
+            # Rust lane runs the whole workspace and needs no package list.
+            return select([], {}, root, f"crate graph unavailable: {error}")
     if event != "pull_request":
         return select([], crates, root, f"{event}: every lane runs on main")
     try:

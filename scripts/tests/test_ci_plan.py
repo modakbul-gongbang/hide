@@ -29,25 +29,35 @@ def needs_for(result, **override):
 
 class Selection(unittest.TestCase):
     def test_documentation_runs_only_the_policy_checks(self):
-        result = plan("docs/ARCHITECTURE.md", "CONTRIBUTING.md", "desktop/AGENTS.md")
+        result = plan("docs/ARCHITECTURE.md", "CONTRIBUTING.md", "desktop/AGENTS.md", "design/hide-ui.lib.pen")
         self.assertEqual(result["lanes"], ["policy"])
         self.assertEqual(result["rust_packages"], [])
 
-    def test_a_web_display_change_skips_rust_windows_and_desktop(self):
+    def test_a_file_another_lane_reads_plans_that_lane(self):
+        notes = plan("AGENTS.md")
+        self.assertEqual(notes["lanes"], ["policy", "rust"])
+        self.assertEqual(notes["rust_packages"], ["herdr-core"])
+        self.assertIn("herdr-core", plan("hided/src/core.rs")["rust_packages"])
+        self.assertTrue({"web-e2e", "windows-e2e"} <= set(plan("desktop/src/main/wirePath.ts")["lanes"]))
+        self.assertTrue({"web-checks", "web-e2e"} <= set(plan("design/tokens.json")["lanes"]))
+
+    def test_a_web_display_change_skips_windows_and_desktop(self):
         result = plan("web/src/components/ui/button.tsx", "web/src/Overview.tsx")
-        self.assertEqual(set(result["lanes"]), {"policy", "web-checks", "web-e2e"})
+        # herdr-core's structure tests scan the shell's sources.
+        self.assertEqual(set(result["lanes"]), {"policy", "web-checks", "web-e2e", "rust"})
+        self.assertEqual(result["rust_packages"], ["herdr-core"])
 
     def test_web_code_the_desktop_host_reads_reaches_desktop_and_windows(self):
         for path in ("web/src/shortcuts.ts", "web/src/host.ts", "web/src/store.ts", "web/src/keys.ts"):
             with self.subTest(path=path):
                 lanes = set(plan(path)["lanes"])
                 self.assertTrue({"web-checks", "web-e2e", "desktop-checks", "desktop-e2e", "windows-e2e"} <= lanes)
-                self.assertNotIn("rust", lanes)
+                self.assertNotIn("windows-check", lanes)
 
     def test_a_platform_spec_keeps_its_platform_lanes(self):
         lanes = set(plan("web/e2e/s3.spec.ts")["lanes"])
         self.assertTrue({"web-e2e", "web-e2e-platform", "windows-e2e"} <= lanes)
-        lanes = set(plan("web/e2e/theme.spec.ts")["lanes"])
+        lanes = set(plan("web/e2e/new-tab.spec.ts")["lanes"])
         self.assertEqual(lanes, {"policy", "web-checks", "web-e2e"})
 
     def test_desktop_changes_run_the_desktop_lanes(self):
@@ -63,14 +73,15 @@ class Selection(unittest.TestCase):
         self.assertEqual(result["rust_packages"], [name for name in EVERY_PACKAGE if name != "hide-project"])
         self.assertFalse(result["full"])
 
-    def test_a_leaf_crate_tests_its_reverse_dependencies_without_windows(self):
+    def test_a_leaf_crate_tests_its_reverse_dependencies_and_compiles_on_windows(self):
         result = plan("hide-session/src/lib.rs")
         self.assertIn("hide-session", result["rust_packages"])
         self.assertIn("hided", result["rust_packages"])
         self.assertNotIn("hide-platform", result["rust_packages"])
-        self.assertNotIn("windows-check", result["lanes"])
+        self.assertIn("windows-check", result["lanes"])
         self.assertNotIn("windows-e2e", result["lanes"])
-        self.assertEqual(plan("hided/src/lib.rs")["rust_packages"], ["hided"])
+        self.assertNotIn("os-contract", result["lanes"])
+        self.assertEqual(plan("hided/tests/handshake.rs")["rust_packages"], ["hided"])
 
     def test_the_os_contract_brings_its_macos_leg(self):
         result = plan("hide-herdr-client/src/lib.rs")
@@ -103,6 +114,12 @@ class Selection(unittest.TestCase):
         result = ci.plan("pull_request", "0" * 40, "HEAD", ROOT)
         self.assertTrue(result["full"])
         self.assertIn("comparison unavailable", result["reasons"]["rust"][0])
+
+    def test_a_missing_crate_graph_runs_everything(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = ci.plan("pull_request", "HEAD^1", "HEAD", Path(directory))
+            self.assertEqual(result["lanes"], list(ci.LANES))
+            self.assertIn("crate graph unavailable", result["reasons"]["rust"][0])
 
     def test_a_pull_request_diff_is_read_from_git(self):
         with tempfile.TemporaryDirectory() as directory:

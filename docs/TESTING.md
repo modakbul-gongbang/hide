@@ -132,18 +132,21 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 
 | Change | Lanes |
 | --- | --- |
-| Only `docs/`, root Markdown, or any `AGENTS.md`/`CLAUDE.md` | `policy` (the script suite and the repository invariants) |
+| Only `docs/`, root Markdown, or an `AGENTS.md`/`CLAUDE.md` below the root | `policy` (the script suite and the repository invariants) |
 | `design/` | `policy`; `design-contract.yml` checks the library |
+| A file a lane outside its folder reads (`READERS` in the script): the root `AGENTS.md`, `web/src` and `hided/src`, which herdr-core's tests read; `desktop/src/main/wirePath.ts`, which web e2e specs import; `design/tokens.json`, which web tests read | also that lane, and `rust` over `herdr-core` for the first three |
 | `web/src`, `web/public`, `web/index.html`, `web/mobile.html` | `web-checks` and the Linux `web-e2e` |
 | Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-checks`, `desktop-e2e`, and the `@platform` lanes on macOS and Windows |
 | A `web/e2e` spec | `web-checks` and `web-e2e`; a spec tagged `@platform` also runs the macOS and Windows `@platform` lanes |
 | `desktop/src`, `desktop/static`, a `desktop/e2e` spec | `desktop-checks` and `desktop-e2e`; `desktop/src/main` also runs `windows-check`, where the main process's unit suite runs on Windows |
-| A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), and the Linux `web-e2e`, since every crate reaches `hided` |
-| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract`, `windows-check`, `windows-e2e`, the macOS `@platform` lane and `desktop-e2e` |
+| A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), `windows-check`, which compiles every crate for Windows, and the Linux `web-e2e`, since every crate reaches `hided` |
+| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract`, `windows-e2e`, the macOS `@platform` lane and `desktop-e2e` |
 | `.github/`, `scripts/`, `contracts/` (the Herdr pin and schemas), `plugins/`, shared e2e fixtures, any `package.json`, configuration or lockfile, the workspace `Cargo.toml`, a type change, and any path no row above claims | every lane |
 
-A push to main plans every lane, and so does a comparison that cannot be computed: a missing base, a checkout that is not the merge commit, or a diff that does not parse.
-Main's full run is the net under a pull request that left out a lane it needed; when one does, fix the rule in `scripts/ci-plan.py` with a case in its test.
+Every plan includes `policy`, whatever else it names.
+A push to main plans every lane, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
+Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
+When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.
 `os-contract` always brings `desktop-e2e`, which holds the OS contract's macOS leg.
 The `plan` job's summary lists each lane with the paths that chose it.
 
