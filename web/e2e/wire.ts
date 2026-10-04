@@ -66,20 +66,6 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   if ((await workspace.count()) > 0) return;
   await main.locator('[data-main-tab="projects"]').click();
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
-  const overview = page.locator("[data-overview-screen]");
-  // Every way in opens the request view; the boxes are the Agents tile's (overview-request-view D-05).
-  await overview.locator('[data-lens-tile-button="agents"]').click();
-  const head = overview.locator("[data-graph-box] [data-graph-head-open]").first();
-  await expect(head.or(overview.locator("[data-graph-empty], [data-graph-fold]")).first()).toBeVisible();
-  if ((await head.count()) > 0) {
-    await head.click();
-  } else {
-    const id = await overview.getAttribute("data-overview-screen");
-    const mode = await page.locator("[data-sidebar]").getAttribute("data-sidebar");
-    await page.locator('[data-sidebar-mode="projects"]').click();
-    await page.locator(`[data-project="${id}"] [data-checkout]`).first().click();
-    if (mode && mode !== "projects") await page.locator(`[data-sidebar-mode="${mode}"]`).click();
-  }
   await expect(workspace).toBeVisible();
 }
 

@@ -5,6 +5,8 @@ import { Hint } from "./components/ui/tooltip";
 import { hostKind, keySystem } from "./host";
 import { resolvedRegistry, sheetRows, storedBindings, type Command } from "./shortcuts";
 import { useShellStore } from "./store";
+import { useInterfaceTranslation } from "./i18n/client";
+import { overviewCommandTitle } from "./shortcutLabels";
 
 // The sheet is generated from the registry (PRD S2 B11): every mapping of the
 // running host by group, a "moved for Chrome" note on the chords Chrome
@@ -16,6 +18,7 @@ import { useShellStore } from "./store";
 const GROUPS: Command["group"][] = ["Tabs", "Navigate", "Panels", "Panes", "Help"];
 
 export function ShortcutSheet({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   // The sheet reads the same effective registry the window listener runs, so
   // a rebound pane chord is what it lists (PRD S5 B9).
   const host = hostKind();
@@ -44,7 +47,7 @@ export function ShortcutSheet({ actions }: { actions: Actions }) {
               <ul>
                 {sheetRows(group, registry, host, system).map((row) => (
                   <li key={row.id} className="flex items-center gap-md py-xxs" data-shortcut={row.id}>
-                    <span className="min-w-0 flex-1 truncate">{row.title}</span>
+                    <span className="min-w-0 flex-1 truncate">{overviewCommandTitle(row.id, row.title, t)}</span>
                     {host === "browser" && row.moved ? (
                       <Hint label={`Chrome reserves ${row.movedFrom}`}>
                         <span className="text-caption text-warning">moved for Chrome ({row.movedFrom})</span>

@@ -25,7 +25,7 @@ const BRANCH = "feature/pr-card";
 const TITLE = "사이드바 가독성: 오른쪽 조작, 흔들리지 않는 행, Projects 계보 접기";
 
 function git(cwd: string, args: string[]): void {
-  execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, stdio: "ignore" });
 }
 
 /** A `gh` that is logged in and lists one open, approved pull request whose checks pass, on `BRANCH`. */
@@ -169,7 +169,10 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(card).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(card).toHaveCount(0);
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    await page.locator("[data-go-main]").click();
     await expect(page.locator("[data-main-screen]")).toBeVisible();
+    const focusBeforeExternal = sent.get("focus_checkout") ?? 0;
 
     // B4: on All projects no Workspace is in front, so the glyph opens the
     // default browser, which a browser tab shows as a new page; nothing opens in hide.
@@ -179,7 +182,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     expect(opened.url()).toBe(url);
     await opened.close();
     await expect(page.locator("[data-main-screen]")).toBeVisible();
-    expect(sent.get("focus_checkout") ?? 0).toBe(0);
+    expect(sent.get("focus_checkout") ?? 0).toBe(focusBeforeExternal);
     expect(sent.get("browser_open") ?? 0).toBe(0);
 
     // B1: with the worktree's Workspace in front, the glyph opens the pull
@@ -273,10 +276,9 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await rest(page);
     await expect(plain).toHaveCount(0);
 
-    // An Escape the shell answers closes the card too: on a Project's Overview
-    // Escape leaves the Overview, and the card the hovered row showed goes
-    // with it, though the card is no layer of its own.
-    await project.locator("[data-project-overview]").click();
+    // Escape leaves the shared Overview page and closes the hovered row's card.
+    await page.locator("[data-go-main]").click();
+    await page.getByRole("tab", { name: "repo", exact: true }).click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await feature.locator("[data-checkout]").hover();
     await expect(card).toBeVisible();

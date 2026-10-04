@@ -136,7 +136,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
       case "agent":
         return entry.paneId ? actions.openAgent(entry.paneId) : undefined;
       case "project":
-        return entry.deviceId && entry.workspaceId ? actions.openOverview(entry.deviceId, entry.workspaceId) : undefined;
+        return entry.deviceId && entry.workspaceId ? actions.openProjectById(entry.deviceId, entry.workspaceId) : undefined;
       case "checkout":
         return entry.deviceId && entry.workspaceId && entry.checkoutId ? actions.openWorkspace(entry.deviceId, entry.workspaceId, entry.checkoutId) : undefined;
       case "issue":

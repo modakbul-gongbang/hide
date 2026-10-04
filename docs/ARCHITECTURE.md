@@ -51,7 +51,7 @@ Each is bounded (64 retired ids, 16 held focuses), and anything else the replica
 `wire.rs` names the day Herdr sequences its stream: a test fails when the event schema declares `sequence` or the subscribe params take `after_sequence`, because a resume cursor would then be worth building back.
 A separate 250 ms coordinator tick advances every bounded asynchronous operation, so an acknowledgement or topology wait reaches its deadline even when Herdr emits no event.
 A tick whose `agent.list` is unchanged publishes nothing, so an idle session recomputes no projection; the catalog's own refresh window still publishes, because the rebuild can only happen inside `publish_replica`.
-The Git context refreshes local worktree state when a watched Git HEAD, index or ref changes, Herdr worktree topology changes, or the local project's Overview opens; content-only working-tree edits wait for the next explicit Overview read.
+The Git context refreshes local worktree state when a watched Git HEAD, index or ref changes, Herdr worktree topology changes, or Overview's local project scope opens; content-only working-tree edits wait for the next explicit Overview read.
 Worktree and pull request readers run outside the runtime mutex, and a changed repository reuses the other projects' cached answers.
 A web Overview names its local Git project with `card_measure_disk` and `{workspace_id}`, for every window of the daemon like `sessions_refresh`: every worktree and the shared Git directory join the same disk request beside the right panel's, the reader counts each inode once, and each workspace row carries the result as `disk`, absent from the wire until measured; the payload `{}` re-measures the focused checkout's project, which the side panel uses.
 The measurement sorts each checkout's blocks into build cache, dependencies, worktree source and other (`herdr-core/src/disk_layers.rs`), and the workspace row's `disk` adds the volume's free space and the project's layer totals; folder paths stay in the core and never reach the wire.
@@ -114,7 +114,7 @@ The shell renders those snapshot values and dispatches typed actions; it does no
 
 The web shell reads a Project's Sessions through the same catalog, but for a Project it names rather than the focused checkout (PRD S8 D-03, `herdr-core/src/runtime/project_sessions.rs`).
 `sessions_refresh` with `{workspace_id, device_id}` names one Project for every window of the daemon and reads its history on a worker, and `archive_open` with `workspace_id` reads one of that Project's sessions beside it; without those fields both keep the meaning above.
-A project's Overview sends it once when it opens, so its Sessions tile counts today's sessions without the Sessions view being chosen (PRD overview-lenses-tiles-agents B5).
+Overview's project scope sends it once when it opens, so its Sessions tile counts today's sessions without the Sessions view being chosen (PRD overview-lenses-tiles-agents B5).
 The named Project stays named while the focus moves, a read that finishes after another Project was named is dropped by the existing generation fence, and naming another Project closes the open session.
 A device Project reads no local session: the section carries the device's reason, because the provider files live on the device and there is no contract yet for reading them there.
 The section rides the snapshot delta on its own revision, `project_sessions`, beside `rest`, `editor` and `changes`, so an agent or navigator change never resends a history; its immutable history rows and open transcript use shared pointers for O(1) unchanged comparisons and payload capture under the lock, and it is absent from the wire until a Project is named.
@@ -829,8 +829,16 @@ Registering or removing a device refreshes only the device rows (`rebuild_device
 
 ### Workspaces in the web shell
 
-The web shell has three screens, one per scope the sidebar picks (PRD S6 D-02, S8 D-08): the Overview (titled so by PRD sidebar-shell D-02) lists every registered Project on every device, a Project's Overview shows its Agents, Issues, PRs or Sessions under the tiles that count them (the session history, see Project sessions and Memory above), and a Workspace is one checkout's working space (`web/src/{MainScreen,ProjectOverview,ProjectSessions,WorkspaceScreen}.tsx`, rules in `web/src/navigation.ts`, `web/src/projectBoard.ts`, `web/src/overviewLens.ts`, `web/src/agentGraph.ts` and `web/src/sessions.ts`).
-The screen and the Overview's view are page state in `web/src/ui.ts`, never the core's, so two windows each keep their own; a Project's Overview carries its lens (tile, the Issues mode, the Agents graph's selected box, filter and opened folds, the PRs view's unfolded rows) on the screen value itself, so Recent Panels brings it back as it was left and every other entry starts from `entryLens`.
+The shared Overview (`web/src/Overview.tsx`) is window-local state in `ui.ts`, with All projects and current-project scopes and no persisted modal or project destination.
+It overlays a mounted Workspace or renders as its central fallback page; its modal is not a Recent Panels visit and Agent cycling uses the existing pane order without a Workspace origin.
+Project activation uses `projects.ts` to choose this device's recent usable checkout, then primary, then first usable checkout.
+The existing `focus_checkout` payload accepts `project_expanded` alongside checkout disclosure, so admission validates the target before either fold or focus changes and persistence keeps the existing collapsed-project state.
+
+
+The web shell has a Workspace and one shared Overview page, with Overview also available as a modal over the Workspace (`web/src/{Overview,MainScreen,ProjectOverview,ProjectSessions,WorkspaceScreen}.tsx`).
+All projects lists the device's registered projects; the current-project scope reuses its Agents, Issues, PRs and Sessions content and lens controls.
+The page, modal visibility, selected project and lens are window-local state in `web/src/ui.ts`, never core state, so each window keeps its own scope.
+Recent Panels restores the shared page and its lens, while the transient modal does not enter recent history.
 Which screen is showing is the shell's own location (`ui.ts`), not core state: the page starts on the Workspace the core has in front only when the core marks it `resumed`, the Workspace the operator last chose, in this process or before a restart (D-11): a `focus_checkout`, `focus_pane` or `focus_tab` the core accepted, or a device `remote_control` focus or Workspace open once the device's front lands there, so a refusal chooses nothing and a front only Herdr's own focus moved is not resumed; a first run, a last Workspace that is gone, or any other front starts on Main once the device in front has settled (`startupScreen` in `navigation.ts`), and moving between screens creates or ends nothing.
 A device Workspace is known only when that device's session arrives, so the first screen waits for the device in front rather than for this machine's Herdr.
 Main and Overview read only the catalog, the device sessions and the agent rows the snapshot already carries; a device that is connecting or cannot answer shows why and leaves its counts unknown rather than zero.
@@ -849,7 +857,7 @@ It answers in `issue_work.search` (`request_id`, `query`, `phase` `working`, `re
 One search runs at a time (`GithubSearchWork`): a request with the running search's request id or query joins it and starts no second worker, any other request becomes the single pending one and replaces an older pending one, and it starts when the running search ends; the slot shows the latest request as `working` at once, and an answer whose request the slot no longer shows is dropped when it lands, as `ingest_issue_detail` does.
 A failed call, any repository's, fails the whole search with the short slot message `GitHub 검색에 실패했습니다.` and a `github_search.failed` diagnostic that carries the request id and the real reason; a worker that panics is a failed search too, so it can never leave the one search slot taken.
 `create_worktree` with a `task_key` writes the link into the new worktree's metadata after its identity is confirmed, and a `prompt` goes to the agent as its first argument (the first prompt, above); a prompt that cannot be passed fails the agent start, and the task operation carries why.
-The GitHub adapter reads what the existing GitHub reader already fetched off the lock (`github.rs`); a project's Overview or the every-project Overview's boards ask for it with `github_request` naming the project, and a read that fails keeps the last tasks with the failure beside them.
+The GitHub adapter reads what the existing GitHub reader already fetched off the lock (`github.rs`); Overview's project scope or All projects boards ask for it with `github_request` naming the project, and a read that fails keeps the last tasks with the failure beside them.
 The GitHub adapter also reads each open issue's `blockedBy` in one `gh api graphql` query per pass, grouped by repository and at most 20 blockers per issue, and keeps only open blockers as `blocked_by` (a key and the id this repository shows); `gh issue list --json` has no dependency field.
 A dependency query that fails or answers with `errors` is a failure, never an empty answer: the pass keeps the issues it read, restores the blockers read before, records `issue_dependencies.unavailable` in the diagnostic log, and states the failure on the task source.
 A local Git project's catalog row also carries `pull_requests`, the ones its PRs view shows (PRD overview-lenses-prs D-32, D-52): the open ones and the merged ones whose worktree record is still here or that merged in the last 14 days, taken from the `gh pr list` answer `github.rs` already holds, so the view adds no read and the row stays bounded by that list's cap; the field is left off the wire when empty.
@@ -1306,7 +1314,7 @@ The core asks Herdr off the lock whether it holds the pane's history: with none 
 Herdr's history is the only witness, because the pinned API does not say whether a pane is on the alternate screen: an inline agent whose output has not yet passed one screen has no history either and gets its own keys, which for Claude Code's default renderer opens its transcript without a search while the whole conversation is still on screen.
 Claude Code's transcript toggles on the key that opens it, so a screen that already shows its transcript footer gets only the search key; the footer is the one witness the agent offers, and a footer that changed sends the full keys as before.
 The answer names the request that asked (`find.opened`), so the shell acts on it once.
-Settings > Shortcuts rebinds the editable commands (`EDITABLE_PANE_COMMANDS`: split right and down, zoom, close pane, larger, smaller and reset text, the sidebar view and device rail toggles, the next/previous Agent pane or focused View tab and global next/previous Recent Panels cycles, and the eight chordless area focus and resize commands `AREA_COMMANDS`) in the running host's own set.
+Settings > Shortcuts rebinds the editable commands (`EDITABLE_PANE_COMMANDS`: split right and down, zoom, close pane, larger, smaller and reset text, Overview, the direct Projects and Agents sidebar commands and the device rail toggle, the next/previous Agent pane or focused View tab and global next/previous Recent Panels cycles, and the eight chordless area focus and resize commands `AREA_COMMANDS`) in the running host's own set.
 The core and the desktop menu refuse a stored or reported set past `BINDINGS_CAP` (32, in `herdr-core/src/runtime/events.rs` and `desktop/src/main/menu.ts`, changed together); `menu.test.ts` fails when the editable list outgrows it.
 The area commands have no default chord on any host, so they appear in Settings and the desktop Pane menu without an accelerator until the operator binds one.
 Each host keeps its set in the core apart from the other's, because the hosts reserve different keys: a browser's in `ui_state.browser_shortcut_bindings`, and the desktop app's in `ui_state.shortcut_bindings`, the macOS chord set, in the removed native app's text form (`command+shift+return`) and command names (`increase_text_size`), with `toggle_conversation` kept but never run here; a save that omits `browser_shortcut_bindings` keeps it.
@@ -1351,10 +1359,10 @@ The table below is written in macOS chords; Windows and Linux press each one thr
 | Next / previous global recent panel | none by default | none by default; bindable in Settings | none by default; the menu selects immediately |
 | Next / previous recent project (Recent Projects) | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
 | Search, Open file, Toggle File Views | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
-| Project home | ⌘⇧H | same chord; opens the front checkout's Project Overview | same chord |
+| Overview | ⌘⇧O | shared modal or page | same chord |
+| Sidebar Projects / Agents | ⌘⇧P / ⌘⇧A | direct list selection and keyboard focus | same chords |
 | Save file | ⌘S | ⌘S | ⌘S |
 | Toggle left sidebar, Toggle File Views, Find in pane, Keep open | ⌘B, ⌘⇧B, ⌘F, ⌘⇧K | same chords | same chords |
-| Toggle sidebar view | ⌘E | none by default; bindable in Settings | none by default; bindable in Settings, kept in the macOS set |
 | Toggle Tools | - | ⌘E | ⌘E |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |

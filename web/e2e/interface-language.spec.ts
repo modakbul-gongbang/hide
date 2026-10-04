@@ -3,12 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { screenshot } from "./wire";
+import { enterWorkspace, screenshot } from "./wire";
+import { chord } from "./chords";
 
 async function openSettings(page: Page, daemon: Daemon) {
   // A hash-only navigation after restart does not remount the connection.
   if (page.url().startsWith(daemon.origin)) await page.goto("about:blank");
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+  await enterWorkspace(page, "fixture");
   await page.locator("[data-open-settings]").click();
   await expect(page.locator("[data-interface-language]")).toBeEnabled();
 }
@@ -35,9 +37,12 @@ test("one confirmed choice follows every window, persists, and resets to each sy
     await expect(right.locator("html")).toHaveAttribute("lang", "ja");
     await expect(left.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "system");
     // The answers are product copy, independent of the translation catalog.
-    for (const [language, heading, general] of [
-      ["en", "Settings", "General"], ["ko", "설정", "일반"],
-      ["zh-CN", "设置", "常规"], ["ja", "設定", "一般"],
+    const keycaps = await left.locator(".sidebar-command-keycap").allTextContents();
+    for (const [language, heading, general, overview, projects, agents, all, scope, close, change, clear, projectCommand, agentCommand] of [
+      ["en", "Settings", "General", "Overview", "Projects", "Agents", "All projects", "Overview scope", "Close Overview", "Change Overview", "Clear", "Projects sidebar", "Agents sidebar"],
+      ["ko", "설정", "일반", "개요", "프로젝트", "에이전트", "모든 프로젝트", "개요 범위", "개요 닫기", "개요 변경", "해제", "프로젝트 사이드바", "에이전트 사이드바"],
+      ["zh-CN", "设置", "常规", "概览", "项目", "智能体", "所有项目", "概览范围", "关闭概览", "更改 概览", "清除", "项目侧边栏", "智能体侧边栏"],
+      ["ja", "設定", "一般", "概要", "プロジェクト", "エージェント", "すべてのプロジェクト", "概要の範囲", "概要を閉じる", "概要を変更", "解除", "プロジェクトサイドバー", "エージェントサイドバー"],
     ]) {
       await choose(left, language!);
       for (const page of [left, right]) {
@@ -48,7 +53,30 @@ test("one confirmed choice follows every window, persists, and resets to each sy
       // User-owned names and paths remain byte-for-byte unchanged.
       await expect(left.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
       await expect(left.locator("[data-settings]")).toContainText(path.join(daemon.stateDir, "core-state.json"));
+      await expect(left.locator('[data-sidebar-mode="projects"] span').first()).toHaveText(projects!);
+      await expect(left.locator('[data-sidebar-mode="agents"] span').first()).toHaveText(agents!);
+      expect(await left.locator(".sidebar-command-keycap").allTextContents()).toEqual(keycaps);
+      await left.locator('[data-settings-tab="shortcuts"]').click();
+      await expect(left.locator('[data-shortcut-record="overview"]')).toHaveAttribute("aria-label", change!);
+      await expect(left.locator('[data-shortcut-clear="overview"]')).toHaveText(clear!);
+      await left.keyboard.press("Escape");
+      await left.locator("[data-open-overview]").click();
+      const modal = left.getByRole("dialog", { name: overview!, exact: true });
+      await expect(modal).toBeVisible();
+      await expect(modal.getByRole("tablist", { name: scope!, exact: true })).toBeVisible();
+      await expect(modal.getByRole("tab", { name: all!, exact: true })).toHaveAttribute("aria-selected", "true");
+      await expect(modal.getByRole("tab", { name: "fixture", exact: true })).toBeVisible();
+      await expect(modal.getByRole("button", { name: close!, exact: true })).toHaveText("Esc");
       await screenshot(left, `interface-${language}`);
+      await left.keyboard.press("Escape");
+      // Command labels translate while command ids and effective chords stay stable.
+      await left.keyboard.press(chord("shortcuts"));
+      for (const [id, title] of [["overview", overview], ["sidebar_projects", projectCommand], ["sidebar_agents", agentCommand]]) {
+        await expect(left.locator(`[data-shortcut="${id}"]`).locator("span").first()).toHaveText(title!);
+      }
+      await left.keyboard.press("Escape");
+      await left.locator("[data-open-settings]").click();
+      await left.locator('[data-settings-tab="general"]').click();
     }
     await right.reload();
     await expect(right.locator("html")).toHaveAttribute("lang", "ja");

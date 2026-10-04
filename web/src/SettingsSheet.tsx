@@ -90,7 +90,7 @@ import {
   type KeySystem,
   sheetRows,
 } from "./shortcuts";
-import { commandLabel } from "./shortcutLabels";
+import { commandLabel, overviewCommandTitle } from "./shortcutLabels";
 import type { Device, IssueSettings } from "./snapshot";
 import { latestDraft } from "./editor/draft";
 import { MobileTab } from "./MobileTab";
@@ -1207,7 +1207,7 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
     setSentAt(Date.now());
     actions.setPaneShortcuts(host, bindings);
   };
-  const current = (): Record<string, string> => ({ ...(diagnostic ? {} : (stored ?? {})) });
+  const current = (): Record<string, string> => Object.fromEntries(Object.entries(diagnostic && !diagnostic.includes("retired and was ignored") ? {} : stored ?? {}).filter(([key]) => !["project_home", "toggle_sidebar_view"].includes(key)));
   const rowsFor = (ids: readonly CommandId[]) =>
     ids.map((id) => (
       <ShortcutRow
@@ -1223,6 +1223,11 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
           const text = serializeStoredChord(chord, host, system);
           if ((fallback && chordEquals(fallback, chord)) || text === null) delete next[storedKey(id, host)];
           else next[storedKey(id, host)] = text;
+          apply(next);
+        }}
+        onClear={() => {
+          const next = current();
+          next[storedKey(id, host)] = "none";
           apply(next);
         }}
         onReset={() => {
@@ -1299,6 +1304,7 @@ function ShortcutRow({
   overridden,
   onApply,
   onReset,
+  onClear,
 }: {
   id: CommandId;
   host: HostKind;
@@ -1307,7 +1313,9 @@ function ShortcutRow({
   overridden: boolean;
   onApply: (chord: Chord) => void;
   onReset: () => void;
+  onClear: () => void;
 }) {
+  const { t } = useInterfaceTranslation();
   const command = registry.find((row) => row.id === id);
   const [recording, setRecording] = useState(false);
   const [draft, setDraft] = useState<Chord | null>(null);
@@ -1319,6 +1327,7 @@ function ShortcutRow({
     return () => setRecordingFlag(false);
   }, [recording, setRecordingFlag]);
   if (!command) return null;
+  const title = overviewCommandTitle(id, command.title, t);
   const effective = hostChord(command, host);
   const record = (event: KeyboardEvent<HTMLButtonElement>) => {
     // IME composition and lone modifiers are not chords; the recorder waits.
@@ -1345,7 +1354,7 @@ function ShortcutRow({
   };
   return (
     <Row
-      label={command.title}
+      label={title}
       detail={
         problem ? (
           <Note tone="error" data-shortcut-problem={id}>
@@ -1377,7 +1386,7 @@ function ShortcutRow({
       ) : (
         <Button
           variant={recording ? "default" : "secondary"}
-          aria-label={recording ? `Recording a chord for ${command.title}; press it, or Escape to cancel` : `Change ${command.title}`}
+          aria-label={recording ? t("settings.shortcuts.recordAria", { command: title }) : t("settings.shortcuts.changeAria", { command: title })}
           onKeyDown={recording ? record : undefined}
           onBlur={() => setRecording(false)}
           onClick={() => {
@@ -1389,6 +1398,7 @@ function ShortcutRow({
           {recording ? "Press a chord…" : "Change"}
         </Button>
       )}
+      {effective && !draft && !recording ? <Button variant="ghost" onClick={onClear} data-shortcut-clear={id}>{t("settings.shortcuts.clear")}</Button> : null}
       {overridden && !draft ? (
         <Button variant="ghost" onClick={onReset} data-shortcut-reset={id}>
           Default

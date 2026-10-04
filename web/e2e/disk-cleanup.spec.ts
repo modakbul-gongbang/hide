@@ -19,13 +19,14 @@ import path from "node:path";
 import { startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
+import { openProjectOverview } from "./overview-entry";
 
 test.describe.configure({ timeout: 240_000 });
 
 const SIGNATURE = "Signature: 8a477f597d28d172789f06886806bc55\n# Created by the disk cleanup e2e fixture\n";
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
+  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
 }
 
 async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
@@ -110,7 +111,7 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await page.locator('[data-sidebar-mode="projects"]').click();
-    await page.locator("[data-project-row]", { hasText: /^repo/ }).click();
+    await openProjectOverview(page, "repo");
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
 
     // B1: the disk number lists the layers on hover and opens the sheet.
@@ -272,7 +273,7 @@ test("a checkout with a working agent cannot be ticked, and an open pane alone d
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await page.locator('[data-sidebar-mode="projects"]').click();
-    await page.locator("[data-project-row]", { hasText: /^repo/ }).click();
+    await openProjectOverview(page, "repo");
     await page.locator('[data-disk-entrance="true"]').click({ timeout: 30_000 });
     const sheet = page.locator("[data-disk-sheet]");
     await expect(sheet).toHaveAttribute("data-disk-state", "ready", { timeout: 60_000 });
