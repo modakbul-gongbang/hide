@@ -17,7 +17,7 @@ test.describe.configure({ timeout: 180_000 });
 const BRANCH = "feature/delete";
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
+  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
 }
 
 async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
