@@ -107,6 +107,7 @@ function observeFocusFrames(page: Page) {
   let evicted = 0;
   let lastPane: string | undefined;
   let changes = 0;
+  let completedClicks = 0;
   page.on("websocket", (socket) => socket.on("framesent", ({ payload }) => {
     if (typeof payload !== "string") return;
     let frame: { kind?: string; payload?: { pane_id?: string; action?: string } };
@@ -119,6 +120,10 @@ function observeFocusFrames(page: Page) {
       return;
     }
     const kind = frame.kind;
+    if (kind === "terminal_click") {
+      completedClicks += 1;
+      return;
+    }
     const paneId = frame.payload?.pane_id;
     if (kind !== "focus_pane" && kind !== "remote_control") return;
     if (kind === "remote_control" && frame.payload?.action !== "focus_pane") return;
@@ -134,6 +139,7 @@ function observeFocusFrames(page: Page) {
     records.push({ occurred_at: Date.now(), kind, pane_id: paneId });
   }));
   return {
+    completedClicks: () => completedClicks,
     changes: () => changes,
     lastPane: () => lastPane,
     save: () => test.info().attach("pane-focus-sent", {
@@ -180,7 +186,8 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
       lastClickAt = Date.now();
       await page.mouse.click(box.x + 100, box.y + 100);
     };
-    const clickBurst = async () => {
+    const clickBurst = async (mouse: CDPSession) => {
+      const completedAfter = focusFrames.completedClicks() + 40;
       const inputs: Promise<unknown>[] = [];
       lastClickAt = Date.now();
       // Use the same trusted Chromium input as page.mouse, queued in order.
@@ -198,6 +205,12 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
       mark("cdp.inputs.before");
       await Promise.all(inputs);
       mark("cdp.inputs.after");
+      // ACKs from the separate CDP session do not fence frame observation.
+      // Each real mouseup sends terminal_click after its focus event on the
+      // same WebSocket. The last click fences every earlier focus frame.
+      mark("cdp.processed.before");
+      await expect.poll(() => focusFrames.completedClicks(), focusObservation).toBe(completedAfter);
+      mark("cdp.processed.after");
     };
     const requested = () => diagnostics().filter((entry) => entry.kind === "pane.focus.requested");
     const confirmed = () => {
@@ -218,9 +231,10 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     await expect.poll(() => requested().at(-1)?.message, focusObservation).toBe(`Focusing pane ${second}`);
     firstFocusAt = requested()[0]?.occurred_at;
     mark("first.requested.after");
+    await expect.poll(() => focusFrames.completedClicks(), focusObservation).toBe(1);
     const acceptedBefore = requested().length;
     const sentBefore = focusFrames.changes();
-    await clickBurst();
+    await clickBurst(mouse);
     expect(focusFrames.lastPane()).toBe(first);
     // Count changes actually sent by the UI, not clicks: focusing an already
     // focused textarea sends nothing, and repeated targets share one intent.
@@ -242,12 +256,17 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     mark("first.confirmed.before");
     await expect.poll(confirmed, focusObservation).toBe(true);
     mark("first.confirmed.after");
+    mark("cdp.detach.before");
+    await mouse.detach();
+    mouseSession = undefined;
+    mark("cdp.detach.after");
     expect(gate.requests).toEqual([second, first]);
     expect(gate.maximum()).toBe(1);
     expect(herdrHasFocus(herdr, first)).toBe(true);
 
     // The same rapid clicks without a held request prove the ordinary path.
-    await clickBurst();
+    mouseSession = await page.context().newCDPSession(page);
+    await clickBurst(mouseSession);
     await expect.poll(confirmed, focusObservation).toBe(true);
     await expect(panes[0]).toHaveAttribute("data-focused", "true");
     await expect.poll(() => herdrHasFocus(herdr, first)).toBe(true);
