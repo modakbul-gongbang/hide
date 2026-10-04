@@ -28,6 +28,19 @@ fn run_coordinator(
 ) {
     let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
     let mut process_reader = super::process_info::ProcessReader::new(&context);
+    let mut lineage_writer = match crate::coordination::lineage::Writer::new(
+        context.log_target().to_owned(),
+        Arc::clone(&context.api_connector),
+        context.runtime.clone(),
+    ) {
+        Ok(writer) => Some(writer),
+        Err(message) => {
+            crate::diagnostic!(
+                json!({"component":"lineage","kind":"start_failed","message":message})
+            );
+            None
+        }
+    };
     let mut replica: Option<SessionReplica> = None;
     let mut active_tab_reads: BTreeMap<String, u32> = BTreeMap::new();
     let mut subscription: Option<ActiveSubscription> = None;
@@ -133,6 +146,7 @@ fn run_coordinator(
                             &mut catalog_cache,
                             &mut purpose_mirror,
                             &mut labels,
+                            &mut lineage_writer,
                         )
                     {
                         stop_subscription(&mut subscription);
@@ -176,6 +190,17 @@ fn run_coordinator(
                         .expect("active subscription always has a replica");
                     let requested =
                         agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
+                    if let Some(writer) = lineage_writer.as_mut()
+                        && let Some(runtime) = context.runtime.upgrade()
+                    {
+                        let state = runtime
+                            .lock()
+                            .ok()
+                            .and_then(|guard| guard.delivery_state().ok());
+                        if let Some(state) = state {
+                            writer.observe(&state, &agents, requested);
+                        }
+                    }
                     if requested {
                         current.replace_agents(agents);
                         match current.refresh_published_state() {
@@ -187,6 +212,7 @@ fn run_coordinator(
                                         &mut catalog_cache,
                                         &mut purpose_mirror,
                                         &mut labels,
+                                        &mut lineage_writer,
                                     ) =>
                             {
                                 stop_subscription(&mut subscription);
@@ -252,6 +278,7 @@ fn run_coordinator(
                     &mut catalog_cache,
                     &mut purpose_mirror,
                     &mut labels,
+                    &mut lineage_writer,
                 )
             {
                 stop_subscription(&mut subscription);
@@ -269,6 +296,7 @@ fn run_coordinator(
                             &mut catalog_cache,
                             &mut purpose_mirror,
                             &mut labels,
+                            &mut lineage_writer,
                         ) {
                             stop_subscription(&mut subscription);
                             return;
@@ -305,6 +333,7 @@ fn run_coordinator(
                             &mut catalog_cache,
                             &mut purpose_mirror,
                             &mut labels,
+                            &mut lineage_writer,
                         );
                     }
                     Ok(false) => {}
@@ -391,6 +420,7 @@ fn run_coordinator(
                         &mut catalog_cache,
                         &mut purpose_mirror,
                         &mut labels,
+                        &mut lineage_writer,
                     )
                 {
                     stop_subscription(&mut subscription);
@@ -513,6 +543,7 @@ fn run_coordinator(
                                         &mut catalog_cache,
                                         &mut purpose_mirror,
                                         &mut labels,
+                                        &mut lineage_writer,
                                     )
                                 {
                                     stop_subscription(&mut subscription);
@@ -531,6 +562,7 @@ fn run_coordinator(
                                                 &mut catalog_cache,
                                                 &mut purpose_mirror,
                                                 &mut labels,
+                                                &mut lineage_writer,
                                             ) {
                                                 stop_subscription(&mut subscription);
                                                 return;
@@ -641,6 +673,7 @@ fn run_coordinator(
                         &mut catalog_cache,
                         &mut purpose_mirror,
                         &mut labels,
+                        &mut lineage_writer,
                     )
                 {
                     stop_subscription(&mut subscription);
@@ -753,7 +786,19 @@ fn publish_replica(
     catalog_cache: &mut Option<CatalogCache>,
     purpose_mirror: &mut Option<live::PurposeMirror>,
     labels: &mut Option<LabelWorker>,
+    lineage_writer: &mut Option<crate::coordination::lineage::Writer>,
 ) -> bool {
+    if let Some(writer) = lineage_writer.as_mut()
+        && let Some(runtime) = context.runtime.upgrade()
+    {
+        let state = runtime
+            .lock()
+            .ok()
+            .and_then(|guard| guard.delivery_state().ok());
+        if let Some(state) = state {
+            writer.observe(&state, &replica.state.agents, true);
+        }
+    }
     let mut payload = replica.project();
     // Observe native state before label overlays add UI timestamps. This is
     // bounded memory work; no delivery I/O or notifier is started here.
