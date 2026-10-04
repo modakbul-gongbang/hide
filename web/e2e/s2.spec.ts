@@ -6,6 +6,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
@@ -73,7 +74,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // Hide open a new owner instead (covered by checkout-owner.spec.ts).
     const folder = fs.realpathSync(path.join(herdr.root, "fixture"));
     const owner = crypto.createHash("sha256").update(`local\0${folder}`).digest("hex").slice(0, 32);
-    herdr.run(["workspace", "report-metadata", herdr.workspace, "--source", "e2e-owner", "--token", `hide_owner=${owner}`]);
+    execFileSync(herdr.bin, ["workspace", "report-metadata", herdr.workspace, "--source", "e2e-owner", "--token", `hide_owner=${owner}`], { env: herdr.env, timeout: 30_000 });
     daemon = await startHided(herdr);
     const lastSent = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, lastSent);
