@@ -68,7 +68,7 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
   Failed cleanup stays registered for recovery instead of being disowned.
-  `cleanupAfterFailure` retains the original error and stack as the cause and first item when cleanup also fails.
+  When setup and cleanup both fail, `cleanupAfterFailure` preserves the setup message and stack as the reported identity and keeps the cleanup error in `cause`, which Playwright serializes.
   `stopFixtureProcess` confirms the private Unix process group or identity-checked Windows descendants have exited before Herdr/hided roots are removed.
   Windows provider executable locks are released by ending their owned processes, with no EBUSY ignore or deletion retry.
   Exit-unconfirmed cleanup fails and retains the root.

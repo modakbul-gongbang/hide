@@ -37,7 +37,15 @@ export function ownUntilWorkerExit(stop: () => void): { stop: () => void; disown
 /** Cleanup remains a failure without replacing the original stack/signature. */
 export function cleanupAfterFailure(primary: unknown, cleanup: () => void): never {
   try { cleanup(); } catch (secondary) {
-    throw new AggregateError([primary, secondary], "fixture primary failure and secondary cleanup failure", { cause: primary });
+    // Playwright serializes message/stack/cause but drops AggregateError.errors.
+    // Keep the primary identity intact. Playwright filters stack frames, so
+    // extra prose appended to the stack is not a durable diagnostic channel.
+    const original = primary instanceof Error ? primary : new Error(String(primary));
+    const cleanupError = secondary instanceof Error ? secondary : new Error(String(secondary));
+    const reported = new Error(original.message, { cause: cleanupError });
+    reported.name = original.name;
+    reported.stack = original.stack;
+    throw reported;
   }
   throw primary;
 }

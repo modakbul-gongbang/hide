@@ -12,10 +12,10 @@ test('primary setup signature and stack survive a secondary cleanup failure', ()
   const secondary = new Error('cleanup EBUSY on owned executable');
   try { cleanupAfterFailure(primary, () => { throw secondary; }); }
   catch (error) {
-    expect(error).toBeInstanceOf(AggregateError);
-    expect((error as AggregateError).errors).toEqual([primary, secondary]);
-    expect((error as AggregateError).cause).toBe(primary);
-    expect((error as AggregateError).errors[0].stack).toBe(primary.stack);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(primary.message);
+    expect((error as Error).cause).toBe(secondary);
+    expect((error as Error).stack).toBe(primary.stack);
     return;
   }
   throw new Error('cleanup failure disappeared');
