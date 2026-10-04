@@ -156,6 +156,23 @@ fn notify_change(core: &Core) {
 /// belong to the thread that created the value. Axum workers talk to it
 /// through an owner-thread channel in `hided`.
 impl Core {
+    #[cfg(test)]
+    pub(crate) fn for_runtime_fixture(runtime: Arc<Mutex<Runtime>>) -> (Self, ChangeNotifier) {
+        let notifier = ChangeNotifier::new();
+        let core = Self {
+            _terminal_maintenance: None,
+            _changes: None,
+            _kit: None,
+            _session_sync: None,
+            _session_search: None,
+            labels: None,
+            runtime,
+            notifier: notifier.clone(),
+            owner_thread: thread::current().id(),
+        };
+        (core, notifier)
+    }
+
     pub fn create(options: CoreOptions) -> Option<Box<Self>> {
         if validate_options(&options).is_err() {
             return None;

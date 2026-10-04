@@ -5,13 +5,16 @@
 //! belongs to is [`attributed_ports`]'s job, and it is pure, so the rule can be
 //! tested without a server to point it at.
 //!
-//! Every `lsof` invocation happens here, on the session-sync coordinator
-//! thread, never while the runtime mutex is held and never on a per-event path.
+//! System reads happen on the session-sync coordinator thread, never while
+//! the runtime mutex is held and never on a per-event path. Unix uses `lsof`;
+//! Windows uses the platform's bounded native listener observation.
 //! [`PortsReader::read_if_due`] recomputes only once a refresh window has
 //! lapsed.
 
+#[cfg(any(not(windows), test))]
 use std::collections::BTreeMap;
 use std::path::Path;
+#[cfg(any(not(windows), test))]
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -57,11 +60,66 @@ impl Default for PortsReader {
 }
 
 /// The listeners right now, for a decision that cannot use the last sample.
-/// Runs `lsof`, so only a worker thread may call it.
+/// Reads the system, so only a worker thread may call it.
 pub(crate) fn read_now() -> ListeningPortsSnapshot {
     read()
 }
 
+#[cfg(windows)]
+fn read() -> ListeningPortsSnapshot {
+    let sockets = match hide_platform::listeners::read() {
+        Ok(sockets) => sockets,
+        Err(error) => {
+            return ListeningPortsSnapshot {
+                entries: Vec::new(),
+                unavailable_reason: Some(format!(
+                    "native TCP listener observation failed: {error}"
+                )),
+            };
+        }
+    };
+    let mut entries: Vec<_> = sockets
+        .into_iter()
+        .map(|socket| {
+            let host = match socket.address {
+                std::net::SocketAddr::V4(address) => {
+                    if address.ip().is_unspecified() {
+                        "127.0.0.1".to_owned()
+                    } else {
+                        address.ip().to_string()
+                    }
+                }
+                std::net::SocketAddr::V6(address) => {
+                    if address.ip().is_unspecified() {
+                        "::1".to_owned()
+                    } else if address.scope_id() == 0 {
+                        address.ip().to_string()
+                    } else {
+                        format!("{}%{}", address.ip(), address.scope_id())
+                    }
+                }
+            };
+            ListeningPortSnapshot {
+                host,
+                port: socket.address.port(),
+                cwd: socket.cwd.as_str().to_owned(),
+            }
+        })
+        .collect();
+    entries.sort_by(|left, right| {
+        left.port
+            .cmp(&right.port)
+            .then_with(|| left.cwd.cmp(&right.cwd))
+            .then_with(|| left.host.cmp(&right.host))
+    });
+    entries.dedup();
+    ListeningPortsSnapshot {
+        entries,
+        unavailable_reason: None,
+    }
+}
+
+#[cfg(not(windows))]
 fn read() -> ListeningPortsSnapshot {
     let listeners = match listening_sockets() {
         Ok(listeners) => listeners,
@@ -114,12 +172,14 @@ fn read() -> ListeningPortsSnapshot {
 }
 
 /// Listening TCP sockets, as a pid to ports map.
+#[cfg(not(windows))]
 fn listening_sockets() -> Result<BTreeMap<u32, Vec<ServerEndpointSnapshot>>, String> {
     let output = run_lsof(&["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pnt"])?;
     Ok(parse_listening_sockets(&output))
 }
 
 /// The working directory of each named process.
+#[cfg(not(windows))]
 fn working_directories(pids: &[u32]) -> Result<BTreeMap<u32, String>, String> {
     if pids.is_empty() {
         return Ok(BTreeMap::new());
@@ -136,12 +196,15 @@ fn working_directories(pids: &[u32]) -> Result<BTreeMap<u32, String>, String> {
 /// How long one `lsof` may run. A cleanup waits on this read while it holds
 /// the daemon's only cleanup lane, so a hung `lsof` must end as an unavailable
 /// read, which fails closed, and not as a lane that never frees.
+#[cfg(not(windows))]
 const LSOF_DEADLINE: Duration = Duration::from_secs(10);
 
+#[cfg(not(windows))]
 fn run_lsof(arguments: &[&str]) -> Result<String, String> {
     run_within(Command::new("lsof").args(arguments), LSOF_DEADLINE)
 }
 
+#[cfg(any(not(windows), test))]
 fn run_within(command: &mut Command, deadline: Duration) -> Result<String, String> {
     let output = hide_host::worktrees::output_within(command, deadline)
         .map_err(|error| format!("lsof could not be run: {error}"))?
@@ -172,6 +235,7 @@ fn run_within(command: &mut Command, deadline: Duration) -> Result<String, Strin
 /// line applies to every following line until the next `p`. A socket's `n`
 /// field is an address such as `127.0.0.1:5173` or `*:8080`, so the port is
 /// what follows the last colon.
+#[cfg(any(not(windows), test))]
 pub fn parse_listening_sockets(output: &str) -> BTreeMap<u32, Vec<ServerEndpointSnapshot>> {
     let mut sockets: BTreeMap<u32, Vec<ServerEndpointSnapshot>> = BTreeMap::new();
     let mut pid = None;
@@ -224,6 +288,7 @@ pub fn parse_listening_sockets(output: &str) -> BTreeMap<u32, Vec<ServerEndpoint
     sockets
 }
 
+#[cfg(any(not(windows), test))]
 pub fn parse_working_directories(output: &str) -> BTreeMap<u32, String> {
     let mut directories = BTreeMap::new();
     let mut pid = None;
@@ -378,9 +443,8 @@ mod tests {
         assert!(attributed_ports("   ", &[listener(5173, "/srv/app")]).is_empty());
     }
 
-    /// The parse is checked against this platform's real `lsof`, because the
-    /// field format is the assumption most likely to be wrong and a unit test
-    /// over invented output would agree with itself.
+    /// A real native listener checks the platform boundary, not invented field
+    /// output that could agree with a wrong parser or foreign-memory layout.
     #[test]
     fn a_real_listener_is_found_and_attributed_to_the_directory_it_runs_in() {
         let listener =
@@ -397,7 +461,7 @@ mod tests {
 
         assert_eq!(
             read.unavailable_reason, None,
-            "lsof should be readable here"
+            "listener observation should be readable here"
         );
         let found = read
             .entries
@@ -411,6 +475,141 @@ mod tests {
         );
 
         drop(listener);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_listener_child() {
+        use std::io::{Read, Write};
+        if std::env::var_os("HIDE_TEST_CLEANUP_LISTENER").is_none() {
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        println!(
+            "READY {}\t{}",
+            listener.local_addr().unwrap(),
+            std::env::current_dir().unwrap().to_str().unwrap()
+        );
+        std::io::stdout().flush().unwrap();
+        let _ = std::io::stdin().read_exact(&mut [0]);
+        drop(listener);
+    }
+
+    #[cfg(windows)]
+    struct CleanupListener {
+        child: Option<hide_platform::process::OwnedChild>,
+        output: Option<std::thread::JoinHandle<()>>,
+    }
+
+    #[cfg(windows)]
+    impl Drop for CleanupListener {
+        fn drop(&mut self) {
+            drop(self.child.take());
+            if let Some(output) = self.output.take() {
+                let joined = output.join();
+                if !std::thread::panicking() {
+                    joined.unwrap();
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_keeps_a_checkout_in_use_when_a_listener_starts_through_another_spelling() {
+        use crate::live::cleanup::{CheckoutFacts, read_in_use};
+        use hide_platform::fs::{identity, link};
+        use std::io::{BufRead, BufReader};
+        use std::path::PathBuf;
+        use std::process::Stdio;
+
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("Checkout");
+        let cwd = checkout.join("native listener 한글");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let canonical_checkout = identity::canonical(&checkout).unwrap();
+        let canonical_cwd = identity::canonical(&cwd).unwrap();
+        let alias = root.path().join("ListenerAlias");
+        link::create_link(&checkout, &alias).unwrap();
+        let mut spellings = vec![
+            alias.join("native listener 한글"),
+            PathBuf::from(format!(r"\\?\{}", alias.display())).join("native listener 한글"),
+        ];
+        // Case sensitivity belongs to this folder, not to the OS. Junction
+        // and verbatim cases always run; alternate case applies where it is
+        // another spelling of the same existing directory.
+        if !identity::case_sensitive(root.path()).unwrap() {
+            spellings.push(root.path().join("listeneralias/native listener 한글"));
+        }
+        let facts = [CheckoutFacts {
+            path: checkout.clone(),
+            agent_working: 0,
+            terminal_panes: Vec::new(),
+        }];
+        for spelling in spellings {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "ports::tests::cleanup_listener_child",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env("HIDE_TEST_CLEANUP_LISTENER", "1")
+                .current_dir(&spelling)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit());
+            let mut child = hide_platform::process::OwnedChild::spawn(&mut command).unwrap();
+            let stdout = child.take_stdout().unwrap();
+            let (ready, heard) = std::sync::mpsc::channel();
+            let output = std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines() {
+                    let line = line.unwrap();
+                    if let Some((_, value)) = line.split_once("READY ") {
+                        let (endpoint, cwd) = value.split_once('\t').unwrap();
+                        let endpoint: std::net::SocketAddr = endpoint.parse().unwrap();
+                        let _ = ready.send((endpoint, PathBuf::from(cwd)));
+                    }
+                }
+            });
+            let fixture = CleanupListener {
+                child: Some(child),
+                output: Some(output),
+            };
+            let (endpoint, observed_by_child) = heard
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the owned listener announced its socket and actual cwd");
+            assert!(identity::same_file(&observed_by_child, &canonical_cwd).unwrap());
+            assert!(
+                !observed_by_child.starts_with(&canonical_checkout),
+                "the fixture must exercise the spelling that previously escaped cleanup"
+            );
+            drop(std::net::TcpStream::connect_timeout(&endpoint, Duration::from_secs(2)).unwrap());
+            // Review and the fresh destructive-action recheck both consume
+            // the real reader, not a handcrafted listening-port snapshot.
+            for _ in 0..2 {
+                let sample = read_now();
+                assert_eq!(sample.unavailable_reason, None);
+                let found = sample
+                    .entries
+                    .iter()
+                    .find(|entry| entry.port == endpoint.port())
+                    .unwrap();
+                assert_eq!(Path::new(&found.cwd), canonical_cwd);
+                let in_use = read_in_use(&facts, Ok(sample.entries), |_| {
+                    panic!("a checkout with no terminal panes has no process query")
+                })
+                .unwrap();
+                let exclusion = in_use
+                    .get(&checkout)
+                    .expect("cleanup must exclude the live listener's checkout");
+                assert_eq!(exclusion.code, "port");
+                assert_eq!(exclusion.port, Some(endpoint.port()));
+            }
+            drop(fixture);
+        }
+        link::remove_link(&alias).unwrap();
     }
 
     #[test]

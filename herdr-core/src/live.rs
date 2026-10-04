@@ -57,7 +57,7 @@ pub use worktree_control::{
     spawn_existing_branch_worktree, spawn_home_link_sync, spawn_home_start, spawn_issue_write,
     spawn_local_issue_write, spawn_purpose_write, spawn_remote_purpose_write,
     spawn_task_agent_start, spawn_workspace_close, spawn_worktree_close, spawn_worktree_create,
-    spawn_worktree_open,
+    spawn_worktree_open, spawn_worktree_preflight,
 };
 
 /// Everything a terminal session spawn needs from the live configuration.

@@ -991,6 +991,9 @@ pub(super) struct RemoveWorktreePayload {
     /// The operator ticked the discard checkbox the gate offered.
     #[serde(default)]
     pub(super) discard_changes: bool,
+    /// The measured repository names the operator actually confirmed.
+    #[serde(default)]
+    pub(super) expected_ignored_repositories: Vec<String>,
     /// The agents outside the worktree, spawned from its agents, that the
     /// operator chose to close first (PRD close-agent-subtree D-10).
     #[serde(default)]
