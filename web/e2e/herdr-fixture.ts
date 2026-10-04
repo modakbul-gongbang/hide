@@ -27,8 +27,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ownUntilWorkerExit } from "./worker-owned";
-import { compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
+import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
+import { stopFixtureProcess, compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 
 export type HerdrFixture = {
   bin: string;
@@ -529,21 +529,22 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     // Keep host-installed providers out while retaining system tools.
     fixturePath = fixtureToolPath(path.join(root, "bin"));
   } catch (error) {
-    fs.rmSync(root, { recursive: true, force: true });
-    throw error;
+    cleanupAfterFailure(error, () => fs.rmSync(root, { recursive: true, force: true }));
   }
   // Workspaces created later inherit the server's PATH, not hided's PATH.
   // Keep every pane on the same fake agent binary, including new workspaces.
   env.PATH = fixturePath;
 
   const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
-  const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });
+  const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log], detached: process.platform !== "win32" });
   fs.closeSync(log);
   let spawnFailed: Error | null = null;
   server.once("error", (error) => { spawnFailed = error; });
   const { stop } = ownUntilWorkerExit(() => {
-    spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
-    if (server.exitCode === null) server.kill("SIGKILL");
+    stopFixtureProcess(server, () => {
+      const stopped = spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
+      if (stopped.error) throw new Error("private Herdr stop failed; preserve root", { cause: stopped.error });
+    });
     for (const file of [socket, socket.replace(/\.sock$/, "-client.sock")]) {
       fs.rmSync(file, { force: true });
     }
@@ -551,6 +552,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     // and what each agent pane's PTY received.
     const keep = process.env.HIDE_E2E_SCREENSHOT_DIR;
     if (keep) {
+      fs.mkdirSync(keep, { recursive: true });
       for (const name of ["herdr-server.log", "input-one.log", "input-two.log"]) {
         const file = path.join(root, name);
         if (fs.existsSync(file)) fs.copyFileSync(file, path.join(keep, `${path.basename(root)}-${name}`));
@@ -690,8 +692,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       stop,
     };
   } catch (error) {
-    stop();
-    throw error;
+    cleanupAfterFailure(error, stop);
   }
 }
 

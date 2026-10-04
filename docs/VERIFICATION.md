@@ -67,6 +67,13 @@ Manual QA covers what a spec cannot reach yet, and the pull request's Evidence s
   The desktop fixture refuses a mismatched coordinator before launching a candidate.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
+  Failed cleanup stays registered for recovery instead of being disowned.
+  `cleanupAfterFailure` retains the original error and stack as the cause and first item when cleanup also fails.
+  `stopFixtureProcess` confirms the private Unix process group or identity-checked Windows descendants have exited before Herdr/hided roots are removed.
+  Windows provider executable locks are released by ending their owned processes, with no EBUSY ignore or deletion retry.
+  Exit-unconfirmed cleanup fails and retains the root.
+  `desktop/e2e/platform-cleanup.unit.ts` checks both-error, cleanup-only and actual executable ownership controls on every OS.
+
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
   The exit callback cannot run after SIGKILL, an OOM kill or host loss; these require separate recovery and are not proven by a `process.exit()` regression.
 - `desktop/e2e/fixture.ts` owns each `isolate` home through both automatic test teardown and worker exit, with at most sixteen unclosed homes per worker.

@@ -7,8 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
-import { ownUntilWorkerExit } from "./worker-owned";
-import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv } from "./platform-fixture";
+import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
+import { stopFixtureProcess, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv } from "./platform-fixture";
 
 /**
  * `restart` stops the daemon and starts it again on the same state directory
@@ -65,6 +65,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
   });
   // A daemon that cannot be spawned (no debug build in this worktree) is an
   // error event; unheard, it kills the worker before any test cleanup runs.
@@ -74,6 +75,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   });
   const logDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (logDir) {
+    fs.mkdirSync(logDir, { recursive: true });
     const log = fs.createWriteStream(path.join(logDir, `hided-${label}-${path.basename(dir)}.log`), { flags: "a" });
     // Two pipes share the file: the first stream to end must not close it
     // under the other's last write ("write after end" on a restart), so it
@@ -84,25 +86,12 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   }
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   const { stop, disown } = ownUntilWorkerExit(() => {
-    child.kill();
-    // The daemon may still be writing its state file (and, with S3, staged
-    // files) as it dies; removing the directory under it fails with ENOTEMPTY.
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-        return;
-      } catch {
-        // Synchronous worker-exit cleanup cannot await a timer. Keep the
-        // same 50 ms filesystem retry interval without a Unix child tool.
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-      }
-    }
+    stopFixtureProcess(child);
     fs.rmSync(dir, { recursive: true, force: true });
   });
   for (let i = 0; i < 50; i += 1) {
     if (spawnFailed) {
-      stop();
-      throw new Error(`hided did not start from ${binary}: ${spawnFailed.message}; run cargo build -p hided in this worktree`);
+      cleanupAfterFailure(new Error(`hided did not start from ${binary}: ${spawnFailed.message}; build hided in this worktree`, { cause: spawnFailed }), stop);
     }
     if (fs.existsSync(statePath)) {
       try {
@@ -112,7 +101,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
         if ((await fetch(`${origin}/health`)).ok) {
           const hostId = fs.readFileSync(path.join(dir, "hide", "host-id"), "utf8").trim();
           const restart = async (beforeStart?: (stateDir: string) => void | Promise<void>) => {
-            child.kill();
+            stopFixtureProcess(child);
             await exited;
             await beforeStart?.(path.join(dir, "hide"));
             // The next daemon takes over the directory and its removal.
@@ -127,6 +116,5 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  stop();
-  throw new Error("hided did not write a state file");
+  cleanupAfterFailure(new Error("hided did not write a state file"), stop);
 }

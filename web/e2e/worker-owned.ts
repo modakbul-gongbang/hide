@@ -25,11 +25,19 @@ process.once("exit", () => {
 export function ownUntilWorkerExit(stop: () => void): { stop: () => void; disown: () => void } {
   let done = false;
   const owned = () => {
-    running.delete(owned);
     if (done) return;
-    done = true;
     stop();
+    done = true;
+    running.delete(owned);
   };
   running.add(owned);
   return { stop: owned, disown: () => void running.delete(owned) };
+}
+
+/** Cleanup remains a failure without replacing the original stack/signature. */
+export function cleanupAfterFailure(primary: unknown, cleanup: () => void): never {
+  try { cleanup(); } catch (secondary) {
+    throw new AggregateError([primary, secondary], "fixture primary failure and secondary cleanup failure", { cause: primary });
+  }
+  throw primary;
 }

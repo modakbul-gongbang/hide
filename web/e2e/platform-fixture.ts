@@ -3,9 +3,73 @@
 // on every OS and maps that path to a named pipe on Windows.
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
+
+/** Kill and confirm only the owned tree before deleting its executable/home.
+ * Unix fixtures start a private process group. Windows captures descendants
+ * and creation times before shutdown, because stopping the parent can orphan
+ * a locked provider executable. The two-second cleanup bound is unchanged. */
+export function stopFixtureProcess(child: ChildProcess, graceful?: () => void): void {
+  if (!child.pid) {
+    if (child.exitCode === null && child.signalCode === null) throw new Error("fixture child has no PID or confirmed exit");
+    return;
+  }
+  const pid = child.pid;
+  if (process.platform === "win32") {
+    // One bounded observer owns process enumeration, tree termination and
+    // identity-safe exit confirmation, even during synchronous worker exit.
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `
+      $ErrorActionPreference = 'Stop'
+      $all = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate)
+      $ids = @(${pid})
+      $owned = @()
+      for ($depth=0; $depth -lt 64; $depth++) {
+        $next = @($all | Where-Object { $ids -contains $_.ProcessId -and $owned.ProcessId -notcontains $_.ProcessId })
+        if ($next.Count -eq 0) { break }
+        $owned += $next
+        if ($owned.Count -gt 256) { throw 'fixture tree exceeded 256 processes; preserve home' }
+        $ids = @($all | Where-Object { $next.ProcessId -contains $_.ParentProcessId } | ForEach-Object { $_.ProcessId })
+      }
+      foreach ($record in $owned) {
+        $live = Get-CimInstance Win32_Process -Filter "ProcessId = $($record.ProcessId)" -Property ProcessId,CreationDate
+        if ($live -and $live.CreationDate -eq $record.CreationDate) { Stop-Process -Id $record.ProcessId -Force -ErrorAction SilentlyContinue }
+      }
+      $until = [DateTime]::UtcNow.AddSeconds(2)
+      do {
+        $remaining = @($owned | Where-Object {
+          $live = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.ProcessId)" -Property ProcessId,CreationDate
+          $live -and $live.CreationDate -eq $_.CreationDate
+        })
+        if ($remaining.Count -eq 0) { exit 0 }
+        Start-Sleep -Milliseconds 50
+      } while ([DateTime]::UtcNow -lt $until)
+      throw "fixture exit unconfirmed for owned PIDs $($remaining.ProcessId -join ','); preserve home"
+    `], { timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
+    // The endpoint stop may still be needed after its process has exited.
+    graceful?.();
+    return;
+  }
+  graceful?.();
+  const liveMembers = () => {
+    const rows = execFileSync("ps", ["-axo", "pid=,pgid=,stat="], { encoding: "utf8", timeout: 1000, maxBuffer: 1024 * 1024 });
+    return rows.split("\n").some((row) => { const [, group, state] = row.trim().split(/\s+/); return Number(group) === pid && !state?.startsWith("Z"); });
+  };
+  if (!liveMembers()) return;
+  const killGroup = (signal: NodeJS.Signals) => {
+    try { process.kill(-pid, signal); } catch (error) { if (liveMembers()) throw error; }
+  };
+  killGroup("SIGTERM");
+  const until = Date.now() + 2000;
+  let forced = false;
+  while (Date.now() < until) {
+    if (!liveMembers()) return;
+    if (!forced && Date.now() >= until - 1000) { killGroup("SIGKILL"); forced = true; }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  throw new Error(`fixture exit unconfirmed for owned process group ${pid}; preserve home`);
+}
 
 /** A fixture compiler is an owned, bounded child, separate from test deadlines. */
 export function compileFixtureC(source: string, executable: string): void {
