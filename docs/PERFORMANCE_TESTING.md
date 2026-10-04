@@ -337,7 +337,9 @@ A Git HEAD, index or ref change is scoped to its own repository: the OS watcher 
 Idle repositories do not run Git commands or sample working-tree files; content-only edits are reflected when the Overview opens again.
 `a_commit_in_one_project_does_not_rerun_status_in_another` and `idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does` own these boundaries.
 A finished worktree removal follows the same scope: its row leaves the catalog under the lock with no Git call, the coordinator rebuilds the rows on its next wake, and the reader re-reads only the removed worktree's repository; `a_finished_removal_drops_its_row_at_once_and_an_older_read_cannot_bring_it_back` owns this.
-The linked-worktree facts pass also measures ignored repository boundaries off the runtime mutex, once per accepted project read, with 2,000,000 scan steps, 30 seconds and 1,024 names as hard caps.
+The linked-worktree facts pass also measures ignored repository boundaries off the runtime mutex once for each linked worktree in an accepted project read.
+Each scan has hard caps of 2,000,000 steps, 30 seconds and 1,024 names.
+The total project-read cost scales with its linked-worktree count; there is no shared project-wide scan step, time or name cap.
 It skips Git metadata and directory links; a failed or capped scan publishes an unavailable fact rather than an empty list.
 A confirmed deletion uses the existing single removal slot and one preflight worker before any pane close; the same host check runs again before guarded removal.
 No scan is added to pane input, a snapshot tick, hover or an unchanged catalog read, and only phase transitions notify the shell.
