@@ -98,6 +98,9 @@ First-warning time and count persist across daemon restarts; activity resets bot
 ## Watch activity and completion
 
 The registered observer receives inactivity warning letters; `hide watch assign` changes that observer without a polling interval flag.
+The current observer can assign a new observer; an attested new observer can accept a handover with explicit `--approval <text>` and the current `--expected-generation <n>`.
+Approval is nonblank text of at most 256 bytes without control characters, and does not replace the command's native caller binding.
+For that acceptance, the requested observer must be the actual caller; `--actor` cannot select a different caller, and a missing or stale generation refuses the handover.
 Activity is the later of Herdr's status-transition time and the confirmed native session file's modification time.
 A local read and the device helper's `session_activity` use the same session ownership and root-confinement checks.
 Session lookup has one total budget of 10000 directory entries, including skipped extensions and unmatched names, 64 visited directories and 8 MiB of retained path bytes.

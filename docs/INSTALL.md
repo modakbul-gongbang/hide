@@ -196,12 +196,17 @@ The kit retains this stage for one release on each machine, with its result show
 
 Before changing anything, the stage checks the legacy ledgers, Hide's delivery ledger and the sasu run registry and registered checkout run state.
 An open item, an unreadable or unknown record, or a capacity limit stops the pass, names the reason and recovery action, and leaves the machine unchanged.
+On a device, the existing SSH/SFTP connection performs this read-only check against that device's registered checkouts before uploading a helper, creating its folders or changing its current link.
+It shares the local ledger and run predicates, needs no remote interpreter, and stops at the existing 15-second SSH operation deadline.
+The kit never stops an old test server by name without an ownership receipt.
+Before the transition, the operator checks earlier test servers and refuses automatic cleanup of any whose ownership cannot be confirmed.
 After that check succeeds, the ordered steps stop the old daemon, unload its LaunchAgent and delete the plist, remove only Hide-owned command and plugin links, remove the kit copy, and rename the old `~/.hide/hcoord` and `~/.hcoord` folders to siblings ending in `.retired-YYYY-MM-DD`.
 The old ledger is never imported into Hide or deleted.
 There is no compatibility command and no rollback.
 
 The private `~/.hide/kit/coordination-retirement.json` receipt records completion or the failed step.
 An interrupted pass retries idempotently at the next kit pass or Reinstall, with completed removals staying removed.
+A failed retirement step stays visible while the ordinary kit parts continue their pass; a preflight refusal stops the whole pass before it changes anything.
 A completed stage does no more work, and the operator decides when a later release removes this stage after every device has passed it.
 Retirement is tested only with private homes, fixture ledgers and injected service control.
 

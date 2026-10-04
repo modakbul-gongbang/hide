@@ -1175,8 +1175,12 @@ On this Mac the core imports the plugin's state before the kit first runs.
 Every child the kit starts (`herdr plugin uninstall`, `codex features`) runs with a cleared environment, as an owned child that leads its own tree, under a deadline, and ends when the kit's owner raises its stop flag (`hide-kit/src/process.rs`, `hide-agent-hooks/src/codex_daemon.rs`, both over `hide_platform::process::run_to_end`).
 The one-release retirement stage first performs bounded, read-only checks of the former coordinator and Hide ledgers, sasu registry and registered checkout run state.
 An active run, open request, active watch, unreadable record or capacity failure leaves every installation and folder unchanged and reports why.
+For a device, `remote::retirement` reads that account's state and its registered checkout roots through the existing SSH/SFTP connection before any helper upload, folder creation or current-link update, with the existing 15-second operation deadline.
+It shares `hide_kit::retirement_inspection` predicates with the local pass and needs neither a new helper nor a remote interpreter to inspect the old state.
+No old test server is stopped by name without an ownership receipt; the operator confirms earlier test servers before the transition and refuses automatic cleanup when ownership cannot be established.
 After preflight it stops the former daemon, unloads the LaunchAgent and deletes its plist, removes only Hide-owned command/plugin links, deletes the kit copy, then renames `~/.hide/hcoord` and `~/.hcoord` to siblings ending in `.retired-YYYY-MM-DD`.
 `~/.hide/kit/coordination-retirement.json` records the step, reason and completion for idempotent retry.
+After a failed retirement step, ordinary parts continue and the retirement row keeps that failure; a preflight refusal precedes the account lock and stops the entire apply.
 The old ledger is never imported or deleted and there is no rollback; the operator chooses the merge/install transition time with all work closed and chooses the later release that removes the stage.
 Legacy labels and helper folders are retired separately by `hide-kit/src/legacy.rs`, only after account ownership and references are checked; results remain diagnostic records.
 The kit runs nothing from and writes nothing into a folder another account can change: `~/.hide` and `~/.hide/kit` are created mode 0700, and a part whose folder is not owned by the account or is writable by its group or others reads failed with that folder named rather than used (`hide_kit::private_dirs`).
