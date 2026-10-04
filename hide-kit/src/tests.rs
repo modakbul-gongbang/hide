@@ -1885,10 +1885,124 @@ fn writable_retirement_records_refuse_before_services_status_or_any_mutation() {
 }
 
 #[test]
+fn retirement_without_a_herdr_server_finishes_when_no_plugin_is_registered() {
+    for refused_socket in [false, true] {
+        for registry in [
+            None,
+            Some(json!([])),
+            Some(json!([plugin("other.plugin", "/foreign", "local")])),
+        ] {
+            let mut fixture = Fixture::new();
+            old_coordination(&fixture, json!({}), json!({}));
+            fixture.target.herdr_socket = fixture.root.join("offline.sock");
+            fixture.target.herdr_bin = None;
+            if refused_socket {
+                drop(UnixListener::bind(&fixture.target.herdr_socket).unwrap());
+            }
+            let path = fixture.home().join(".config/herdr/plugins.json");
+            let bytes = registry.map(|value| serde_json::to_vec(&value).unwrap());
+            if let Some(bytes) = &bytes {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, bytes).unwrap();
+            }
+            let report = apply(&fixture.target, &Scope::automatic());
+            assert_eq!(
+                state(&report, ComponentId::CoordinationRetirement),
+                ComponentState::Installed,
+                "{report:?}"
+            );
+            assert_eq!(std::fs::read(&path).ok(), bytes);
+            assert!(!fixture.home().join(".hide/hcoord").exists());
+            let before = home_tree(fixture.home());
+            assert_eq!(
+                state(
+                    &apply(&fixture.target, &Scope::automatic()),
+                    ComponentId::CoordinationRetirement
+                ),
+                ComponentState::Installed
+            );
+            assert_eq!(home_tree(fixture.home()), before);
+        }
+    }
+}
+
+#[test]
+fn offline_plugin_retirement_refuses_an_unreadable_registry_and_resumes_after_repair() {
+    for bytes in [b"invalid".as_slice(), b"{}", b"[{}]"] {
+        let mut fixture = Fixture::new();
+        old_coordination(&fixture, json!({}), json!({}));
+        fixture.target.herdr_socket = fixture.root.join("absent.sock");
+        let path = fixture.home().join(".config/herdr/plugins.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Failed,
+            "{report:?}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert!(fixture.home().join(".hide/hcoord/ledger.json").exists());
+        assert!(!fixture.home().join("herdr.log").exists());
+        std::fs::write(path, "[]").unwrap();
+        assert_eq!(
+            state(
+                &apply(&fixture.target, &Scope::automatic()),
+                ComponentId::CoordinationRetirement
+            ),
+            ComponentState::Installed
+        );
+    }
+}
+
+#[test]
+fn offline_plugin_retirement_requires_confirmed_removal_and_preserves_foreign_entries() {
+    let mut fixture = Fixture::new();
+    old_coordination(&fixture, json!({}), json!({}));
+    fixture.target.herdr_socket = fixture.root.join("absent.sock");
+    let path = fixture.home().join(".config/herdr/plugins.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let foreign = json!([plugin("other.plugin", "/foreign", "local")]);
+    let original = json!([plugin(HCOORD_PLUGIN_ID, "/old", "local"), foreign[0]]);
+    std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+    // The boundary first returns success without unregistering: retirement
+    // must retain its failed step instead of preserving a false completion.
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Failed,
+        "{report:?}"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+        original
+    );
+    executable(
+        fixture.target.herdr_bin.as_ref().unwrap(),
+        &format!(
+            "#!/bin/sh\n[ \"$*\" = 'plugin uninstall hide.hcoord' ] || exit 1\nprintf '%s' '{}' > \"$HOME/.config/herdr/plugins.json\"\n",
+            foreign
+        ),
+    );
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CoordinationRetirement),
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+        foreign
+    );
+}
+
+#[test]
 fn a_long_home_with_no_daemon_socket_finishes_retirement_and_converges() {
     for legacy_folder in [false, true] {
         let mut fixture = Fixture::new();
-        fixture.target.home = fixture.root.join(format!("home-{}", "l".repeat(160)));
+        // Each component stays below NAME_MAX; the nested suffix alone
+        // exceeds the assertion regardless of the platform's temp root.
+        fixture.target.home = fixture.root.join("l".repeat(120)).join("l".repeat(120));
         fixture.target.cli_dir = fixture.home().join(".local/bin");
         std::fs::create_dir_all(fixture.home()).unwrap();
         let old = fixture.home().join(".hide/hcoord");

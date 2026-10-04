@@ -670,6 +670,57 @@ fn remove_links(target: &KitTarget) -> Result<crate::Retirement, String> {
     Ok(plugin)
 }
 
+/// Herdr v0.9.1 persists its global registry here and its CLI can uninstall
+/// without a server. Read strictly first: Herdr's offline list intentionally
+/// treats a corrupt registry as empty, which cannot prove retirement.
+pub(crate) fn retire_offline_plugin(target: &KitTarget) -> Result<Option<&'static str>, String> {
+    use hide_herdr_client::wire::success_response::{InstalledPluginInfo, PluginSourceKind};
+
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| target.home.join(".config"))
+        .join("herdr");
+    if let Ok(anchor) = home_anchor(&target.home, &config) {
+        if !inspect_below(&anchor, &config)? {
+            return Ok(None);
+        }
+    } else if !inspect_state_override(&config)? {
+        return Ok(None);
+    }
+    let registry = config.join("plugins.json");
+    let entries = || -> Result<Vec<InstalledPluginInfo>, String> {
+        let Some(value) = read_json(&registry, MAX_STATE_BYTES)? else {
+            return Ok(Vec::new());
+        };
+        let entries: Vec<InstalledPluginInfo> = serde_json::from_value(value)
+            .map_err(|error| format!("Herdr's offline plugin registry is unreadable: {error}"))?;
+        if entries.len() > MAX_ENTRIES {
+            return Err("Herdr's offline plugin registry exceeds the entry bound".into());
+        }
+        Ok(entries)
+    };
+    let Some(plugin) = entries()?
+        .into_iter()
+        .find(|plugin| plugin.plugin_id == crate::HCOORD_PLUGIN_ID)
+    else {
+        return Ok(None);
+    };
+    // The CLI owns the registry lock, unregistering and managed-file removal.
+    // It leaves locally linked source and per-plugin configuration intact.
+    crate::labels::uninstall_managed(target, crate::HCOORD_PLUGIN_ID)?;
+    if entries()?
+        .iter()
+        .any(|plugin| plugin.plugin_id == crate::HCOORD_PLUGIN_ID)
+    {
+        return Err("Herdr's offline plugin registration remains; retry retirement".into());
+    }
+    Ok(Some(match plugin.source.kind {
+        PluginSourceKind::Github => "GitHub",
+        PluginSourceKind::Local => "linked folder",
+    }))
+}
+
 fn remove_copy(target: &KitTarget) -> Result<(), String> {
     let path = crate::record::private_state_dir(&target.home, false)?.join("hcoord");
     match fs::symlink_metadata(&path) {
