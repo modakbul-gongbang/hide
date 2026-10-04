@@ -38,6 +38,20 @@ test('workflow collector reads six batch artifacts and keeps incomplete attempts
   const receipt=JSON.parse(fs.readFileSync(output));
   assert.equal(receipt.complete,true);
   assert.equal(receipt.checks.flatMap(value=>value.checks).length,Object.values(contract.scenarios).reduce((sum,value)=>sum+value.tests.length*value.oses.length,0));
+  // Workflow-equivalent failed action outcome: even a complete downloaded
+  // prefix cannot erase the failed download stage or skip receipt publication.
+  const failedDownload=spawnSync('bash',['-c',
+    `false; download_status=$?; if [ "$download_status" != 0 ]; then outcome=failure; else outcome=success; fi;
+`+
+    String.raw`exec "$1" scripts/ci-controls.cjs collect "$2" "$3" "{\"web\":\"$outcome\",\"desktop\":\"success\"}"`,
+    'download-control',process.execPath,input,output],{env,encoding:'utf8'});
+  assert.notEqual(failedDownload.status,0);
+  const downloadReceipt=JSON.parse(fs.readFileSync(output));
+  assert.equal(downloadReceipt.complete,false);
+  assert.ok(downloadReceipt.checks.length>0);
+  assert.equal(downloadReceipt.errors[0].stage,'artifact-download');
+  assert.equal(downloadReceipt.errors[0].consumer,'web');
+  assert.equal(downloadReceipt.errors[0].message,'artifact download failure');
   const removed=path.join(input,'checkout-Linux-5','ledger.json');
   fs.unlinkSync(removed);
   assert.notEqual(run().status,0);

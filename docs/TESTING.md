@@ -148,6 +148,7 @@ The real-process controls in `scripts/tests/test_playwright_contracts.py` termin
 The ledger caps remain 20,000 rows and 16 MiB; overflow fails the caller and retains the previous complete JSON.
 The complete repetition receipt reads all six five-result batch artifacts through `scripts/ci-controls.cjs collect` and requires every registered test/OS/repeat identity.
 Missing or malformed input leaves a failing incomplete receipt with the collection stage; a passing prefix of the workload is not thirty successful fixtures.
+Collection runs even after an artifact download action fails, retains that download outcome, and refuses acceptance even if other downloaded results are complete.
 
 The link-replacement reader test admits each of forty replacements only after a native file read has consumed its prefix.
 It keeps that file open until publication is observed, reads the suffix afterwards and asserts forty read phases straddled their replacements, alongside concurrent path lookups, old/new-only content, no `NotFound` and no temporary entry.

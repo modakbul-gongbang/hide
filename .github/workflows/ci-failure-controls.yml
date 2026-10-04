@@ -225,15 +225,21 @@ jobs:
         with:
           node-version: 22
       - uses: actions/download-artifact@v8
+        id: web-download
         with:
           pattern: ci-ledger-web-controls-*
           path: control-ledgers/web
       - uses: actions/download-artifact@v8
+        id: desktop-download
+        if: always()
         with:
           pattern: ci-ledger-desktop-controls-*
           path: control-ledgers/desktop
       - name: Require every exact test and OS identity, including all six batches
-        run: node scripts/ci-controls.cjs collect control-ledgers control-receipt.json
+        if: always()
+        run: >-
+          node scripts/ci-controls.cjs collect control-ledgers control-receipt.json
+          '{"web":"${{ steps.web-download.outcome }}","desktop":"${{ steps.desktop-download.outcome }}"}'
       - uses: actions/upload-artifact@v7
         if: always()
         with:

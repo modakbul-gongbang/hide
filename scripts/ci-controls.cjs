@@ -42,11 +42,19 @@ function results(name, os, value, source, original, batch) {
   if (rows.length !== expected.length * count) throw Error('unexpected diagnostic selection identity');
   return {version:1,source,scenario:name,checks,complete:batch === undefined,batch:batch ?? null,originalCompared:Boolean(original)};
 }
-function collect(directory, output, source) {
+function collect(directory, output, source, downloads) {
   const receipt={version:1,source:source || null,checks:[],complete:false,errors:[]};
   let stage='source';
   try {
     receipt.source=source || ledger.identity();
+    stage='artifact-download';
+    if(downloads !== undefined) {
+      receipt.downloads=typeof downloads==='string'?JSON.parse(downloads):downloads;
+      if(!receipt.downloads || Object.keys(receipt.downloads).sort().join(',')!=='desktop,web') throw Error('unknown artifact download inventory');
+      for(const [consumer,outcome] of Object.entries(receipt.downloads)) if(outcome!=='success') {
+        receipt.errors.push({stage,consumer,message:`artifact download ${outcome==='failure'||outcome==='cancelled'||outcome==='skipped'?outcome:'unknown'}`});
+      }
+    }
     stage='input';
     const records=require('./ci-history.cjs').readRecords(directory);
     if (records.some(row=>!Object.values(contract.scenarios).some(scenario=>scenario.oses.includes(row.os) && scenario.tests.some(([suite,test])=>suite===row.suite && test===row.test)))) throw Error('unexpected collected control identity');
@@ -55,6 +63,7 @@ function collect(directory, output, source) {
       const selected=records.filter(row=>row.os===os && scenario.tests.some(([suite,test])=>row.suite===suite && row.test===test));
       receipt.checks.push(results(name,os,{version:1,records:selected},receipt.source));
     }
+    if(receipt.errors.length) throw Error('artifact download incomplete');
     receipt.complete=true;
     return receipt;
   } catch(error) {
@@ -65,10 +74,10 @@ function collect(directory, output, source) {
 module.exports = {selection,results,collect};
 if (require.main === module) {
   const [mode,name,os,input,output,original] = process.argv.slice(2);
-  if (mode === 'collect' && name && os && !input) collect(name,os);
+  if (mode === 'collect' && name && os && !output) collect(name,os,undefined,input);
   else if (mode === 'select' && input && !output) fs.writeFileSync(input,selection(name,os));
   else if (mode === 'results' && input && output) {
     const current = ledger.identity();
     ledger.write(output,results(name,os,JSON.parse(fs.readFileSync(input)),{sha:current.sha,run:current.run,runAttempt:current.runAttempt},original && JSON.parse(fs.readFileSync(original)),process.env.CI_CONTROL_BATCH === undefined ? undefined : Number(process.env.CI_CONTROL_BATCH)));
-  } else throw Error('usage: ci-controls.cjs collect DIRECTORY OUTPUT | select NAME OS OUTPUT | results NAME OS LEDGER OUTPUT [ORIGINAL]');
+  } else throw Error('usage: ci-controls.cjs collect DIRECTORY OUTPUT [DOWNLOAD_RESULTS_JSON] | select NAME OS OUTPUT | results NAME OS LEDGER OUTPUT [ORIGINAL]');
 }
