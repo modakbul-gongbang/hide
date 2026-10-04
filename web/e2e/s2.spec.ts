@@ -379,7 +379,9 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await expect.poll(() => sent.get("close_pane")).toBe(1);
     await expect(page.locator("[data-confirm-close]")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__hideProbe?.liveTerminals() ?? [])).not.toContain(closingPane);
-    await expect(page.locator("[data-terminal-parking] [data-terminal]")).toHaveCount(0);
+    // Other open tabs keep their parked terminals (D-05); only the closed
+    // pane must be absent from the parking lot.
+    await expect(page.locator(`[data-terminal-parking] [data-terminal="${closingPane}"]`)).toHaveCount(0);
 
     // Agent areas own local order (B7/D19): one move changes the strip without a Herdr reorder.
     const secondTab = page.locator(`[data-tab="${tabs[1]}"]`);

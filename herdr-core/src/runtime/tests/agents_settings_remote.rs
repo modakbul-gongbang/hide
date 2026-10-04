@@ -1466,7 +1466,11 @@ fn read_record_stops_following_a_pane_herdr_moved_focus_away_from() {
     assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
     // The requested focus lands, then a spawned pane takes it away.
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p3")));
+    super::session_navigation::finish_running_pane_focus(&mut runtime, Ok(()));
+    assert!(runtime.pending_pane_focus.is_none());
+    assert!(runtime.pane_focus_in_flight.is_none());
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
 
     let moved = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6031)];
     runtime.ingest_session(Ok(finished_tab_payload(&moved, "w1:p1")));

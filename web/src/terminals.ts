@@ -566,7 +566,9 @@ export function attachTerminal(
     // owns the focus pane, so the click is an event and the header follows
     // the snapshot, not the click.
     shown.term.textarea?.addEventListener("focus", () => {
-      if (followingSnapshot || useShellStore.getState().focusedPaneId === paneId) return;
+      if (followingSnapshot) return;
+      // A snapshot can lag a newer intent. Core owns focus idempotence and
+      // coalescing, so every operator focus must reach it.
       // A remote pane's focus is its host's, so it goes there by the pane's
       // own scoped id; this machine's `focus_pane` never carries it.
       const targetId = remoteTargetOfPane(useShellStore.getState().rest, paneId);
