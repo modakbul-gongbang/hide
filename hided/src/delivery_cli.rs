@@ -4,7 +4,7 @@ use herdr_core::delivery::{BODY_LIMIT, Command, HOOK_LETTERS};
 
 use crate::env::{self, Env};
 
-pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
+pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>] [--approval <text>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
 
 pub fn parse<'a>(
     topic: &str,
@@ -33,11 +33,19 @@ pub fn parse<'a>(
         let mut observer = None;
         let mut actor = None;
         let mut expected_generation = None;
+        let mut approval = None;
         while let Some(flag) = args.next() {
             let value = args.next().ok_or(USAGE)?;
             match flag.as_str() {
                 "--observer" if observer.is_none() && key(value) => observer = Some(value.clone()),
                 "--actor" if actor.is_none() && key(value) => actor = Some(value.clone()),
+                "--approval"
+                    if approval.is_none()
+                        && verb == Some("assign")
+                        && herdr_core::delivery::watch::valid_approval(value) =>
+                {
+                    approval = Some(value.clone());
+                }
                 "--expected-generation"
                     if expected_generation.is_none() && verb == Some("assign") =>
                 {
@@ -52,12 +60,15 @@ pub fn parse<'a>(
                 observer,
                 actor,
             }),
-            Some("assign") => Ok(Command::WatchAssign {
-                id: subject,
-                observer: observer.ok_or(USAGE)?,
-                actor,
-                expected_generation,
-            }),
+            Some("assign") if approval.is_none() || expected_generation.is_some() => {
+                Ok(Command::WatchAssign {
+                    id: subject,
+                    observer: observer.ok_or(USAGE)?,
+                    actor,
+                    expected_generation,
+                    approval,
+                })
+            }
             Some("stop") if observer.is_none() && actor.is_none() => {
                 Ok(Command::WatchStop { id: subject })
             }
@@ -224,5 +235,44 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn handover_approval_is_explicit_bounded_and_requires_a_generation() {
+        assert!(matches!(
+            parse_line(&["watch", "assign", "watch-1", "--observer", "next", "--approval", "approved", "--expected-generation", "1"]).unwrap(),
+            Command::WatchAssign { approval: Some(text), expected_generation: Some(1), .. } if text == "approved"
+        ));
+        for approval in ["", " ", "line\nbreak"] {
+            assert!(
+                parse_line(&[
+                    "watch",
+                    "assign",
+                    "watch-1",
+                    "--observer",
+                    "next",
+                    "--approval",
+                    approval,
+                    "--expected-generation",
+                    "1"
+                ])
+                .is_err()
+            );
+        }
+        assert!(
+            parse_line(&[
+                "watch",
+                "assign",
+                "watch-1",
+                "--observer",
+                "next",
+                "--approval",
+                "approved"
+            ])
+            .is_err()
+        );
+        assert!(!herdr_core::delivery::watch::valid_approval(
+            &"x".repeat(257)
+        ));
     }
 }

@@ -49,6 +49,8 @@ pub enum Command {
         observer: String,
         actor: Option<String>,
         expected_generation: Option<u64>,
+        #[serde(default)]
+        approval: Option<String>,
     },
     WatchList,
 }

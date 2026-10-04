@@ -120,11 +120,19 @@ pub fn assign(
     id: &str,
     observer: &Actor,
     expected_generation: Option<u64>,
+    approval: Option<&str>,
 ) -> Result<Watch, String> {
     observer.require_native_identity()?;
+    if approval.is_some_and(|text| !valid_approval(text)) {
+        return Err("invalid_approval".into());
+    }
+    let approved_observer = parent.same_identity(observer) && approval.is_some();
+    if approved_observer && expected_generation.is_none() {
+        return Err("expected_generation_required".into());
+    }
     let registered = crate::coordination::resolve_actor(ledger, id).cloned();
     let mut matches = ledger.watches.iter().enumerate().filter(|(_, watch)| {
-        watch.parent.same_identity(parent)
+        (watch.parent.same_identity(parent) || approved_observer)
             && (watch.id == id
                 || registered
                     .as_ref()
@@ -146,6 +154,12 @@ pub fn assign(
         watch.parent = observer.clone();
     }
     Ok(watch.clone())
+}
+
+/// Approval permits only the attested new observer to accept a handover.
+/// The explicit text is bounded input and is never emitted to diagnostics.
+pub fn valid_approval(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
 #[derive(Clone)]
@@ -412,7 +426,7 @@ mod tests {
         let watch = start(&mut ledger, &parent, &target, 10).unwrap();
         tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
         let before = ledger.watches[0].clone();
-        let changed = assign(&mut ledger, &parent, &watch.id, &next, Some(0)).unwrap();
+        let changed = assign(&mut ledger, &parent, &watch.id, &next, Some(0), None).unwrap();
         assert_eq!(changed.generation, 1);
         assert_eq!(
             changed.last_activity_at_unix_ms,
@@ -424,15 +438,78 @@ mod tests {
         );
         assert_eq!(changed.warning_count, before.warning_count);
         assert_eq!(
-            assign(&mut ledger, &next, &watch.id, &parent, Some(0)).unwrap_err(),
+            assign(&mut ledger, &next, &watch.id, &parent, Some(0), None).unwrap_err(),
             "stale_generation"
         );
         assert_eq!(
-            assign(&mut ledger, &parent, &watch.id, &parent, Some(1)).unwrap_err(),
+            assign(&mut ledger, &parent, &watch.id, &parent, Some(1), None).unwrap_err(),
             "watch_unavailable"
         );
         let restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
         assert_eq!(restored.watches[0], changed);
+    }
+
+    #[test]
+    fn the_current_new_observer_accepts_handover_only_with_approval_and_current_generation() {
+        let mut ledger = Ledger::default();
+        let parent = actor("parent");
+        let next = actor("next");
+        let stranger = actor("stranger");
+        let watch = start(&mut ledger, &parent, &actor("target"), 10).unwrap();
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
+        let before = ledger.watches[0].clone();
+        for (caller, observer, generation, approval, expected) in [
+            (&next, &next, Some(0), None, "watch_unavailable"),
+            (
+                &next,
+                &next,
+                None,
+                Some("approved"),
+                "expected_generation_required",
+            ),
+            (&next, &next, Some(1), Some("approved"), "stale_generation"),
+            (
+                &stranger,
+                &next,
+                Some(0),
+                Some("approved"),
+                "watch_unavailable",
+            ),
+            (&next, &next, Some(0), Some(" "), "invalid_approval"),
+        ] {
+            assert_eq!(
+                assign(
+                    &mut ledger,
+                    caller,
+                    &watch.id,
+                    observer,
+                    generation,
+                    approval
+                )
+                .unwrap_err(),
+                expected
+            );
+            assert_eq!(ledger.watches[0], before);
+        }
+        let changed = assign(
+            &mut ledger,
+            &next,
+            &watch.id,
+            &next,
+            Some(0),
+            Some("approved"),
+        )
+        .unwrap();
+        let mut expected = before;
+        expected.parent = next;
+        expected.generation = 1;
+        assert_eq!(changed, expected);
+        assert_eq!(ledger.watches[0], expected);
+        assert!(
+            !String::from_utf8(ledger.bytes().unwrap())
+                .unwrap()
+                .contains("approved")
+        );
     }
 
     #[test]

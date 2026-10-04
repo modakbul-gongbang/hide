@@ -543,6 +543,7 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
         Command::WatchAssign {
             id,
             expected_generation,
+            approval,
             ..
         } => {
             let observer = target.as_ref().ok_or("target_unavailable")?;
@@ -551,7 +552,8 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
                 actor,
                 id,
                 &observer.actor,
-                *expected_generation
+                *expected_generation,
+                approval.as_deref()
             )?))
         }
         Command::WatchList => Ok(json!(
