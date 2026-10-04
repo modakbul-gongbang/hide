@@ -86,9 +86,14 @@ fn child_role() {
             let _ = child.wait();
         }
         // An ordinary supervisor leaves both inherited pipes in its child.
-        "exit_with_pipes" => {
+        "exit_with_pipes" | "exit_with_escaped_pipes" => {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            #[cfg(unix)]
+            if role == "exit_with_escaped_pipes" {
+                std::os::unix::process::CommandExt::process_group(&mut command, 0);
+            }
             #[allow(clippy::zombie_processes)]
-            let helper = Command::new(std::env::current_exe().unwrap())
+            let helper = command
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
                 .spawn()
@@ -565,22 +570,27 @@ fn a_raised_stop_ends_the_child_before_its_deadline() {
     assert!(started.elapsed() < Duration::from_secs(10));
 }
 
-/// The public call must finish after exit 0 even when its descendant retains
-/// both pipes. Recovery is armed before that parent exits, so the old hang
-/// fails within a bound and its one known helper is still cleaned up.
-#[test]
-fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
-    let _serial = serial();
+/// Recovery is armed before the parent exits, so a hanging public call fails
+/// within a bound and only its known helper is ended.
+fn inherited_pipe_run(
+    role: &str,
+    deadline: Duration,
+) -> (
+    Result<hide_platform::process::Finished, RunFailure>,
+    bool,
+    Duration,
+    bool,
+) {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("owner");
-    let mut command = role_command("exit_with_pipes");
+    let mut command = role_command(role);
     command.env(PIPE_OWNER, &path);
     let (answered, result) = mpsc::channel();
     let started = Instant::now();
     let runner = thread::spawn(move || {
         let answer = run_to_end(
             &mut command,
-            Duration::from_secs(5),
+            deadline,
             &std::sync::atomic::AtomicBool::new(false),
         );
         answered.send(answer).unwrap();
@@ -631,9 +641,22 @@ fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
             .expect("the recovered pipe reader must finish")
     });
     runner.join().unwrap();
+    (answer, within_deadline, elapsed, absent_on_return)
+}
+
+/// An exit-0 parent must not wait for its sleeping descendant's pipes.
+#[test]
+fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
+    let _serial = serial();
+    let (answer, within_deadline, elapsed, absent_on_return) =
+        inherited_pipe_run("exit_with_pipes", Duration::from_secs(5));
     assert!(
         within_deadline,
         "run_to_end hung after exit 0 while inherited pipes remained open; elapsed {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "the original deadline was exceeded"
     );
     let finished = answer.unwrap();
     assert_eq!(finished.code, Some(0));
@@ -643,4 +666,20 @@ fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
         absent_on_return,
         "the inherited-pipe helper outlived the call"
     );
+}
+
+/// Unix cannot attribute a helper that escaped and was reparented before its
+/// walk, but that helper's inherited pipes must not make a deadline unlimited.
+#[cfg(unix)]
+#[test]
+fn an_escaped_pipe_holder_cannot_extend_the_run_deadline() {
+    let _serial = serial();
+    let (answer, completed, elapsed, _) =
+        inherited_pipe_run("exit_with_escaped_pipes", Duration::from_millis(500));
+    assert!(
+        completed,
+        "pipe draining blocked even after the run deadline"
+    );
+    assert!(matches!(answer, Err(RunFailure::TimedOut)), "{answer:?}");
+    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
 }
