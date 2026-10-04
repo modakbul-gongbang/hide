@@ -6,7 +6,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
-// PRD tab-view-bookmark: two Agent tabs of one checkout share the side panel's
+// PRD tab-view-bookmark: two Agent tabs of one checkout share File Views'
 // View list, and each remembers which View was in front for it.
 
 test.describe.configure({ timeout: 180_000 });
@@ -65,14 +65,17 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await expect(agentTab(page, second)).toBeVisible();
-    await page.locator('[data-panel-toggle="off"]').click();
-    await expect(page.locator("[data-side-panel]")).toBeVisible();
+    // File Views on, so the agents' opens without --reveal are seen; with
+    // nothing open it starts on a New tab page (PRD three-column-panel B16).
+    await page.locator('[data-column-toggle="views"]').click();
+    await expect(page.locator("[data-view-area]")).toBeVisible();
 
     // Tab 1 is in front and opens a.md: that is its bookmark.
     await hideFrom(herdr, daemon, firstPane, ["file", "open", "a.md"], 1);
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
+    await closeNewTabPage(page);
 
-    // Tab 2 has no bookmark, so the panel stays; its own agent opens b.md.
+    // Tab 2 has no bookmark, so File Views stays; its own agent opens b.md.
     await agentTab(page, second).click();
     await expect(agentTab(page, second)).toHaveAttribute("aria-selected", "true");
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
@@ -123,7 +126,7 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
   }
 });
 
-test("moving focus between two Agent tabs shown side by side leaves the panel alone", async ({ page }) => {
+test("moving focus between two Agent tabs shown side by side leaves File Views alone", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
@@ -139,13 +142,12 @@ test("moving focus between two Agent tabs shown side by side leaves the panel al
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await expect(agentTab(page, second)).toBeVisible();
-    await page.locator('[data-panel-toggle="off"]').click();
-    await expect(page.locator("[data-side-panel]")).toBeVisible();
-    // Pinned, so the panel docks beside the Agent areas instead of over them.
-    await page.locator('[data-panel-pin="off"]').click();
-    await expect(page.locator('[data-panel-pin="on"]')).toBeVisible();
+    await page.locator('[data-column-toggle="views"]').click();
+    await expect(page.locator("[data-view-area]")).toBeVisible();
 
     await hideFrom(herdr, daemon, firstPane, ["file", "open", "a.md"], 1);
+    await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
+    await closeNewTabPage(page);
     await agentTab(page, second).click();
     await hideFrom(herdr, daemon, secondPane, ["file", "open", "b.md"], 2);
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
@@ -160,7 +162,7 @@ test("moving focus between two Agent tabs shown side by side leaves the panel al
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
 
     // B7: focus moves to the other area's tab, by its strip and by a pane;
-    // both tabs were shown already, so the panel does not swap.
+    // both tabs were shown already, so File Views does not swap.
     await agentTab(page, first).click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/b\.md/);
     await page.locator(`[data-pane-view="${secondPane}"]`).click();
@@ -170,7 +172,7 @@ test("moving focus between two Agent tabs shown side by side leaves the panel al
     await expect(viewTabs(page)).toHaveCount(2);
     await screenshot(page, "view-bookmarks-side-by-side");
 
-    // What is picked in the panel next belongs to the tab that has focus:
+    // What is picked in File Views next belongs to the tab that has focus:
     // choosing a.md now, then focusing the other area, leaves it in front.
     await page.locator('[data-view-tab-bar] [role="tab"][aria-label*="/a.md"]').click();
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
@@ -181,3 +183,12 @@ test("moving focus between two Agent tabs shown side by side leaves the panel al
     herdr.stop();
   }
 });
+
+/** Closes the New tab page File Views starts on when it is turned on with nothing open. */
+async function closeNewTabPage(page: Page): Promise<void> {
+  const blank = page.locator('[data-view-tab-bar] [role="tab"]').filter({ hasNotText: /\.md/ });
+  await expect(blank).toHaveCount(1);
+  await blank.hover();
+  await blank.getByRole("button", { name: /Close view/ }).click();
+  await expect(blank).toHaveCount(0);
+}

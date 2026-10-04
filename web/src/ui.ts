@@ -11,11 +11,15 @@ import { NO_FILTER, type IssueFilter } from "./projectBoard";
 import type { SettingsTab } from "./settings";
 import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
-import { placementForWidth, type ToolsPlacement, type ViewFocusRequest, type ViewWorkspace } from "./viewLayout";
+import type { ViewFocusRequest, ViewWorkspace } from "./viewLayout";
+import { DEFAULT_SLOTS, NO_CALLS_SEEN, type BodyStep, type CallsSeen, type Column, type ColumnSlots } from "./workspace";
 
 export type HomeStart = { requestId: string; deviceId: string; refusal: string | null };
 
-export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
+export type { ViewFocusRequest } from "./viewLayout";
+
+/** The columns the Workspace screen draws now beside Agent Views, and how many the body holds. */
+export type ShownColumns = { views: boolean; tools: boolean; step: BodyStep };
 
 export type SidebarMode = "agents" | "projects";
 
@@ -49,17 +53,26 @@ export type PendingClose = {
  * (PRD home-device-rail D-13): `deviceId` names the device, and without one it
  * is the device in front.
  */
-export type Screen = { kind: "main"; deviceId?: string } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
+export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
 
 /**
  * How All projects is looked at: every Project's tasks, every agent, or the
  * list of Projects (PRD task-agents-views D-01). A Project's Overview has its
  * own tiles instead (`OverviewLens`).
  */
-export type MainView = "tasks" | "agents" | "projects";
+export type MainView = "requests" | "tasks" | "agents" | "projects";
 
-/** A Project Overview's tiles (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14): its agents, its issues, its pull requests, its sessions. */
-export type OverviewTab = "agents" | "issues" | "prs" | "sessions";
+/** A Project Overview's tiles (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view D-05): its requests, its agents, its issues, its pull requests, its sessions. */
+export type OverviewTab = "requests" | "agents" | "issues" | "prs" | "sessions";
+
+/**
+ * The request view's own state (PRD overview-request-view B3, B6): the rows
+ * expanded, by pane id, the ones whose full request is shown past twenty
+ * lines, and whether the resting group is unfolded.
+ */
+export type RequestLens = { open: readonly string[]; full: readonly string[]; resting: boolean };
+
+export const NO_REQUEST_LENS: RequestLens = { open: [], full: [], resting: false };
 
 /**
  * The PRs tab's own state (PRD overview-lenses-prs B5, B19, B21): the rows
@@ -96,6 +109,8 @@ export type OverviewLens = {
   filter: IssueFilter;
   /** The PRs tab's rows and folds (PRD overview-lenses-prs). */
   prs: PrLens;
+  /** The request view's rows and fold (PRD overview-request-view). */
+  requests: RequestLens;
 };
 
 /** `folds` with `fold` opened, or closed again when it was open. */
@@ -104,13 +119,13 @@ export function toggledFold(folds: readonly string[], fold: string): string[] {
 }
 
 /**
- * Where every way into a Project's Overview lands (D-04, D-17, agents-graph-view
- * D-22): the Agents graph with the given box selected and no filter. The
- * Issues mode is the page's, the one All projects' Tasks shows too
- * (task-agents-views D-10).
+ * Where every way into a Project's Overview lands (overview-request-view D-05):
+ * the request view, with the given box selected for when the Agents graph is
+ * chosen and no filter. The Issues mode is the page's, the one All projects'
+ * Tasks shows too (task-agents-views D-10).
  */
 export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLens {
-  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS };
+  return { tab: "requests", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS, requests: NO_REQUEST_LENS };
 }
 
 /**
@@ -219,14 +234,15 @@ type UiStore = {
   agentFindRequest: string | null;
   viewFocusRequest: ViewFocusRequest | null;
   /**
-   * How the Workspace tools stand (S7 B12, D-08): the column while the side
-   * panel has room for it, else an overlay that stays closed until the
-   * operator asks for a tool. The Workspace screen keeps it in step with the
-   * panel's width; the tools the core stores are never changed by it.
+   * Which column a narrow Workspace body shows (PRD three-column-panel D-07):
+   * the one called last. Display only, never sent, so widening brings back
+   * what the core stores.
    */
-  toolsPlacement: ToolsPlacement;
-  /** A tool was asked for while the side panel was closed, so the overlay opens with the panel if it turns out narrow. */
-  toolsAsked: boolean;
+  columnSlots: ColumnSlots;
+  /** What the page has read of the core's File Views calls (`columnCalls.ts`). */
+  viewsCallsSeen: CallsSeen;
+  /** The columns the Workspace screen draws now, which the toolbar and the column chords read. */
+  shownColumns: ShownColumns;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
@@ -274,8 +290,13 @@ type UiStore = {
    * closes these itself as it consumes.
    */
   tooltips: (() => void)[];
+  /** A way into a screen; Home from another screen opens its request view (overview-request-view D-05). */
   setScreen: (screen: Screen) => void;
+  /** A screen brought back as it was left (Recent Panels): Home keeps the view it had. */
+  restoreScreen: (screen: Screen) => void;
   setMainView: (view: MainView) => void;
+  /** The Main request view's lens rides on its screen for Recent Panels. */
+  setMainRequestLens: (patch: Partial<RequestLens>) => void;
   setTasksMode: (mode: TasksMode) => void;
   /** Changes the Project Overview's lens in place; a no-op on any other screen. */
   setLens: (patch: Partial<OverviewLens>) => void;
@@ -287,14 +308,11 @@ type UiStore = {
   requestEditorFind: (displayId: string | null) => void;
   setAgentFindRequest: (requestId: string | null) => void;
   setViewFocusRequest: (request: ViewFocusRequest | null) => void;
-  /** Follows the window: `column` when wide, a closed overlay when it turns narrow, unless a tool was asked for with the panel. */
-  setToolsNarrow: (narrow: boolean) => void;
-  /** The operator asked for a tool: a narrow window's overlay opens. */
-  openTools: () => void;
-  /** The operator asked for a tool while the side panel was closed. */
-  askTools: () => void;
-  /** Escape or a click outside closes a narrow window's overlay. */
-  closeTools: () => void;
+  /** A column was called (an open, a tool, an agent chosen): a narrow body shows it. */
+  callColumn: (column: Column) => void;
+  /** Another Workspace is drawn: a narrow body starts on Agent Views again. */
+  resetColumnSlots: () => void;
+  setShownColumns: (shown: ShownColumns) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
@@ -320,7 +338,7 @@ type UiStore = {
 
 export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
-  mainView: "tasks",
+  mainView: "requests",
   tasksMode: "board",
   relation: null,
   sidebarMode: "projects",
@@ -330,8 +348,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
   editorFindDisplay: null,
   agentFindRequest: null,
   viewFocusRequest: null,
-  toolsPlacement: "column",
-  toolsAsked: false,
+  columnSlots: DEFAULT_SLOTS,
+  viewsCallsSeen: NO_CALLS_SEEN,
+  shownColumns: { views: false, tools: false, step: "wide" },
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
@@ -350,8 +369,14 @@ export const useUiStore = create<UiStore>((set, get) => ({
   tooltips: [],
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
-  setScreen: (screen) => set({ screen, opening: null }),
+  setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, mainView: "requests" } : { screen, opening: null })),
+  restoreScreen: (screen) => set({ screen, opening: null }),
   setMainView: (mainView) => set({ mainView }),
+  setMainRequestLens: (patch) => {
+    const screen = get().screen;
+    if (screen?.kind !== "main") return;
+    set({ screen: { ...screen, requests: { ...(screen.requests ?? NO_REQUEST_LENS), ...patch } } });
+  },
   setTasksMode: (tasksMode) => set({ tasksMode }),
   // A lens change is a new screen value, so Recent Panels records the
   // Overview as it now is; the open request stays, since nothing moved away.
@@ -372,20 +397,17 @@ export const useUiStore = create<UiStore>((set, get) => ({
   requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),
   setAgentFindRequest: (agentFindRequest) => set({ agentFindRequest }),
   setViewFocusRequest: (viewFocusRequest) => set({ viewFocusRequest }),
-  setToolsNarrow: (narrow) => {
-    const { toolsPlacement: current, toolsAsked } = get();
-    const next = narrow && toolsAsked ? "open" : placementForWidth(current, narrow);
-    if (next !== current || toolsAsked) set({ toolsPlacement: next, toolsAsked: false });
+  callColumn: (column) => {
+    const { columnSlots } = get();
+    const side = column === "agents" ? columnSlots.side : column;
+    if (columnSlots.single !== column || columnSlots.side !== side) set({ columnSlots: { side, single: column } });
   },
-  askTools: () => set({ toolsAsked: true }),
-  openTools: () => {
-    if (get().toolsPlacement === "closed") set({ toolsPlacement: "open" });
+  resetColumnSlots: () => {
+    if (get().columnSlots !== DEFAULT_SLOTS) set({ columnSlots: DEFAULT_SLOTS });
   },
-  // A tool asked for with a panel that never opened is forgotten here too,
-  // so a later narrow panel never opens its overlay by itself.
-  closeTools: () => {
-    const { toolsPlacement, toolsAsked } = get();
-    if (toolsPlacement === "open" || toolsAsked) set({ toolsPlacement: toolsPlacement === "open" ? "closed" : toolsPlacement, toolsAsked: false });
+  setShownColumns: (shown) => {
+    const current = get().shownColumns;
+    if (current.views !== shown.views || current.tools !== shown.tools || current.step !== shown.step) set({ shownColumns: shown });
   },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),

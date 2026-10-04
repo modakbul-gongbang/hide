@@ -980,7 +980,7 @@ impl Runtime {
 
     pub(super) fn remove_git_worktree(&mut self, payload: RemoveWorktreePayload) -> bool {
         if let Some(removal) = self.snapshot.worktree_removal.as_ref()
-            && matches!(removal.phase.as_str(), "closing" | "removing")
+            && matches!(removal.phase.as_str(), "checking" | "closing" | "removing")
         {
             if removal.checkout_path == payload.checkout_path {
                 return false;
@@ -1034,7 +1034,7 @@ impl Runtime {
             worktree,
             &payload,
         );
-        self.close_worktree_then_remove(id, None, payload)
+        self.start_worktree_preflight(id, None, payload.close_descendant_pane_ids)
     }
 
     /// `remove_worktree` for a device's linked worktree (PRD S5.5 B28, B29):
@@ -1083,7 +1083,62 @@ impl Runtime {
             worktree,
             &payload,
         );
-        self.close_worktree_then_remove(id, Some(device.to_owned()), payload)
+        self.start_worktree_preflight(
+            id,
+            Some(device.to_owned()),
+            payload.close_descendant_pane_ids,
+        )
+    }
+
+    fn start_worktree_preflight(
+        &mut self,
+        id: u64,
+        device: Option<String>,
+        outside: Vec<String>,
+    ) -> bool {
+        let context = match device.as_deref() {
+            Some(device) => self.device_worktree_target(device),
+            None => self.local_worktree_target(),
+        };
+        let result =
+            context.and_then(|context| live::spawn_worktree_preflight(context, id, outside));
+        if let Err(reason) = result {
+            self.ingest_worktree_preflight_result(id, Vec::new(), Err(reason));
+        }
+        true
+    }
+
+    /// Only a successful host measurement admits any descendant or local close.
+    pub(crate) fn ingest_worktree_preflight_result(
+        &mut self,
+        id: u64,
+        outside: Vec<String>,
+        result: Result<(), String>,
+    ) -> bool {
+        let Some(removal) = self
+            .snapshot
+            .worktree_removal
+            .as_mut()
+            .filter(|row| row.id == id && row.phase == "checking")
+        else {
+            return false;
+        };
+        if let Err(message) = result {
+            removal.phase = "failed".to_owned();
+            removal.message = Some(message);
+            let device = removal.device_id.clone();
+            match device.as_deref() {
+                Some(device) => {
+                    self.request_device_worktrees(device, true);
+                }
+                None => self.refresh_worktrees(),
+            };
+            return true;
+        }
+        removal.phase = "closing".to_owned();
+        let device = removal.device_id.clone();
+        let path = removal.checkout_path.clone();
+        self.close_worktree_then_remove(id, device, path, outside)
     }
 
     /// The panes of a checkout a removal closes, by the ids its own Herdr
@@ -1121,13 +1176,14 @@ impl Runtime {
         &mut self,
         id: u64,
         device: Option<String>,
-        payload: RemoveWorktreePayload,
+        checkout_path: String,
+        outside: Vec<String>,
     ) -> bool {
-        if payload.close_descendant_pane_ids.is_empty() {
-            return self.close_worktree_panes(id, device, payload.checkout_path);
+        if outside.is_empty() {
+            return self.close_worktree_panes(id, device, checkout_path);
         }
         let inside = self
-            .checkout_pane_ids(device.as_deref(), &payload.checkout_path)
+            .checkout_pane_ids(device.as_deref(), &checkout_path)
             .into_iter()
             .map(|pane| match device.as_deref() {
                 Some(device) => crate::session_sync::remote_pane_id(device, &pane),
@@ -1136,11 +1192,11 @@ impl Runtime {
             .collect::<HashSet<_>>();
         self.close_descendants_before_removal(
             &inside,
-            payload.close_descendant_pane_ids,
+            outside,
             super::tree_close::TreeFinal::Worktree {
                 removal_id: id,
                 device,
-                checkout_path: payload.checkout_path,
+                checkout_path,
             },
         )
     }
@@ -1195,6 +1251,10 @@ impl Runtime {
             self.set_error("worktree.remove_blocked", reason.clone(), true);
             return false;
         }
+        if worktree.ignored_repositories != payload.expected_ignored_repositories {
+            self.set_error("worktree.remove_unaccepted", "Not deleted: the ignored repository list changed. Refresh and review every repository before choosing Discard.".to_owned(), true);
+            return false;
+        }
         if let Some(label) = worktree.deletion_gate.discard_label.as_ref()
             && !payload.discard_changes
         {
@@ -1236,8 +1296,9 @@ impl Runtime {
             delete_branch,
             force_delete_branch: delete_branch && gate.branch_warning.is_some(),
             discard_changes: payload.discard_changes && gate.discard_label.is_some(),
+            expected_ignored_repositories: payload.expected_ignored_repositories.clone(),
             branch: worktree.branch,
-            phase: "closing".to_owned(),
+            phase: "checking".to_owned(),
             message: None,
         });
         id
@@ -1992,8 +2053,23 @@ impl Runtime {
         &self,
         id: u64,
     ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
+        self.worktree_removal_request(id, "removing")
+    }
+
+    pub(crate) fn worktree_preflight_request(
+        &self,
+        id: u64,
+    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
+        self.worktree_removal_request(id, "checking")
+    }
+
+    fn worktree_removal_request(
+        &self,
+        id: u64,
+        phase: &str,
+    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
         let removal = self.snapshot.worktree_removal.as_ref()?;
-        (removal.id == id && removal.phase == "removing").then(|| {
+        (removal.id == id && removal.phase == phase).then(|| {
             hide_host::worktrees::ConfirmedRemoval {
                 repository_root: removal.repository_root.clone(),
                 checkout_path: removal.checkout_path.clone(),
@@ -2006,6 +2082,7 @@ impl Runtime {
                     .flatten(),
                 force_delete_branch: removal.force_delete_branch,
                 discard_changes: removal.discard_changes,
+                expected_ignored_repositories: removal.expected_ignored_repositories.clone(),
             }
         })
     }
@@ -2270,12 +2347,20 @@ impl Runtime {
                 }
             }
         }
+        let times = pull_request_times(&github);
+        if *self.pull_request_times != times {
+            self.pull_request_times = std::sync::Arc::new(times);
+            if let Some(services) = self.label_services.as_ref() {
+                services.wake_local();
+            }
+        }
         changed |= crate::sidebar::sync_checkout_purposes(
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
         changed |= self.sync_issues();
         changed |= self.sync_tasks();
+        changed |= self.sync_request_rows();
         changed
     }
 
@@ -3148,6 +3233,25 @@ pub(super) fn owner_open(
         project.is_git,
         label,
     )
+}
+
+/// When GitHub made each pull request read, by the address's lowercase
+/// `owner/name` and number.
+fn pull_request_times(
+    github: &crate::model::GithubSnapshot,
+) -> crate::labels::facts::PullRequestTimes {
+    github
+        .projects
+        .iter()
+        .flat_map(|project| project.pull_requests.iter())
+        .filter_map(|pull_request| {
+            let created = pull_request.created_at_unix_ms?;
+            let (repository, number) = hide_session::pull_request_addresses(&pull_request.url)
+                .into_iter()
+                .next()?;
+            Some(((repository.to_ascii_lowercase(), number), created))
+        })
+        .collect()
 }
 
 #[cfg(test)]

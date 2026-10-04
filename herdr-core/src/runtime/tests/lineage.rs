@@ -1724,6 +1724,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
         state,
         reason: None,
         location: None,
+        codex_daemon: None,
     };
     runtime.ingest_kit_report(
         "local",
@@ -1769,12 +1770,10 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
     assert!(local(&runtime).busy, "the row shows the install running");
     assert_eq!(
         runtime.take_local_kit_job(std::time::Instant::now()),
-        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::Reinstall(
-            vec![
-                hide_kit::ComponentId::ClaudeCodeHook,
-                hide_kit::ComponentId::CodexHook,
-            ]
-        ))),
+        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::reinstall([
+            hide_kit::ComponentId::ClaudeCodeHook,
+            hide_kit::ComponentId::CodexHook,
+        ]))),
         "two presses are one install of the two parts that need it"
     );
 
@@ -2267,5 +2266,90 @@ fn a_descendant_on_a_disconnected_device_is_never_listed_for_a_close() {
     assert_eq!(
         local_lineage_agent(&runtime, "local-parent").close_descendant_pane_ids,
         ["local-child"]
+    );
+}
+
+// PRD overview-request-view D-24, B36: the Codex part's switch queues its
+// undo or its reinstall, a part already where the switch puts it is the same
+// intent met, and only a part with a switch takes one. Codex starts follow the
+// machine's kit whichever way the switch stands (D-20).
+#[test]
+fn the_codex_part_switch_queues_its_choice_and_starts_follow_the_kit() {
+    let mut runtime = runtime();
+    let set = |component: &str, enabled: bool| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "kit_component_set",
+            "payload": {"device_id": "local", "component": component, "enabled": enabled}
+        }))
+        .unwrap()
+    };
+    let report = |state| hide_kit::KitReport {
+        components: vec![hide_kit::ComponentReport {
+            id: hide_kit::ComponentId::CodexPerPane,
+            state,
+            reason: None,
+            location: None,
+            codex_daemon: None,
+        }],
+        labels_retirement: Default::default(),
+        legacy_retirement: Default::default(),
+    };
+    assert_eq!(
+        runtime.codex_daemon("local"),
+        crate::codex_launch::CodexDaemon::Unknown,
+        "a machine whose kit has not answered cannot start Codex yet"
+    );
+    runtime.ingest_kit_report("local", &report(hide_kit::ComponentState::Installed));
+    assert_eq!(
+        runtime.codex_daemon("local"),
+        crate::codex_launch::CodexDaemon::Present
+    );
+
+    assert!(
+        !runtime.dispatch_json(&set("codex_per_pane", true)),
+        "already on"
+    );
+    assert!(runtime.dispatch_json(&set("codex_per_pane", false)));
+    assert_eq!(
+        runtime.take_local_kit_job(std::time::Instant::now()),
+        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::turn_off([
+            hide_kit::ComponentId::CodexPerPane
+        ])))
+    );
+
+    runtime.ingest_kit_report("local", &report(hide_kit::ComponentState::Off));
+    assert_eq!(
+        runtime.codex_daemon("local"),
+        crate::codex_launch::CodexDaemon::Present,
+        "Hide's own Codex starts still go per pane"
+    );
+    assert!(
+        !runtime.dispatch_json(&set("codex_per_pane", false)),
+        "already off"
+    );
+    assert!(runtime.dispatch_json(&set("codex_per_pane", true)));
+    assert_eq!(
+        runtime.take_local_kit_job(std::time::Instant::now()),
+        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::reinstall([
+            hide_kit::ComponentId::CodexPerPane
+        ])))
+    );
+
+    assert!(runtime.dispatch_json(&set("cli", false)));
+    assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("kit.not_switchable")
+    );
+
+    runtime.ingest_kit_report("local", &report(hide_kit::ComponentState::Absent));
+    assert_eq!(
+        runtime.codex_daemon("local"),
+        crate::codex_launch::CodexDaemon::Unknown
     );
 }

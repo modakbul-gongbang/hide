@@ -92,11 +92,6 @@ pub(super) struct FocusPaneRequestPayload {
     /// while another device is in front is one action (S6 B12, B21).
     #[serde(default)]
     pub(super) focus_device: bool,
-    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
-    /// as they are, so the View areas drawn over the agents stay up
-    /// (issue 170). A choice from the sidebar, a palette or a cycle is not.
-    #[serde(default)]
-    pub(super) in_place: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +106,14 @@ pub(super) struct GithubRequestPayload {
 #[serde(deny_unknown_fields)]
 pub(super) struct OverviewRefreshPayload {
     pub(super) workspace_id: String,
+}
+
+/// Whether any window shows the request view; hided aggregates its
+/// connections and sends the change (PRD overview-request-view D-32).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RequestViewPayload {
+    pub(super) observing: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,11 +183,6 @@ pub(super) struct FocusTabPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
     pub(super) tab_id: String,
-    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
-    /// as they are, so the side panel over the agents stays up (issue 170).
-    /// A choice from the sidebar, a palette or a cycle is not.
-    #[serde(default)]
-    pub(super) in_place: bool,
     /// Also makes this machine the device in front when the tab is accepted,
     /// as `FocusCheckoutPayload::focus_device` does.
     #[serde(default)]
@@ -357,11 +355,6 @@ pub(super) struct RemoteControlPayload {
     /// or, refused, neither (S6 B21).
     #[serde(default)]
     pub(super) focus_device: bool,
-    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
-    /// as they are, so the View areas drawn over the agents stay up
-    /// (issue 170). A choice from the sidebar, a palette or a cycle is not.
-    #[serde(default)]
-    pub(super) in_place: bool,
     #[serde(flatten)]
     pub(super) request: RemoteControlRequest,
 }
@@ -983,6 +976,9 @@ pub(super) struct RemoveWorktreePayload {
     /// The operator ticked the discard checkbox the gate offered.
     #[serde(default)]
     pub(super) discard_changes: bool,
+    /// The measured repository names the operator actually confirmed.
+    #[serde(default)]
+    pub(super) expected_ignored_repositories: Vec<String>,
     /// The agents outside the worktree, spawned from its agents, that the
     /// operator chose to close first (PRD close-agent-subtree D-10).
     #[serde(default)]
@@ -1002,6 +998,16 @@ pub(super) struct KitReinstallPayload {
     pub(super) device_id: String,
     #[serde(default)]
     pub(super) components: Option<Vec<hide_kit::ComponentId>>,
+}
+
+/// The operator switched a kit part on or off from its row (PRD
+/// overview-request-view D-24); only a part
+/// [`hide_kit::ComponentId::can_turn_off`] names has a switch.
+#[derive(Debug, Deserialize)]
+pub(super) struct KitComponentSetPayload {
+    pub(super) device_id: String,
+    pub(super) component: hide_kit::ComponentId,
+    pub(super) enabled: bool,
 }
 
 /// A Settings tab that shows the kit opened: this Mac's parts are read again
@@ -1043,6 +1049,9 @@ pub(super) struct AiSettingsPayload {
     /// selected.
     #[serde(default)]
     pub(super) model: Option<String>,
+    /// The agent-summary switch (PRD overview-request-view D-11).
+    #[serde(default)]
+    pub(super) agent_summary: Option<bool>,
 }
 
 /// One pane search. An empty `term` clears the search rather than needing its
@@ -1146,7 +1155,6 @@ pub(super) struct TerminalResizePayload {
 
 pub(super) enum Event {
     WorkspaceView(WorkspaceViewPayload),
-    PanelCovers(PanelCoversPayload),
     ViewLayout(ViewLayoutPayload),
     AgentLayout(AgentLayoutPayload),
     BrowserOpen(BrowserOpenPayload),
@@ -1194,6 +1202,7 @@ pub(super) enum Event {
     ForkPane(PaneTargetPayload),
     AgentSleepSet(AgentSleepSetPayload),
     AgentSleep(PaneTargetPayload),
+    PaneInputSubmitted(PaneTargetPayload),
     AgentWake(AgentWakePayload),
     AgentTreeToggle(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
@@ -1225,6 +1234,7 @@ pub(super) enum Event {
     CloneRepository(CloneRepositoryPayload),
     CancelRepositoryClone(CancelRepositoryClonePayload),
     KitReinstall(KitReinstallPayload),
+    KitComponentSet(KitComponentSetPayload),
     KitCheck(KitCheckPayload),
     UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
@@ -1260,6 +1270,8 @@ pub(super) enum Event {
     RemoveWorktree(RemoveWorktreePayload),
     GithubRequest(GithubRequestPayload),
     OverviewRefresh(OverviewRefreshPayload),
+    OverviewOpenResult(PaneTargetPayload),
+    RequestView(RequestViewPayload),
     /// The card's refresh button, opening the delete confirmation, and a
     /// completed worktree removal. All three say "read again now" about a
     /// different set of readers, and none needs a target: the card is always
@@ -1390,6 +1402,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "fork_pane" => decode!(PaneTargetPayload, ForkPane),
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
+        "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
@@ -1425,6 +1438,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
+        "kit_component_set" => decode!(KitComponentSetPayload, KitComponentSet),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
@@ -1460,6 +1474,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "remove_worktree" => decode!(RemoveWorktreePayload, RemoveWorktree),
         "github_request" => decode!(GithubRequestPayload, GithubRequest),
         "overview_refresh" => decode!(OverviewRefreshPayload, OverviewRefresh),
+        "overview_open_result" => decode!(PaneTargetPayload, OverviewOpenResult),
+        "request_view" => decode!(RequestViewPayload, RequestView),
         "cleanup_review" => decode!(CleanupReviewPayload, CleanupReview),
         "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
         "cleanup_dismiss" => Ok(Event::CleanupDismiss),
@@ -1478,7 +1494,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_activity" => Ok(Event::PetActivity),
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
         "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
-        "panel_covers" => decode!(PanelCoversPayload, PanelCovers),
         "agent_layout" => decode!(AgentLayoutPayload, AgentLayout),
         "view_layout" => decode!(ViewLayoutPayload, ViewLayout),
         "browser_open" => decode!(BrowserOpenPayload, BrowserOpen),
@@ -1494,7 +1509,6 @@ impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
-            Event::PanelCovers(payload) => self.apply_panel_covers(payload),
             Event::AgentLayout(payload) => self.apply_agent_layout(payload),
             Event::ViewLayout(payload) => self.apply_view_layout(payload),
             Event::BrowserOpen(payload) => self.open_browser(payload),
@@ -1522,6 +1536,9 @@ impl Runtime {
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
+                if let Some(observation) = self.delivery_observations.get_mut(&payload.pane_id) {
+                    observation.last_input_at_unix_ms = super::unix_milliseconds();
+                }
                 if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
                     return changed;
                 }
@@ -1534,6 +1551,9 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
+                if crate::labels::input::key_submits(&payload.bytes_base64) {
+                    self.record_operator_submit(&payload.pane_id);
+                }
                 if self.live.is_some()
                     || self.remote_terminals.keys().any(|target_id| {
                         remote_pane_source_id(target_id, &payload.pane_id).is_some()
@@ -1559,6 +1579,11 @@ impl Runtime {
             Event::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
             Event::AgentSleepSet(payload) => self.set_agent_sleep_after(payload),
             Event::AgentSleep(payload) => self.request_agent_sleep(&payload.pane_id),
+            // The phone's reply reached the pane; nothing on screen moves.
+            Event::PaneInputSubmitted(payload) => {
+                self.record_operator_submit(&payload.pane_id);
+                false
+            }
             Event::AgentWake(payload) => self.request_agent_wake(payload),
             Event::RefreshStatus => self.request_status_refresh(),
             Event::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
@@ -1663,6 +1688,11 @@ impl Runtime {
                 self.request_terminal_control(&pane_id);
                 true
             }
+            Event::KitComponentSet(payload) => self.request_kit_component_set(
+                &payload.device_id,
+                payload.component,
+                payload.enabled,
+            ),
             Event::KitReinstall(payload) => {
                 self.request_kit_reinstall(&payload.device_id, payload.components.as_deref())
             }
@@ -2556,6 +2586,7 @@ impl Runtime {
                     session_id,
                     cwd,
                     name,
+                    codex_daemon: self.codex_daemon_for_pane(&pane_id),
                 };
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
                 if let Err(message) = live::spawn_agent_fork(context, request) {
@@ -3093,6 +3124,11 @@ impl Runtime {
                 }
                 first || payload.refresh
             }
+            Event::OverviewOpenResult(payload) => self.open_result(&payload.pane_id),
+            Event::RequestView(payload) => {
+                self.observe_request_view(payload.observing, std::time::Instant::now());
+                false
+            }
             Event::OverviewRefresh(payload) => {
                 let project = self
                     .snapshot
@@ -3432,6 +3468,7 @@ impl Runtime {
                     editor_text_scale: current.editor_text_scale,
                     conversation_pane_ids: current.conversation_pane_ids,
                     pane_read_records: current.pane_read_records,
+                    request_verbs: current.request_verbs,
                     // `agent_sleep_set` owns the setting and the core owns
                     // the sleep records; a shared save carries both through.
                     agent_sleep_after_hours: current.agent_sleep_after_hours,

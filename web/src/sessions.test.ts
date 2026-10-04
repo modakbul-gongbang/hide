@@ -67,9 +67,44 @@ describe("where a session ran", () => {
   });
 
   it("gives no time a session did not carry", () => {
-    expect(sessionTime(0)).toBeNull();
-    expect(sessionTime(null)).toBeNull();
-    expect(sessionTime(Date.UTC(2020, 0, 2, 3, 4), new Date(Date.UTC(2026, 0, 1)), "en-US")).toContain("2020");
+    const sample = (stage: string) => {
+      const cpu = process.cpuUsage();
+      return {
+        stage,
+        monotonic_ms: performance.now(),
+        wall_ms: Date.now(),
+        cpu_user_us: cpu.user,
+        cpu_system_us: cpu.system,
+      };
+    };
+    // Eight fixed samples, one numeric record; the calls and 5s budget stay intact.
+    const entry = sample("callback.entry");
+    const stages = [entry];
+    try {
+      stages.push(sample("zero.before"));
+      expect(sessionTime(0)).toBeNull();
+      stages.push(sample("zero.after"));
+      stages.push(sample("null.before"));
+      expect(sessionTime(null)).toBeNull();
+      stages.push(sample("null.after"));
+      stages.push(sample("year.before"));
+      expect(sessionTime(Date.UTC(2020, 0, 2, 3, 4), new Date(Date.UTC(2026, 0, 1)), "en-US")).toContain("2020");
+      stages.push(sample("year.after"));
+    } finally {
+      stages.push(sample("callback.exit"));
+      console.info(JSON.stringify({
+        event: "test.session_time.stage_timing",
+        correlation_id: "session-time-369-v1",
+        subject_id: "gives-no-time",
+        stages: stages.map((stage) => ({
+          ...stage,
+          elapsed_monotonic_ms: stage.monotonic_ms - entry.monotonic_ms,
+          elapsed_wall_ms: stage.wall_ms - entry.wall_ms,
+          elapsed_cpu_user_us: stage.cpu_user_us - entry.cpu_user_us,
+          elapsed_cpu_system_us: stage.cpu_system_us - entry.cpu_system_us,
+        })),
+      }));
+    }
   });
 });
 

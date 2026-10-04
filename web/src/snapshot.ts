@@ -55,6 +55,54 @@ export type AgentRow = {
   session_id?: string | null;
   /** The agent searches its own conversation, so ⌘F asks the core where the search goes (`pane_find_open`). */
   own_find?: boolean;
+  /** The request view's block (`AgentRequestSnapshot`); absent on a row the core has not laid it on. */
+  request?: AgentRequest;
+};
+
+/** How the label read a turn's end (`LabelEnd`). */
+export type LabelEnd = "working" | "question" | "done" | "waiting" | "unfinished";
+
+/** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
+export type RequestVerb = "answer" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
+
+/** Who sent the request a row shows (`RequestSender`). */
+export type RequestSender = { kind: "operator" } | { kind: "named"; name: string } | { kind: "agent" };
+
+/** The request view's part of an agent row (`AgentRequestSnapshot`, PRD overview-request-view). */
+export type AgentRequest = {
+  verb: RequestVerb;
+  /** When the row took this verb; kept across a restart (D-40). */
+  verb_since_unix_ms: number;
+  /** The label's line for the turn (B18, B47); absent with summaries off or no analysis, when the reply stands in (D-12). */
+  line?: string;
+  /** How the label read the turn's end (`contracts/snapshot-wire-enums.json`: `label_end`). */
+  end?: LabelEnd;
+  /** The operator's last request, else the last one another agent sent. */
+  request: { text: string; cut: boolean; images: number; at_unix_ms: number; sender: RequestSender } | null;
+  /** Who sent a request after the operator's last one (B4). */
+  later_by: RequestSender | null;
+  /** The agent's last words. */
+  reply: { text: string; cut: boolean; at_unix_ms: number } | null;
+  /** The chip first (D-46), then the other live ones, then settled ones. */
+  pull_requests: AgentPullRequest[];
+};
+
+/** One of a row's pull requests (`AgentPullRequestSnapshot`). */
+export type AgentPullRequest = {
+  number: number;
+  title: string;
+  url: string;
+  badge: PullRequest["badge"];
+  checks: NonNullable<PullRequest["checks"]>;
+  head_branch: string;
+  closing_issues: IssueReference[];
+  /** Drawn as the row's chip or counted in its `+N` (D-43). */
+  live: boolean;
+  /** This row holds the pull request's duty (D-31). */
+  duty: boolean;
+  /** The row's session made it, as opposed to its branch having it. */
+  created: boolean;
+  settled_at_unix_ms: number | null;
 };
 
 /** A sleeping agent's state (`AgentSleepSnapshot`): the row and the pane draw it. */
@@ -171,6 +219,8 @@ export type Task = {
   /** When the source last changed it, for the backlog's order and age. */
   updated_at_unix_ms?: number | null;
   created_at_unix_ms?: number | null;
+  /** Actual closure time; editing a closed issue does not reset it. */
+  closed_at_unix_ms?: number | null;
   /** The open tasks this one waits on, possibly of another project (`TaskRefSnapshot`). */
   blocked_by?: TaskRef[];
 };
@@ -358,7 +408,7 @@ export type StripTab = {
 
 /** The removal gate the core computed for a linked worktree (`WorktreeDeletionGateSnapshot`). */
 export type DeletionGate = {
-  /** Only the main worktree, which offers no deletion. */
+  /** Main, locked or unavailable ignored-repository measurement. */
   blocked_reason: string | null;
   warnings: string[];
   button_label: string;
@@ -371,6 +421,9 @@ export type DeletionGate = {
 
 /** The parts of the core's worktree row the removal confirmation reads. */
 export type WorktreeRow = {
+  lock_reason?: string | null;
+  ignored_repositories?: string[];
+  ignored_scan_unavailable?: string | null;
   path: string;
   branch: string | null;
   head_sha: string | null;
@@ -863,10 +916,10 @@ export type Device = {
 };
 
 /** One part of the install kit (`contracts/snapshot-wire-enums.json`: `kit_component_id`). */
-export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "hcoord";
+export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "hcoord" | "codex_per_pane";
 
 /** What a part is on its machine (`contracts/snapshot-wire-enums.json`: `kit_component_state`). */
-export type KitComponentState = "installed" | "outdated" | "not_installed" | "removed" | "failed" | "absent";
+export type KitComponentState = "installed" | "outdated" | "not_installed" | "removed" | "failed" | "absent" | "off";
 
 export type KitComponent = {
   id: KitComponentId;
@@ -874,6 +927,8 @@ export type KitComponent = {
   state: KitComponentState;
   reason: string | null;
   location: string | null;
+  /** Actual target capability, independent of the part's switch; absent in older reports. */
+  codex_daemon?: boolean | null;
 };
 
 /**
@@ -977,6 +1032,8 @@ export type AiProvider = {
 export type BackgroundAi = {
   provider: string;
   chosen: boolean;
+  /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
+  agent_summary?: boolean;
   providers: AiProvider[];
   unavailable_reason: string | null;
 };
@@ -1026,7 +1083,7 @@ export type RepositoryClone = {
   message: string | null;
 };
 
-/** One worktree deletion: `closing` panes, `removing` on the core's worker, then `finished` or `failed`. */
+/** One worktree deletion: `checking` before any close, `closing` panes, `removing` on the core's worker, then `finished` or `failed`. */
 export type WorktreeRemoval = {
   id: number;
   /** The device the worktree is on; null is the daemon's own machine. */

@@ -68,7 +68,7 @@ export type RecentEntry = Surface | ScreenVisit;
 function screenVisit(screen: PageScreen, frontId: string): ScreenVisit {
   if (screen.kind === "main") {
     const deviceId = screen.deviceId ?? frontId;
-    return { key: `main:${deviceId}`, screen: { kind: "main", deviceId } };
+    return { key: `main:${deviceId}`, screen: { ...screen, deviceId } };
   }
   return { key: `overview:${screen.projectId}`, screen };
 }
@@ -161,7 +161,7 @@ export function focusSignature(rest: SnapshotRest | null): string {
   const layout = checkout ? frontLayoutOf(rest, checkout) : null;
   const display = layout ? activeDisplay(layout)?.display.id : null;
   const device = remoteView(remoteContext(rest)?.session ?? null);
-  return [navigator?.focused_device_id, checkout?.id, checkout?.active_tab_id, rest?.focused?.pane_id, device?.checkout.id, device?.tab?.id, device?.focusedPaneId, workspaceViewOf(rest)?.panel, display].join("\u0000");
+  return [navigator?.focused_device_id, checkout?.id, checkout?.active_tab_id, rest?.focused?.pane_id, device?.checkout.id, device?.tab?.id, device?.focusedPaneId, workspaceViewOf(rest)?.views, display].join("\u0000");
 }
 
 /**

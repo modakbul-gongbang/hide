@@ -57,7 +57,7 @@ struct PrivateHerdr {
     socket: PathBuf,
     config: PathBuf,
     log: PathBuf,
-    server: Child,
+    server: Option<Child>,
 }
 
 impl PrivateHerdr {
@@ -100,7 +100,7 @@ impl PrivateHerdr {
             socket,
             config,
             log,
-            server,
+            server: Some(server),
         };
         let deadline = Instant::now() + Duration::from_secs(60);
         while hide_herdr_client::request_with_timeout(
@@ -120,15 +120,25 @@ impl PrivateHerdr {
         }
         herdr
     }
+
+    fn stop(&mut self) -> std::io::Result<()> {
+        if self.server.is_none() {
+            return Ok(());
+        }
+        let _ = herdr_command(&self.bin, &self.home, &self.socket, &self.config)
+            .args(["server", "stop"])
+            .output();
+        let server = self.server.as_mut().expect("the private server is owned");
+        let _ = server.kill();
+        server.wait()?;
+        self.server = None;
+        Ok(())
+    }
 }
 
 impl Drop for PrivateHerdr {
     fn drop(&mut self) {
-        let _ = herdr_command(&self.bin, &self.home, &self.socket, &self.config)
-            .args(["server", "stop"])
-            .output();
-        let _ = self.server.kill();
-        let _ = self.server.wait();
+        let _ = self.stop();
     }
 }
 
@@ -245,6 +255,63 @@ async fn next_frame(socket: &mut Socket, deadline: Instant) -> Option<Value> {
     }
 }
 
+/// Keep a bounded record of state changes without another API request in the
+/// input/echo path. A missing pane and a pane leaving its checkout have the
+/// same empty terminal symptom, but different lifetime boundaries.
+fn record_state(frame: &Value, states: &mut Vec<Value>) {
+    let Some(rest) = frame["payload"]["rest"].as_object() else {
+        return;
+    };
+    let state = json!({
+        "focused": rest.get("focused"),
+        "navigator": rest.get("navigator"),
+        "terminal": rest.get("terminal"),
+        "diagnostics": rest.get("status").map(|status| &status["diagnostics"]),
+    });
+    if states.last() != Some(&state) {
+        if states.len() == 8 {
+            // Preserve the initial selection alongside the latest changes.
+            states.remove(1);
+        }
+        states.push(state);
+    }
+}
+
+fn failure_snapshot(herdr: &PrivateHerdr) -> String {
+    match hide_herdr_client::request_small_response(
+        &hide_herdr_client::LocalSocketConnector::new(&herdr.socket),
+        "session.snapshot",
+        json!({}),
+        Duration::from_secs(5),
+    ) {
+        Ok(response) => {
+            let snapshot = &response["snapshot"];
+            let panes = snapshot["panes"].as_array().map(|panes| {
+                panes
+                    .iter()
+                    .map(|pane| {
+                        json!({
+                            "pane_id": pane["pane_id"],
+                            "workspace_id": pane["workspace_id"],
+                            "tab_id": pane["tab_id"],
+                            "cwd": pane["cwd"],
+                            "foreground_cwd": pane["foreground_cwd"],
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            json!({
+                "focused_pane_id": snapshot["focused_pane_id"],
+                "focused_workspace_id": snapshot["focused_workspace_id"],
+                "panes": panes,
+                "layouts": snapshot["layouts"],
+            })
+            .to_string()
+        }
+        Err(error) => format!("session.snapshot failed: {error}"),
+    }
+}
+
 /// Every `{pane_id, bytes_base64}` chunk anywhere in a frame, decoded.
 fn chunks(value: &Value, out: &mut Vec<(String, Vec<u8>)>) {
     match value {
@@ -298,9 +365,7 @@ fn plain(screen: &str) -> String {
     text
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
-async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
+async fn assert_private_pane_input() -> tempfile::TempDir {
     let bin = PathBuf::from(
         std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
     );
@@ -311,7 +376,7 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
         tempfile::Builder::new().prefix("hh").tempdir()
     }
     .unwrap();
-    let herdr = PrivateHerdr::start(bin, root.path());
+    let mut herdr = PrivateHerdr::start(bin, root.path());
     let running = hided::start_daemon(daemon_env(root.path(), &herdr))
         .await
         .expect("hided starts");
@@ -331,11 +396,13 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
     .await;
     // The Workspace's first pane, as the shell finds it: the focused one.
     let deadline = Instant::now() + Duration::from_secs(60);
+    let mut states = Vec::new();
     let pane = loop {
         let frame = next_frame(&mut socket, deadline)
             .await
             .expect("the new Workspace's pane is focused within a minute");
         if let Some(pane) = frame["payload"]["rest"]["focused"]["pane_id"].as_str() {
+            record_state(&frame, &mut states);
             break pane.to_owned();
         }
     };
@@ -360,6 +427,7 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
         let Some(frame) = next_frame(&mut socket, deadline).await else {
             break false;
         };
+        record_state(&frame, &mut states);
         let mut out = Vec::new();
         chunks(&frame, &mut out);
         for (from, bytes) in out {
@@ -385,12 +453,37 @@ async fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
             break true;
         }
     };
+    eprintln!("pane lifecycle states: {states:?}");
     assert!(
         found,
-        "the typed line never came back on the terminal stream (typed: {typed}); the screen read: {:?}; {}; herdr: {}",
+        "the typed line never came back on the terminal stream (typed: {typed}); the screen read: {:?}; states: {states:?}; snapshot: {}; {}; herdr: {}",
         plain(&screen),
+        failure_snapshot(&herdr),
         control_attempt(&herdr, &pane),
         std::fs::read_to_string(&herdr.log).unwrap_or_default()
     );
+    drop(socket);
     running.stop();
+    drop(running);
+    herdr.stop().expect("the private Herdr server exits");
+    root
+}
+
+#[test]
+#[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
+fn hided_opens_a_pane_on_the_pinned_herdr_and_a_typed_line_echoes() {
+    // Independent servers exercise startup ordering. An assertion failure
+    // stops the test immediately; a later instance cannot erase its result.
+    for instance in 1..=3 {
+        eprintln!("private pane/input instance {instance}/3");
+        let fixture_runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("the private daemon runtime starts");
+        let root = fixture_runtime.block_on(assert_private_pane_input());
+        // End resident daemon tasks and their core before removing the
+        // fixture, so none can publish into the next instance's diagnostics.
+        drop(fixture_runtime);
+        root.close().expect("the private fixture is removed");
+    }
 }

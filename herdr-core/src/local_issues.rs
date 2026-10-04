@@ -35,6 +35,9 @@ pub struct LocalIssue {
     pub open: bool,
     pub created_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
+    /// Actual closure, unchanged by edits; absent in older stores.
+    #[serde(default)]
+    pub closed_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -137,6 +140,7 @@ impl LocalIssueStore {
             open: true,
             created_at_unix_ms: now_unix_ms,
             updated_at_unix_ms: now_unix_ms,
+            closed_at_unix_ms: None,
         });
         self.version = VERSION;
         Ok(number)
@@ -189,6 +193,7 @@ impl LocalIssueStore {
         }
         issue.open = open;
         issue.updated_at_unix_ms = now_unix_ms;
+        issue.closed_at_unix_ms = (!open).then_some(now_unix_ms);
         true
     }
 }
@@ -294,6 +299,29 @@ mod tests {
             },
         );
         assert!(store.create("/p", "one more", "", 1).is_err());
+    }
+
+    #[test]
+    fn closure_time_survives_edits_and_tracks_reopen_and_close() {
+        let mut store = LocalIssueStore::default();
+        store.create("/p", "First work", "", 1).unwrap();
+        assert!(store.set_open("/p", 1, false, 2));
+        assert!(
+            store
+                .update("/p", 1, "Edited after closure", "", 3)
+                .unwrap()
+        );
+        let issue = &store.projects["/p"].issues[0];
+        assert_eq!(issue.updated_at_unix_ms, 3);
+        assert_eq!(issue.closed_at_unix_ms, Some(2));
+        assert!(store.set_open("/p", 1, true, 4));
+        assert_eq!(store.projects["/p"].issues[0].closed_at_unix_ms, None);
+        assert!(store.set_open("/p", 1, false, 5));
+        assert_eq!(store.projects["/p"].issues[0].closed_at_unix_ms, Some(5));
+        let old: LocalIssue = serde_json::from_str(
+            r#"{"number":1,"title":"Older closed work","open":false,"created_at_unix_ms":1,"updated_at_unix_ms":3}"#,
+        ).unwrap();
+        assert_eq!(old.closed_at_unix_ms, None);
     }
 
     #[test]

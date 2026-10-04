@@ -1,5 +1,4 @@
-//! Replacing a file, and moving one, so that no reader and no crash sees a
-//! half-done change.
+//! Replacing a file, and moving one, without exposing partially written bytes.
 //!
 //! The path of a file that is being replaced names either the old file or the
 //! new one at every moment and never a truncated one, on every system.
@@ -9,11 +8,15 @@
 //! replaces and keeps the old file under another name, and `MoveFileExW`,
 //! which refuses to replace. [`EXCHANGE_IS_ATOMIC`] says which of the two a
 //! build has.
+//!
+//! Atomic visibility and durable acknowledgement are separate contracts.
+//! [`write_file_durable`] checks the operating system's persistence barrier;
+//! the older writers retain their best-effort parent sync.
 
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::identity::{self, FileId};
 use super::permissions::Permissions;
@@ -26,64 +29,289 @@ use super::{Access, Handle};
 /// `.hide-swap-` name beside it instead of lost.
 pub const EXCHANGE_IS_ATOMIC: bool = cfg!(any(target_os = "macos", target_os = "linux"));
 
+/// A failed removal of the writer's own temporary file, separate from the
+/// original write failure. The named temporary is retained for recovery.
+#[derive(Debug)]
+pub struct TempCleanupError {
+    pub path: PathBuf,
+    pub source: io::Error,
+}
+
+impl std::fmt::Display for TempCleanupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "temporary cleanup failed at {}: {}",
+            self.path.display(),
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for TempCleanupError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// The point at which a durable write failed. Neither uncertain outcome
+/// means rollback: the caller must stop using an assumed old version until
+/// it has validated the actual file and established durability again.
+#[derive(Debug)]
+pub enum DurableWriteError {
+    /// Replacement was not attempted, so the destination was not changed.
+    BeforeReplace {
+        source: io::Error,
+        cleanup: Option<TempCleanupError>,
+    },
+    /// The replacement operation failed. Some systems can change names
+    /// before reporting failure, so the destination's version is uncertain.
+    ReplacementUncertain {
+        source: io::Error,
+        cleanup: Option<TempCleanupError>,
+    },
+    /// Replacement succeeded but its parent barrier failed. The installed
+    /// file has this identity; its crash persistence has not been confirmed.
+    ReplacedNotDurable { file_id: FileId, source: io::Error },
+}
+
+impl DurableWriteError {
+    fn before_replace(source: io::Error) -> Self {
+        Self::BeforeReplace {
+            source,
+            cleanup: None,
+        }
+    }
+
+    // The legacy API intentionally retains its original io::Error contract.
+    fn into_io_error(self) -> io::Error {
+        match self {
+            Self::BeforeReplace { source, .. }
+            | Self::ReplacementUncertain { source, .. }
+            | Self::ReplacedNotDurable { source, .. } => source,
+        }
+    }
+}
+
+impl std::fmt::Display for DurableWriteError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (phase, source, cleanup) = match self {
+            Self::BeforeReplace { source, cleanup } => ("before replacement", source, cleanup),
+            Self::ReplacementUncertain { source, cleanup } => {
+                ("replacement uncertain", source, cleanup)
+            }
+            Self::ReplacedNotDurable { source, .. } => {
+                return write!(formatter, "replaced but durability unconfirmed: {source}");
+            }
+        };
+        write!(formatter, "{phase}: {source}")?;
+        if let Some(cleanup) = cleanup {
+            write!(formatter, "; {cleanup}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for DurableWriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(match self {
+            Self::BeforeReplace { source, .. }
+            | Self::ReplacementUncertain { source, .. }
+            | Self::ReplacedNotDurable { source, .. } => source,
+        })
+    }
+}
+
 /// Writes `contents` to `path` whole or not at all: the bytes go to a file
-/// beside it, are flushed, and replace `path` in one step. A failure at any
-/// point leaves what was at `path` as it was and the temporary file removed.
+/// beside it, are flushed, and replace `path` in one step. Parent sync and
+/// temporary cleanup are best effort. A replacement error does not promise
+/// the old destination is unchanged on every system.
 /// Returns the identity of the file now at `path`.
 ///
 /// `path` itself is replaced, so a link there is replaced by a file; a caller
 /// that means to write through a link resolves it first with
 /// [`identity::canonical`].
 pub fn write_file(path: &Path, contents: &[u8], access: Access) -> io::Result<FileId> {
+    write(path, contents, access, WriteMode::Visibility).map_err(DurableWriteError::into_io_error)
+}
+
+/// Writes a whole file and returns its identity only after the operating
+/// system acknowledges the persistence barrier. On Unix this is file sync,
+/// rename and fallible parent open/sync. On Windows it is file sync and a
+/// same-directory `MoveFileExW` with replacement and write-through flags.
+/// Windows supports only `Access::Private` here; other access modes fail
+/// before mutation rather than changing their ACL-preservation contract.
+///
+/// The parent must already exist, its ancestry must have an established
+/// durability boundary, and the caller must keep that trusted parent stable.
+/// This function neither creates nor syncs a chain of ancestors. An OS
+/// acknowledgement is not proof against every storage device's power loss,
+/// and sync calls have no promised wall-clock cancellation bound.
+///
+/// An uncertain error preserves the destination for validated recovery;
+/// it never restores old bytes or deletes the destination. A temporary that
+/// could not be removed is reported separately with its path and cause.
+/// As with [`write_file`], a link at the destination is replaced, not followed.
+pub fn write_file_durable(
+    path: &Path,
+    contents: &[u8],
+    access: Access,
+) -> Result<FileId, DurableWriteError> {
+    write(path, contents, access, WriteMode::Durable)
+}
+
+#[derive(Clone, Copy)]
+enum WriteMode {
+    Visibility,
+    Durable,
+}
+
+fn write(
+    path: &Path,
+    contents: &[u8],
+    access: Access,
+    mode: WriteMode,
+) -> Result<FileId, DurableWriteError> {
     let name = path
         .file_name()
-        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        .ok_or_else(|| DurableWriteError::before_replace(io::ErrorKind::InvalidInput.into()))?;
     let folder = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
+    if matches!(mode, WriteMode::Durable) {
+        sys::validate_durable(path, access).map_err(DurableWriteError::before_replace)?;
+    }
     let kept = match access {
         Access::KeepOrPrivate => match fs::File::open(path) {
-            Ok(existing) => Some(Permissions::of(&existing)?),
+            Ok(existing) => {
+                Some(Permissions::of(&existing).map_err(DurableWriteError::before_replace)?)
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error),
+            Err(error) => return Err(DurableWriteError::before_replace(error)),
         },
         Access::Private | Access::PrivateExecutable => None,
     };
     let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
     for _ in 0..8 {
-        let temporary = folder.join(super::temporary_name(name, "hide"));
-        let mut file = match sys::create_temporary(&temporary, access, kept.is_some()) {
+        let temporary_path = folder.join(super::temporary_name(name, "hide"));
+        let mut file = match sys::create_temporary(&temporary_path, access, kept.is_some()) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 last = error;
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(DurableWriteError::before_replace(error)),
         };
-        let written = (|| {
+        let mut temporary = OwnedTemporary::new(temporary_path);
+        let prepared: io::Result<FileId> = (|| {
+            #[cfg(test)]
+            if matches!(mode, WriteMode::Durable) {
+                os_faults::fail(os_faults::Point::FileWrite)?;
+            }
             file.write_all(contents)?;
             if let Some(kept) = &kept {
                 kept.apply(&file)?;
             }
+            #[cfg(test)]
+            if matches!(mode, WriteMode::Durable) {
+                os_faults::fail(os_faults::Point::FileSync)?;
+            }
             file.sync_all()?;
             let id = identity::file_id_of(&file)?;
             drop(file);
-            sys::replace(&temporary, path, kept.is_some())?;
             Ok(id)
         })();
-        return match written {
-            Ok(id) => {
-                sync_path_parent(folder);
-                Ok(id)
-            }
-            Err(error) => {
-                let _ = fs::remove_file(&temporary);
-                Err(error)
-            }
+        let id = prepared.map_err(|source| DurableWriteError::BeforeReplace {
+            source,
+            cleanup: temporary.cleanup(mode),
+        })?;
+        let replaced = match mode {
+            WriteMode::Visibility => sys::replace(&temporary.path, path, kept.is_some()),
+            WriteMode::Durable => sys::replace_durable(&temporary.path, path),
         };
+        replaced.map_err(|source| DurableWriteError::ReplacementUncertain {
+            source,
+            cleanup: temporary.cleanup(mode),
+        })?;
+        temporary.disarm();
+        match mode {
+            WriteMode::Visibility => sync_path_parent(folder),
+            WriteMode::Durable => {
+                // Windows's write-through replacement is the barrier; its
+                // legacy no-op sync_dir must not stand in for one.
+                #[cfg(unix)]
+                sync_durable_parent(folder).map_err(|source| {
+                    DurableWriteError::ReplacedNotDurable {
+                        file_id: id,
+                        source,
+                    }
+                })?;
+            }
+        }
+        return Ok(id);
     }
-    Err(last)
+    Err(DurableWriteError::before_replace(last))
+}
+
+/// Owns only the exclusively created temporary, never the destination.
+/// Normal failures report removal errors; Drop is the unwinding fallback.
+struct OwnedTemporary {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl OwnedTemporary {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn cleanup(&mut self, mode: WriteMode) -> Option<TempCleanupError> {
+        // Do not retry a failed removal in Drop: the reported residue stays
+        // available for the caller's recovery and the original cause survives.
+        self.disarm();
+        #[cfg(not(test))]
+        let _ = mode;
+        #[cfg(test)]
+        let fault = if matches!(mode, WriteMode::Durable) {
+            os_faults::fail(os_faults::Point::Cleanup)
+        } else {
+            Ok(())
+        };
+        #[cfg(not(test))]
+        let fault: io::Result<()> = Ok(());
+        match fault.and_then(|()| fs::remove_file(&self.path)) {
+            Ok(()) => None,
+            // A failed replacement can already have moved the temporary.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(source) => Some(TempCleanupError {
+                path: self.path.clone(),
+                source,
+            }),
+        }
+    }
+}
+
+impl Drop for OwnedTemporary {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn sync_durable_parent(folder: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    os_faults::fail(os_faults::Point::ParentOpen)?;
+    let folder = super::open_dir(folder)?;
+    #[cfg(test)]
+    os_faults::fail(os_faults::Point::ParentSync)?;
+    sys::sync_dir(&folder)
 }
 
 /// Renames the file `from` over `to`, replacing it in one step. Returns the
@@ -98,9 +326,9 @@ pub fn replace_file(from: &Path, to: &Path) -> io::Result<FileId> {
     Ok(id)
 }
 
-/// Makes the changes to the open folder `dir`'s entries durable: a file
-/// that was synced and renamed is not yet on disk until its folder is.
-/// Windows keeps no such separate step, and answers `Ok`.
+/// Syncs an open folder's entries on Unix. Windows retains the legacy no-op
+/// `Ok` result, which is not a durability acknowledgement. Use
+/// [`write_file_durable`] when a writer must check its persistence barrier.
 pub fn sync_dir(dir: &impl Handle) -> io::Result<()> {
     sys::sync_dir(dir)
 }
@@ -170,6 +398,19 @@ mod sys {
 
     pub(super) fn replace(from: &Path, to: &Path, _keep_acl: bool) -> io::Result<()> {
         fs::rename(from, to)
+    }
+
+    pub(super) fn validate_durable(_: &Path, _: Access) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub(super) fn replace_durable(from: &Path, to: &Path) -> io::Result<()> {
+        #[cfg(test)]
+        super::os_faults::fail(super::os_faults::Point::Replacement)?;
+        fs::rename(from, to)?;
+        #[cfg(test)]
+        super::os_faults::fail(super::os_faults::Point::ReplacementAcknowledgement)?;
+        Ok(())
     }
 
     pub(super) fn sync_dir(dir: &impl Handle) -> io::Result<()> {
@@ -335,7 +576,9 @@ mod sys {
     use std::path::Path;
     use std::ptr::null;
 
-    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, ReplaceFileW};
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, ReplaceFileW,
+    };
 
     use super::{Access, Handle};
     use crate::fs::{path_of, wide};
@@ -364,6 +607,41 @@ mod sys {
             return replace_file_w(to, from, None);
         }
         fs::rename(from, to)
+    }
+
+    pub(super) fn validate_durable(path: &Path, access: Access) -> io::Result<()> {
+        if !matches!(access, Access::Private) {
+            // ReplaceFileW preserves an existing ACL, but its write-through
+            // flag is unsupported. Do not substitute an ACL-changing move.
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "durable replacement supports only private access on Windows",
+            ));
+        }
+        wide(path)?;
+        Ok(())
+    }
+
+    pub(super) fn replace_durable(from: &Path, to: &Path) -> io::Result<()> {
+        let (from, to) = (wide(from)?, wide(to)?);
+        #[cfg(test)]
+        super::os_faults::fail(super::os_faults::Point::Replacement)?;
+        // SAFETY: both paths are NUL-terminated and outlive this call. The
+        // temporary is beside the destination; copying across volumes is not
+        // enabled. Its private access list moves with it.
+        let done = unsafe {
+            MoveFileExW(
+                from.as_ptr(),
+                to.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if done == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        #[cfg(test)]
+        super::os_faults::fail(super::os_faults::Point::ReplacementAcknowledgement)?;
+        Ok(())
     }
 
     pub(super) fn sync_dir(_: &impl Handle) -> io::Result<()> {
@@ -428,5 +706,251 @@ mod sys {
             return Err(io::Error::last_os_error());
         }
         Ok(())
+    }
+}
+
+/// Test-only faults at OS I/O boundaries, scoped to the calling test thread.
+/// Real files, permissions, identity and writer decisions remain in use.
+#[cfg(test)]
+mod os_faults {
+    use std::cell::Cell;
+    use std::io;
+
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) enum Point {
+        FileWrite,
+        FileSync,
+        Replacement,
+        ReplacementAcknowledgement,
+        Cleanup,
+        #[cfg(unix)]
+        ParentOpen,
+        #[cfg(unix)]
+        ParentSync,
+    }
+
+    thread_local! {
+        static FAULTS: Cell<u8> = const { Cell::new(0) };
+    }
+
+    pub(super) struct Scope(u8);
+
+    pub(super) fn install(points: &[Point]) -> Scope {
+        let mask = points
+            .iter()
+            .fold(0, |mask, point| mask | (1 << *point as u32));
+        Scope(FAULTS.with(|faults| faults.replace(mask)))
+    }
+
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            FAULTS.with(|faults| faults.set(self.0));
+        }
+    }
+
+    #[cfg(unix)]
+    pub(super) const IO_ERROR: i32 = libc::EIO;
+    #[cfg(windows)]
+    pub(super) const IO_ERROR: i32 = windows_sys::Win32::Foundation::ERROR_WRITE_FAULT as i32;
+    #[cfg(unix)]
+    const CLEANUP_ERROR: i32 = libc::EACCES;
+    #[cfg(windows)]
+    const CLEANUP_ERROR: i32 = windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED as i32;
+
+    pub(super) fn fail(point: Point) -> io::Result<()> {
+        if FAULTS.with(|faults| faults.get() & (1 << point as u32) != 0) {
+            Err(io::Error::from_raw_os_error(if point == Point::Cleanup {
+                CLEANUP_ERROR
+            } else {
+                IO_ERROR
+            }))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::os_faults::{self, Point};
+    use super::*;
+
+    fn names(folder: &Path) -> Vec<std::ffi::OsString> {
+        let mut names: Vec<_> = fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn write_or_file_sync_failure_keeps_old_bytes_and_cleans_the_temporary() {
+        for point in [Point::FileWrite, Point::FileSync] {
+            let folder = tempfile::tempdir().unwrap();
+            let path = folder.path().join("ledger.json");
+            fs::write(&path, b"old").unwrap();
+            let old_id = identity::file_id(&path).unwrap();
+            let _fault = os_faults::install(&[point]);
+
+            let error = write_file_durable(&path, b"new", Access::Private).unwrap_err();
+
+            match &error {
+                DurableWriteError::BeforeReplace { source, cleanup } => {
+                    assert_eq!(source.raw_os_error(), Some(os_faults::IO_ERROR));
+                    assert!(cleanup.is_none());
+                }
+                other => panic!("expected failure before replacement: {other}"),
+            }
+            assert!(std::error::Error::source(&error).is_some());
+            assert_eq!(fs::read(&path).unwrap(), b"old");
+            assert_eq!(identity::file_id(&path).unwrap(), old_id);
+            assert_eq!(names(folder.path()), [OsString::from("ledger.json")]);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_open_or_sync_failure_preserves_the_installed_file_for_recovery() {
+        for point in [Point::ParentOpen, Point::ParentSync] {
+            let folder = tempfile::tempdir().unwrap();
+            let path = folder.path().join("ledger.json");
+            fs::write(&path, b"old").unwrap();
+            let old_id = identity::file_id(&path).unwrap();
+            let fault = os_faults::install(&[point]);
+
+            let error = write_file_durable(&path, b"new intent", Access::Private).unwrap_err();
+
+            match error {
+                DurableWriteError::ReplacedNotDurable { file_id, source } => {
+                    assert_eq!(source.raw_os_error(), Some(os_faults::IO_ERROR));
+                    assert_eq!(file_id, identity::file_id(&path).unwrap());
+                    assert_ne!(file_id, old_id);
+                }
+                other => panic!("expected installed but unconfirmed file: {other}"),
+            }
+            assert_eq!(fs::read(&path).unwrap(), b"new intent");
+            assert!(super::super::private::is_private(&path).unwrap());
+            assert_eq!(names(folder.path()), [OsString::from("ledger.json")]);
+
+            // Explicit recovery uses the retained intent, after the fault is
+            // gone. The writer itself never retries or restores old bytes.
+            drop(fault);
+            let retained = fs::read(&path).unwrap();
+            let recovered = write_file_durable(&path, &retained, Access::Private).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), b"new intent");
+            assert_eq!(identity::file_id(&path).unwrap(), recovered);
+        }
+    }
+
+    #[test]
+    fn replacement_failure_is_uncertain_even_when_old_bytes_are_still_present() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("ledger.json");
+        fs::write(&path, b"old").unwrap();
+        let _fault = os_faults::install(&[Point::Replacement]);
+
+        let error = write_file_durable(&path, b"new", Access::Private).unwrap_err();
+
+        match error {
+            DurableWriteError::ReplacementUncertain { source, cleanup } => {
+                assert_eq!(source.raw_os_error(), Some(os_faults::IO_ERROR));
+                assert!(cleanup.is_none());
+            }
+            other => panic!("expected uncertain replacement: {other}"),
+        }
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert_eq!(names(folder.path()), [OsString::from("ledger.json")]);
+    }
+
+    #[test]
+    fn failed_replacement_acknowledgement_never_rolls_back_or_deletes_new_bytes() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("ledger.json");
+        fs::write(&path, b"old").unwrap();
+        let old_id = identity::file_id(&path).unwrap();
+        // The real replacement takes place; only its OS acknowledgement is
+        // faulted, modeling a failed operation with a changed namespace.
+        let _fault = os_faults::install(&[Point::ReplacementAcknowledgement]);
+
+        let error = write_file_durable(&path, b"new intent", Access::Private).unwrap_err();
+
+        match error {
+            DurableWriteError::ReplacementUncertain { source, cleanup } => {
+                assert_eq!(source.raw_os_error(), Some(os_faults::IO_ERROR));
+                assert!(cleanup.is_none());
+            }
+            other => panic!("expected uncertain replacement acknowledgement: {other}"),
+        }
+        assert_eq!(fs::read(&path).unwrap(), b"new intent");
+        assert_ne!(identity::file_id(&path).unwrap(), old_id);
+        assert_eq!(names(folder.path()), [OsString::from("ledger.json")]);
+    }
+
+    #[test]
+    fn failed_cleanup_reports_retained_temp_and_preserves_the_primary_io_cause() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("ledger.json");
+        fs::write(&path, b"old").unwrap();
+        let _fault = os_faults::install(&[Point::FileSync, Point::Cleanup]);
+
+        let error = write_file_durable(&path, b"new", Access::Private).unwrap_err();
+
+        match error {
+            DurableWriteError::BeforeReplace {
+                source,
+                cleanup: Some(cleanup),
+            } => {
+                assert_eq!(source.raw_os_error(), Some(os_faults::IO_ERROR));
+                assert_eq!(cleanup.source.kind(), io::ErrorKind::PermissionDenied);
+                assert_eq!(cleanup.path.parent(), Some(folder.path()));
+                assert_ne!(cleanup.path, path);
+                assert_eq!(fs::read(&cleanup.path).unwrap(), b"new");
+                assert!(super::super::private::is_private(&cleanup.path).unwrap());
+                assert_eq!(names(folder.path()).len(), 2);
+                // Remove only the reported owned residue, not the destination.
+                fs::remove_file(cleanup.path).unwrap();
+            }
+            other => panic!("expected primary and cleanup failures: {other}"),
+        }
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert_eq!(names(folder.path()), [OsString::from("ledger.json")]);
+    }
+
+    #[test]
+    fn strict_faults_are_thread_scoped_and_legacy_writes_keep_their_contract() {
+        let folder = tempfile::tempdir().unwrap();
+        let strict = folder.path().join("strict");
+        let legacy = folder.path().join("legacy");
+        let other_thread = folder.path().join("other-thread");
+        let _fault = os_faults::install(&[Point::FileSync]);
+
+        assert!(matches!(
+            write_file_durable(&strict, b"strict", Access::Private),
+            Err(DurableWriteError::BeforeReplace { .. })
+        ));
+        write_file(&legacy, b"legacy", Access::KeepOrPrivate).unwrap();
+        let other_id = std::thread::spawn(move || {
+            write_file_durable(&other_thread, b"other", Access::Private).unwrap()
+        })
+        .join()
+        .unwrap();
+
+        assert!(!strict.exists());
+        assert_eq!(fs::read(&legacy).unwrap(), b"legacy");
+        assert_eq!(
+            fs::read(folder.path().join("other-thread")).unwrap(),
+            b"other"
+        );
+        assert_eq!(
+            identity::file_id(&folder.path().join("other-thread")).unwrap(),
+            other_id
+        );
+        assert_eq!(
+            names(folder.path()),
+            [OsString::from("legacy"), OsString::from("other-thread")]
+        );
     }
 }

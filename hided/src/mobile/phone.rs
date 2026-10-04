@@ -714,6 +714,7 @@ async fn input(
         Reservation::Seen(InputState::Uncertain) => return answer(false, Some("uncertain")),
     }
     let pane_id = key.herdr_pane_id().to_owned();
+    let core_pane_id = key.pane_id.clone();
     let device_id = key.device_id.clone();
     let writer = Arc::clone(mobile);
     let text = text.map(str::to_owned);
@@ -729,7 +730,12 @@ async fn input(
             (None, Some(key)) => Input::Key(key),
             (None, None) => unreachable!("validated above"),
         };
-        (true, pane::send(&connector, &pane_id, input))
+        let reply = matches!(input, Input::Reply(_));
+        let sent = pane::send(&connector, &pane_id, input);
+        if reply && sent.is_ok() {
+            writer.note_submit(&core_pane_id);
+        }
+        (true, sent)
     })
     .await
     .unwrap_or_else(|error| (true, Err(PaneError::Unavailable(error.to_string()))));

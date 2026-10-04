@@ -62,11 +62,11 @@ function session(checkoutId: string, tabId: string, displays: ViewDisplaySnapsho
     workspace_view: {
       device_id: "local",
       path: front.path,
-      panel: "open",
-      pinned: true,
-      tool: "explorer",
+      views: true,
       tools: false,
-      views_over_share: 0.5,
+      tool: "explorer",
+      views_width: null,
+      tools_width: null,
       layout: { root: { area: { id: "a1", active: displays[0]?.id ?? null, displays } }, active_area: "a1", limits: { areas: 4, depth: 3, displays: 64 }, display_count: displays.length },
     },
   } as unknown as SnapshotRest;
@@ -230,7 +230,7 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
     // The lens changed on the Overview is the visit Recent Panels brings back (PRD overview-lenses-tiles-agents B11),
     // the issue panel and the filter with it (PRD overview-lenses-issues D-08), and the PRs tab's unfolded rows
     // (PRD overview-lenses-prs B23: ^Tab brings the PRs tab back as it was left).
-    const left: OverviewLens = { tab: "prs", tasksMode: "list", box: "c-notes", folds: ["cleanup:notes"], graph: { chips: ["turn"], query: "sigterm", device: null }, focusTask: null, panel: "local:/notes#3", filter: { query: "sigterm", turn: true }, prs: { open: [218], focus: 218, merged: true } };
+    const left: OverviewLens = { tab: "prs", tasksMode: "list", box: "c-notes", folds: ["cleanup:notes"], graph: { chips: ["turn"], query: "sigterm", device: null }, focusTask: null, panel: "local:/notes#3", filter: { query: "sigterm", turn: true }, prs: { open: [218], focus: 218, merged: true }, requests: { open: ["p1"], full: [], resting: true } };
     show(rest, overview("w-notes", left));
     show(rest, { kind: "workspace" });
     // A commit still on its way does not keep the Overview from being the visit.

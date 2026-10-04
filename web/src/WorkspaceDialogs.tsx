@@ -28,6 +28,7 @@ import {
   PURPOSE_HARD_LIMIT,
   branchProblem,
   deletionFacts,
+  discardConfirmationKey,
   factsLine,
   normalizePurpose,
   projectRemovalFacts,
@@ -444,12 +445,17 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
   const gate = row?.deletion_gate;
   const paneCount = checkout.tabs.reduce((count, tab) => count + tab.panes.length, 0);
   const [deleteBranch, setDeleteBranch] = useState(false);
-  const [discard, setDiscard] = useState(false);
+  const discardKey = discardConfirmationKey(checkout);
+  const [discardSelection, setDiscardSelection] = useState({ key: discardKey, accepted: false });
+  // Every observed facts transition retires the previous consent, including
+  // a return to the same names after a lock or unavailable scan is resolved.
+  if (discardSelection.key !== discardKey) setDiscardSelection({ key: discardKey, accepted: false });
+  const discard = discardSelection.key === discardKey && discardSelection.accepted;
   const [request, setRequest] = useState<{ afterId: number; at: number } | null>(null);
   const current = useShellStore((s) => s.rest?.worktree_removal);
   const removal = request ? removalFor(current, deviceId, checkout.path, request.afterId) : null;
   const refused = useErrorSince(request?.at ?? null, ["worktree.remove"]);
-  const inFlight = request !== null && refused === null && (removal === null || removal.phase === "closing" || removal.phase === "removing");
+  const inFlight = request !== null && refused === null && (removal === null || removal.phase === "checking" || removal.phase === "closing" || removal.phase === "removing");
   const finished = removal?.phase === "finished" ? removal : null;
   // A refusal or a failed removal keeps the worktree, so the choices come
   // back under the reason and Delete tries again on the row as it is now.
@@ -460,13 +466,13 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
   const inside = checkout.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id));
   const subtree = useOutsideSubtree(actions, inside);
   const [withOutside, setWithOutside] = useState(false);
-  const closingOutside = inFlight && withOutside && subtree !== null && (removal === null || removal.phase === "closing");
+  const closingOutside = inFlight && withOutside && subtree !== null && removal?.phase === "closing";
   const confirm = (outside: boolean) => {
     const afterId = useShellStore.getState().rest?.worktree_removal?.id ?? 0;
     setWithOutside(outside);
     setRequest({ afterId, at: Date.now() });
     useUiStore.getState().setWatchedRemoval({ deviceId, path: checkout.path, afterId });
-    actions.removeWorktree(deviceId, checkout.path, deleteBranch && !!gate?.can_delete_branch, discard && needsDiscard, outside ? (subtree?.ids ?? []) : []);
+    actions.removeWorktree(deviceId, checkout.path, deleteBranch && !!gate?.can_delete_branch, discard && needsDiscard, outside ? (subtree?.ids ?? []) : [], row?.ignored_repositories ?? []);
   };
   const hide = () => {
     // A removal the operator stopped watching still reports its end through
@@ -528,7 +534,7 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
             ) : null}
             {gate.discard_label ? (
               <label className="flex items-start gap-xs text-body text-foreground">
-                <Checkbox checked={discard} onCheckedChange={(checked) => setDiscard(checked === true)} data-delete-discard="true" className="mt-xxs" />
+                <Checkbox checked={discard} onCheckedChange={(checked) => setDiscardSelection({ key: discardKey, accepted: checked === true })} data-delete-discard="true" className="mt-xxs" />
                 <span className="min-w-0 break-words">
                   {gate.discard_label}
                   <span className="block text-caption text-muted-foreground">Required to delete: this work cannot be recovered.</span>
@@ -540,7 +546,9 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
         {subtree && (choosing || closingOutside) ? <OutsideAgents actions={actions} subtree={subtree} what="worktree" targetDevice={deviceId} /> : null}
         {inFlight ? (
           <Status tone="pending" data-delete-phase={closingOutside ? "closing_outside" : (removal?.phase ?? "requested")}>
-            {removal?.phase === "removing"
+            {removal === null || removal.phase === "checking"
+              ? "Rechecking Git state before closing any panes…"
+              : removal.phase === "removing"
               ? "Rechecking and removing the folder…"
               : closingOutside
                 ? `Closing ${agentsWord(subtree.ids.length)} outside, then ${paneCount} pane${paneCount === 1 ? "" : "s"}…`

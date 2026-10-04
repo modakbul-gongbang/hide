@@ -6,19 +6,24 @@
 //! below that reads the variable plays the role; without the variable it does
 //! nothing.
 
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use hide_platform::process::GuardedSpawnError;
 use hide_platform::process::{
-    OwnedChild, cwd_of, descends_from, detach, is_alive, kill_tree, measure_tree, parent_of,
-    start_time, terminate, terminate_group,
+    CaptureFailureKind, MAX_CAPTURE_BYTES, OWNER_LAUNCH_KEYS, OwnedChild, OwnerWatch,
+    RUN_OUTPUT_CAP, RunFailure, cwd_of, descends_from, detach, is_alive, kill_tree, measure_tree,
+    parent_of, run_to_end, start_time, terminate, terminate_group,
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
+// Test-only handoff: arm recovery before the short-lived parent exits.
+const PIPE_OWNER: &str = "HIDE_PLATFORM_PROC_PIPE_OWNER";
 
 /// Windows hands a freed pid to the next process that starts, so a test that
 /// asks about a pid it has finished with must not run beside one that starts
@@ -36,7 +41,40 @@ fn child_role() {
     let Ok(role) = std::env::var(ROLE) else {
         return;
     };
+    let _watch = OwnerWatch::from_launch().unwrap();
     match role.as_str() {
+        "proof" => println!("GUARDED {}", _watch.is_some()),
+        "echo" => {
+            let mut input = Vec::new();
+            std::io::stdin().read_to_end(&mut input).unwrap();
+            std::io::stdout().write_all(&input).unwrap();
+            std::io::stderr().write_all(b"ERROR-MARKER").unwrap();
+        }
+        "overflow" => {
+            std::io::stdout()
+                .write_all(&vec![b'x'; MAX_CAPTURE_BYTES + 1])
+                .unwrap();
+        }
+        "held_pipe" => {
+            // The parent exits while its own group keeps the stdout pipe
+            // open. Capture must time out without joining a blocked reader.
+            #[allow(clippy::zombie_processes)]
+            let helper = role_command("sleep")
+                .stdout(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            println!("READY {}", helper.id());
+        }
+        "guarded_owner" => {
+            let mut child = OwnedChild::spawn_guarded(
+                role_command("tree_own_group"),
+                Instant::now() + Duration::from_millis(1850),
+            )
+            .unwrap();
+            let helper = ready_number(child.take_stdout().unwrap());
+            println!("OWNED {} {helper}", child.id());
+            thread::sleep(Duration::from_secs(60));
+        }
         "sleep" => {
             println!("READY {}", std::process::id());
             thread::sleep(Duration::from_secs(60));
@@ -46,6 +84,8 @@ fn child_role() {
             let mut grandchild = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
+                .env_remove(OWNER_LAUNCH_KEYS[0])
+                .env_remove(OWNER_LAUNCH_KEYS[1])
                 .stdout(Stdio::null())
                 .spawn()
                 .unwrap();
@@ -59,6 +99,8 @@ fn child_role() {
             command
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
+                .env_remove(OWNER_LAUNCH_KEYS[0])
+                .env_remove(OWNER_LAUNCH_KEYS[1])
                 .stdout(Stdio::null());
             #[cfg(unix)]
             std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -71,6 +113,8 @@ fn child_role() {
             let mut child = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "tree")
+                .env_remove(OWNER_LAUNCH_KEYS[0])
+                .env_remove(OWNER_LAUNCH_KEYS[1])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -83,6 +127,47 @@ fn child_role() {
             println!("READY {}", child.id());
             let _ = child.wait();
         }
+        // An ordinary supervisor leaves both inherited pipes in its child.
+        "exit_with_pipes" | "exit_with_escaped_pipes" => {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            #[cfg(unix)]
+            if role == "exit_with_escaped_pipes" {
+                std::os::unix::process::CommandExt::process_group(&mut command, 0);
+            }
+            #[allow(clippy::zombie_processes)]
+            let helper = command
+                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .env(ROLE, "sleep")
+                .spawn()
+                .unwrap();
+            let path = PathBuf::from(std::env::var_os(PIPE_OWNER).unwrap());
+            std::fs::write(
+                &path,
+                format!("{} {}", helper.id(), start_time(helper.id()).unwrap()),
+            )
+            .unwrap();
+            let started = Instant::now();
+            while !path.with_extension("armed").exists() {
+                assert!(started.elapsed() < Duration::from_secs(5));
+                thread::sleep(Duration::from_millis(10));
+            }
+            println!("SPOKE out");
+            eprintln!("SPOKE err");
+            std::process::exit(0);
+        }
+        // Says something on both outputs and exits with a code of its own.
+        "speak" => {
+            println!("SPOKE out");
+            eprintln!("SPOKE err");
+            std::process::exit(3);
+        }
+        // Writes far past the output cap, then exits.
+        "flood" => {
+            let line = "x".repeat(1023);
+            for _ in 0..512 {
+                println!("{line}");
+            }
+        }
         // A short-lived parent that starts a detached `sleep` and exits, as
         // `hide connect` starts its daemon.
         "detacher" => {
@@ -90,6 +175,8 @@ fn child_role() {
             command
                 .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
                 .env(ROLE, "sleep")
+                .env_remove(OWNER_LAUNCH_KEYS[0])
+                .env_remove(OWNER_LAUNCH_KEYS[1])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
@@ -109,6 +196,8 @@ fn role_command(role: &str) -> Command {
     command
         .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
         .env(ROLE, role)
+        .env_remove(OWNER_LAUNCH_KEYS[0])
+        .env_remove(OWNER_LAUNCH_KEYS[1])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     command
@@ -139,6 +228,227 @@ fn gone_within(pid: u32, bound: Duration) -> bool {
         thread::sleep(Duration::from_millis(20));
     }
     true
+}
+
+/// Failure recovery names only a child this fixture announced while live,
+/// and only while the kernel still reports the same process identity.
+struct FixtureProcess {
+    pid: u32,
+    started: u64,
+}
+
+impl FixtureProcess {
+    fn live(pid: u32) -> Self {
+        Self {
+            pid,
+            started: start_time(pid).unwrap(),
+        }
+    }
+}
+
+impl Drop for FixtureProcess {
+    fn drop(&mut self) {
+        if start_time(self.pid).ok() == Some(self.started)
+            && let Err(source) = kill_tree(self.pid)
+        {
+            eprintln!(
+                "process.fixture_cleanup_failed pid={} error={source}",
+                self.pid
+            );
+        }
+    }
+}
+
+#[test]
+fn guarded_capture_keeps_stdin_payload_and_both_output_streams() {
+    let _serial = serial();
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(1850);
+    let mut command = role_command("echo");
+    command.stdin(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
+    child
+        .take_stdin()
+        .unwrap()
+        .write_all(b"PAYLOAD-MARKER")
+        .unwrap();
+    let output = child.capture_until(deadline, 64 * 1024).unwrap();
+    assert!(output.status.success());
+    assert!(
+        output
+            .stdout
+            .windows(14)
+            .any(|part| part == b"PAYLOAD-MARKER")
+    );
+    assert_eq!(output.stderr, b"ERROR-MARKER");
+    assert!(started.elapsed() < Duration::from_millis(1850));
+    assert!(child.try_wait().unwrap().is_some(), "success confirms exit");
+}
+
+#[test]
+fn only_a_guarded_launch_returns_startup_proof() {
+    let _serial = serial();
+    let deadline = Instant::now() + Duration::from_millis(1850);
+    let mut guarded = OwnedChild::spawn_guarded(role_command("proof"), deadline).unwrap();
+    let output = guarded.capture_until(deadline, 64 * 1024).unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("GUARDED true")
+    );
+    let deadline = Instant::now() + Duration::from_millis(1850);
+    let mut standalone = OwnedChild::spawn(&mut role_command("proof")).unwrap();
+    let output = standalone.capture_until(deadline, 64 * 1024).unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("GUARDED false")
+    );
+}
+
+#[test]
+fn capture_reports_the_callers_byte_limit_without_losing_cleanup() {
+    let _serial = serial();
+    for limit in [64 * 1024, MAX_CAPTURE_BYTES] {
+        let deadline = Instant::now() + Duration::from_millis(1850);
+        let mut child = OwnedChild::spawn_guarded(role_command("overflow"), deadline).unwrap();
+        let error = child.capture_until(deadline, limit).unwrap_err();
+        assert!(
+            matches!(error.kind, CaptureFailureKind::OutputLimit { limit: found } if found == limit)
+        );
+        assert_eq!(error.stdout.len() + error.stderr.len(), limit);
+        assert!(error.cleanup.is_none(), "{error}");
+        assert!(child.try_wait().unwrap().is_some());
+    }
+}
+
+#[test]
+fn inherited_output_cannot_extend_capture_deadline() {
+    let _serial = serial();
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(300);
+    let mut child = OwnedChild::spawn(&mut role_command("held_pipe")).unwrap();
+    let error = child.capture_until(deadline, 64 * 1024).unwrap_err();
+    assert!(matches!(error.kind, CaptureFailureKind::Deadline));
+    assert!(
+        started.elapsed() < Duration::from_millis(1850),
+        "a pipe reader extended the deadline"
+    );
+    let output = String::from_utf8(error.stdout).unwrap();
+    let helper = output
+        .lines()
+        .find_map(|line| {
+            line.split_once("READY ")
+                .and_then(|(_, number)| number.trim().parse::<u32>().ok())
+        })
+        .expect("helper announced its pid");
+    if error.cleanup.is_some() {
+        // A timeout never asserts an exit it has not observed. The same
+        // retained owner can reap after the prompt capture outcome.
+        child.kill_tree().unwrap();
+        child.wait().unwrap();
+    }
+    assert!(
+        gone_within(helper, Duration::from_secs(5)),
+        "owned inherited-pipe helper survived"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_uncooperative_guarded_launch_returns_its_cleanup_state() {
+    let _serial = serial();
+    let started = Instant::now();
+    // An uncooperative Unix executable never acknowledges the watch.
+    let mut command = Command::new("/bin/sleep");
+    command
+        .arg("60")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let error =
+        OwnedChild::spawn_guarded(command, started + Duration::from_millis(200)).unwrap_err();
+    assert!(started.elapsed() < Duration::from_millis(1850));
+    let mut failure = error
+        .into_inner()
+        .unwrap()
+        .downcast::<GuardedSpawnError>()
+        .unwrap();
+    if let Some(mut child) = failure.child.take() {
+        assert!(
+            failure.cleanup.is_some(),
+            "unconfirmed cleanup retains ownership"
+        );
+        child.kill_tree().unwrap();
+        child.wait().unwrap();
+    } else {
+        assert!(failure.cleanup.is_none());
+    }
+}
+
+#[test]
+fn abrupt_owner_death_ends_guarded_child_and_helper_outside_its_group() {
+    let _serial = serial();
+    // A raw owner is intentional: killing only its own Child handle skips
+    // all destructors and cannot make its child's cleanup pass by proxy.
+    let mut owner = role_command("guarded_owner").spawn().unwrap();
+    let stdout = owner.stdout.take().unwrap();
+    let (send, recv) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some((_, pair)) = line.split_once("OWNED ") {
+                let pids: Vec<u32> = pair
+                    .split_whitespace()
+                    .map(|pid| pid.parse().unwrap())
+                    .collect();
+                send.send((pids[0], pids[1])).unwrap();
+                return;
+            }
+        }
+    });
+    let ready = recv.recv_timeout(Duration::from_secs(5));
+    let identities = ready
+        .as_ref()
+        .ok()
+        .map(|(child, helper)| (FixtureProcess::live(*child), FixtureProcess::live(*helper)));
+    owner.kill().unwrap();
+    owner.wait().unwrap();
+    reader.join().unwrap();
+    let (child, helper) = ready.expect("guarded owner did not announce its child");
+    assert!(
+        gone_within(child, Duration::from_secs(5)),
+        "guarded child survived owner SIGKILL"
+    );
+    assert!(
+        gone_within(helper, Duration::from_secs(5)),
+        "helper outside child group survived"
+    );
+    drop(identities);
+}
+
+#[test]
+fn repeated_guarded_work_releases_children_and_capture_resources() {
+    let _serial = serial();
+    let baseline = measure_tree(std::process::id()).unwrap().descendants;
+    for _ in 0..10 {
+        let deadline = Instant::now() + Duration::from_millis(1850);
+        let mut command = role_command("echo");
+        command.stdin(Stdio::null());
+        let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
+        assert!(
+            child
+                .capture_until(deadline, 64 * 1024)
+                .unwrap()
+                .status
+                .success()
+        );
+        drop(child);
+        assert_eq!(
+            measure_tree(std::process::id()).unwrap().descendants,
+            baseline
+        );
+    }
 }
 
 /// A detached child holds none of its parent's standard handles: whoever reads
@@ -454,4 +764,189 @@ fn killing_by_pid_reaches_the_group_of_a_leader_that_already_exited() {
         "the orphan survived"
     );
     drop(child);
+}
+
+fn run_role(
+    role: &str,
+    deadline: Duration,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Result<hide_platform::process::Finished, RunFailure> {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+        .env(ROLE, role);
+    run_to_end(&mut command, deadline, stop)
+}
+
+#[test]
+fn a_child_run_to_its_end_answers_its_code_and_both_outputs() {
+    let _serial = serial();
+    let finished = run_role(
+        "speak",
+        Duration::from_secs(30),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(finished.code, Some(3));
+    assert!(finished.stdout.contains("SPOKE out"));
+    assert!(finished.stderr.contains("SPOKE err"));
+}
+
+#[test]
+fn a_child_that_writes_past_the_cap_is_read_to_its_end_and_kept_to_the_cap() {
+    let _serial = serial();
+    let finished = run_role(
+        "flood",
+        Duration::from_secs(30),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(finished.code, Some(0));
+    assert_eq!(finished.stdout.len(), RUN_OUTPUT_CAP);
+}
+
+#[test]
+fn a_child_past_its_deadline_is_ended_with_its_tree() {
+    let _serial = serial();
+    let started = Instant::now();
+    let failure = run_role(
+        "tree",
+        Duration::from_millis(500),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert!(matches!(failure, RunFailure::TimedOut), "{failure:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn a_raised_stop_ends_the_child_before_its_deadline() {
+    let _serial = serial();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let raiser = {
+        let stop = std::sync::Arc::clone(&stop);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        })
+    };
+    let started = Instant::now();
+    let failure = run_role("sleep", Duration::from_secs(60), &stop).unwrap_err();
+    raiser.join().unwrap();
+    assert!(matches!(failure, RunFailure::Stopped), "{failure:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+/// Recovery is armed before the parent exits, so a hanging public call fails
+/// within a bound and only its known helper is ended.
+fn inherited_pipe_run(
+    role: &str,
+    deadline: Duration,
+) -> (
+    Result<hide_platform::process::Finished, RunFailure>,
+    bool,
+    Duration,
+    bool,
+) {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("owner");
+    let mut command = role_command(role);
+    command.env(PIPE_OWNER, &path);
+    let (answered, result) = mpsc::channel();
+    let started = Instant::now();
+    let runner = thread::spawn(move || {
+        let answer = run_to_end(
+            &mut command,
+            deadline,
+            &std::sync::atomic::AtomicBool::new(false),
+        );
+        answered.send(answer).unwrap();
+    });
+    let reported = loop {
+        match std::fs::read_to_string(&path) {
+            Ok(value) => {
+                let fields: Vec<_> = value.split_whitespace().collect();
+                if fields.len() == 2 {
+                    break (
+                        fields[0].parse::<u32>().unwrap(),
+                        fields[1].parse::<u64>().unwrap(),
+                    );
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => panic!("cannot read helper ownership: {error}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "helper not reported"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    struct Recovery(u32, u64);
+    impl Drop for Recovery {
+        fn drop(&mut self) {
+            if start_time(self.0).is_ok_and(|birth| birth == self.1) {
+                terminate(self.0).expect("end only the reported helper");
+                assert!(
+                    gone_within(self.0, Duration::from_secs(5)),
+                    "helper recovery failed"
+                );
+            }
+        }
+    }
+    let recovery = Recovery(reported.0, reported.1);
+    assert_eq!(start_time(reported.0).unwrap(), reported.1);
+    std::fs::write(path.with_extension("armed"), b"ready").unwrap();
+    let answer = result.recv_timeout(Duration::from_secs(5));
+    let within_deadline = answer.is_ok();
+    let elapsed = started.elapsed();
+    let absent_on_return = !is_alive(reported.0);
+    drop(recovery);
+    let answer = answer.unwrap_or_else(|_| {
+        result
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the recovered pipe reader must finish")
+    });
+    runner.join().unwrap();
+    (answer, within_deadline, elapsed, absent_on_return)
+}
+
+/// An exit-0 parent must not wait for its sleeping descendant's pipes.
+#[test]
+fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
+    let _serial = serial();
+    let (answer, within_deadline, elapsed, absent_on_return) =
+        inherited_pipe_run("exit_with_pipes", Duration::from_secs(5));
+    assert!(
+        within_deadline,
+        "run_to_end hung after exit 0 while inherited pipes remained open; elapsed {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "the original deadline was exceeded"
+    );
+    let finished = answer.unwrap();
+    assert_eq!(finished.code, Some(0));
+    assert!(finished.stdout.contains("SPOKE out"));
+    assert!(finished.stderr.contains("SPOKE err"));
+    assert!(
+        absent_on_return,
+        "the inherited-pipe helper outlived the call"
+    );
+}
+
+/// Unix cannot attribute a helper that escaped and was reparented before its
+/// walk, but that helper's inherited pipes must not make a deadline unlimited.
+#[cfg(unix)]
+#[test]
+fn an_escaped_pipe_holder_cannot_extend_the_run_deadline() {
+    let _serial = serial();
+    let (answer, completed, elapsed, _) =
+        inherited_pipe_run("exit_with_escaped_pipes", Duration::from_millis(500));
+    assert!(
+        completed,
+        "pipe draining blocked even after the run deadline"
+    );
+    assert!(matches!(answer, Err(RunFailure::TimedOut)), "{answer:?}");
+    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
 }

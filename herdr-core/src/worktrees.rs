@@ -364,7 +364,7 @@ impl Default for WorktreeReader {
 
 /// The sole deletion policy, consumed by all three presentation surfaces.
 ///
-/// Only the main worktree is refused; everything else that can lose work is a
+/// Main, locked or unmeasured worktrees are refused; other loss is a
 /// warning the confirmation shows, and the loss itself is a choice the
 /// operator makes there (`discard_label`, `can_delete_branch`).
 pub fn deletion_gate(
@@ -372,9 +372,22 @@ pub fn deletion_gate(
     is_base: bool,
     pane_count: usize,
 ) -> WorktreeDeletionGateSnapshot {
-    let blocked_reason = worktree
-        .is_main
-        .then(|| "The main worktree cannot be deleted".to_owned());
+    let blocked_reason = if worktree.is_main {
+        Some("The main worktree cannot be deleted".to_owned())
+    } else if let Some(reason) = worktree.lock_reason.as_deref() {
+        let name = worktree
+            .branch
+            .as_deref()
+            .or_else(|| {
+                Path::new(&worktree.path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+            })
+            .unwrap_or("selected checkout");
+        Some(hide_host::worktrees::locked_removal_reason(name, reason))
+    } else {
+        worktree.ignored_scan_unavailable.clone()
+    };
     let status_unknown = worktree.unavailable_reason.is_some() && !worktree.missing;
     let files = |count: u32| match count {
         0 => "uncommitted changes".to_owned(),
@@ -405,7 +418,7 @@ pub fn deletion_gate(
             warnings.push("not pushed".to_owned());
         }
     }
-    let discard_label = match (worktree.dirty, worktree.nested) {
+    let mut discard_label = match (worktree.dirty, worktree.nested) {
         (true, true) => Some(format!(
             "Discard {} and the worktree inside it",
             files(worktree.changed_file_count)
@@ -414,6 +427,17 @@ pub fn deletion_gate(
         (false, true) => Some("Discard the worktree inside it".to_owned()),
         (false, false) => status_unknown.then(|| "Discard any uncommitted changes".to_owned()),
     };
+    if !worktree.ignored_repositories.is_empty() {
+        let names = worktree.ignored_repositories.join(", ");
+        warnings.push(format!(
+            "{} ignored repositories",
+            worktree.ignored_repositories.len()
+        ));
+        discard_label = Some(match discard_label {
+            Some(label) => format!("{label} and ignored repositories {names}"),
+            None => format!("Discard ignored repositories {names}"),
+        });
+    }
     let can_delete_branch = !worktree.missing && worktree.branch.is_some() && !is_base;
     let branch_warning = match worktree.merged {
         _ if !can_delete_branch => None,
@@ -532,6 +556,9 @@ fn worktree_snapshot(facts: hide_host::worktrees::WorktreeFacts) -> WorktreeSnap
         head_sha: facts.head_sha,
         missing: facts.missing,
         is_main: facts.is_main,
+        lock_reason: facts.lock_reason,
+        ignored_repositories: facts.ignored_repositories,
+        ignored_scan_unavailable: facts.ignored_scan_unavailable,
         nested: facts.nested,
         dirty: facts.dirty,
         changed_file_count: facts.changed_file_count,
@@ -676,6 +703,7 @@ mod tests {
                 is_main: false,
                 bare: false,
                 head_sha: None,
+                lock_reason: None,
             },
             &BTreeMap::new(),
             Some("main"),

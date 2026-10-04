@@ -11,6 +11,7 @@ mod agent_sleep;
 mod agents;
 mod attachments;
 mod clone;
+pub(crate) mod delivery;
 mod device_catalog;
 mod devices;
 mod documents;
@@ -27,6 +28,7 @@ mod projects;
 mod pull_requests;
 mod recent_checkouts;
 mod rename;
+mod request_view;
 mod session;
 pub(crate) mod session_search;
 mod snapshot_delta;
@@ -46,7 +48,7 @@ use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
 use events::*;
 use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
-use workspace_view::{AreaIntent, PanelCoversPayload, WorkspaceViewPayload, WorkspaceViewStore};
+use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
 use crate::checkout_owner::{OwnerOpen, TabHost};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
@@ -380,6 +382,8 @@ struct PendingViewFocus {
     /// core owns the outcome; the shell supplies this opaque correlation id
     /// only so it can consume the answer to the action it initiated.
     request_id: Option<String>,
+    /// Local pane controls settle by operation identity, never by target alone.
+    pane_control_serial: Option<u64>,
     requested_at_unix_ms: u64,
 }
 
@@ -389,6 +393,7 @@ impl PendingViewFocus {
             scope_id: scope_id.into(),
             target_id: target_id.into(),
             request_id: None,
+            pane_control_serial: None,
             requested_at_unix_ms: unix_milliseconds(),
         }
     }
@@ -398,6 +403,7 @@ impl PendingViewFocus {
             scope_id: String::new(),
             target_id: target_id.into(),
             request_id: Some(request_id),
+            pane_control_serial: None,
             requested_at_unix_ms: unix_milliseconds(),
         }
     }
@@ -405,6 +411,15 @@ impl PendingViewFocus {
     fn expired_at(&self, now_unix_ms: u64) -> bool {
         now_unix_ms.saturating_sub(self.requested_at_unix_ms) >= VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS
     }
+}
+
+/// One socket operation in the pane-focus chain. The latest intent lives in
+/// `pending_pane_focus`; replacing it cannot start a second socket operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingPaneFocusControl {
+    pub(crate) serial: u64,
+    pub(crate) target_id: String,
+    pub(crate) live_generation: u64,
 }
 
 /// How many diagnostics the snapshot keeps. Newest are kept; the oldest go.
@@ -938,6 +953,11 @@ pub(crate) struct TaskAgentLaunch {
 
 pub struct Runtime {
     snapshot: Snapshot,
+    delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
+    delivery_client: Option<crate::delivery::worker::Client>,
+    delivery_observations: HashMap<String, delivery::Observation>,
+    delivery_overflow: HashSet<String>,
+    delivery_connected: HashSet<String>,
     /// Stable identities are separate from device labels: labels are mutable
     /// presentation, while hcoord lineage is keyed by operating-system id.
     local_machine_id: Option<String>,
@@ -1212,6 +1232,8 @@ pub struct Runtime {
     /// The pane focus Hide has told Herdr about and is still waiting to see
     /// confirmed.
     pending_pane_focus: Option<PendingViewFocus>,
+    pane_focus_in_flight: Option<PendingPaneFocusControl>,
+    next_pane_focus_serial: u64,
     /// The tabs Herdr most recently reported active in their own workspaces.
     /// A pane layout remembers a focused pane even while its tab is hidden,
     /// so the layout alone cannot confirm a pane-focus request.
@@ -1239,6 +1261,14 @@ pub struct Runtime {
     /// The label store and analyzer every session-sync coordinator's worker
     /// shares; `None` when the core was made without them (tests).
     label_services: Option<std::sync::Arc<crate::labels::LabelServices>>,
+    /// GitHub's creation time of every pull request read, which the label
+    /// workers judge their sessions' sightings against (PRD
+    /// overview-request-view D-31); replaced only when it changes.
+    pull_request_times: std::sync::Arc<crate::labels::facts::PullRequestTimes>,
+    /// Some window shows the request view, and when its pending checks were
+    /// last looked at (PRD overview-request-view D-32).
+    request_view_observed: bool,
+    pending_checks_read_at: Option<std::time::Instant>,
     issue_tokens: crate::wire::IssueTokens,
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
     issue_write_pending: Option<(u64, String, String)>,
@@ -1403,8 +1433,22 @@ struct RuntimeWorkerContext {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
+        let delivery_path =
+            hide_kit::layout::delivery_ledger(state_path.parent().unwrap_or(Path::new(".")));
+        let delivery_ledger = crate::delivery::ledger::recover(&delivery_path)
+            .map(Arc::new)
+            .map_err(|error| {
+                crate::diagnostic!(serde_json::json!({
+                    "component":"delivery","kind":"ledger.load_failed",
+                    "code":error.code(),"persistence":error.diagnostic(),
+                }));
+                error.code().to_owned()
+            });
         let (host_packages, host_helper_root, host_cli_dir) = Self::helper_packages_from(&options);
         let mut snapshot = Snapshot::initial(&options);
+        if let Ok(ledger) = &delivery_ledger {
+            snapshot.delivery_watches = ledger.watches.iter().map(|watch| watch.view()).collect();
+        }
         snapshot.status.environment = environment.statuses;
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         let local_issues_path = options.local_issues_path.as_ref().map(PathBuf::from);
@@ -1512,6 +1556,11 @@ impl Runtime {
         });
         let mut runtime = Self {
             snapshot,
+            delivery_ledger,
+            delivery_client: None,
+            delivery_observations: HashMap::new(),
+            delivery_overflow: HashSet::new(),
+            delivery_connected: HashSet::new(),
             local_machine_id: options.machine_id.clone(),
             device_machine_ids: HashMap::new(),
             unresolved_machine_lineage: HashSet::new(),
@@ -1634,6 +1683,8 @@ impl Runtime {
             herdr_focused_tab_seen: None,
             herdr_tab_focus_seen: None,
             pending_pane_focus: None,
+            pane_focus_in_flight: None,
+            next_pane_focus_serial: 0,
             herdr_active_tab_ids: BTreeSet::new(),
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
@@ -1641,6 +1692,9 @@ impl Runtime {
             ui_attached: true,
             label_overlay: Default::default(),
             label_services: None,
+            pull_request_times: Default::default(),
+            request_view_observed: false,
+            pending_checks_read_at: None,
             issue_tokens: Default::default(),
             issue_candidates: Default::default(),
             issue_write_pending: None,
@@ -1921,6 +1975,9 @@ impl Runtime {
                 && self.snapshot.status.last_error.is_none()
             {
                 self.apply_area_intent(intent);
+                // The call is numbered even when nothing else moved (an
+                // open of the view already shown), and the shell must hear it.
+                changed = true;
             }
             if chooses_workspace && self.snapshot.status.last_error.is_none() {
                 self.mark_front_chosen();

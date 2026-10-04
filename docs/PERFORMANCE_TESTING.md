@@ -13,12 +13,16 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 | Layer | What it catches | Current execution |
 | --- | --- | --- |
 | Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | The Rust workspace suite and repository invariant checks run on every PR and main push in `.github/workflows/pr.yml`; `design-contract.yml` adds static design checks |
-| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; the web suite runs in the six Linux `web-e2e` shards and, for its `@platform` tests, in one macOS job, the desktop app in the macOS `desktop-e2e` job of `pr.yml`, and `nightly.yml` runs the whole web suite on macOS; `verify` requires the pull request's jobs |
+| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; the web suite runs in the six Linux `web-e2e` shards and, for its `@platform` tests, in one macOS job, the desktop app in the macOS `desktop-e2e` job of `pr.yml`, and `nightly.yml` configures full web and desktop suites on Linux, macOS and Windows, with tracked flaky tests blocking nightly; Linux desktop uses Xvfb; `verify` requires the pull request's jobs |
 | Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements (`scripts/web-shell-measure/run.sh`); no checked-in scheduled or required performance job |
 
 The repository-invariant Python tests run in the required `checks` lane of `pr.yml`.
 Fixture/replay commands under `scripts/web-shell-measure/` do not become CI gates merely because this guide lists them.
 Check the workflow before claiming any of them runs automatically.
+The per-OS schema/runtime contracts and three package lanes are nightly configuration; actual executed jobs, failures and skips establish a particular head's coverage.
+PR macOS queue comparisons use actual executed jobs (exclude skipped reusable placeholders), recorded SHA/time windows and sample counts, and report run wall time and runner cost separately.
+A before/after observational sample with different workloads or little concurrent queueing does not establish the concurrent-PR p90 target.
+Hosted desktop automation and private hook fixtures do not establish physical IME, first-launch security prompts or real agent hook behavior.
 
 ### Maintenance and review policy
 
@@ -232,6 +236,8 @@ Record uptime, the restart time, and both sample windows in the run directory, a
   Read-then-clear can swallow a concurrent change.
 - Size snapshot traffic by changes: terminal sequence cursors, rarely-changing revisioned `rest`, and per-event scalars.
   An unused heartbeat timestamp can still dirty `rest` and resend the full navigator every second.
+- Keep the keyboard path to the byte bridge.
+  The one thing added per key is the operator-submit check (`labels::input::key_submits`, PRD overview-request-view D-19): a chunk over 64 bytes is skipped, a shorter one is decoded into a stack buffer and scanned; only a found submit looks up the agent row and pushes one entry behind the submit record's own lock, and nothing is published.
 - Keep async operation records bounded by active intent and conflict scope.
   A close or topology mutation uses an absolute five-second stage deadline; expiry becomes a caller-visible unknown result and never schedules a destructive resend.
   Status checks are read-only and are started only for an ambiguous close or an explicit status action, so unknown activity does not become a polling loop.
@@ -329,12 +335,20 @@ Measure baseline and candidate idle/driven work separately with the same project
 
 Each opening of a local Git project's Overview requests a background worktree and pull request read for that project; closing it adds no Git command.
 The previous catalog remains visible while that read runs.
+An accepted changed worktree answer announces its facts and loading completion after releasing the runtime mutex, even when the following catalog rebuild leaves pane topology unchanged; unchanged or rejected answers announce nothing.
+The open-dialog regression in `web/e2e/worktree-delete.spec.ts` checks lock recovery, loading completion and repository-list A-to-B-to-A consent on the existing renderer connection.
 `behind_upstream` rides the same `rev-list --left-right --count @{u}...HEAD` call that already counted unpushed commits, so a fetched-side count costs no extra process, and `created_at_unix_ms` is one `stat` of the worktree's gitdir in the same background pass off the mutex.
 The catalog pass is bounded by the worktree count; a project with many worktrees pays one status, one rev-list and one stat per worktree per change, never per tick or per agent update.
 A Git HEAD, index or ref change is scoped to its own repository: the OS watcher groups a burst into one generation change, so that project alone is re-read and every other project is answered from the worker's last read.
 Idle repositories do not run Git commands or sample working-tree files; content-only edits are reflected when the Overview opens again.
 `a_commit_in_one_project_does_not_rerun_status_in_another` and `idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does` own these boundaries.
 A finished worktree removal follows the same scope: its row leaves the catalog under the lock with no Git call, the coordinator rebuilds the rows on its next wake, and the reader re-reads only the removed worktree's repository; `a_finished_removal_drops_its_row_at_once_and_an_older_read_cannot_bring_it_back` owns this.
+The linked-worktree facts pass also measures ignored repository boundaries off the runtime mutex once for each linked worktree in an accepted project read.
+Each scan has hard caps of 2,000,000 steps, 30 seconds and 1,024 names.
+The total project-read cost scales with its linked-worktree count; there is no shared project-wide scan step, time or name cap.
+It skips Git metadata and directory links; a failed or capped scan publishes an unavailable fact rather than an empty list.
+A confirmed deletion uses the existing single removal slot and one preflight worker before any pane close; the same host check runs again before guarded removal.
+No scan is added to pane input, a snapshot tick, hover or an unchanged catalog read, and only phase transitions notify the shell.
 Every `git` the catalog runs is bounded by `GIT_DEADLINE` (15 s) and drained off-thread past the pipe buffer; a repository that outruns it reports its status unavailable and a `git.deadline_exceeded` diagnostic rather than holding the other projects' answer, which a status over evicted iCloud files once did for minutes.
 Group ordering, chips and search are pure functions of the accepted snapshot; agent status updates redraw rows and never recompute the catalog.
 List rows use the existing lazy-loading and search keyboard patterns.

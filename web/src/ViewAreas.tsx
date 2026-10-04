@@ -20,13 +20,11 @@ import { locateDisplay } from "./areaLayout";
 import { workspaceViewOf } from "./workspace";
 
 /**
- * The front Workspace's View areas, in the side panel. With no display they
- * are drawn only while a file of this checkout is opening; otherwise the
- * panel holds its tools or closes (`panelFrame`). `trailing` is what
- * the panel's strip carries at its right end when no tool column is there to
- * carry it.
+ * The front Workspace's View areas, the File Views column. With no display
+ * they are drawn only while a file of this checkout is opening; otherwise
+ * the column is not drawn (`columnFrame`).
  */
-export function ViewAreas({ actions, trailing = null }: { actions: Actions; trailing?: React.ReactNode }) {
+export function ViewAreas({ actions }: { actions: Actions }) {
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   if (!view) return null;
   const layout = view.layout;
@@ -34,21 +32,16 @@ export function ViewAreas({ actions, trailing = null }: { actions: Actions; trai
     return <AreaEmpty state="view-layout-missing" text="This Hide core publishes no View areas, so no file or diff can be shown here." />;
   }
   if (layout.display_count === 0) {
-    return (
-      <>
-        {trailing ? <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center justify-end border-b border-border">{trailing}</div> : null}
-        <AreaEmpty state="view-opening" text="Opening…" />
-      </>
-    );
+    return <AreaEmpty state="view-opening" text="Opening…" />;
   }
   // One tree per Workspace: a front that moves to another Workspace ends a
   // drag, a divider drag or a menu begun on this one, whose ids (a1, d2, s1)
   // name other views there (contract 4.1, B8).
-  return <ViewTree key={workspaceKey({ device_id: view.device_id, path: view.path })} layout={layout} deviceId={view.device_id} path={view.path} trailing={trailing} actions={actions} />;
+  return <ViewTree key={workspaceKey({ device_id: view.device_id, path: view.path })} layout={layout} deviceId={view.device_id} path={view.path} actions={actions} />;
 }
 
 const SharedViewTree = createAreaTree<ViewDisplaySnapshot>("view");
-function ViewTree({ layout, deviceId, path, trailing, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; trailing: React.ReactNode; actions: Actions }) {
+function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; actions: Actions }) {
   const owner = useKeyboardOwner();
   const checkoutId = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
   const workspace = useMemo(() => ({ device_id: deviceId, path }), [deviceId, path]);
@@ -112,7 +105,7 @@ function ViewTree({ layout, deviceId, path, trailing, actions }: { layout: ViewL
     onDraw: (frame) => noteDrawnViews(frame ? { ...frame, workspace } : null),
     onBody: setBody,
   };
-  return <SharedViewTree layout={layout} adapter={adapter} trailing={trailing}>
+  return <SharedViewTree layout={layout} adapter={adapter}>
     {documents.map((tabId) => <DocumentKeeper key={tabId} tabId={tabId} actions={actions} />)}
   </SharedViewTree>;
 }

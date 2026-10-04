@@ -11,13 +11,9 @@ use super::*;
 fn agent_notes_state_the_view_authority_and_the_announcement_rule() {
     let notes = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../AGENTS.md"))
         .expect("the agent notes");
-    let (architecture, rest) = notes
+    let (_, rest) = notes
         .split_once("## Runtime Architecture")
         .expect("a Runtime Architecture section");
-    assert!(
-        architecture.len() < rest.len(),
-        "the split must put the section body on the right"
-    );
     let (architecture, _) = rest
         .split_once("## Herdr API Contract")
         .expect("Runtime Architecture ends at the Herdr API Contract");

@@ -13,27 +13,51 @@
 //! operator owns, and the only paths authorised to do that are Hide's first
 //! run and the Settings action the operator pressed (PRD D-25, D-31, B28).
 
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use hide_agent_hooks::counters;
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::report;
 use hide_agent_hooks::runtime::{AgentRuntime, HookEvent, hook_stdout};
+use hide_platform::process::{OwnedChild, OwnerWatch};
+
+const PROMPT_BUDGET: Duration = Duration::from_millis(1_850);
+const INTAKE_BUDGET: Duration = Duration::from_millis(1_650);
 
 #[path = "../workspace_context.rs"]
 mod workspace_context;
 
 fn main() -> ExitCode {
+    let started = Instant::now();
+    // Guarded launches acknowledge ownership before parsing, filesystem work
+    // or runtime stdin. Keep this guard until all output and intake finish.
+    let owner_watch = match OwnerWatch::from_launch() {
+        Ok(watch) => watch,
+        Err(_) => return ExitCode::from(2),
+    };
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
         Some("hook") => {
-            run_hook(&arguments);
+            if argument_value("--event", &arguments).as_deref()
+                == Some(HookEvent::UserPromptSubmit.name())
+            {
+                run_prompt_hook(&arguments, started + PROMPT_BUDGET);
+            } else {
+                run_hook(&arguments, started);
+            }
             // A hook that could not report is not a failed turn. Its visible
             // outcome is the pane reading as uninstrumented (PRD B32).
             ExitCode::SUCCESS
         }
+        Some("hook-inner") if owner_watch.is_some() => {
+            run_hook(&arguments, started);
+            ExitCode::SUCCESS
+        }
+        // An internal operation must never bypass its parent deadline.
+        Some("hook-inner") => ExitCode::from(2),
         Some("doctor") => match run_doctor(&arguments) {
             Ok(text) => {
                 println!("{text}");
@@ -58,7 +82,27 @@ fn usage() -> String {
         .to_owned()
 }
 
-fn run_hook(arguments: &[String]) {
+fn run_prompt_hook(arguments: &[String], deadline: Instant) {
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let mut command = Command::new(executable);
+    command
+        .arg("hook-inner")
+        .args(&arguments[1..])
+        .stdin(Stdio::inherit())
+        // The inner flush must reach the runtime before it confirms intake.
+        // Buffering and re-emitting here would acknowledge undelivered output.
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if let Ok(mut child) = OwnedChild::spawn_guarded(command, deadline) {
+        let _ = child.capture_until(deadline, 64 * 1024);
+    }
+    // No filesystem or stream write follows the deadline. Failure keeps the
+    // manual-inbox fallback; diagnostics run inside the supervised operation.
+}
+
+fn run_hook(arguments: &[String], started: Instant) {
     let Some(event) =
         argument_value("--event", arguments).and_then(|value| HookEvent::parse(&value))
     else {
@@ -68,6 +112,7 @@ fn run_hook(arguments: &[String]) {
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
     let Some(home) = home_directory() else { return };
     let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
+    let delivery_deadline = started + INTAKE_BUDGET;
     let mut output = if let Some(runtime) = runtime.filter(|_| {
         arguments
             .iter()
@@ -87,15 +132,56 @@ fn run_hook(arguments: &[String]) {
             hide_agent_hooks::runtime::append_session_context(&value, &context).unwrap_or(value)
         });
     }
+    let intake = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
+        match hide_agent_hooks::delivery::pull(delivery_deadline) {
+            Ok(intake) => intake,
+            Err(failure) => {
+                hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(intake) = &intake {
+        output = match output {
+            Some(existing) => {
+                hide_agent_hooks::runtime::append_session_context(&existing, &intake.context)
+            }
+            None => runtime.and_then(|runtime| {
+                hide_agent_hooks::runtime::hook_stdout_with_context(
+                    runtime,
+                    event,
+                    Some(&intake.context),
+                )
+            }),
+        };
+    }
+    let mut flushed = false;
     if let Some(output) = output {
         // PowerShell runs the hook on Windows and re-encodes what it prints.
-        if cfg!(windows) {
-            println!("{}", hide_agent_hooks::runtime::ascii_json(&output));
+        let output = if cfg!(windows) {
+            hide_agent_hooks::runtime::ascii_json(&output)
         } else {
-            println!("{output}");
-        }
+            output
+        };
+        let mut stdout = std::io::stdout().lock();
+        flushed = writeln!(stdout, "{output}")
+            .and_then(|_| stdout.flush())
+            .is_ok();
     }
     if event == HookEvent::UserPromptSubmit {
+        if let Some(intake) = intake {
+            if flushed {
+                if let Err(failure) =
+                    hide_agent_hooks::delivery::confirm(&intake, delivery_deadline)
+                {
+                    hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
+                }
+            } else {
+                hide_agent_hooks::delivery::diagnose(&home, "stdout");
+            }
+        }
         return;
     }
     let Some(pane_id) = std::env::var("HERDR_PANE_ID")

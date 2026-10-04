@@ -6,6 +6,7 @@ Do not apply superseded architecture decisions, old milestone reports, or old PR
 Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
 Before changing browser displays, read `docs/BROWSER_DISPLAYS.md` for who owns a page, the `file:` address boundary, and native display verification.
 Before calling a change verified, read `docs/VERIFICATION.md` for which check proves the claim, the traps that made a check prove nothing, and the native QA tools that can address a candidate app without reaching the operator's.
+Before writing or changing a test, read `docs/TESTING.md` for which layer to test at, how to build its fixture, the writing rules that keep it deterministic, and the flaky policy.
 
 ## Repository Layout
 
@@ -17,7 +18,7 @@ Before calling a change verified, read `docs/VERIFICATION.md` for which check pr
 - `hide-agent-hooks/` - the only code that writes a configuration file the operator owns (each agent runtime's hook file). A separate crate because a `settings.json` write must never sit behind the render lock; see `docs/agent-hooks.md`.
 - `hide-platform/` - the operating-system layer under every other crate: what differs between macOS, Linux and Windows is written here once and checked by contract tests that run on all three; today the local stream (`ipc`) the Herdr client uses, the processes (`process`: the one child-start helper and what the kernel says about a pid), the files (`fs`: private files and folders, locks, atomic replacement, links, file identity), and how a path is spelled between machines (`path`: `/` between names on every system, converted to a native path only on the machine that owns it). It has no hide dependencies and no state; see `docs/ARCHITECTURE.md`, The platform layer.
 - `hide-ai/` - the provider boundary for background AI features, backed by the user's own logged-in CLIs; see `docs/AI_PROVIDERS.md`.
-- `hide-session/` - shared local Claude and Codex session location, incremental and backwards page reading, and conversation parsing used by the core's label worker, the core usage fallback and the phone's conversation.
+- `hide-session/` - shared local Claude, Codex and OpenCode session location, incremental and backwards page reading, and conversation parsing used by the core's label worker, the core usage fallback and the phone's conversation; `tests/adapters.rs` is each agent reader's contract.
 - `plugins/hcoord/` - hcoord, the agent coordination and lineage component hide's kit installs at `~/.hide/hcoord` (`hide-kit/src/hcoord.rs`); it has no install of its own.
   Agent labels are made by the core, in `herdr-core/src/labels/`; see `docs/status-model.md`, Task identity.
 

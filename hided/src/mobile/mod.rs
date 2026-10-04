@@ -1261,6 +1261,22 @@ impl Mobile {
         &self.config.home
     }
 
+    /// Tells the core the operator submitted a reply to `pane_id` from the
+    /// phone, so the message it writes reads as theirs (PRD
+    /// overview-request-view D-19). A refusal only loses that attribution.
+    pub fn note_submit(&self, pane_id: &str) {
+        let event = json!({
+            "schema_version": 2,
+            "kind": "pane_input_submitted",
+            "payload": {"pane_id": pane_id},
+        });
+        if let Err(message) = self.config.core.dispatch(event.to_string().into_bytes()) {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_phone", "kind": "input.submit_unrecorded", "message": message,
+            }));
+        }
+    }
+
     /// The Herdr connection for a pane on this Mac or a connected device.
     pub fn herdr_api(
         &self,

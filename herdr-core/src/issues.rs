@@ -99,6 +99,7 @@ pub struct IssueSnapshot {
     pub project_status: Option<String>,
     pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_ms: Option<u64>,
+    pub closed_at_unix_ms: Option<u64>,
     /// The open issues GitHub records as blocking this one (its "blocked by"
     /// dependencies), in GitHub's order; a closed blocker no longer blocks.
     pub blocked_by: Vec<IssueReference>,
@@ -136,6 +137,7 @@ struct ListedIssue {
     project_items: Vec<ProjectItem>,
     updated_at: Option<String>,
     created_at: Option<String>,
+    closed_at: Option<String>,
 }
 #[derive(Deserialize)]
 struct ProjectItem {
@@ -175,6 +177,10 @@ pub fn parse_issues(output: &str) -> Result<Vec<IssueSnapshot>, String> {
                     .and_then(crate::github::parse_rfc3339_ms),
                 created_at_unix_ms: issue
                     .created_at
+                    .as_deref()
+                    .and_then(crate::github::parse_rfc3339_ms),
+                closed_at_unix_ms: issue
+                    .closed_at
                     .as_deref()
                     .and_then(crate::github::parse_rfc3339_ms),
                 blocked_by: Vec::new(),
@@ -236,8 +242,13 @@ mod tests {
     }
     #[test]
     fn issue_state_and_project_status_come_from_the_response() {
-        let issues = parse_issues(r#"[{"number":42,"title":"한국어 작업","url":"https://github.com/a/b/issues/42","state":"CLOSED","projectItems":[{"status":{"name":"Done","optionId":"1"},"title":"Roadmap"}],"updatedAt":"2026-09-20T00:00:00Z","createdAt":"2026-09-18T00:00:00Z"}]"#).unwrap();
+        let issues = parse_issues(r#"[{"number":42,"title":"한국어 작업","url":"https://github.com/a/b/issues/42","state":"CLOSED","projectItems":[{"status":{"name":"Done","optionId":"1"},"title":"Roadmap"}],"updatedAt":"2026-09-20T00:00:00Z","createdAt":"2026-09-18T00:00:00Z","closedAt":"2026-09-19T00:00:00Z"}]"#).unwrap();
         assert_eq!(issues[0].state, "CLOSED");
+        assert_eq!(
+            issues[0].closed_at_unix_ms,
+            crate::github::parse_rfc3339_ms("2026-09-19T00:00:00Z")
+        );
+        assert_ne!(issues[0].closed_at_unix_ms, issues[0].updated_at_unix_ms);
         assert_eq!(issues[0].project_status.as_deref(), Some("Done"));
         assert!(issues[0].created_at_unix_ms.is_some());
         assert_eq!(parse_issues(r#"[{"number":43,"title":"older","url":"https://github.com/a/b/issues/43","state":"OPEN"}]"#).unwrap()[0].created_at_unix_ms, None);

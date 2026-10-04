@@ -13,7 +13,10 @@ use std::collections::HashMap;
 
 use hide_session::label_reference_token;
 
+use super::analysis::LabelEnd;
+use super::facts::SessionFacts;
 use super::store::{self, PaneRecord};
+use crate::request_view::RowFacts;
 use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -34,16 +37,24 @@ struct OverlayPane {
 struct ProvenLabel {
     owner: Option<String>,
     proven_reference: Option<String>,
-    task: Option<String>,
-    progress: String,
-    expected_reply: String,
-    question: bool,
+    /// `None` while the operator has turned agent summaries off (D-11): the
+    /// row stands on its facts alone.
+    summary: Option<Summary>,
+    facts: RowFacts,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Summary {
+    goal: Option<String>,
+    line: String,
+    end: Option<LabelEnd>,
 }
 
 impl LabelOverlay {
     pub(crate) fn of_records<'a>(
         records: impl IntoIterator<Item = (&'a String, &'a PaneRecord)>,
         labels_shown: bool,
+        summaries: bool,
     ) -> Self {
         let panes = records
             .into_iter()
@@ -51,10 +62,12 @@ impl LabelOverlay {
                 let label = labels_shown.then(|| ProvenLabel {
                     owner: record.owner.clone(),
                     proven_reference: record.proven_reference.clone(),
-                    task: record.task.clone(),
-                    progress: record.progress.clone(),
-                    expected_reply: record.expected_reply.clone(),
-                    question: record.question,
+                    summary: summaries.then(|| Summary {
+                        goal: record.goal.clone(),
+                        line: record.line.clone(),
+                        end: record.end,
+                    }),
+                    facts: row_facts(&record.facts),
                 });
                 (
                     pane_id.clone(),
@@ -90,14 +103,42 @@ impl LabelOverlay {
             if !label.proves(reference.as_deref()) {
                 continue;
             }
-            let non_empty = |value: &str| (!value.trim().is_empty()).then(|| value.to_owned());
-            agent.label = Some(AgentLabel {
-                task: label.task.clone(),
-                progress: non_empty(&label.progress),
-                expected_reply: non_empty(&label.expected_reply),
-                question: label.question && agent.agent_status.as_deref() != Some("working"),
-            });
+            let mut facts = label.facts.clone();
+            if let Some(summary) = &label.summary {
+                let working = agent.agent_status.as_deref() == Some("working");
+                let asking = summary.end == Some(LabelEnd::Question);
+                let line = (!summary.line.trim().is_empty()).then(|| summary.line.clone());
+                // The sidebar's two lines keep their meaning: the line is the
+                // reply asked for when the turn ended on a question, and the
+                // progress otherwise.
+                agent.label = Some(AgentLabel {
+                    task: summary.goal.clone(),
+                    progress: line.clone().filter(|_| !asking),
+                    expected_reply: line.clone().filter(|_| asking),
+                    question: asking && !working,
+                });
+                facts.end = summary.end;
+                facts.line = line;
+            }
+            agent.facts = Some(facts);
         }
+    }
+}
+
+/// The part of a session's facts a row is built from.
+fn row_facts(facts: &SessionFacts) -> RowFacts {
+    RowFacts {
+        native_title: facts.custom_title.clone().or_else(|| facts.title.clone()),
+        operator_request: facts.operator_request.clone(),
+        other_request: facts.other_request.clone(),
+        reply: facts.reply.clone(),
+        created_prs: facts
+            .created_prs
+            .iter()
+            .map(|pr| (pr.repository.clone(), pr.number, pr.sighted_at_unix_ms))
+            .collect(),
+        end: None,
+        line: None,
     }
 }
 
