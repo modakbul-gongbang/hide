@@ -8,7 +8,8 @@ out/
 .vite/
 .DS_Store
 
-# Local research and agent pipeline files
+# Local research and the complete agent pipeline, including approved contracts
+# and configuration. Root agents/ has no public exception.
 .research/
 /agents/
 

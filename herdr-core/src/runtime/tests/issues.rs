@@ -626,7 +626,7 @@ fn a_github_issue_panel_read_settles_only_the_issue_it_asked_for() {
     ));
     let answer = crate::tasks::TaskDetail {
         body: "본문".into(),
-        author: Some("yansfil".into()),
+        author: Some("example".into()),
         comment_count: Some(0),
         ..Default::default()
     };
@@ -639,7 +639,7 @@ fn a_github_issue_panel_read_settles_only_the_issue_it_asked_for() {
             detail.body.as_deref(),
             detail.author.as_deref()
         ),
-        ("ready", Some("본문"), Some("yansfil"))
+        ("ready", Some("본문"), Some("example"))
     );
     assert!(!runtime.ingest_issue_detail("github:acme/project#2", Err("late".into())));
 }

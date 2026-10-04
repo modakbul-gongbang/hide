@@ -155,7 +155,7 @@ if (a === "issue" && b === "create") {
   process.exit(0);
 }
 if (a === "issue" && b === "list") { out(read("issues.json")); process.exit(0); }
-if (a === "issue" && b === "view") { out({ body: "이슈 본문", labels: [], author: { login: "hoyeon" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] }); process.exit(0); }
+if (a === "issue" && b === "view") { out({ body: "이슈 본문", labels: [], author: { login: "example-user" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] }); process.exit(0); }
 if (a === "api" && b === "graphql") { out({ data: { r0: { nameWithOwner: "acme/repo" } } }); process.exit(0); }
 fail("unsupported: " + args.join(" "));
 `;

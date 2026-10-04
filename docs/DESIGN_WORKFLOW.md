@@ -252,7 +252,7 @@ A `System /` sheet is a shadcn part redrawn with hide tokens, name and variant 1
 
 A `Component /` sheet is a hide composite assembled from `System /` masters (never redrawn from scratch).
 
-1. Confirm the composite is actually needed in the current web screens; do not add a Component for a screen that has no PRD or committed plan (see D-20 in `agents/prd/web-design-system-reset/prd.md` for the classification this reset used for existing Components).
+1. Confirm the composite is actually needed in the current web screens; do not add a Component for a screen that has no approved local contract or public review plan.
 2. Compose it in the scratch document from `System /` masters as refs with descendant overrides, so it inherits token updates automatically.
 3. Implement it as a hide composite in `web/src/components/<name>.tsx`, built from the same `web/src/components/ui` parts the sheet composed.
 4. `Component /` sheets are not covered by the gallery; compare them against an actual app capture in both themes instead (see step 7 of the flow above).

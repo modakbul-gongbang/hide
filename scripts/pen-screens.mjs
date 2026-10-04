@@ -1759,13 +1759,13 @@ function buildProjectOverview(tokens) {
       ], {newIssue: true}),
       stageColumn(`ov-pgw-${suffix}`, '진행 중', 2, [card('pg-w1', {...ISSUE_192, selected: true}), card('pg-w2', LOCAL_3)], {foot: [foldLine(`ov-pgloose-${suffix}`, '이슈 없는 워크트리 3')]}),
     ], spec: {
-      task: gh(192), title: ISSUE_192.title, stage: '진행 중', labels: [BUG], author: 'yansfil · 9월 27일', updated: '9월 27일',
+      task: gh(192), title: ISSUE_192.title, stage: '진행 중', labels: [BUG], author: 'example · 9월 27일', updated: '9월 27일',
       work: {branch: ISSUE_192.branch, ahead: 3, files: 4, agents: [
         {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'},
         {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m', depth: 1},
       ], pr: {number: 221, tone: 'draft', title: 'hided: stop AI children on SIGTERM before exit', review: 'changes_requested'}},
       body: [['h', '배경'], ['p', 'Found during the Swift removal (#188): hided installs no SIGTERM handler, so a background AI child is ended by the OS closing its stdin pipe.'], ['p', 'Add a graceful stop path: signal handler, owner-thread shutdown, child teardown with a bounded wait.']],
-      comments: [['yansfil · 9월 27일', '데스크톱 호스트 종료도 같은 경로로 가야 함']],
+      comments: [['example · 9월 27일', '데스크톱 호스트 종료도 같은 경로로 가야 함']],
     }});
     const localPanel = withPanel('local', {name: 'Local', columns: [
       stageColumn(`ov-plb-${suffix}`, '백로그', 2, [

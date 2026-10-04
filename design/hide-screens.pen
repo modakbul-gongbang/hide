@@ -30085,9 +30085,9 @@
                                     {
                                       "type": "text",
                                       "id": "ov-panel-gh-p-l-p-author-v",
-                                      "name": "yansfil · 9월 27일",
+                                      "name": "example · 9월 27일",
                                       "fill": "$--foreground",
-                                      "content": "yansfil · 9월 27일",
+                                      "content": "example · 9월 27일",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-body"
                                     }
@@ -30529,7 +30529,7 @@
                                 {
                                   "type": "frame",
                                   "id": "ov-panel-gh-p-l-c0",
-                                  "name": "yansfil · 9월 27일",
+                                  "name": "example · 9월 27일",
                                   "width": 408,
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs",
@@ -30537,9 +30537,9 @@
                                     {
                                       "type": "text",
                                       "id": "ov-panel-gh-p-l-c0-by",
-                                      "name": "yansfil · 9월 27일",
+                                      "name": "example · 9월 27일",
                                       "fill": "$--muted-foreground",
-                                      "content": "yansfil · 9월 27일",
+                                      "content": "example · 9월 27일",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     },
@@ -54824,9 +54824,9 @@
                                     {
                                       "type": "text",
                                       "id": "ov-panel-gh-p-d-p-author-v",
-                                      "name": "yansfil · 9월 27일",
+                                      "name": "example · 9월 27일",
                                       "fill": "$--foreground",
-                                      "content": "yansfil · 9월 27일",
+                                      "content": "example · 9월 27일",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-body"
                                     }
@@ -55268,7 +55268,7 @@
                                 {
                                   "type": "frame",
                                   "id": "ov-panel-gh-p-d-c0",
-                                  "name": "yansfil · 9월 27일",
+                                  "name": "example · 9월 27일",
                                   "width": 408,
                                   "layout": "vertical",
                                   "gap": "$--spacing-xxs",
@@ -55276,9 +55276,9 @@
                                     {
                                       "type": "text",
                                       "id": "ov-panel-gh-p-d-c0-by",
-                                      "name": "yansfil · 9월 27일",
+                                      "name": "example · 9월 27일",
                                       "fill": "$--muted-foreground",
-                                      "content": "yansfil · 9월 27일",
+                                      "content": "example · 9월 27일",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption"
                                     },

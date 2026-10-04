@@ -4,7 +4,7 @@
 해당 없는 줄과 섹션은 "N/A"로 메우지 말고 지우세요. 게이트 목록은 CONTRIBUTING.md에 있습니다.
 -->
 
-Related: <!-- 이슈 #, 선행·의존 PR #, `agents/prd/<slug>/prd.md`. 없으면 이 줄을 지우세요. -->
+Related: <!-- 이슈 #, 선행·의존 PR #. 로컬 PRD 경로 대신 이 PR의 Summary와 Evidence에 검토할 계약을 씁니다. 없으면 이 줄을 지우세요. -->
 
 ## Summary
 
