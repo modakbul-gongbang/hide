@@ -5,6 +5,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
@@ -67,6 +68,12 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
       ]) as { result: { tab: { tab_id: string } } };
       tabs.push(made.result.tab.tab_id);
     }
+    // Checkout owner D-11/B13: this existing plain-folder workspace owns
+    // the tabs this flow adds. An unmarked workspace would correctly make
+    // Hide open a new owner instead (covered by checkout-owner.spec.ts).
+    const folder = fs.realpathSync(path.join(herdr.root, "fixture"));
+    const owner = crypto.createHash("sha256").update(`local\0${folder}`).digest("hex").slice(0, 32);
+    herdr.run(["workspace", "report-metadata", herdr.workspace, "--source", "e2e-owner", "--token", `hide_owner=${owner}`]);
     daemon = await startHided(herdr);
     const lastSent = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, lastSent);
@@ -122,6 +129,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     const nextLabel = (await page.locator("[data-new-agent-tab]").first().getAttribute("aria-label"))!.replace("New tab ", "");
     await page.keyboard.press(chord("new_tab"));
     await expect(page.locator("[role=tab]")).toHaveCount(4);
+    // The fourth tab belongs to the marked owner, not a second workspace.
+    await expect.poll(() => (herdr.run(["tab", "list", "--workspace", herdr.workspace]) as { result: { tabs: unknown[] } }).result.tabs.length).toBe(4);
     // The label is Herdr's: the strip shows an automatic label only until
     // Herdr reports the pane's process, which then names the tab.
     const labelled = () => (herdr.run(["api", "snapshot"]) as { result: { snapshot: { tabs: { tab_id: string; label?: string }[] } } }).result.snapshot.tabs.find((tab) => tab.label === nextLabel)?.tab_id;
