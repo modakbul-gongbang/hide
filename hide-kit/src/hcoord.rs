@@ -451,6 +451,9 @@ fn stable_spelling(chosen: PathBuf, links: &[PathBuf]) -> PathBuf {
 /// [`NODE_MINIMUM`] within five seconds. The one found is named by a stable
 /// link when one leads to it ([`stable_spelling`]).
 pub fn find_node(home: &Path, hcoord_home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
+    if stop.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("Node selection stopped because Hide is quitting".into());
+    }
     let mut candidates = Vec::new();
     for shim in [
         layout::hcoord_command(hcoord_home),
@@ -468,40 +471,70 @@ pub fn find_node(home: &Path, hcoord_home: &Path, stop: &AtomicBool) -> Result<P
         candidates.extend(std::env::split_paths(&path).map(|folder| folder.join("node")));
     }
     candidates.extend(stable_links(home));
+    if candidates.len() > 256 {
+        return Err("Node candidate search exceeded 256 paths".into());
+    }
     let mut seen = Vec::new();
     let mut too_old = None;
-    for candidate in candidates {
+    let mut rejections = Vec::new();
+    for (index, candidate) in candidates.into_iter().enumerate() {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("Node selection stopped because Hide is quitting".into());
+        }
         if seen.contains(&candidate) || !candidate.is_file() {
             continue;
         }
         seen.push(candidate.clone());
-        let Ok(finished) = process::run(
+        let finished = match process::run(
             &candidate,
             &["--version"],
             &[],
             home,
             NODE_PROBE_DEADLINE,
             stop,
-        ) else {
-            continue;
+        ) {
+            Ok(finished) => finished,
+            Err(error) => {
+                if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(error);
+                }
+                rejections.push(format!("candidate {index}: probe failed: {error}"));
+                continue;
+            }
         };
+        if finished.code != Some(0) {
+            rejections.push(format!("candidate {index}: probe exit {:?}", finished.code));
+            continue;
+        }
         match parse_node_version(&finished.stdout) {
             Some(version) if version >= NODE_MINIMUM => {
+                // A fallback remains available, but a failed existing shim
+                // cannot vanish from the caller's installation diagnostics.
+                for reason in &rejections {
+                    eprintln!("hcoord.node.rejected reason={reason:?}");
+                }
                 return Ok(stable_spelling(candidate, &stable_links(home)));
             }
             Some((major, minor, patch)) => {
                 too_old.get_or_insert(format!("{major}.{minor}.{patch}"));
+                rejections.push(format!(
+                    "candidate {index}: Node {major}.{minor}.{patch} is too old"
+                ));
             }
-            None => {}
+            None => rejections.push(format!("candidate {index}: invalid version output")),
         }
     }
     let (major, minor, patch) = NODE_MINIMUM;
-    Err(match too_old {
+    let reason = match too_old {
         Some(found) => {
             format!("hcoord needs Node {major}.{minor}.{patch} or later; this machine has {found}")
         }
         None => format!("hcoord needs Node {major}.{minor}.{patch} or later; none was found"),
-    })
+    };
+    Err(format!(
+        "{reason}; rejected probes: {}",
+        rejections.join("; ")
+    ))
 }
 
 fn parse_node_version(output: &str) -> Option<(u64, u64, u64)> {
@@ -509,6 +542,9 @@ fn parse_node_version(output: &str) -> Option<(u64, u64, u64)> {
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
     let patch = parts.next()?.split(['-', '+']).next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
     Some((major, minor, patch))
 }
 
@@ -668,5 +704,55 @@ mod tests {
         assert!(parse_node_version("v22.11.9").unwrap() < NODE_MINIMUM);
         assert!(parse_node_version("v26.7.0").unwrap() >= NODE_MINIMUM);
         assert_eq!(parse_node_version("node"), None);
+        assert_eq!(parse_node_version("v26.7.0.extra"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejected_shim_probes_do_not_masquerade_as_the_old_node() {
+        for output in ["not a version", "v22.11.9", "v26.7.0.extra"] {
+            let home = tempfile::tempdir().unwrap();
+            let chosen = home.path().join("node");
+            fake_node(&chosen);
+            std::fs::write(&chosen, format!("#!/bin/sh\nprintf '%s\\n' '{output}'\n")).unwrap();
+            shim_naming(home.path(), &chosen);
+            let result = find_node(
+                home.path(),
+                &layout::default_hcoord_home(home.path()),
+                &AtomicBool::new(false),
+            );
+            assert_ne!(result, Ok(chosen), "invalid/old shim output: {output}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_with_a_version_but_unsuccessful_exit_is_not_a_node() {
+        let home = tempfile::tempdir().unwrap();
+        let chosen = home.path().join("node");
+        fake_node(&chosen);
+        std::fs::write(&chosen, "#!/bin/sh\necho v26.7.0\nexit 3\n").unwrap();
+        shim_naming(home.path(), &chosen);
+        let result = find_node(
+            home.path(),
+            &layout::default_hcoord_home(home.path()),
+            &AtomicBool::new(false),
+        );
+        assert_ne!(
+            result,
+            Ok(chosen),
+            "a failed shim probe must not be adopted"
+        );
+    }
+
+    #[test]
+    fn quitting_stops_candidate_selection_without_host_fallback() {
+        let home = tempfile::tempdir().unwrap();
+        let result = find_node(
+            home.path(),
+            &layout::default_hcoord_home(home.path()),
+            &AtomicBool::new(true),
+        );
+        assert!(result.unwrap_err().contains("quitting"));
     }
 }

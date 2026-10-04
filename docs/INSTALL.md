@@ -188,6 +188,11 @@ Every launch of the installed app installs Hide's kit on this Mac without asking
 - hcoord, copied to `~/.hide/kit/hcoord/`, with its command at `~/.hide/hcoord/bin/hcoord`, a link to it at `~/.local/bin/hcoord` unless an `hcoord` that is not Hide's is already there, and its daemon;
 - `Codex를 pane마다 실행`: when this Mac's Codex has the shared app-server daemon turned on, `codex features disable daemon_auto_start`, so each Codex runs in its own pane and Hide can read it. A daemon already running keeps running, and the setting reaches each Codex started after it. Settings > Devices turns it back on (`codex features enable daemon_auto_start`), and Hide then leaves it on.
 
+The hcoord Node probe preserves a valid Node named by the current or legacy shim before searching PATH and stable links.
+A candidate must finish within five seconds, exit successfully and report a valid version of at least 22.12.0.
+A rejected probe is recorded as `hcoord.node.rejected` when another candidate supplies the fallback; failure reports retain rejected-probe reasons.
+Quitting stops selection immediately rather than trying the next host candidate, and the shared process boundary ends the probe's child tree.
+
 ### Where Hide keeps its files
 
 Everything Hide owns on a machine is under `~/.hide`:
