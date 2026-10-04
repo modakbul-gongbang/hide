@@ -9,7 +9,10 @@
 // requests muted as stale instead of falling back to a branch glyph, and a
 // restart with `gh` back replaces them, still with no screen asking. The third
 // repository's pull request is merged and names its head commit: it reattaches
-// to the checkout on that commit from the saved answer alone.
+// to the checkout on that commit from the saved answer alone. The repositories
+// are tiny, so the worktree reader answers within milliseconds and this flow
+// proves the end state; that the row does not wait for the reader is owned by
+// the unit test in `herdr-core/src/runtime/tests/github_reads.rs`.
 
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";

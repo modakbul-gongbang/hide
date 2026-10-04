@@ -568,9 +568,9 @@ pub(crate) fn apply_worktrees(
                     &path,
                     &label,
                     worktree.branch.clone(),
-                    // The catalog's own commit: this runs under the runtime
-                    // lock, where Git's files are not read.
-                    worktree.head_sha.clone(),
+                    // The row's `worktree` carries the reader's commit, which
+                    // `head_sha` prefers; no second copy is made here.
+                    None,
                     !worktree.is_main,
                     project.temporary,
                 ));

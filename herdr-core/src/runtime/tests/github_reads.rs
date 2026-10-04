@@ -386,6 +386,10 @@ fn repository_on(branch: &str) -> (tempfile::TempDir, String) {
             ])
             .args(["-c", "commit.gpgsign=false"])
             .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
             .current_dir(folder.path())
             .output()
             .unwrap();
@@ -468,5 +472,33 @@ fn a_restored_merged_pull_request_stays_off_a_checkout_on_another_commit() {
         shown(&runtime),
         None,
         "a reused branch name shows no old merge"
+    );
+}
+
+#[test]
+fn a_checkouts_commit_is_the_readers_when_it_has_one_and_the_files_before_that() {
+    let mut checkout = crate::model::CheckoutSnapshot {
+        head_oid: Some("b".repeat(40)),
+        ..Default::default()
+    };
+    assert_eq!(
+        checkout.head_sha(),
+        Some("b".repeat(40).as_str()),
+        "before the reader has answered, the commit read from Git's files"
+    );
+    checkout.worktree = Some(crate::model::WorktreeSnapshot {
+        head_sha: Some("a".repeat(40)),
+        ..Default::default()
+    });
+    assert_eq!(
+        checkout.head_sha(),
+        Some("a".repeat(40).as_str()),
+        "the reader reruns on a moved HEAD, so its commit beats the file value"
+    );
+    checkout.worktree = Some(crate::model::WorktreeSnapshot::default());
+    assert_eq!(
+        checkout.head_sha(),
+        Some("b".repeat(40).as_str()),
+        "a reader row with no commit leaves the file value standing"
     );
 }

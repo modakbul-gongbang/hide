@@ -152,7 +152,11 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
 pub mod git {
     use super::ResolveError;
     use std::fs;
+    use std::io::{BufRead, BufReader, Read};
     use std::path::{Path, PathBuf};
+
+    /// The most of `packed-refs` `head_oid` reads.
+    const PACKED_REFS_LIMIT: u64 = 8 * 1024 * 1024;
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Repository {
@@ -190,7 +194,12 @@ pub mod git {
                 return object_name(head);
             };
             let reference = reference.trim();
+            // Git forbids these in a ref name, and `\` and `:` would leave
+            // the directory on Windows.
             let safe = reference.starts_with("refs/")
+                && !reference
+                    .chars()
+                    .any(|character| character.is_control() || matches!(character, '\\' | ':'))
                 && reference
                     .split('/')
                     .all(|part| !part.is_empty() && part != "." && part != "..");
@@ -200,9 +209,13 @@ pub mod git {
             if let Ok(loose) = fs::read_to_string(self.common_dir.join(reference)) {
                 return object_name(loose.trim());
             }
-            let packed = fs::read_to_string(self.common_dir.join("packed-refs")).ok()?;
-            packed
+            // Streamed and capped: a repository that has packed many refs
+            // can hold a file of megabytes, and a missing line in the first
+            // `PACKED_REFS_LIMIT` bytes is no answer rather than a guess.
+            let packed = fs::File::open(self.common_dir.join("packed-refs")).ok()?;
+            BufReader::new(packed.take(PACKED_REFS_LIMIT))
                 .lines()
+                .map_while(Result::ok)
                 .filter(|line| !line.starts_with('#') && !line.starts_with('^'))
                 .find_map(|line| {
                     let (oid, name) = line.split_once(' ')?;
@@ -556,6 +569,7 @@ pub mod git {
             )
             .unwrap();
             assert_eq!(repository.head_oid(), None, "a ref that is no object name");
+            fs::write(repository.common_dir.join("escape"), format!("{FIRST}\n")).unwrap();
             fs::write(
                 repository.git_dir.join("HEAD"),
                 "ref: refs/heads/../../escape\n",
