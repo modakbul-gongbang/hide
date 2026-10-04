@@ -12,9 +12,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { chooseColumn, countSent, screenshot } from "./wire";
+import { chooseColumn, countSent, explorerRow, screenshot } from "./wire";
 import { chord, commandLabel } from "./chords";
 import { openCurrentProjectOverview } from "./overview-entry";
+import { finishFixture } from "./worker-owned";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -27,6 +28,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
   await page.setViewportSize({ width: 1920, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
+  let primary: unknown;
   try {
     const [parent, child] = herdr.panes;
     // The Explorer names rows by the checkout's resolved path.
@@ -177,7 +179,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await settled();
     const agentsBeforeViews = (await agentArea.boundingBox())!;
     const resizesBeforeViews = resizes();
-    await page.locator(`[data-explorer-row="${path.join(root, "notes.md")}"]`).dblclick();
+    await (await explorerRow(page, path.join(root, "notes.md"))).dblclick();
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(1);
     await expect.poll(async () => (await agentArea.boundingBox())!.width).toBeLessThan(agentsBeforeViews.width - 300);
@@ -198,7 +200,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     // Inside File Views nothing resizes a terminal: opening another file,
     // switching its tabs (B19).
     const resizesInViews = resizes();
-    await page.locator(`[data-explorer-row="${path.join(root, "gone.txt")}"]`).dblclick();
+    await (await explorerRow(page, path.join(root, "gone.txt"))).dblclick();
     await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(2);
     await viewsColumn.locator('[data-tab-kind="file"]').first().click();
     await page.waitForTimeout(500);
@@ -415,8 +417,9 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(page.locator('[data-view-area] [data-unavailable="true"]')).toHaveCount(1);
     await expect(page.locator("[data-view-area] [data-close-unavailable]")).toBeVisible();
     await screenshot(page, "s6-restored-unavailable");
+  } catch (error) {
+    primary = error;
   } finally {
-    daemon?.stop();
-    herdr.stop();
+    await finishFixture(primary, [() => daemon?.stop(), () => herdr.stop()]);
   }
 });

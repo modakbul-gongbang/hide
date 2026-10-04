@@ -7,6 +7,14 @@ import path from "node:path";
 import { chord } from "./chords";
 import type { SnapshotRest } from "../src/snapshot";
 import { areasOf } from "../src/areaLayout";
+import { fixturePagePath } from "./platform-fixture";
+
+/** Explorer attributes use the shared wire spelling, not native filesystem
+ * spelling. Escape in the actual page so punctuation cannot change selection. */
+export async function explorerRow(page: Page, nativePath: string): Promise<Locator> {
+  const escaped = await page.evaluate(value => CSS.escape(value), fixturePagePath(nativePath));
+  return page.locator(`[data-explorer-row=${escaped}]`);
+}
 
 /** Observe the same published frames the shell consumes, without dispatch or probes. */
 export function observeTabProjection(page: Page, root: string) {

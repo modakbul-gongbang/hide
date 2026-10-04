@@ -16,6 +16,51 @@ spec.loader.exec_module(quarantine)
 
 
 class PlaywrightContracts(unittest.TestCase):
+    def test_ordinary_explorer_locator_selects_exact_wire_path_with_css_metacharacters(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        filename = ROOT / 'web/e2e/ci-explorer-path-control.spec.ts'
+        filename.write_text("""import {test,expect} from '@playwright/test';
+import path from 'node:path';
+import {explorerRow} from './wire';
+test('native Explorer paths select one exact portable row',async({page})=>{
+  const name='notes [quoted] "한글".md';
+  const root=path.resolve('e2e');
+  const native=path.join(root,name);
+  // Independent UI contract: separators between native components are '/',
+  // and the complete filename (including CSS punctuation) is literal.
+  const wire=root.split(path.sep).join('/')+'/'+name;
+  await page.setContent('<main></main>');
+  await page.evaluate(({wire,native})=>{
+    for(const [id,value] of [['exact',wire],['longer',wire+' more'],['other-file',wire+'.other'],
+      ...(native===wire?[]:[['native-spelling',native]])]){
+      const row=document.createElement('button');
+      row.setAttribute('data-explorer-row',value);
+      row.textContent=id;
+      row.addEventListener('dblclick',()=>document.body.setAttribute('data-opened',id));
+      document.querySelector('main')!.append(row);
+    }
+  },{wire,native});
+  const row=await explorerRow(page,native);
+  await expect(row).toHaveCount(1);
+  await expect(row).toHaveAttribute('data-explorer-row',wire);
+  await row.dblclick();
+  await expect(page.locator('body')).toHaveAttribute('data-opened','exact');
+});
+""")
+        try:
+            ledger = artifacts / 'ordinary-explorer-path.ledger.json'
+            result = subprocess.run(['bash','scripts/verify-web.sh','web','e2e',filename.name,'--retries=0'],cwd=ROOT,
+                env={**os.environ,'CI_LEDGER_PATH':str(ledger)},capture_output=True,text=True,timeout=30)
+            (artifacts/'ordinary-explorer-path.log').write_text(result.stdout+result.stderr)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            rows = json.loads(ledger.read_text())['records']
+            self.assertEqual(len(rows),1)
+            self.assertEqual(rows[0]['status'],'passed')
+            self.assertEqual(rows[0]['retry'],0)
+        finally:
+            filename.unlink()
+
     def test_step_inventory_overflow_retains_actual_failure_and_timeout(self):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
         artifacts.mkdir(parents=True, exist_ok=True)

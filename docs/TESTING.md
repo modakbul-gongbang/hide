@@ -114,6 +114,8 @@ When the behavior depends on the order of two events, the test fixes that order;
 `hide-platform` owns what differs between systems in the product; the e2e fixtures need the same for their own resources: the endpoint they listen on, how they spell a path the core compares, the programs they copy and run, and how they clean up.
 That belongs in one shared fixture helper under `web/e2e/`, which the specs and both fixtures call, not in a `process.platform` branch per spec.
 `web/e2e/platform-fixture.ts` owns native executable names, isolated home variables, system-tool paths and confirmed process-tree exit.
+Its `fixturePagePath` reuses the host's wire-path contract; the shared `wire.ts` Explorer locator converts native paths once and uses the actual browser's `CSS.escape` before selecting an exact row attribute.
+Keep native filesystem paths for file operations and portable page paths for UI selection, including quotes, brackets and backslashes in names.
 Herdr, hided, shell fixtures and the C compiler launch through its native `fixture-owner` supervisor, built in this worktree by the CLI preparation and included in the checked shard artifact.
 For a direct local browser gate, first run `bash scripts/verify-cargo.sh build -p hided --bins -p hide-platform --example fixture-owner`; the desktop gate also needs `-p hide-agent-hooks` in that build.
 Its dedicated stdin pipe belongs only to the Playwright worker; worker loss ends the original native process group/job, records confirmed or unconfirmed exit outside the private home, and removes that same home only after confirmed exit.

@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { cleanupAfterFailure, throwFixtureFailures } from "./worker-owned";
 import { run as runOwnedCommand } from "../../scripts/ci-owned-command.cjs";
+export { toPage as fixturePagePath } from "../../desktop/src/main/wirePath";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
 
