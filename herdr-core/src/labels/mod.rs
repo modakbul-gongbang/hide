@@ -1,8 +1,8 @@
 //! Agent labels, made by the core (PRD labels-in-hided).
 //!
-//! What each agent pane is doing (its task title, progress, the reply it
-//! asks for, whether it asked a question) used to come from a separate Herdr
-//! plugin through pane tokens. The core now makes them itself: each Herdr
+//! What each agent pane is doing (the session's goal, one line for its turn,
+//! how the turn ended) used to come from a separate Herdr plugin through
+//! pane tokens. The core now makes them itself: each Herdr
 //! server's session-sync coordinator owns a [`worker::LabelWorker`], the
 //! core owns one [`analyzer::LabelAnalyzer`] for all of them, and
 //! [`store::LabelStore`] keeps `labels.json` beside the daemon's state.
@@ -11,8 +11,10 @@
 pub(crate) mod analysis;
 pub(crate) mod analyzer;
 mod context_label;
+pub(crate) mod facts;
 pub(crate) mod generator;
 mod import;
+pub(crate) mod input;
 pub(crate) mod overlay;
 pub(crate) mod store;
 pub(crate) mod worker;
@@ -40,6 +42,11 @@ const DEVICE_READ_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) struct LabelServices {
     pub(crate) store: Arc<LabelStore>,
     pub(crate) analyzer: Arc<LabelAnalyzer>,
+    /// The operator's submits the runtime records for every worker.
+    pub(crate) input: Arc<input::OperatorInput>,
+    /// Wakes this Mac's worker, for news that reaches the runtime rather
+    /// than its coordinator (new pull request creation times).
+    local_wake: Mutex<Option<Wake>>,
     home: Option<PathBuf>,
     /// The daemon's state folder, which holds the device generator locks.
     state_dir: Option<PathBuf>,
@@ -64,6 +71,8 @@ impl LabelServices {
         Ok(Self {
             store,
             analyzer: Arc::new(analyzer),
+            input: Arc::default(),
+            local_wake: Mutex::new(None),
             home,
             state_dir: state_dir.map(Path::to_path_buf),
         })
@@ -78,10 +87,15 @@ impl LabelServices {
         let Some(home) = self.home.clone() else {
             return Ok(None);
         };
+        *self
+            .local_wake
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(Arc::clone(&wake));
         LabelWorker::spawn(
             WorkerConfig {
                 target: store::LOCAL_TARGET.to_owned(),
                 lock_path: Some(generator::local_lock_path(socket_path)),
+                input: Arc::clone(&self.input),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
@@ -89,6 +103,18 @@ impl LabelServices {
             wake,
         )
         .map(Some)
+    }
+
+    /// Wakes this Mac's worker, which takes the runtime's news on its wake.
+    pub(crate) fn wake_local(&self) {
+        let wake = self
+            .local_wake
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        if let Some(wake) = wake {
+            wake();
+        }
     }
 
     /// The worker for a device's Herdr server, reading through its helper.
@@ -105,6 +131,7 @@ impl LabelServices {
                     .state_dir
                     .as_deref()
                     .map(|state_dir| generator::device_lock_path(state_dir, device_id)),
+                input: Arc::clone(&self.input),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),

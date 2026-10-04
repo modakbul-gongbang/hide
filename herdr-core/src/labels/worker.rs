@@ -25,11 +25,13 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use hide_session::label_transcript::{LabelEvent, LabelTranscript, LabelTranscriptRequest};
+use hide_session::label_transcript::{
+    LabelEvent, LabelEventKind, LabelTranscript, LabelTranscriptRequest,
+};
 use hide_session::{Agent, label_reference_token};
 use serde_json::json;
 
-use super::analysis::AnalysisFailure;
+use super::analysis::{AnalysisFailure, LabelEnd};
 use super::analysis::{
     AnalysisPhase, analysis_context, analysis_phase, context_fingerprint, interrupted,
     new_human_turns, newest_user_is_last, retain_bounded, rolling_analysis_context,
@@ -37,7 +39,9 @@ use super::analysis::{
 };
 use super::analyzer::{AnalysisJob, AnalysisResult, LabelAnalyzer};
 use super::context_label;
+use super::facts::{InputView, LogTarget, PullRequestTimes, ReadFacts};
 use super::generator::GeneratorLock;
+use super::input::{OperatorInput, Submit};
 use super::overlay::LabelOverlay;
 use super::store::{LabelStore, PaneRecord};
 
@@ -82,6 +86,8 @@ pub(crate) struct WorkerConfig {
     pub(crate) target: String,
     /// The Herdr server's generator lock (D-10); see `generator`.
     pub(crate) lock_path: Option<PathBuf>,
+    /// Where the runtime records the operator's submits (D-19).
+    pub(crate) input: Arc<OperatorInput>,
 }
 
 pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -92,6 +98,8 @@ enum WorkerResult {
         generation: u64,
         reference: String,
         from_start: bool,
+        /// The read began at the conversation's start.
+        from_beginning: bool,
         result: Box<Result<LabelTranscript, ReadFailure>>,
     },
     Analysis(AnalysisOutcome),
@@ -106,6 +114,9 @@ struct AnalysisMeta {
     phase: AnalysisPhase,
     task_input_cursor: Option<u64>,
     initial_context: bool,
+    /// The turn began with the operator's request, so it may move the goal
+    /// (D-09).
+    operator_turn: bool,
     context_chars: usize,
 }
 
@@ -139,12 +150,22 @@ struct PaneState {
     follow_up_armed: bool,
     /// The last failure logged, so a repeating one is logged once.
     last_failure: Option<String>,
+    /// When this worker began seeing the pane, and so its input (D-19).
+    input_observed_since_unix_ms: u64,
+    /// The newest operator submit matched to a message.
+    claimed_submit: Option<Submit>,
+    /// The turn whose end already had its one retry after a timeout (D-33).
+    end_retried: Option<u64>,
+    /// The skip reasons already logged, so a cap that holds on every read
+    /// (more subagent files than one read takes) is logged once.
+    skip_reasons_logged: std::collections::BTreeSet<String>,
 }
 
 pub(crate) struct LabelWorker {
     target: String,
     store: Arc<LabelStore>,
     analyzer: Arc<LabelAnalyzer>,
+    input: Arc<OperatorInput>,
     records: BTreeMap<String, PaneRecord>,
     panes: BTreeMap<String, PaneState>,
     generator: GeneratorLock,
@@ -158,6 +179,12 @@ pub(crate) struct LabelWorker {
     waiting: VecDeque<String>,
     next_generation: u64,
     dirty: bool,
+    /// GitHub's creation time of each pull request the core has read.
+    pull_request_times: Arc<PullRequestTimes>,
+    /// The operator's agent-summary switch (D-11). Off, no analysis is
+    /// asked for and the overlay lays no AI field; reads go on, because the
+    /// rows stand on what they find.
+    summaries: bool,
 }
 
 impl LabelWorker {
@@ -174,6 +201,7 @@ impl LabelWorker {
             records: store.target(&config.target),
             generator: GeneratorLock::new(config.lock_path, &config.target),
             target: config.target,
+            input: config.input,
             store,
             analyzer,
             panes: BTreeMap::new(),
@@ -186,6 +214,8 @@ impl LabelWorker {
             waiting: VecDeque::new(),
             next_generation: 0,
             dirty: false,
+            pull_request_times: Arc::default(),
+            summaries: true,
         })
     }
 
@@ -236,8 +266,9 @@ impl LabelWorker {
                 record.agent_status = Some(status.clone());
                 self.dirty = true;
             }
-            // A running agent is not waiting on anyone: the question and the
-            // reply it asked for are over, and the turn's end writes anew. A
+            // A running agent is not waiting on anyone: how the last turn
+            // ended (and a question's reply) is over, and the turn's end
+            // writes anew. A
             // stopped agent whose state moved and is stopped again (or at a
             // permission prompt) ran in between, even when its working state
             // came and went inside one burst of Herdr events and was never
@@ -246,9 +277,11 @@ impl LabelWorker {
                 || (seq_moved
                     && was_stopped
                     && matches!(status.as_str(), "idle" | "done" | "blocked"));
-            if ran && (record.question || !record.expected_reply.is_empty()) {
-                record.question = false;
-                record.expected_reply.clear();
+            if ran && let Some(end) = record.end.filter(|end| *end != LabelEnd::Working) {
+                if end == LabelEnd::Question {
+                    record.line.clear();
+                }
+                record.end = None;
                 self.dirty = true;
                 changed = true;
             }
@@ -288,6 +321,10 @@ impl LabelWorker {
                             follow_up_at: None,
                             follow_up_armed: status_moved,
                             last_failure: None,
+                            input_observed_since_unix_ms: now_unix_ms,
+                            claimed_submit: None,
+                            end_retried: None,
+                            skip_reasons_logged: Default::default(),
                         },
                     );
                 }
@@ -349,6 +386,25 @@ impl LabelWorker {
         changed
     }
 
+    /// Takes the core's latest pull request creation times and judges every
+    /// session's sightings against them (D-31). Returns whether a row's pull
+    /// requests changed.
+    pub(crate) fn set_pull_request_times(&mut self, times: Arc<PullRequestTimes>) -> bool {
+        if Arc::ptr_eq(&self.pull_request_times, &times) {
+            return false;
+        }
+        self.pull_request_times = times;
+        let mut changed = false;
+        for record in self.records.values_mut() {
+            changed |= record.facts.judge_created(&self.pull_request_times);
+        }
+        if changed {
+            self.dirty = true;
+            self.persist();
+        }
+        changed
+    }
+
     /// Runs what came due: the generator role, provider waits, follow-up
     /// reads. Returns whether anything shown changed.
     pub(crate) fn tick(&mut self, now: Instant) -> bool {
@@ -388,8 +444,16 @@ impl LabelWorker {
                     generation,
                     reference,
                     from_start,
+                    from_beginning,
                     result,
-                } => self.handle_read(&pane, generation, &reference, from_start, *result, now),
+                } => self.handle_read(
+                    &pane,
+                    generation,
+                    &reference,
+                    (from_start, from_beginning),
+                    *result,
+                    now,
+                ),
                 WorkerResult::Analysis(outcome) => self.handle_analysis(outcome, now),
             };
         }
@@ -400,7 +464,32 @@ impl LabelWorker {
 
     /// What these labels lay onto a projection; see [`LabelOverlay`].
     pub(crate) fn overlay(&self) -> LabelOverlay {
-        LabelOverlay::of_records(&self.records, self.generator.held())
+        LabelOverlay::of_records(&self.records, self.generator.held(), self.summaries)
+    }
+
+    /// Takes the operator's agent-summary switch. Off cancels the request
+    /// running and asks for nothing more; on asks each pane for its current
+    /// turn only, since the turns that ended while it was off are not owed.
+    /// Returns whether what the projection shows changed.
+    pub(crate) fn set_summaries(&mut self, on: bool, now: Instant) -> bool {
+        if self.summaries == on {
+            return false;
+        }
+        self.summaries = on;
+        if on {
+            for (id, pane) in &self.panes {
+                if pane.events_loaded && !self.waiting.contains(id) {
+                    self.waiting.push_back(id.clone());
+                }
+            }
+            self.schedule(now);
+        } else {
+            self.waiting.clear();
+            if self.analysis_in_flight.is_some() {
+                self.analyzer.cancel_running();
+            }
+        }
+        true
     }
 
     /// Nothing is being read or analyzed and nothing waits to be.
@@ -477,6 +566,10 @@ impl LabelWorker {
             record.and_then(|record| record.anchor.clone())
         };
         let (kind, value) = pane.reference.clone().expect("a token has a reference");
+        let subagents = record
+            .filter(|_| same_file)
+            .map(|record| record.facts.subagents.clone())
+            .unwrap_or_default();
         let job = ReadJob {
             pane: id.clone(),
             generation: pane.generation,
@@ -488,6 +581,7 @@ impl LabelWorker {
                 reference_value: value,
                 cwd: pane.cwd.clone(),
                 checkpoint,
+                subagents,
             },
         };
         self.read_in_flight = Some(id);
@@ -528,7 +622,7 @@ impl LabelWorker {
         pane_id: &str,
         generation: u64,
         reference: &str,
-        from_start: bool,
+        (from_start, from_beginning): (bool, bool),
         result: Result<LabelTranscript, ReadFailure>,
         now: Instant,
     ) -> bool {
@@ -562,8 +656,11 @@ impl LabelWorker {
             .get_mut(pane_id)
             .expect("an observed pane has a record");
         let owner = transcript.confirmed.owner.clone();
+        // Forgetting the verdicts forgets which submits they claimed too, so
+        // the messages are judged again against every submit kept.
+        let mut verdicts_forgotten = false;
         if record.owner.as_deref() != Some(owner.as_str()) {
-            if record.owner.is_some() || record.task.is_some() {
+            if record.owner.is_some() || record.goal.is_some() {
                 crate::diagnostic!(json!({
                     "component": "labels",
                     "kind": "session.reset",
@@ -576,6 +673,7 @@ impl LabelWorker {
             record.reset_session(Some(owner));
             record.forget_position();
             self.waiting.retain(|id| id != pane_id);
+            verdicts_forgotten = true;
             changed = true;
         } else if transcript.rescanned.is_some()
             || record
@@ -592,6 +690,7 @@ impl LabelWorker {
                 "reason": transcript.rescanned,
             }));
             record.reset_analysis();
+            verdicts_forgotten = true;
         }
         if record.proven_reference.as_deref() != Some(reference) {
             record.proven_reference = Some(reference.to_owned());
@@ -604,7 +703,37 @@ impl LabelWorker {
         }
         record.incarnation = Some(transcript.confirmed.incarnation.clone());
         self.dirty = true;
-        if transcript.skipped_lines > 0 {
+        let pane = self.panes.get_mut(pane_id).expect("checked above");
+        if verdicts_forgotten {
+            pane.claimed_submit = None;
+        }
+        let submits = self.input.submits(&target, pane_id);
+        changed |= record.facts.fold(
+            ReadFacts {
+                events: &transcript.events,
+                title: transcript.title.as_deref(),
+                custom_title: transcript.custom_title.as_deref(),
+                sightings: &transcript.pr_sightings,
+                subagents: &transcript.subagents,
+                from_beginning: from_beginning || transcript.rescanned.is_some(),
+            },
+            InputView {
+                submits: &submits,
+                observed_since_unix_ms: pane.input_observed_since_unix_ms,
+                claimed: &mut pane.claimed_submit,
+            },
+            &LogTarget {
+                target: &target,
+                pane_id,
+            },
+        );
+        changed |= record.facts.judge_created(&self.pull_request_times);
+        let pane = self.panes.get_mut(pane_id).expect("checked above");
+        let new_reason = transcript
+            .skipped_reasons
+            .keys()
+            .any(|reason| !pane.skip_reasons_logged.contains(reason));
+        if transcript.skipped_lines > 0 || new_reason {
             crate::diagnostic!(json!({
                 "component": "labels",
                 "kind": "read.lines_skipped",
@@ -613,8 +742,9 @@ impl LabelWorker {
                 "lines": transcript.skipped_lines,
                 "reasons": transcript.skipped_reasons,
             }));
+            pane.skip_reasons_logged
+                .extend(transcript.skipped_reasons.keys().cloned());
         }
-        let pane = self.panes.get_mut(pane_id).expect("checked above");
         pane.last_failure = None;
         if from_start || transcript.rescanned.is_some() {
             pane.events.clear();
@@ -651,6 +781,9 @@ impl LabelWorker {
     /// Whether the pane owes an analysis now and, if the analyzer is free
     /// for this server, hands it in. Returns whether anything shown changed.
     fn decide(&mut self, pane_id: &str, now: Instant) -> bool {
+        if !self.summaries {
+            return false;
+        }
         let Some(pane) = self.panes.get_mut(pane_id) else {
             return false;
         };
@@ -680,7 +813,7 @@ impl LabelWorker {
         let Some(turn) = turn_key(events) else {
             return false;
         };
-        let initial_context = record.task.is_none() || record.task_input_cursor.is_none();
+        let initial_context = record.goal.is_none() || record.task_input_cursor.is_none();
         let Some(phase) = analysis_phase(
             newest_user_is_last(events),
             working,
@@ -702,12 +835,20 @@ impl LabelWorker {
             }
             return false;
         }
+        // The goal reads the operator's requests only (D-09).
+        let facts = &record.facts;
+        let operator = |event: &LabelEvent| facts.feeds_analysis(event.offset);
+        let operator_turn = events
+            .iter()
+            .rfind(|event| event.kind == LabelEventKind::Human)
+            .is_some_and(operator);
         let context = if initial_context {
-            analysis_context(events)
+            analysis_context(events, &operator)
         } else {
-            let delta = new_human_turns(events, record.task_input_cursor);
+            let mut delta = new_human_turns(events, record.task_input_cursor);
+            delta.retain(operator);
             rolling_analysis_context(
-                record.task.as_deref().unwrap_or_default(),
+                record.goal.as_deref().unwrap_or_default(),
                 if phase == AnalysisPhase::TurnStart {
                     &delta
                 } else {
@@ -720,8 +861,13 @@ impl LabelWorker {
             return false;
         }
         let generation = pane.generation;
+        let retry = if phase == AnalysisPhase::TurnEnd && pane.end_retried == Some(turn) {
+            ":retry"
+        } else {
+            ""
+        };
         let request_id = format!(
-            "{}/{pane_id}:{owner}:{generation}:{turn:016x}:{}:{:016x}",
+            "{}/{pane_id}:{owner}:{generation}:{turn:016x}:{}{retry}:{:016x}",
             self.target,
             phase.label(),
             context_fingerprint(&context)
@@ -736,6 +882,7 @@ impl LabelWorker {
             phase,
             task_input_cursor: task_input_cursor(events),
             initial_context,
+            operator_turn,
             context_chars: context.chars().count(),
         };
         self.analysis_in_flight = Some(pane_id.to_owned());
@@ -781,22 +928,30 @@ impl LabelWorker {
             }
             return false;
         }
+        // Switched off while it ran: nothing it said is kept, and the turn
+        // is asked again when the switch comes back.
+        if !self.summaries {
+            return false;
+        }
         match result {
             Ok((provider, analysis)) => {
                 let record = self.records.get_mut(pane_id).expect("checked above");
-                let previous_task = record.task.clone();
-                let may_update_task = outcome.initial_context
-                    || previous_task.is_none()
-                    || (outcome.phase == AnalysisPhase::TurnStart && analysis.task_changed);
-                let task_changed =
-                    may_update_task && previous_task.as_deref() != Some(analysis.task.as_str());
-                if task_changed {
-                    record.task = Some(analysis.task.clone());
+                let previous_goal = record.goal.clone();
+                // Only the first analysis or the start of a turn the
+                // operator asked for may move the goal (D-09).
+                let may_update_goal = outcome.initial_context
+                    || previous_goal.is_none()
+                    || (outcome.phase == AnalysisPhase::TurnStart
+                        && outcome.operator_turn
+                        && analysis.goal_changed);
+                let goal_changed =
+                    may_update_goal && previous_goal.as_deref() != Some(analysis.goal.as_str());
+                if goal_changed {
+                    record.goal = Some(analysis.goal.clone());
                 }
-                record.progress = analysis.progress.clone();
-                record.expected_reply = analysis.expected_reply.clone();
+                record.line = analysis.line.clone();
+                record.end = Some(analysis.end);
                 record.task_input_cursor = outcome.task_input_cursor.or(record.task_input_cursor);
-                record.question = analysis.question;
                 match outcome.phase {
                     AnalysisPhase::TurnStart => record.analysis_turn_start = Some(outcome.turn),
                     // Recording the start too keeps a turn first seen at its
@@ -815,11 +970,11 @@ impl LabelWorker {
                     "pane_id": pane_id,
                     "generation": outcome.generation,
                     "phase": outcome.phase.label(),
-                    "task_changed": task_changed,
-                    "task_chars": analysis.task.chars().count(),
-                    "progress_chars": analysis.progress.chars().count(),
-                    "expected_reply_chars": analysis.expected_reply.chars().count(),
-                    "question": analysis.question,
+                    "goal_changed": goal_changed,
+                    "operator_turn": outcome.operator_turn,
+                    "goal_chars": analysis.goal.chars().count(),
+                    "line_chars": analysis.line.chars().count(),
+                    "end": analysis.end,
                     "context_chars": outcome.context_chars,
                     "turn": format!("{:016x}", outcome.turn),
                     "provider": provider.to_string(),
@@ -832,6 +987,26 @@ impl LabelWorker {
             // A stopping daemon records nothing; the next one asks again.
             Err(AnalysisFailure::Stopped) => false,
             Err(failure) => {
+                // The turn's own line and end are unknown now: the row shows
+                // its facts and never stops on a guess; the goal stays
+                // (D-33, B20).
+                let record = self.records.get_mut(pane_id).expect("checked above");
+                let cleared = record.end.is_some() || !record.line.is_empty();
+                if cleared {
+                    record.end = None;
+                    record.line.clear();
+                    self.dirty = true;
+                }
+                let pane = self.panes.get_mut(pane_id).expect("checked above");
+                if outcome.phase == AnalysisPhase::TurnEnd
+                    && failure.timed_out()
+                    && pane.end_retried != Some(outcome.turn)
+                {
+                    pane.end_retried = Some(outcome.turn);
+                    pane.next_analysis_at = Some(now);
+                    self.log_failure(pane_id, "analysis.retried", &failure.detail());
+                    return cleared;
+                }
                 match failure.retry_after() {
                     Some(wait) => {
                         if let Some(pane) = self.panes.get_mut(pane_id) {
@@ -853,7 +1028,7 @@ impl LabelWorker {
                         self.log_failure(pane_id, "analysis.abandoned", &failure.detail());
                     }
                 }
-                false
+                cleared
             }
         }
     }
@@ -863,6 +1038,7 @@ fn provider(kind: Option<&str>) -> Option<Agent> {
     match kind? {
         "claude" => Some(Agent::Claude),
         "codex" => Some(Agent::Codex),
+        "opencode" => Some(Agent::OpenCode),
         _ => None,
     }
 }
@@ -898,6 +1074,7 @@ impl Reader {
                             generation: job.generation,
                             reference: job.reference,
                             from_start: job.from_start,
+                            from_beginning: job.request.checkpoint.is_none(),
                             result: Box::new(result),
                         })
                         .is_err()

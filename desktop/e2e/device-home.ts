@@ -110,7 +110,32 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   }
+  seedCodex(home);
   return { claude, codex };
+}
+
+/**
+ * A `codex` in the account's `~/.local/bin` that has the shared daemon and
+ * answers `codex features` the way Codex 0.160 does, so the kit's
+ * `codex_per_pane` part is applied on a runner without Codex. A machine whose
+ * PATH has a real Codex runs that one instead, against this HOME's `.codex`.
+ */
+function seedCodex(home: string): void {
+  const bin = path.join(home, ".local", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const script = [
+    "#!/bin/sh",
+    'state="${CODEX_HOME:-$HOME/.codex}/fake-daemon"',
+    'case "$1 $2" in',
+    "  '--version ') echo 'codex-cli 0.160.0' ;;",
+    "  'features list') echo \"daemon_auto_start    stable  $(cat \"$state\" 2>/dev/null || echo true)\" ;;",
+    "  'features disable') echo false > \"$state\" ;;",
+    "  'features enable') echo true > \"$state\" ;;",
+    "  *) exit 1 ;;",
+    "esac",
+    "",
+  ].join("\n");
+  fs.writeFileSync(path.join(bin, "codex"), script, { mode: 0o755 });
 }
 
 /**

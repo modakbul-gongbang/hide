@@ -90,14 +90,19 @@ The core reads the file once, when this Mac's session-sync coordinator starts, a
 The core's label analyzer reads the runtime's choice before each analysis, so a choice made in Settings reaches the next label without restarting anything, and an analysis already running finishes on the choice it started with.
 A changed choice rebuilds the router, because a backend is constructed with its model; an unchanged one leaves the router and its sticky failover state alone.
 
-The file names a provider and a model per provider:
+The file names a provider, a model per provider, and whether agent labels are made at all:
 
 ```json
 {
   "provider": "codex",
-  "models": { "codex": "gpt-5.6-luna", "claude": "sonnet" }
+  "models": { "codex": "gpt-5.6-luna", "claude": "sonnet" },
+  "agent_summary": true
 }
 ```
+
+`agent_summary` is the Settings › Background AI `에이전트 요약` switch (PRD overview-request-view D-11), on when the field is absent.
+Off, the label analyzer asks nothing and cancels the request it is running, and no surface shows a label; worktree naming and Project Memory keep their own switches.
+Turning it does not rebuild the router, because it is not part of the router's choice.
 
 The defaults are the backends' own constants: `codex` with `gpt-5.6-luna`, `claude` with `sonnet`.
 A file Hide wrote before this default changed names `haiku` for claude like any other choice, so it keeps haiku until the operator picks a model in Settings.
@@ -148,7 +153,7 @@ The two process caps are measured after each codex turn (macOS `libproc`: `proc_
 Crossing one logs `ai.app_server.over_budget` with the measured value and the cap, ends the app-server through the graceful shutdown path, fails the request with `OverBudget`, and lets the next request start a fresh app-server.
 A request that completes under the cap clears the restart count; three consecutive restarts that do not clear it fail with `ProviderUnavailable(app_server_restart_cap)`.
 On a platform without the kernel query the measurement is `Unavailable`: the process caps are not enforced and the log line says `measurement=unavailable` rather than a zero.
-The label worker treats `OverBudget` as an environmental failure: it keeps its last label and asks again after ten minutes, the same as any other environmental failure (`AnalysisFailure::retry_after`).
+The label worker treats `OverBudget` as an environmental failure: it keeps the goal, drops the turn's line and end, and asks again after ten minutes, the same as any other environmental failure (`AnalysisFailure::retry_after`).
 
 ## Weekly usage display
 
@@ -236,7 +241,7 @@ There is no silent fallback: the result names the provider that answered, the lo
   The in-flight entry is owned by a guard, so a leader that panics still wakes its joiners and releases the key.
 
 What the caller does after the router gives up is the caller's decision.
-The label worker parks a turn for good on a settled failure and asks again after ten minutes on an environmental one (after the provider's reset time when a usage limit reports one).
+The label worker parks a turn for good on a settled failure and asks again after ten minutes on an environmental one (after the provider's reset time when a usage limit reports one); a turn end that timed out is asked once more before it is parked (PRD overview-request-view D-33), so a turn costs at most three requests.
 
 ## Logging
 

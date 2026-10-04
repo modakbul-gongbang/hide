@@ -232,6 +232,8 @@ Record uptime, the restart time, and both sample windows in the run directory, a
   Read-then-clear can swallow a concurrent change.
 - Size snapshot traffic by changes: terminal sequence cursors, rarely-changing revisioned `rest`, and per-event scalars.
   An unused heartbeat timestamp can still dirty `rest` and resend the full navigator every second.
+- Keep the keyboard path to the byte bridge.
+  The one thing added per key is the operator-submit check (`labels::input::key_submits`, PRD overview-request-view D-19): a chunk over 64 bytes is skipped, a shorter one is decoded into a stack buffer and scanned; only a found submit looks up the agent row and pushes one entry behind the submit record's own lock, and nothing is published.
 - Keep async operation records bounded by active intent and conflict scope.
   A close or topology mutation uses an absolute five-second stage deadline; expiry becomes a caller-visible unknown result and never schedules a destructive resend.
   Status checks are read-only and are started only for an ambiguous close or an explicit status action, so unknown activity does not become a polling loop.

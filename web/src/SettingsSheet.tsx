@@ -58,6 +58,7 @@ import {
   hostLine,
   kitHookMachines,
   kitPartLine,
+  kitPartSwitch,
   kitPartNeedsReinstall,
   offeredModels,
   ownerLine,
@@ -513,6 +514,18 @@ function AgentsTab({ actions }: { actions: Actions }) {
             </SelectContent>
           </Select>
         </Row>
+        <Row label="에이전트 요약" detail={<Note>꺼 두면 에이전트 제목과 한 줄이 AI 없이 세션 원문으로 보입니다.</Note>}>
+          <Switch
+            checked={ai?.agent_summary ?? true}
+            disabled={!ai}
+            onCheckedChange={(checked) => {
+              setChangedAt(Date.now());
+              actions.setAgentSummary(checked);
+            }}
+            aria-label="에이전트 요약"
+            data-ai-agent-summary={String(ai?.agent_summary ?? true)}
+          />
+        </Row>
         {selected && selected.state !== "ready" && selected.state !== "unread" ? (
           <Row label={<Note tone="warn" data-ai-degraded="true">{selected.label}: {selected.headline || selected.state}. Background requests go to the other agent until {selected.label} can answer.</Note>} />
         ) : null}
@@ -743,7 +756,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                 <>
                   <DeviceConnection device={device} facts={deviceFacts(device, status)} />
                   {device.kind === "remote" ? <DeviceHelper device={device} /> : null}
-                  <MachineKit device={device} />
+                  <MachineKit device={device} actions={actions} />
                   {device.test ? <DeviceTest test={device.test} /> : null}
                 </>
               }
@@ -1001,7 +1014,7 @@ function KitTerms({ helperRoot, cliDir }: { helperRoot: string | null; cliDir: s
  * every device (PRD device-parity B7): a mark, the part, and where it is or
  * why it is not. A machine whose kit does not run says why instead.
  */
-function MachineKit({ device }: { device: Device }) {
+function MachineKit({ device, actions }: { device: Device; actions: Actions }) {
   const kit = device.kit;
   if (!kit) return null;
   if (kit.unavailable) {
@@ -1019,13 +1032,14 @@ function MachineKit({ device }: { device: Device }) {
     );
   }
   return (
-    <div className="mt-xs grid grid-cols-[auto_auto_minmax(0,1fr)] gap-x-xs gap-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
+    <div className="mt-xs grid grid-cols-[auto_auto_minmax(0,1fr)_auto] gap-x-xs gap-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
       {kit.components.map((part) => {
         const line = kitPartLine(part);
-        const mark = part.state === "installed" ? "✓" : part.state === "absent" ? "–" : part.state === "failed" ? "✕" : "!";
+        const switched = kitPartSwitch(part);
+        const mark = part.state === "installed" ? "✓" : part.state === "absent" ? "–" : part.state === "off" ? "○" : part.state === "failed" ? "✕" : "!";
         const markTone = line.tone === "ok" ? "text-success" : line.tone === "muted" ? "text-muted-foreground" : line.tone === "error" ? "text-destructive" : "text-warning";
         return (
-          <div key={part.id} className="col-span-3 grid grid-cols-subgrid text-caption" data-kit-part={`${device.id}:${part.id}:${part.state}`}>
+          <div key={part.id} className="col-span-4 grid grid-cols-subgrid text-caption" data-kit-part={`${device.id}:${part.id}:${part.state}`}>
             <span className={markTone} aria-hidden="true">
               {mark}
             </span>
@@ -1036,6 +1050,17 @@ function MachineKit({ device }: { device: Device }) {
               {/* An installed part can still carry a reason, such as another program's `hcoord` on PATH (B14). */}
               {part.state === "installed" && part.reason ? <span className="block text-muted-foreground" data-kit-part-note="">{part.reason}</span> : null}
             </span>
+            {switched ? (
+              <Switch
+                checked={switched.on}
+                disabled={kit.busy}
+                onCheckedChange={(checked) => actions.setKitComponent(device.id, part.id, checked)}
+                aria-label={`${part.label} ${switched.on ? "끄기" : "켜기"}`}
+                data-kit-part-switch={`${device.id}:${part.id}:${switched.on ? "on" : "off"}`}
+              />
+            ) : (
+              <span aria-hidden="true" />
+            )}
           </div>
         );
       })}
