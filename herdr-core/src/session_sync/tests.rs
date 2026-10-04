@@ -314,6 +314,75 @@ fn worktree_events_invalidate_the_change_driven_reader_once() {
     assert!(outcome.refresh_worktrees);
 }
 
+/// A workspace's first tab is named before its tab and pane events arrive.
+/// Publishing that incomplete workspace can erase the complete pane snapshot
+/// already delivered by the workspace creation worker, losing its view size.
+#[test]
+fn a_new_workspace_waits_for_its_first_tab_layout_before_publication() {
+    let created: Value = serde_json::from_str(&snapshot().to_string().replace("w1", "w2")).unwrap();
+    let mut empty = snapshot();
+    empty["focused_pane_id"] = Value::Null;
+    for field in ["workspaces", "tabs", "panes", "layouts"] {
+        empty[field] = json!([]);
+    }
+    for initial in [empty, snapshot()] {
+        let mut replica = SessionReplica::from_snapshot(&initial).unwrap();
+        let before = replica.project();
+        for next in [
+            event(
+                "workspace_created",
+                json!({"type":"workspace_created", "workspace":created["workspaces"][0]}),
+            ),
+            event(
+                "workspace_focused",
+                json!({"type":"workspace_focused", "workspace_id":"w2"}),
+            ),
+            event(
+                "tab_created",
+                json!({"type":"tab_created", "tab":created["tabs"][0]}),
+            ),
+            event(
+                "pane_created",
+                json!({"type":"pane_created", "pane":created["panes"][0]}),
+            ),
+        ] {
+            let outcome = replica.apply(next, ApplyMode::Strict).unwrap();
+            assert!(!outcome.publish, "the first tab has no complete layout yet");
+            let projected = replica.project();
+            assert_eq!(projected.workspaces.len(), before.workspaces.len());
+            assert_eq!(projected.panes.len(), before.panes.len());
+            assert_eq!(projected.layouts.len(), before.layouts.len());
+            assert_eq!(projected.focused_pane_id, before.focused_pane_id);
+        }
+        let outcome = replica
+            .apply(
+                event(
+                    "layout_updated",
+                    json!({"type":"layout_updated", "layout":created["layouts"][0]}),
+                ),
+                ApplyMode::Strict,
+            )
+            .unwrap();
+        assert!(outcome.publish);
+        let projected = replica.project();
+        assert!(projected.panes.iter().any(|pane| pane.pane_id == "w2:p1"));
+        assert!(
+            projected
+                .layouts
+                .iter()
+                .any(|layout| layout.tab_id == "w2:t1")
+        );
+        for pane in before.panes {
+            assert!(
+                projected
+                    .panes
+                    .iter()
+                    .any(|current| current.pane_id == pane.pane_id)
+            );
+        }
+    }
+}
+
 /// Where a test's socket folder goes: directly under `/tmp` on Unix, whose
 /// socket paths have a hard length limit, and the temporary folder on
 /// Windows, which names a pipe after the path.
@@ -1497,6 +1566,42 @@ fn fresh_catalog() -> CatalogCache {
         roots: workspace::RootIndex::new(),
         built_at: Instant::now(),
     }
+}
+
+#[test]
+fn agent_refresh_reconciles_a_plain_new_panes_live_checkout_cwd() {
+    let mut value = two_tab_snapshot();
+    value["panes"][1]["cwd"] = json!("/tmp");
+    let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+    let mut plain = agent("w1:p2", "");
+    plain.tab_id = "w1:t2".to_owned();
+    plain.agent = None;
+    plain.cwd = Some("/tmp/fixture".to_owned());
+
+    replica.replace_agents(vec![plain]);
+    replica.refresh_published_state().expect("publish live cwd");
+    let projected = replica.project();
+    assert_eq!(
+        Runtime::session_spaces(&projected)[0].cwds,
+        vec!["/tmp/fixture".to_owned()],
+        "the shell's live directory, not its inherited birth cwd, owns both tabs"
+    );
+    assert_eq!(projected.tabs.len(), 2);
+    assert_eq!(projected.panes[1].cwd.as_deref(), Some("/tmp/fixture"));
+}
+
+#[test]
+fn agent_refresh_does_not_move_a_pane_or_clear_its_known_cwd() {
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let mut other_scope = agent("w1:p1", "");
+    other_scope.tab_id = "w1:t2".to_owned();
+    other_scope.cwd = Some("/tmp/elsewhere".to_owned());
+    replica.replace_agents(vec![other_scope]);
+    assert_eq!(replica.state.panes[0].cwd.as_deref(), Some("/tmp/fixture"));
+    assert_eq!(replica.state.panes[0].tab_id, "w1:t1");
+
+    replica.replace_agents(vec![agent("w1:p1", "")]);
+    assert_eq!(replica.state.panes[0].cwd.as_deref(), Some("/tmp/fixture"));
 }
 
 /// R6, AC12, SC5. `agent.list` is polled once a second whether or not it

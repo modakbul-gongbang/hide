@@ -279,7 +279,7 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     for (const host of ["browser", "electron"] as const) {
       expect(matchHost(press, REGISTRY, host)?.id).toBe("toggle_explorer");
       expect(displayCommand("toggle_sidebar_view", host, REGISTRY, "mac")).toBe("");
-      expect(bindingProblem("toggle_sidebar_view", { code: "KeyE", meta: true }, REGISTRY, host, "mac")).toMatch(/already Toggle tools/);
+      expect(bindingProblem("toggle_sidebar_view", { code: "KeyE", meta: true }, REGISTRY, host, "mac")).toMatch(/already Toggle Tools/);
     }
     const browser = effectiveRegistry({ toggle_sidebar_view: "meta+shift+KeyE" }, "browser", "mac");
     expect(browser.diagnostic).toBeNull();

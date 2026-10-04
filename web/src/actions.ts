@@ -29,7 +29,7 @@ import { railShown } from "./devices";
 import { allAgents, overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
-import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
+import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
   catalogWorkspaces,
   deviceOfCheckout,
@@ -65,7 +65,6 @@ import {
   menuEdge,
   neighbourArea,
   resizeTarget,
-  shownTool,
   viewAreaStepUnavailable,
   viewLayoutPayload,
   workspaceKey,
@@ -75,7 +74,7 @@ import {
   type ViewMenuId,
   type ViewWorkspace,
 } from "./viewLayout";
-import { workspaceViewOf, type PanelState, type Tool, type WorkspaceView } from "./workspace";
+import { workspaceViewOf, type Column, type SideColumn, type Tool } from "./workspace";
 
 /** The `device_id` an event carries: none for this machine, which the core takes as the default. */
 function deviceField(device: string): { device_id?: string } {
@@ -84,7 +83,41 @@ function deviceField(device: string): { device_id?: string } {
 
 export type Actions = ReturnType<typeof createActions>;
 
-export function createActions(dispatch: DispatchFn) {
+/**
+ * The column an event calls into sight in a narrow Workspace body (PRD
+ * three-column-panel D-07): File Views turned on calls File Views, a tool, a
+ * reveal or a linked folder calls Tools, and an agent or tab chosen calls
+ * Agent Views. Read
+ * here, where every operator event passes, so no path can forget it; it is
+ * page state and never sent. An open, a History selection or a Recent Panels
+ * display calls File Views through the core's call number instead
+ * (`columnCalls.ts`), the one way a call from the CLI or another page arrives
+ * too, so a call is never applied twice.
+ */
+export function columnCalled(event: Parameters<DispatchFn>[0]): Column | null {
+  const payload = event.payload;
+  switch (event.kind) {
+    case "workspace_view":
+      return payload.views === true ? "views" : payload.tools === true || payload.tool !== undefined || payload.reveal !== undefined ? "tools" : null;
+    case "reveal_path":
+      // A folder a terminal link names shows only in the Explorer.
+      return payload.is_directory ? "tools" : null;
+    case "focus_pane":
+    case "focus_tab":
+      return "agents";
+    case "remote_control":
+      return payload.action === "focus_pane" || payload.action === "focus_tab" ? "agents" : null;
+    default:
+      return null;
+  }
+}
+
+export function createActions(send: DispatchFn) {
+  const dispatch: DispatchFn = (event) => {
+    const column = columnCalled(event);
+    if (column) useUiStore.getState().callColumn(column);
+    return send(event);
+  };
   const rest = () => useShellStore.getState().rest;
   const catalogObserver = createCatalogObserver((observing) => dispatch({ schema_version: 2, kind: "ai_settings", payload: { start_observing: observing } }));
   const diagnostic = (message: string) => useShellStore.getState().noteDiagnostic(message);
@@ -204,15 +237,14 @@ export function createActions(dispatch: DispatchFn) {
     ui().setScreen({ kind: "workspace" });
     const targetId = remoteTargetOfPane(rest(), targetPaneId);
     if (targetId) {
-      // Chips, Returns and Opens sit in the Agent area on screen, beside the side panel (issue 170).
       dispatch({
         schema_version: 2,
         kind: "remote_control",
-        payload: { target_id: targetId, request_id: requestId, report_pane_focus_outcome: true, in_place: true, action: "focus_pane", pane_id: targetPaneId },
+        payload: { target_id: targetId, request_id: requestId, report_pane_focus_outcome: true, action: "focus_pane", pane_id: targetPaneId },
       });
       return;
     }
-    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: targetPaneId, origin: "operator", request_id: requestId, in_place: true } });
+    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: targetPaneId, origin: "operator", request_id: requestId } });
   };
 
   /** The id of the core's task slot now, so a request can tell its own answer from an older one. */
@@ -311,71 +343,45 @@ export function createActions(dispatch: DispatchFn) {
   };
 
   /**
-   * The front Workspace's side panel and tools (S6 D-05, issue 170): one
-   * `workspace_view` event naming only what changes. The core keeps them per
-   * Workspace, so another Workspace is never touched.
+   * The front Workspace's columns and tool (S6 D-05; PRD three-column-panel
+   * D-05, D-08): one `workspace_view` event naming only what changes, each
+   * field the value it should end at. The core keeps them per Workspace, so
+   * another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { panel?: PanelState; pinned?: boolean; tool?: Tool; tools?: boolean; views_over_share?: number; tools_share?: number; reveal?: string }) => {
+  const setWorkspaceView = (patch: { views?: boolean; tools?: boolean; tool?: Tool; views_width?: number; tools_width?: number; width_request_id?: string; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
-    dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
+    return dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
 
-  /** A narrow panel's overlay opens for the tool asked for, including with the panel that the same event opens. */
-  const askForTools = (view: WorkspaceView) => {
-    ui().openTools();
-    if (view.panel === "closed" || !view.tools) ui().askTools();
-  };
-
-  /**
-   * Shows one tool in the column (B10; issue 170, one tool at a time). The
-   * operator asked for it, so a narrow panel's overlay opens (S7 B12), and a
-   * closed panel opens on it with the column shown (the core's rule); nothing
-   * is sent when the open panel already shows it, since the overlay closing
-   * never stored the column hidden.
-   */
+  /** Shows one tool in the Tools column (B10, B12), turning the column on; nothing is sent when it already holds it. */
   const showTool = (tool: Tool) => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("workspace_view: no Workspace in front");
-    askForTools(view);
-    if (view.panel === "closed" || !view.tools || view.tool !== tool) setWorkspaceView({ tool });
+    if (!view.tools || view.tool !== tool) return setWorkspaceView({ tool });
+    ui().callColumn("tools");
   };
 
   /**
-   * The tool column shown or hidden, on the tool it holds. A narrow panel's
-   * overlay is this page's alone: hiding it stores nothing, so a wider window
-   * brings the column back.
+   * The toolbar icon, ⌘⇧B or ⌘E for one column (D-05, D-07): a column on
+   * screen turns off, except that in a narrow body, where it fills the one
+   * column because it was called, it only gives the body back to Agent
+   * Views and sends nothing, since a narrow body never changes what is
+   * stored (B27, B28); a column that is on but hidden by the body's width
+   * comes into sight and nothing is sent; a column that is off turns on.
    */
-  const setToolsShown = (visible: boolean) => {
+  const toggleColumn = (column: SideColumn) => {
     const view = workspaceViewOf(rest());
-    if (!view) return diagnostic("workspace_view: no Workspace in front");
-    if (!visible) {
-      if (ui().toolsPlacement === "open") return ui().closeTools();
-      if (view.tools) setWorkspaceView({ tools: false });
-      return;
+    if (!view) return diagnostic(`toggle ${column === "views" ? "File Views" : "Tools"}: no Workspace in front`);
+    const shown = ui().shownColumns;
+    if (shown[column]) {
+      if (shown.step === "narrow") return ui().callColumn("agents");
+      return setWorkspaceView({ [column]: false });
     }
-    askForTools(view);
-    if (view.panel === "closed" || !view.tools) setWorkspaceView({ tools: true });
+    if (view[column]) return ui().callColumn(column);
+    setWorkspaceView({ [column]: true });
   };
-
-  /** ⌘E opens tools, closes tools-only, or toggles the column beside views. */
-  const toggleExplorer = () => {
-    const view = workspaceViewOf(rest());
-    if (!view) return diagnostic("toggle tools: no Workspace in front");
-    if (view.panel === "closed") {
-      askForTools(view);
-      return setWorkspaceView({ panel: "open", tools: true });
-    }
-    if ((view.layout?.display_count ?? 0) === 0) return setWorkspaceView({ panel: "closed" });
-    setToolsShown(shownTool(view, ui().toolsPlacement) === null);
-  };
-
-  /** ⌘⇧B hides or restores the content, keeping the chosen tool and column. */
-  const toggleRightPanel = () => {
-    const view = workspaceViewOf(rest());
-    if (!view) return diagnostic("toggle side panel: no Workspace in front");
-    if (view.panel !== "closed") return setWorkspaceView({ panel: "closed" });
-    setWorkspaceView({ panel: "open", ...((view.layout?.display_count ?? 0) === 0 ? { tools: true } : {}) });
-  };
+  const toggleFileViews = () => toggleColumn("views");
+  const toggleTools = () => toggleColumn("tools");
 
   /**
    * The folder chain to an opened file under the focused checkout, so the
@@ -578,7 +584,7 @@ export function createActions(dispatch: DispatchFn) {
   /**
    * `changes_select` for a History row of the checkout in front (S4, S7
    * contract 4.2): the core places a diff by the rules a file open follows,
-   * so a closed side panel opens to show it (issue 170).
+   * so File Views turns on to show it (PRD three-column-panel B4).
    */
   const selectChangeIn = (path: string, committed: boolean, preview: boolean, beside: boolean) => {
     const here = explorerContext(rest()).checkout;
@@ -733,8 +739,6 @@ export function createActions(dispatch: DispatchFn) {
 
   /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
   const revealInExplorer = (path: string) => {
-    const view = workspaceViewOf(rest());
-    if (view) askForTools(view);
     setWorkspaceView({ reveal: path });
     ui().setExplorerSelection(path);
   };
@@ -1390,11 +1394,11 @@ export function createActions(dispatch: DispatchFn) {
 
     /** `discardChanges`: the operator ticked the discard the core's gate offered, accepting the folder's uncommitted work is lost. */
     /** `closeDescendants`: the agents outside the worktree the operator chose to close first (PRD close-agent-subtree D-36). */
-    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean, closeDescendants: string[] = []) {
+    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean, closeDescendants: string[] = [], ignoredRepositories: string[] = []) {
       dispatch({
         schema_version: 2,
         kind: "remove_worktree",
-        payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges, ...(closeDescendants.length > 0 ? { close_descendant_pane_ids: closeDescendants } : {}) },
+        payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges, expected_ignored_repositories: ignoredRepositories, ...(closeDescendants.length > 0 ? { close_descendant_pane_ids: closeDescendants } : {}) },
       });
     },
 
@@ -1408,13 +1412,12 @@ export function createActions(dispatch: DispatchFn) {
     agentLayout,
     runAgentCommand,
 
-    /** `inPlace`: chosen in the Agent area's own tab strip, beside the side panel, which stays up (issue 170). */
-    focusTab(tabId: string, inPlace = false) {
+    focusTab(tabId: string) {
       if (remoteContext(rest())) {
         const host = remoteHost("Switching tab");
         if (!host) return;
         const event = remoteControl(host.targetId, { action: "focus_tab", tab_id: tabId });
-        dispatch(inPlace ? inPlaceEvent(event) : event);
+        dispatch(event);
         return;
       }
       const here = current();
@@ -1422,7 +1425,7 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({
         schema_version: 2,
         kind: "focus_tab",
-        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: tabId, ...(inPlace ? { in_place: true } : {}) },
+        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: tabId },
       });
     },
 
@@ -1490,7 +1493,7 @@ export function createActions(dispatch: DispatchFn) {
       const target = closeShortcutPolicy({
         owner,
         workspace: ui().screen?.kind === "workspace" ? checkout?.id ?? null : null,
-        displayId: workspaceViewOf(rest())?.panel !== "closed" ? area?.active ?? null : null,
+        displayId: ui().shownColumns.views ? area?.active ?? null : null,
         paneIds: tab?.panes.map((pane) => pane.id) ?? [],
       });
       if (target.kind === "view") return closeView(target.id);
@@ -1722,28 +1725,15 @@ export function createActions(dispatch: DispatchFn) {
 
     showSidebarMode,
 
-    toggleRightPanel,
+    toggleFileViews,
 
-    toggleExplorer,
+    toggleTools,
 
     setWorkspaceView,
-
-    /** The side panel closed, open or expanded; none of them closes a view (issue 170). */
-    setPanel(panel: PanelState) {
-      const view = workspaceViewOf(rest());
-      const needsTools = panel !== "closed" && (view?.layout?.display_count ?? 0) === 0 && !view?.tools;
-      setWorkspaceView({ panel, ...(needsTools ? { tools: true } : {}) });
-    },
-
-    /** Docks the side panel beside the agents, or floats it over them again: one terminal resize either way. */
-    setPanelPinned(pinned: boolean) {
-      setWorkspaceView({ pinned });
-    },
 
     revealInExplorer,
 
     showTool,
-    setToolsShown,
 
     /** A History row's diff in the active View area's preview (a single click) or pinned (a double click). */
     selectChange(path: string, committed: boolean, preview: boolean) {
@@ -1982,10 +1972,6 @@ export function createActions(dispatch: DispatchFn) {
       if (frame) viewLayout(frame, { action: "navigate", display_id: displayId, url });
     },
 
-    /** Whether the page draws this Workspace's side panel over the whole body; sent only when that changes (issue 170). */
-    reportPanelCovers(workspace: ViewWorkspace, covers: boolean): unknown {
-      return dispatch({ schema_version: 2, kind: "panel_covers", payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, covers } });
-    },
 
     /** What a page says (its address and title), recorded so the tab and a relaunch show it. */
     reportBrowserState(workspace: ViewWorkspace, displayId: string, url: string, title: string, load: number, loading: boolean, failure: string | null, present: boolean) {

@@ -207,6 +207,7 @@ fn removing_a_project_or_a_worktree_drops_its_records() {
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "removing".into(),
         message: None,
     });
@@ -231,6 +232,7 @@ fn a_failed_worktree_removal_keeps_the_record() {
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "removing".into(),
         message: None,
     });

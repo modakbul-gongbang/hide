@@ -4,16 +4,19 @@ import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { isolate, launch, screenshot, test } from "./fixture";
+import { observeTerminalInput, type TerminalInputObservation } from "./terminal-input-observation";
 
 test("Agent edge drag splits the desktop column into two live tab groups", async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "agent-groups");
   let app: ElectronApplication | null = null;
+  let observation: TerminalInputObservation | null = null;
   try {
     const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } };
     const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
+    observation = await observeTerminalInput(page, [...herdr.panes, created.result.root_pane.pane_id], app.process().pid);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1920, 1080));
     await enterWorkspace(page, "fixture");
     const tab = page.locator(`[data-agent-tab-bar] [data-tab="${created.result.tab.tab_id}"]`);
@@ -34,6 +37,7 @@ test("Agent edge drag splits the desktop column into two live tab groups", async
     for (const pane of [herdr.panes[0], created.result.root_pane.pane_id]) {
       const terminal = page.locator(`[data-terminal-host="${pane}"]`);
       await expect(terminal).toBeVisible();
+      observation.markTarget(pane);
       await terminal.click();
       await page.keyboard.type("printf 'desktop-group-live\\n'");
       await page.keyboard.press("Enter");
@@ -47,8 +51,12 @@ test("Agent edge drag splits the desktop column into two live tab groups", async
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
     await screenshot(page, "desktop-agent-groups-split");
   } finally {
-    await app?.close().catch(() => undefined);
-    run.cleanup();
-    herdr.stop();
+    try {
+      await observation?.exportOnce();
+    } finally {
+      await app?.close().catch(() => undefined);
+      run.cleanup();
+      herdr.stop();
+    }
   }
 });

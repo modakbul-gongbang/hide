@@ -755,6 +755,20 @@ fn publish_replica(
     labels: &mut Option<LabelWorker>,
 ) -> bool {
     let mut payload = replica.project();
+    // Observe native state before label overlays add UI timestamps. This is
+    // bounded memory work; no delivery I/O or notifier is started here.
+    if let Some(runtime) = context.runtime.upgrade()
+        && let Ok(mut guard) = runtime.lock()
+    {
+        match &context.target {
+            SessionSyncTarget::Local { socket_path } => {
+                guard.observe_delivery("local", &payload, socket_path.to_str())
+            }
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.observe_delivery(target_id, &payload, None)
+            }
+        }
+    }
     let overlay = labels.as_mut().map(|worker| {
         take_pull_request_times(context, worker);
         take_label_switch(context, worker);
@@ -797,15 +811,35 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (registrations, worktrees, unconfirmed_created_purposes) = match runtime.lock() {
-        Ok(guard) => (
-            guard.snapshot().ui_state.workspace_registrations.clone(),
-            guard.worktree_catalog(),
-            guard.unconfirmed_created_purpose_values(),
-        ),
-        Err(_) => return false,
-    };
+    let (registrations, worktrees, unconfirmed_created_purposes, focus_readback_target) =
+        match runtime.lock() {
+            Ok(guard) => (
+                guard.snapshot().ui_state.workspace_registrations.clone(),
+                guard.worktree_catalog(),
+                guard.unconfirmed_created_purpose_values(),
+                guard.pane_focus_readback_target(&payload),
+            ),
+            Err(_) => return false,
+        };
     drop(runtime);
+
+    // The unsequenced stream can still contain a layout from an older focus
+    // after the pane worker has confirmed the final click. Read before adopting
+    // a differing external focus, outside the mutex and without another effect.
+    let focus_readback = focus_readback_target.map(|identity| {
+        let result = live::confirm_pane_focus(context.api_connector.as_ref(), &identity.target_id);
+        if let Err(error) = &result {
+            crate::diagnostic!(json!({
+                "component": "pane_focus",
+                "kind": "pane.focus.stream_readback_failed",
+                "pane_id": identity.target_id,
+                "serial": identity.serial,
+                "connection_generation": identity.live_generation,
+                "message": error.message(),
+            }));
+        }
+        (identity, result.is_ok())
+    });
 
     let spaces = Runtime::session_spaces(&payload);
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
@@ -850,7 +884,7 @@ fn publish_replica(
             if let Some(overlay) = overlay {
                 guard.set_label_overlay(overlay);
             }
-            guard.ingest_session_with_catalog(Ok(payload), Some(precomputed))
+            guard.ingest_session_with_focus_readback(Ok(payload), Some(precomputed), focus_readback)
         }
         Err(_) => return false,
     };
@@ -1213,6 +1247,9 @@ fn publish_worktrees(
     let changed = guard.ingest_worktrees_answer(answer.catalog, answer.removals, current);
     drop(guard);
     drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
     Some(changed)
 }
 
@@ -1315,4 +1352,233 @@ fn stale_if_projected(
         return error;
     }
     SessionFetchError::Stale(error.message().to_owned())
+}
+
+#[cfg(test)]
+mod worktree_observer_tests {
+    use super::*;
+    use crate::handle::Core;
+    use crate::model::{
+        CoreOptions, ProjectWorktreesSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot,
+    };
+    use crate::worktrees::WorktreeAnswer;
+    use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
+
+    struct ObserverFixture {
+        core: Core,
+        runtime: Arc<Mutex<Runtime>>,
+        context: SessionSyncContext,
+        observations: Receiver<bool>,
+        _directory: tempfile::TempDir,
+    }
+
+    impl ObserverFixture {
+        fn new() -> Self {
+            let directory = tempfile::tempdir_in(workspace::temp_base_outside_any_repository())
+                .expect("isolated observer directory");
+            let root = directory.path().canonicalize().expect("fixture path");
+            let path = hide_platform::path::to_wire_lossy(&root);
+            let options: CoreOptions = serde_json::from_value(json!({
+                "schema_version": crate::model::SCHEMA_VERSION,
+                "app_state_path": ""
+            }))
+            .expect("workerless core options");
+            let mut runtime = Runtime::new(
+                options,
+                crate::environment::EnvironmentReport {
+                    statuses: Vec::new(),
+                    home_path: None,
+                    codex_home: None,
+                },
+            );
+            let catalog = WorktreeCatalogSnapshot {
+                projects: vec![ProjectWorktreesSnapshot {
+                    root_path: path.clone(),
+                    worktrees: vec![WorktreeSnapshot {
+                        path: path.clone(),
+                        branch: Some("feature/preflight".into()),
+                        ignored_repositories: vec!["target/original".into()],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+            };
+            let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(json!({
+                "agents": [],
+                "focused_pane_id": "w1:p1",
+                "focused_workspace_id": "w1",
+                "workspaces": [{"workspace_id": "w1", "active_tab_id": "w1:t1"}],
+                "tabs": [{"workspace_id": "w1", "tab_id": "w1:t1"}],
+                "panes": [{"pane_id": "w1:p1", "cwd": path}],
+                "layouts": [{
+                    "workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w1:p1",
+                    "panes": [{"pane_id": "w1:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                }]
+            }))
+            .expect("focused project input");
+            let spaces = Runtime::session_spaces(&payload);
+            let precomputed = PrecomputedCatalog {
+                registrations: Vec::new(),
+                workspaces: workspace::build_catalog(&[], &spaces, &catalog),
+                roots: workspace::root_index(&spaces),
+            };
+            runtime.ingest_session_with_catalog(Ok(payload), Some(precomputed));
+            // A populated baseline preserves the existing initial stale-answer policy.
+            runtime.ingest_worktrees(catalog, 0);
+            let runtime = Arc::new(Mutex::new(runtime));
+            let (core, notifier) = Core::for_runtime_fixture(Arc::clone(&runtime));
+            let socket_path = root.join("unused.sock");
+            let context = SessionSyncContext::local(&LiveContext {
+                socket_path: socket_path.clone(),
+                herdr_bin: None,
+                runtime: Arc::downgrade(&runtime),
+                notifier,
+                api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+            });
+            let baseline: Value = serde_json::from_slice(&core.snapshot_delta(0, 0))
+                .expect("initial observer snapshot");
+            assert_eq!(
+                baseline["rest"]["git_worktrees"]["worktrees"][0]["branch"],
+                "feature/preflight"
+            );
+            let (sender, observations) = sync_channel(8);
+            let weak_runtime = Arc::downgrade(&runtime);
+            core.on_change(move || {
+                let unlocked = weak_runtime
+                    .upgrade()
+                    .is_some_and(|runtime| runtime.try_lock().is_ok());
+                // notify catches callback panics, so the caller asserts this witness.
+                let _ = sender.try_send(unlocked);
+            });
+            Self {
+                core,
+                runtime,
+                context,
+                observations,
+                _directory: directory,
+            }
+        }
+
+        fn catalog(&self) -> WorktreeCatalogSnapshot {
+            self.runtime.lock().expect("runtime").worktree_catalog()
+        }
+
+        fn answer(&self, catalog: WorktreeCatalogSnapshot) -> WorktreeAnswer {
+            let request = self.runtime.lock().expect("runtime").worktrees_request();
+            WorktreeAnswer {
+                removals: request.removals,
+                request,
+                catalog,
+                observations_current: true,
+            }
+        }
+
+        fn snapshot(&self) -> Value {
+            serde_json::from_slice(&self.core.snapshot_delta(0, 0)).expect("observer snapshot")
+        }
+
+        fn expect_wake_after_unlock(&self) {
+            assert!(
+                self.observations.try_recv().expect("observer was notified"),
+                "the observer must run after releasing the runtime lock"
+            );
+            self.expect_silence();
+        }
+
+        fn expect_silence(&self) {
+            assert_eq!(self.observations.try_recv(), Err(TryRecvError::Empty));
+        }
+    }
+
+    #[test]
+    fn changed_worktree_facts_wake_the_observer_and_coalesce_until_its_snapshot() {
+        let fixture = ObserverFixture::new();
+        let mut catalog = fixture.catalog();
+        catalog.projects[0].worktrees[0].lock_reason = Some("Review $(literal)".into());
+        let _ = publish_worktrees(&fixture.context, fixture.answer(catalog));
+        fixture.expect_wake_after_unlock();
+
+        let mut catalog = fixture.catalog();
+        catalog.projects[0].worktrees[0].ignored_repositories =
+            vec!["target/review".into(), "vendor/next".into()];
+        let _ = publish_worktrees(&fixture.context, fixture.answer(catalog));
+        fixture.expect_silence();
+        let snapshot = fixture.snapshot();
+        let row = &snapshot["rest"]["git_worktrees"]["worktrees"][0];
+        assert_eq!(row["lock_reason"], "Review $(literal)");
+        assert_eq!(
+            row["ignored_repositories"],
+            json!(["target/review", "vendor/next"])
+        );
+
+        let mut catalog = fixture.catalog();
+        catalog.projects[0].worktrees[0].lock_reason = None;
+        let _ = publish_worktrees(&fixture.context, fixture.answer(catalog));
+        fixture.expect_wake_after_unlock();
+        let snapshot = fixture.snapshot();
+        assert!(snapshot["rest"]["git_worktrees"]["worktrees"][0]["lock_reason"].is_null());
+    }
+
+    #[test]
+    fn worktree_loading_completion_wakes_the_observer_with_unchanged_facts() {
+        let fixture = ObserverFixture::new();
+        let catalog = fixture.catalog();
+        fixture.runtime.lock().expect("runtime").refresh_worktrees();
+        let before = fixture.snapshot();
+        assert_eq!(before["rest"]["git_worktrees_loading"], true);
+
+        let _ = publish_worktrees(&fixture.context, fixture.answer(catalog));
+        fixture.expect_wake_after_unlock();
+        let after = fixture.snapshot();
+        assert_eq!(after["rest"]["git_worktrees_loading"], false);
+        assert_eq!(
+            after["rest"]["git_worktrees"],
+            before["rest"]["git_worktrees"]
+        );
+    }
+
+    #[test]
+    fn unchanged_and_rejected_worktree_answers_leave_the_observer_silent() {
+        let fixture = ObserverFixture::new();
+        let catalog = fixture.catalog();
+        let original_request = fixture.answer(catalog.clone()).request;
+        let before = fixture.snapshot();
+        let _ = publish_worktrees(&fixture.context, fixture.answer(catalog));
+        fixture.expect_silence();
+        let after = fixture.snapshot();
+        assert_eq!(
+            after["rest"]["git_worktrees"],
+            before["rest"]["git_worktrees"]
+        );
+        assert_eq!(after["rest"]["git_worktrees_loading"], false);
+
+        fixture.runtime.lock().expect("runtime").refresh_worktrees();
+        assert_eq!(fixture.snapshot()["rest"]["git_worktrees_loading"], true);
+        let mut rejected = fixture.catalog();
+        rejected.projects[0].worktrees[0].lock_reason = Some("Unaccepted facts".into());
+        let mut stale_request = fixture.answer(rejected.clone());
+        stale_request.request = original_request;
+        let _ = publish_worktrees(&fixture.context, stale_request);
+        fixture.expect_silence();
+        let after = fixture.snapshot();
+        assert_eq!(
+            after["rest"]["git_worktrees"],
+            before["rest"]["git_worktrees"]
+        );
+        assert_eq!(after["rest"]["git_worktrees_loading"], true);
+
+        let mut stale_observation = fixture.answer(rejected);
+        stale_observation.observations_current = false;
+        let _ = publish_worktrees(&fixture.context, stale_observation);
+        fixture.expect_silence();
+        let after = fixture.snapshot();
+        assert_eq!(
+            after["rest"]["git_worktrees"],
+            before["rest"]["git_worktrees"]
+        );
+        assert_eq!(after["rest"]["git_worktrees_loading"], true);
+    }
 }

@@ -1,78 +1,223 @@
+use std::io::{PipeReader, PipeWriter, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-/// Execs the hook and the sibling `hide` it runs once, untimed. macOS checks
-/// a just-linked binary on its first exec: after a relink the 131 MB debug
-/// `hide` took 1.8 s to start on an idle machine and 5 ms on the next exec,
-/// which under a full workspace test run pushed the hook past the deadline
-/// below. That one-time cost is not the hook's, so it is paid here.
+use hide_platform::process::OwnedChild;
+
+/// A relinked macOS executable pays a first-exec validation cost. Warm only
+/// the owned hook and its existing sibling, with a five-second deadline each.
 fn warm_first_exec(hook: &Path) {
     let sibling = hook
         .parent()
         .map(|dir| dir.join(format!("hide{}", std::env::consts::EXE_SUFFIX)));
     for program in std::iter::once(hook.to_path_buf()).chain(sibling.filter(|path| path.exists())) {
-        let _ = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .arg("--help")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        let mut child = OwnedChild::spawn(&mut command).unwrap();
+        child
+            .capture_until(Instant::now() + Duration::from_secs(5), 1)
+            .expect("first-exec warming must finish within its own bound");
     }
+}
+
+fn hook_command(home: &Path, mode: &str, event: &str) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hide-agent-hooks"));
+    command
+        .args([mode, "--runtime", "claude-code", "--event", event])
+        .env(hide_platform::host::HOME_VARIABLE, home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Fixtures must never inherit operator capability, pane or server routing.
+    for (key, _) in std::env::vars_os() {
+        let name = key.to_string_lossy();
+        if ["HERDR_", "HIDE_", "HCOORD_"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        {
+            command.env_remove(key);
+        }
+    }
+    command
 }
 
 #[test]
 fn blocked_stdin_cannot_hold_the_agent_hook_past_its_hard_deadline() {
     let home = tempfile::tempdir().unwrap();
-    let hook = Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks"));
-    warm_first_exec(hook);
-    let mut child = Command::new(hook)
-        .args([
-            "hook",
-            "--runtime",
-            "claude-code",
-            "--event",
-            "SessionStart",
-            // As the installed entry runs it: this is the flag that reads stdin.
-            "--memory-injection",
-        ])
-        .env(hide_platform::host::HOME_VARIABLE, home.path())
-        .env_remove("HERDR_PANE_ID")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let held_open = child.stdin.take().unwrap();
+    warm_first_exec(Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks")));
+    let mut command = hook_command(home.path(), "hook", "SessionStart");
+    command.arg("--memory-injection");
+    let mut child = OwnedChild::spawn(&mut command).unwrap();
+    let held_open = child.take_stdin().unwrap();
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(2);
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            drop(held_open);
-            let output = child.wait_with_output().unwrap();
-            panic!(
-                "hook exceeded the hard deadline; stdout={:?} stderr={:?}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    };
+    let output = child
+        .capture_until(started + Duration::from_secs(2), 64 * 1024)
+        .expect("hook exceeded the hard deadline");
     drop(held_open);
-    let output = child.wait_with_output().unwrap();
-    assert!(status.success());
+    assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         payload["hookSpecificOutput"]["additionalContext"],
         hide_agent_hooks::runtime::PURPOSE_CONTEXT
     );
-    // This target is an unoptimised Cargo test binary, so its process startup
-    // is not the production hook timing surface. The signed release helper's
-    // caller-visible 100 ms boundary is measured in native acceptance.
+    // Keep the original debug-binary boundary. Native acceptance separately
+    // measures the signed release helper's 100ms Memory boundary.
     assert!(started.elapsed() < Duration::from_millis(1_500));
+}
+
+#[test]
+fn prompt_hook_with_open_payload_stdin_does_not_hold_submission() {
+    let home = tempfile::tempdir().unwrap();
+    warm_first_exec(Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks")));
+    let mut command = hook_command(home.path(), "hook", "UserPromptSubmit");
+    command.arg("--memory-injection");
+    let started = Instant::now();
+    let mut child = OwnedChild::spawn(&mut command).unwrap();
+    let held_open = child.take_stdin().unwrap();
+    let output = child
+        .capture_until(started + Duration::from_secs(2), 64 * 1024)
+        .expect("prompt submission remained blocked by its input stream");
+    drop(held_open);
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let diagnostics = String::from_utf8(output.stderr).unwrap();
+    assert!(!diagnostics.contains(&home.path().display().to_string()));
+    assert!(diagnostics.len() < 1024);
+}
+
+/// Real output pressure, capped at one writer and one MiB. Closing the only
+/// reader wakes the filler on every exit path; join only after observed exit.
+struct OutputPressure {
+    reader: Option<PipeReader>,
+    filler: Option<std::thread::JoinHandle<()>>,
+}
+
+impl OutputPressure {
+    fn new() -> (Self, PipeWriter) {
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        let hook_output = writer.try_clone().unwrap();
+        let written = Arc::new(AtomicUsize::new(0));
+        let count = written.clone();
+        let filler = std::thread::spawn(move || {
+            let bytes = [b'x'; 4096];
+            for _ in 0..256 {
+                if writer.write_all(&bytes).is_err() {
+                    return;
+                }
+                count.fetch_add(bytes.len(), Ordering::SeqCst);
+            }
+        });
+        let pressure = Self {
+            reader: Some(reader),
+            filler: Some(filler),
+        };
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut previous = 0;
+        let mut changed = Instant::now();
+        loop {
+            assert!(
+                !pressure.filler.as_ref().unwrap().is_finished(),
+                "fixture pipe did not provide output pressure"
+            );
+            let current = written.load(Ordering::SeqCst);
+            if current != previous {
+                previous = current;
+                changed = Instant::now();
+            }
+            if current > 0 && changed.elapsed() >= Duration::from_millis(50) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fixture pipe pressure was not reached"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        (pressure, hook_output)
+    }
+
+    fn finish(&mut self) -> bool {
+        self.reader.take();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while self
+            .filler
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+        {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        self.filler
+            .take()
+            .is_none_or(|thread| thread.join().is_ok())
+    }
+}
+
+impl Drop for OutputPressure {
+    fn drop(&mut self) {
+        if !self.finish() {
+            eprintln!("hook fixture output-writer cleanup unconfirmed");
+        }
+    }
+}
+
+#[test]
+fn prompt_hook_with_blocked_diagnostic_output_exits_without_holding_submission() {
+    let home = tempfile::tempdir().unwrap();
+    warm_first_exec(Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks")));
+    let (mut pressure, output) = OutputPressure::new();
+    let mut command = hook_command(home.path(), "hook", "UserPromptSubmit");
+    command.stdin(Stdio::null()).stderr(Stdio::from(output));
+    let started = Instant::now();
+    let mut child = OwnedChild::spawn(&mut command).unwrap();
+    drop(command);
+    let result = child.capture_until(started + Duration::from_secs(2), 64 * 1024);
+    let elapsed = started.elapsed();
+    let cleaned = pressure.finish();
+    assert!(cleaned, "output filler cleanup must be confirmed");
+    let output = result.expect("blocked diagnostics held the runtime submission past two seconds");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    // Reaching a persisted claim and remaining blocked distinguishes this
+    // scenario from an early failure that never exercised output pressure.
+    let path = hide_agent_hooks::counters::state_directory(home.path())
+        .parent()
+        .unwrap()
+        .join("delivery-diagnostics.json");
+    assert!(
+        path.is_file(),
+        "fixture must reach the real diagnostic output"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "fixture output was not blocked"
+    );
+    assert!(elapsed < Duration::from_secs(2));
+}
+
+#[test]
+fn internal_hook_without_a_positive_owner_is_refused_before_effects() {
+    let home = tempfile::tempdir().unwrap();
+    warm_first_exec(Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks")));
+    let mut command = hook_command(home.path(), "hook-inner", "UserPromptSubmit");
+    command.stdin(Stdio::null());
+    let mut child = OwnedChild::spawn(&mut command).unwrap();
+    let output = child
+        .capture_until(Instant::now() + Duration::from_secs(2), 64 * 1024)
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
 }

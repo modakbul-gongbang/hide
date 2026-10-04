@@ -125,8 +125,6 @@ export function createAreaTree<I extends AreaItem>(column: "view" | "agent") {
     focus: (id: string) => void;
     startResize: (box: DividerBox, event: React.PointerEvent<HTMLElement>) => void;
     menu: (id: string) => MenuEntry<string>[];
-    trailing: React.ReactNode;
-    trailingArea: string | null;
   };
   const TreeContext = createContext<Tree | null>(null);
   function useTree(): Tree {
@@ -134,13 +132,7 @@ export function createAreaTree<I extends AreaItem>(column: "view" | "agent") {
     if (!tree) throw new Error("an area rendered outside its tree");
     return tree;
   }
-/** The area at the tree's top right: the second half of a side-by-side split, the first of a stacked one. */
-function topRightArea(node: AreaNode<I>): string {
-  if ("area" in node) return node.area.id;
-  return topRightArea(node.split.axis === "row" ? node.split.second : node.split.first);
-}
-
-function AreaTree({ layout, adapter, trailing = null, children }: { layout: AreaLayout<I>; adapter: AreaAdapter<I>; trailing?: React.ReactNode; children?: React.ReactNode }) {
+function AreaTree({ layout, adapter, children }: { layout: AreaLayout<I>; adapter: AreaAdapter<I>; children?: React.ReactNode }) {
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   useLayoutEffect(() => {
@@ -336,8 +328,6 @@ function AreaTree({ layout, adapter, trailing = null, children }: { layout: Area
     focus,
     startResize,
     menu: (displayId) => adapter.menu(displayId, geometry, sizes),
-    trailing,
-    trailingArea: trailing ? (single ? (shownArea?.id ?? null) : topRightArea(layout.root)) : null,
   };
 
   return (
@@ -590,7 +580,6 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
           }
         />
       ) : null}
-      {tree.trailingArea === area.id ? tree.trailing : null}
     </div>
   );
 }

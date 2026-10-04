@@ -558,6 +558,21 @@ fn tab_layouts_survive_a_tab_switch_with_no_empty_canvas() {
     );
 }
 
+pub(super) fn finish_running_pane_focus(runtime: &mut Runtime, result: Result<(), &str>) {
+    let control = runtime.pane_focus_in_flight.clone().expect("running focus");
+    let result = result
+        .map(|()| {
+            let mut layout = runtime
+                .layout_holding_pane(&control.target_id)
+                .expect("focus target layout")
+                .clone();
+            layout.focused_pane_id = control.target_id.clone();
+            layout
+        })
+        .map_err(|message| live::ControlFailure::Definite(message.to_owned()));
+    runtime.ingest_pane_focus_completion(control, result, 8);
+}
+
 /// PRD B24. A relationship Open is completed only by the outcome carrying
 /// its request id. An unrelated app-wide error and the already projected
 /// layout cannot answer it while Herdr still reports the prior focus.
@@ -610,6 +625,17 @@ fn pane_focus_request_waits_for_its_matching_authoritative_confirmation() {
         &tabs,
         "w-order:t2",
     )));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "pending"
+    );
+    finish_running_pane_focus(&mut runtime, Ok(()));
     assert_eq!(
         runtime
             .snapshot()
@@ -746,6 +772,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
     );
 
     runtime.ingest_session(Ok(payload("herdr-b", "herdr-b:p1")));
+    finish_running_pane_focus(&mut runtime, Ok(()));
     assert_eq!(
         runtime
             .snapshot()
@@ -761,9 +788,9 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
 
 /// PRD B24, engineering rule 11. Replaying one request id produces no
 /// second pane-control effect. A retry receives a new id only after the
-/// core-owned timeout has ended the first wait.
+/// bounded socket operation has ended the first wait.
 #[test]
-fn pane_focus_request_blocks_duplicates_times_out_and_accepts_a_retry() {
+fn pane_focus_request_blocks_duplicates_waits_for_transport_and_accepts_a_retry() {
     let checkout_path = "/private/tmp/hide-pane-focus-timeout";
     let (mut runtime, _) = live_tab_order_runtime(checkout_path);
     let tabs = ["w-order:t1", "w-order:t2"];
@@ -795,7 +822,21 @@ fn pane_focus_request_blocks_duplicates_times_out_and_accepts_a_retry() {
         1
     );
 
-    assert!(runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS));
+    assert!(!runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "pending"
+    );
+    finish_running_pane_focus(
+        &mut runtime,
+        Err("Herdr did not confirm pane focus: transport timed out"),
+    );
     let timed_out = runtime
         .snapshot()
         .status
@@ -840,13 +881,7 @@ fn pane_focus_refusal_and_target_retirement_end_the_matching_request() {
         "w-order:t2:p",
         "relationship-refused",
     )));
-    runtime.ingest_pane_control_result(
-        PaneControlAction::Focus {
-            pane_id: "w-order:t2:p".to_owned(),
-        },
-        Err("focus refused".to_owned()),
-        8,
-    );
+    finish_running_pane_focus(&mut runtime, Err("focus refused"));
     let refusal = runtime
         .snapshot()
         .status
@@ -1462,6 +1497,266 @@ fn view_authority_a_pane_click_moves_focus_and_a_stale_layout_does_not_undo_it()
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
 }
 
+#[test]
+fn pane_focus_burst_keeps_only_the_latest_successor_and_resumes_external_follow() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    let first = runtime.pane_focus_in_flight.clone().unwrap();
+    for _ in 0..100 {
+        runtime.dispatch_json(&operator_focus_event("w1:p1"));
+        runtime.dispatch_json(&operator_focus_event("w1:p3"));
+    }
+    assert_eq!(runtime.pane_focus_in_flight.as_ref(), Some(&first));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert_eq!(
+        runtime.pane_focus_in_flight.as_ref().unwrap().target_id,
+        "w1:p3"
+    );
+    assert!(runtime.pending_pane_focus.is_some());
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert!(runtime.pane_focus_in_flight.is_none());
+    assert!(runtime.pending_pane_focus.is_none());
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
+}
+
+#[test]
+fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_external_move() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+
+    let stale = finished_tab_payload(&panes, "w1:p1");
+    let identity = runtime.pane_focus_readback_target(&stale).unwrap();
+    runtime.ingest_session_with_focus_readback(Ok(stale.clone()), None, Some((identity, false)));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w1:p2")
+    );
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+    assert!(runtime.pending_pane_focus.is_none());
+
+    // The same proposed move becomes external authority when Herdr's fresh
+    // layout and active tab really agree, without any new operator request.
+    let identity = runtime.pane_focus_readback_target(&stale).unwrap();
+    runtime.ingest_session_with_focus_readback(Ok(stale), None, Some((identity, true)));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w1:p1")
+    );
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
+}
+
+#[test]
+fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
+    for reconnect in [false, true] {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        runtime.dispatch_json(&operator_focus_event("w1:p2"));
+        finish_running_pane_focus(&mut runtime, Ok(()));
+        let stale = finished_tab_payload(&panes, "w1:p1");
+        let identity = runtime.pane_focus_readback_target(&stale).unwrap();
+        let expected = if reconnect {
+            runtime.set_live(runtime.live.as_ref().unwrap().clone());
+            "w1:p2"
+        } else {
+            runtime.dispatch_json(&operator_focus_event("w1:p3"));
+            finish_running_pane_focus(&mut runtime, Ok(()));
+            "w1:p3"
+        };
+
+        runtime.ingest_session_with_focus_readback(Ok(stale), None, Some((identity, true)));
+        assert_eq!(
+            runtime.snapshot().focused.pane_id.as_deref(),
+            Some(expected)
+        );
+        assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+    }
+}
+
+#[test]
+fn pane_focus_completion_during_session_read_does_not_authorize_an_unchecked_stream_move() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    let stale = finished_tab_payload(&panes, "w1:p1");
+    assert!(runtime.pane_focus_readback_target(&stale).is_none());
+    finish_running_pane_focus(&mut runtime, Ok(()));
+
+    runtime.ingest_session_with_focus_readback(Ok(stale), None, None);
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+}
+
+#[test]
+fn superseded_same_pane_focus_failure_cannot_fail_a_newer_correlated_request() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&correlated_pane_focus_event("w1:p2", "first"));
+    let first = runtime.pane_focus_in_flight.clone().unwrap();
+    runtime.dispatch_json(&operator_focus_event("w1:p1"));
+    runtime.dispatch_json(&correlated_pane_focus_event("w1:p2", "latest"));
+    finish_running_pane_focus(&mut runtime, Err("older request refused"));
+    let request = runtime
+        .snapshot()
+        .status
+        .pane_focus_request
+        .as_ref()
+        .unwrap();
+    assert_eq!(request.request_id, "latest");
+    assert_eq!(request.phase, "pending");
+    assert!(runtime.snapshot().status.last_error.is_none());
+    assert!(
+        !runtime
+            .ingest_pane_focus_completion(first, Err("late duplicate".to_owned().into()), 9)
+            .0
+    );
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "succeeded"
+    );
+}
+
+#[test]
+fn unknown_pane_focus_ends_the_automatic_burst_without_claiming_success() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    let first = runtime.pane_focus_in_flight.clone().unwrap();
+    runtime.dispatch_json(&correlated_pane_focus_event("w1:p1", "latest"));
+    let (changed, successor) = runtime.ingest_pane_focus_completion(
+        first,
+        Err(live::ControlFailure::Ambiguous(
+            "pane.focus result is unknown: response timed out".into(),
+        )),
+        5_000,
+    );
+    assert!(changed);
+    assert!(
+        successor.is_none(),
+        "an unknown effect cannot release its queue"
+    );
+    assert!(runtime.pane_focus_in_flight.is_none());
+    assert!(runtime.pending_pane_focus.is_none());
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    let request = runtime
+        .snapshot()
+        .status
+        .pane_focus_request
+        .as_ref()
+        .unwrap();
+    assert_eq!(request.request_id, "latest");
+    assert_eq!(request.phase, "failed");
+    assert!(request.retryable);
+    assert!(request.message.as_ref().unwrap().contains("unknown"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.unknown"), 1);
+    assert_eq!(diagnostic_count(&runtime, "pane.focus"), 0);
+    assert_eq!(
+        runtime.snapshot().status.last_error.as_ref().unwrap().kind,
+        "pane.focus_unknown"
+    );
+
+    // Ending the wait cannot cancel the old mutation. A later external move
+    // is followed, and an explicit new selection begins a new burst.
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p2")));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+    runtime.dispatch_json(&correlated_pane_focus_event("w1:p1", "retry"));
+    assert_eq!(
+        runtime.pane_focus_in_flight.as_ref().unwrap().target_id,
+        "w1:p1"
+    );
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "succeeded"
+    );
+}
+
+#[test]
+fn old_connection_focus_completion_runs_the_latest_intent_on_the_new_connection() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&correlated_pane_focus_event("w1:p2", "reconnected"));
+    let old_generation = runtime
+        .pane_focus_in_flight
+        .as_ref()
+        .unwrap()
+        .live_generation;
+    runtime.set_live(runtime.live.as_ref().unwrap().clone());
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert_ne!(
+        runtime
+            .pane_focus_in_flight
+            .as_ref()
+            .unwrap()
+            .live_generation,
+        old_generation
+    );
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "pending"
+    );
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "succeeded"
+    );
+}
+
+#[test]
+fn latest_pane_focus_is_not_released_by_a_layout_while_an_older_request_is_running() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    runtime.dispatch_json(&operator_focus_event("w1:p1"));
+    // The newer response/event can arrive before the older socket request.
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p2")));
+
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+}
+
 /// AC1, AC8, R1. With nothing in flight, a Herdr layout naming another
 /// pane is a focus made outside Hide. Hide follows it and reports the
 /// panes and where the change came from.
@@ -1487,13 +1782,7 @@ fn view_authority_a_refused_pane_focus_keeps_the_pane_and_reports_it() {
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
     assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
 
-    runtime.ingest_pane_control_result(
-        PaneControlAction::Focus {
-            pane_id: "w1:p3".to_owned(),
-        },
-        Err("pane.focus rejected".to_owned()),
-        9,
-    );
+    finish_running_pane_focus(&mut runtime, Err("pane.focus rejected"));
 
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
     assert_eq!(diagnostic_count(&runtime, "pane.focus.refused"), 1);
@@ -1512,6 +1801,7 @@ fn view_authority_repeating_a_focus_sends_no_second_notification() {
 
     assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p3")));
+    finish_running_pane_focus(&mut runtime, Ok(()));
     assert!(runtime.pending_pane_focus.is_none());
     let notifications = diagnostic_count(&runtime, "pane.focus.requested");
 

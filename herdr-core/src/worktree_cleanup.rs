@@ -1360,6 +1360,7 @@ mod tests {
                 .then(|| worktree.file_name().unwrap().to_string_lossy().into_owned()),
             force_delete_branch: false,
             discard_changes: false,
+            expected_ignored_repositories: Vec::new(),
         }
     }
 
@@ -1407,7 +1408,9 @@ mod tests {
         request.force_delete_branch = true;
         std::fs::write(worktree.join("tracked"), "dirty").unwrap();
         std::fs::write(worktree.join("untracked"), "new").unwrap();
-        std::fs::create_dir_all(worktree.join("target/clone/.git")).unwrap();
+        std::fs::create_dir_all(worktree.join("target/clone")).unwrap();
+        git(&worktree.join("target/clone"), &["init", "-q"]).unwrap();
+        request.expected_ignored_repositories = vec!["target/clone".to_owned()];
 
         let removed = remove_confirmed(&request).unwrap();
         assert!(removed.contains("and local branch linked"), "{removed}");

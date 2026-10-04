@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawn, spawnSync, execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {PEN_VERSION} from '../pen-cli.mjs';
 
 const repository = fileURLToPath(new URL('../../', import.meta.url));
 // Pen is a third-party process boundary. Tests use a fake executable, never
@@ -17,7 +18,7 @@ const mode = fs.existsSync('.pen-mode') ? fs.readFileSync('.pen-mode', 'utf8') :
 if (args[0] === 'version') {
   // pen 0.3.8 boxes an update notice around its answer on every command.
   if (mode === 'banner') console.log('\\u001b[33m  ╭──────╮\\u001b[39m\\n\\u001b[33m  │\\u001b[39m  Update available 0.3.8 → 0.3.9  \\u001b[33m│\\u001b[39m\\n  ╰──────╯\\n');
-  console.log(mode === 'old' ? 'pen 0.3.7' : 'pen 0.3.8');
+  console.log(mode === 'old' ? 'pen 0.3.8' : 'pen ${PEN_VERSION}');
   process.exit();
 }
 const output = args[args.indexOf('--out') + 1];
@@ -129,7 +130,7 @@ test('unignored targets and unsupported CLI versions fail before creation', t =>
   assert.equal(fs.existsSync(path.join(f.root, 'agents')), false);
   fs.writeFileSync(path.join(f.root, '.gitignore'), '/agents/\n');
   mode(f, 'old');
-  assert.match(run(f).stderr, /Expected pen 0.3.8/);
+  assert.ok(run(f).stderr.includes(`Expected pen ${PEN_VERSION}`));
   assert.equal(fs.existsSync(path.join(f.root, 'agents')), false);
 });
 

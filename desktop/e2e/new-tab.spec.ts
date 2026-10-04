@@ -74,9 +74,9 @@ test("Command T and Command W from a native page act on its View area, and after
     const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
-    // At a CI runner's 1024-point width the side panel covers the agents
-    // while the sidebar shows, so the sidebar goes and the panel floats over
-    // the agents' right part, leaving each terminal's left edge to click.
+    // D-07/B25 place a 1024px body in the 848..1115px step: Agent Views
+    // stays beside File Views, while Tools gives way. Hiding the sidebar
+    // makes the actual body fit that contract on the CI runner's screen.
     await fitWindow(app, { width: 1024, height: 700 });
     await enterWorkspace(page);
     await menuClick(app, "toggle_left_sidebar");
@@ -90,7 +90,15 @@ test("Command T and Command W from a native page act on its View area, and after
     await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
-    await expect(page.locator("[data-workspace-body]")).toHaveAttribute("data-workspace-body", "wide");
+    const body = page.locator("[data-column-row]");
+    const bounds = await body.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.width).toBeGreaterThanOrEqual(848);
+    expect(bounds!.width).toBeLessThan(1116);
+    await expect(page.locator("[data-workspace-body]")).toHaveAttribute("data-workspace-body", "mid");
+    await expect(page.locator('[data-column="agents"]')).toBeVisible();
+    await expect(page.locator('[data-column="views"]')).toBeVisible();
+    await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
 
     // Command T: the page's area gets the View strip's New tab.
     await terminal(herdr.panes[0]);
@@ -113,14 +121,19 @@ test("Command T and Command W from a native page act on its View area, and after
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(0);
     await expect(panes).toHaveCount(2);
 
-    // Any other command from the page (Command E here) hands the keyboard to the terminal for
-    // good once it has run, so the next Command W closes that pane, not the page.
+    // Command E from the page calls Tools into File Views' place at this
+    // width (B26) and hands the keyboard to the terminal. A second Command E
+    // turns Tools off again; Command W must still close the pane, not the page.
+    await showExplorer(page);
     await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(1);
     await terminal(herdr.panes[0]);
     await enterPage(app, page);
     await handBack(page);
+    await menuClick(app, "toggle_explorer");
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await expect(page.locator(`[data-terminal-host="${herdr.panes[0]}"] textarea`)).toBeFocused();
     await menuClick(app, "toggle_explorer");
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await menuClick(app, "close_tab");

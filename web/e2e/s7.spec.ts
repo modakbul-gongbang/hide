@@ -6,8 +6,9 @@
 // splits, dividers, menus and the area commands work from the keyboard (B9, B10,
 // B18, B20); the tab menu and the caps say what cannot be done (B11, B19); a
 // narrow window changes only what is drawn (B12, B13); a restart brings the
-// layout back and a broken or older file is handled (B14-B17); and the side
-// panel's toggle and tools keep working beside several areas (B22, issue 170).
+// layout back and a broken or older file is handled (B14-B17); and the
+// column toggles and tools keep working beside several areas (B22; PRD
+// three-column-panel).
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -16,7 +17,7 @@ import path from "node:path";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { bindChordlessCommand, choosePanel, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
+import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
 import { chord } from "./chords";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
@@ -75,10 +76,38 @@ async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
 }
 
+/** Drags File Views' divider to the right edge, where its minimum width stops it. */
+async function narrowFileViews(page: Page): Promise<void> {
+  const divider = page.locator('[data-column-divider="views"]');
+  const box = await boxOf(divider);
+  const body = await boxOf(page.locator('[data-column-row="true"]'));
+  await page.mouse.move(box.x + box.width / 2, box.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(body.x + body.width - 10, box.y + 200, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.locator("[data-column-guide]")).toHaveCount(0);
+}
+
+/**
+ * Gives File Views all the width Agent Views can spare by dragging its
+ * divider to the left edge, where the PRD's minimum stops it, so several
+ * View areas fit side by side (PRD three-column-panel D-12).
+ */
+async function widenFileViews(page: Page): Promise<void> {
+  const divider = page.locator('[data-column-divider="views"]');
+  const box = await boxOf(divider);
+  const body = await boxOf(page.locator('[data-column-row="true"]'));
+  await page.mouse.move(box.x + box.width / 2, box.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(body.x + 10, box.y + 200, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.locator("[data-column-guide]")).toHaveCount(0);
+}
+
 /**
  * The isolated stack with `files` written into the fixture checkout, and the
  * page on that Workspace (a first run goes through Main and the Overview)
- * with the Explorer shown, which opens its side panel.
+ * with the Explorer shown in the Tools column.
  */
 async function startStack(
   page: Page,
@@ -182,8 +211,7 @@ test("a click previews in the last used area, a pin keeps a view, and a shown fi
     // A single click previews in the one area, italic, and the next single
     // click replaces that preview in place (B1).
     await row("a.txt").click();
-    await expect(workspace).toHaveAttribute("data-panel", "open");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "false");
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
     await expect(tab(page, "a.txt").getByText("a.txt")).toHaveCSS("font-style", "italic");
     await expect(tab(page, "a.txt")).toHaveAttribute("aria-label", /· Preview$/);
@@ -423,13 +451,14 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
 const BESIDE_TOO_NARROW = "This view area is too narrow to open a second view beside it.";
 
 test("Open to the side from the only area is refused with its reason until that area has room to split", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-beside-room", { "a.txt": "a\n" }, { prepare: gitCheckout });
   try {
-    // In the open panel, where the one area is too narrow to halve.
+    // In File Views at its narrowest, where the one area is too narrow to halve.
     const row = explorerRow(page, stack, "a.txt");
     await row.click();
     await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
+    await narrowFileViews(page);
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeLessThan(450);
 
     // The one area cannot be halved, so Open to the side stays listed,
@@ -471,8 +500,8 @@ test("Open to the side from the only area is refused with its reason until that 
     expect(stack.events.filter((event) => event.kind === "file_open" && event.payload.beside === true)).toHaveLength(0);
     expect(stack.events.filter((event) => event.kind === "changes_select" && event.payload.beside === true)).toHaveLength(0);
 
-    // With room (the panel expanded), the same item opens the second view to the right.
-    await page.locator('[data-panel-expand="off"]').click();
+    // With room (File Views widened), the same item opens the second view to the right.
+    await widenFileViews(page);
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeGreaterThan(450);
     await showExplorer(page);
     await row.click({ button: "right" });
@@ -648,8 +677,8 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
     for (const name of ["a.txt", "c.txt"]) await explorerRow(page, stack, name).dblclick();
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
     await choose(page, "beta");
-    // A Workspace chosen for the first time starts with its panel closed.
-    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "closed");
+    // A Workspace chosen for the first time starts with File Views off.
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-file-views", "off");
     await showExplorer(page);
     for (const name of ["b1.txt", "b2.txt"]) await page.locator(`[data-explorer-row="${betaRoot}/${name}"]`).dblclick();
     await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
@@ -725,7 +754,7 @@ async function menuByKeyboard(page: Page, item: string): Promise<void> {
 }
 
 test("splits, moves, resizes, focus and closes run from the tab menu, area commands and chords by keyboard, each landing once", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.setViewportSize({ width: 2560, height: 1080 });
   // The split frame is delivered twice at the transport, as a resend would
   // be; the core must split once (B18).
   let pageSplits = 0;
@@ -745,9 +774,9 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
   const stack = await startStack(page, "s7-keys", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n", "d.txt": "d\n" }, { beforeOpen: duplicateFirstSplit });
   try {
     for (const name of ["a.txt", "b.txt", "c.txt", "d.txt"]) await explorerRow(page, stack, name).dblclick();
-    await page.locator('[data-panel-expand="off"]').click();
+    await widenFileViews(page);
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
     const count = (key: string) => stack.sent.get(key) ?? 0;
     // The area commands have no default chord (PRD cmdk-navigation D-05): the
@@ -813,7 +842,10 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     expect(count("view_layout.resize")).toBe(1);
 
     // The focused divider moves one step per arrow key, one event each (B9, B20).
+    // The walk starts at File Views' own divider, the stop before its areas;
+    // an agent terminal ahead of it keeps Tab for its program.
     const dragged = Number(await divider.getAttribute("aria-valuenow"));
+    await page.locator('[data-column-divider="views"]').focus();
     await tabTo(page, divider, "Tab");
     await page.keyboard.press("ArrowLeft");
     await expect.poll(async () => Number(await divider.getAttribute("aria-valuenow"))).toBe(dragged - 5);
@@ -838,20 +870,21 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     await expect(divider).toHaveCount(0);
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
-    // Closing the last view with no tool shown closes the panel (issue 170).
+    // Closing the last view turns File Views off (PRD three-column-panel B17).
     await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
-    const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
-    await tabTo(page, tab(page, "c.txt"), "Shift+Tab");
+    const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "views" in event.payload).length;
+    await page.locator('[data-column-divider="views"]').focus();
+    await tabTo(page, tab(page, "c.txt"), "Tab");
     await menuByKeyboard(page, "close_view");
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
-    await tabTo(page, tab(page, "a.txt"), "Shift+Tab");
+    await page.locator('[data-column-divider="views"]').focus();
+    await tabTo(page, tab(page, "a.txt"), "Tab");
     await menuByKeyboard(page, "close_view");
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
-    await expect(page.locator("[data-side-panel]")).toHaveCount(0);
-    await expect(workspace).toHaveAttribute("data-panel", "closed");
-    // Core normalizes the panel as part of closing the view, without another dispatch.
-    expect(stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length).toBe(panelsBefore);
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
+    // The core turns File Views off as part of closing the view, without another dispatch.
+    expect(stack.events.filter((event) => event.kind === "workspace_view" && "views" in event.payload).length).toBe(panelsBefore);
     await screenshot(page, "s7-keys-closed");
     await page.keyboard.press(chord("toggle_explorer"));
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
@@ -894,13 +927,13 @@ async function dragToEdge(page: Page, from: Locator, target: Locator, edge: "rig
 
 // Quarantined: runs in CI without blocking `verify` until #286 is fixed.
 test("the tab menu offers only what a view can do, and each cap refuses with its reason and leaves the views alone", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/286" } }, async ({ page }) => {
-  await page.setViewportSize({ width: 1920 + RAIL, height: 1080 });
+  await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
   const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps", files);
   try {
     await explorerRow(page, stack, "f01.txt").click();
     await expect.poll(() => shape(page)).toBe("@(>f01.txt*)");
-    await page.locator('[data-panel-expand="off"]').click();
+    await widenFileViews(page);
     const layoutEvents = () => viewEvents(stack).length;
 
     // A preview alone in its area: New tab, Keep open, four splits that cannot land
@@ -938,7 +971,7 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
     const cramped = await tabMenuRows(page, area(page, 0), "f02.txt");
     expect(cramped.find((row) => row.id === "split_right")).toMatchObject({ disabled: true, reason: "This view area is too narrow to split." });
     expect(cramped.find((row) => row.id === "split_down")).toMatchObject({ disabled: false });
-    await page.setViewportSize({ width: 1920 + RAIL, height: 1080 });
+    await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeGreaterThan(600);
 
     // Down to the depth limit: an area three splits deep cannot split again (B9, B19).
@@ -984,11 +1017,9 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
         {
           device_id: "local",
           path: stack.root,
-          panel: "expanded",
-          pinned: false,
+          views: true,
           tool: "explorer",
           tools: true,
-          views_over_share: 0.6,
           last_used_unix_ms: Date.now(),
           layout: {
             root: {
@@ -1034,7 +1065,7 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
   }
 });
 
-type StoredWorkspace = { device_id: string; path: string; panel: string; pinned: boolean; tool: string; tools: boolean; views_over_share: number; layout: unknown };
+type StoredWorkspace = { device_id: string; path: string; views: boolean; tools: boolean; tool: string; views_width?: number; tools_width?: number; layout: unknown };
 
 /** This Workspace's entry in `workspace-views.json`, without the clock stamps a focus writes. */
 function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
@@ -1050,43 +1081,39 @@ function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
   return stored.workspaces.find((entry) => entry.device_id === "local" && entry.path === root) ?? null;
 }
 
-test("a narrow window gives the side panel the whole body, floats the tools, shows one area with a way to the others, and stores none of it", async ({ page }) => {
+test("a narrow body shows one column, File Views with one area and a way to the others, and stores none of it", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-narrow", { "a.txt": "a\n", "b.txt": "b\n" });
   try {
-    // Two areas in a panel pinned beside the agents, the state with the most to narrow.
+    // Two areas in File Views beside the agents and Tools.
     await explorerRow(page, stack, "a.txt").dblclick();
     await explorerRow(page, stack, "b.txt").dblclick();
+    await widenFileViews(page);
     await tabMenu(page, page, "b.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(>a.txt) | @(>b.txt)");
     const divider = page.locator("[data-view-divider]");
     await divider.focus();
     await page.keyboard.press("ArrowLeft");
     await expect(divider).toHaveAttribute("aria-valuenow", "45");
-    await page.locator('[data-panel-pin="off"]').click();
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-panel", "open");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)?.pinned).toBe(true);
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-tools", "shown");
     await expect.poll(() => (storedWorkspace(stack.daemon, stack.root)?.layout as { root?: { split?: { ratio?: number } } } | undefined)?.root?.split?.ratio).toBeCloseTo(0.45);
     const stored = storedWorkspace(stack.daemon, stack.root);
     const sentBefore = stack.events.filter((event) => event.kind === "workspace_view").length;
-    const body = page.locator("[data-workspace-body]");
+    const body = page.locator('[data-column-row="true"]');
     const sidebar = (await boxOf(body)).x;
-    const toggle = page.locator("[data-tools-toggle]");
 
-    // Too narrow for the agents beside the panel: the panel takes the whole
-    // body without Expand or Pin and the pinned one floats; the tools fold
-    // into an overlay, closed until asked for; the View areas that cannot
-    // all fit show the active one with a switcher to the others (B12, B13,
-    // issue 170).
-    await page.setViewportSize({ width: Math.round(sidebar + 450), height: 1080 });
-    await expect(body).toHaveAttribute("data-workspace-body", "narrow");
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "false");
-    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await expect(toggle).toHaveAttribute("aria-pressed", "false");
-    await expect(page.locator("[data-panel-pin], [data-panel-expand]")).toHaveCount(0);
+    // Below the narrow step one column shows, Agent Views first; File Views
+    // called by its icon takes the body, and its View areas that cannot all
+    // fit show the active one with a switcher to the others (PRD
+    // three-column-panel B25, B27; S7 B13).
+    await page.setViewportSize({ width: Math.round(sidebar + 440), height: 1080 });
+    await expect(workspace).toHaveAttribute("data-workspace-body", "narrow");
+    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
+    await expect(workspace).toHaveAttribute("data-tools", "hidden");
+    await page.locator('[data-column-toggle="views"]').click();
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(page.locator('[data-view-areas="single"]')).toBeVisible();
     await expect(page.locator("[data-view-area-id]")).toHaveCount(1);
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
@@ -1103,61 +1130,9 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await page.locator('[role="menu"] [data-menu-item]').nth(1).click();
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
 
-    // Narrower still, the tools stay closed until asked for (B12).
-    await page.setViewportSize({ width: Math.round(sidebar + 440), height: 1080 });
-    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await expect(toggle).toHaveAttribute("aria-pressed", "false");
-
-    // The overlay opens on request, takes the keyboard, and Escape closes it
-    // with the keyboard back on its toggle (B12).
-    await toggle.click();
-    const overlay = page.locator('[data-tools-overlay="true"]');
-    await expect(overlay).toBeVisible();
-    await expect(overlay.locator('[data-tool="explorer"]')).toBeVisible();
-    await expect(overlay).toBeFocused();
-    await screenshot(page, "s7-narrow-tools-overlay");
-    await page.keyboard.press("Escape");
-    await expect(overlay).toHaveCount(0);
-    await expect(toggle).toBeFocused();
-    // A click outside it (here the document header's own padding, which
-    // takes no focus) closes it too (B12).
-    await toggle.click();
-    await expect(overlay).toBeVisible();
-    await page.locator("[data-document-header]").click({ position: { x: 3, y: 3 } });
-    await expect(overlay).toHaveCount(0);
-    // A row's menu is the overlay's own, so choosing from it leaves the
-    // overlay open for what the item started.
-    await toggle.click();
-    await explorerRow(page, stack, "a.txt").click({ button: "right" });
-    await page.locator('[data-explorer-menu] [data-menu-item="rename"]').click();
-    await expect(overlay.locator('[data-explorer-draft="rename"]')).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(overlay.locator("[data-explorer-draft]")).toHaveCount(0);
-    await expect(overlay.locator("[data-explorer-tree]")).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(overlay).toHaveCount(0);
-
-    // Widening brings back what the core stores: the pinned panel beside the
-    // agents, both areas at their ratio and the tool column; nothing narrow
-    // was sent or stored (B13).
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    await expect(body).toHaveAttribute("data-workspace-body", "wide");
-    await expect(workspace).toHaveAttribute("data-panel", "open");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
-    await expect(page.locator('[data-view-areas="tree"]')).toBeVisible();
-    await expect.poll(() => shape(page)).toBe("(>a.txt) | @(>b.txt)");
-    await expect(divider).toHaveAttribute("aria-valuenow", "45");
-    await expect(page.locator('[data-workspace-tools="explorer"]')).toBeVisible();
-    await expect(page.locator("[data-tools-overlay]")).toHaveCount(0);
-    expect(stack.events.filter((event) => event.kind === "workspace_view").length).toBe(sentBefore);
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toEqual(stored);
-
-    // The panel toolbar retains the last View keyboard owner, so closing
-    // from its toggle closes that display and leaves the covered agents alone.
-    await page.setViewportSize({ width: Math.round(sidebar + 420), height: 1080 });
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    // The close chord with the keyboard in the View area closes that view and
+    // leaves the agents out of sight alone.
     await editor(page, 0).click();
-    await page.locator("[data-panel-toggle]").focus();
     const herdrBefore = herdrIds(stack.herdr);
     const closes = () => viewEvents(stack).filter((event) => event.payload.action === "close").length;
     const closesBefore = closes();
@@ -1167,142 +1142,27 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     expect(stack.events.filter((event) => event.kind === "close_tab" || event.kind === "close_pane")).toHaveLength(0);
     expect(herdrIds(stack.herdr)).toEqual(herdrBefore);
 
-    // Drawn over the whole body, the pinned panel covers the agents, so an
-    // agent chosen from the sidebar uncovers them: the panel closes and
-    // stays pinned (issue 170).
-    await expect.poll(() => stack.events.filter((event) => event.kind === "panel_covers").at(-1)?.payload).toMatchObject({ workspace: { device_id: "local", path: stack.root }, covers: true });
+    // An agent chosen from the sidebar gives the body back to Agent Views,
+    // and nothing narrow was sent or stored (B27, B28).
     await page.locator('[data-sidebar-mode="agents"]').click();
     const agent = page.locator("[data-agent-list] [data-agent-open]").first();
     const pane = await agent.getAttribute("data-agent-open");
     await agent.click();
-    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    await expect(workspace).toHaveAttribute("data-file-views", "hidden");
     await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
-    // ⌘⇧B restores the panel with its narrow tool overlay still hidden.
-    // Asking for Explorer explicitly opens the overlay (issue 170).
-    await page.keyboard.press(chord("toggle_right_panel"));
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
-    await expect(page.locator("[data-tools-overlay]")).toHaveCount(0);
-    await expect(toggle).toHaveAttribute("aria-pressed", "false");
-    // Select in File Tree, from the tab's menu, requests the tool the narrow panel kept hidden.
-    await tabMenu(page, page, "a.txt", "select_in_tree");
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
-    await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
-    expectFrontWorkspaceOnEveryViewEvent(stack);
-  } finally {
-    stopStack(stack);
-  }
-});
+    const sentNarrow = stack.events.filter((event) => event.kind === "workspace_view").length;
+    expect(sentNarrow).toBe(sentBefore);
 
-// Issue 170: the report that a narrow window draws the panel over the agents
-// names its Workspace, so an agent choice uncovers that Workspace alone.
-test("a pinned panel over a narrow window uncovers the agent chosen from the sidebar and leaves another Workspace's panel as it was", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 1080 });
-  const stack = await startStack(page, "s7-covers", { "a.txt": "a\n" }, {
-    prepare: (checkout, herdr) => {
-      const beta = path.join(path.dirname(checkout), "beta");
-      fs.mkdirSync(beta, { recursive: true });
-      fs.writeFileSync(path.join(beta, "b1.txt"), "b1\n");
-      herdr.run(["workspace", "create", "--cwd", beta, "--label", "beta", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
-      const gamma = path.join(path.dirname(checkout), "gamma");
-      fs.mkdirSync(gamma, { recursive: true });
-      herdr.run(["workspace", "create", "--cwd", gamma, "--label", "gamma", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
-    },
-  });
-  try {
-    const betaRoot = `${path.posix.dirname(stack.root)}/beta`;
-    const workspace = page.locator("[data-workspace-screen]");
-    const choose = async (project: string) => {
-      await page.locator('[data-sidebar-mode="projects"]').click();
-      await page.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first().click();
-    };
-    // Beta: a file in a pinned panel beside its agents.
-    await choose("beta");
-    await expect(workspace).toHaveAttribute("data-panel", "closed");
-    await showExplorer(page);
-    await page.locator(`[data-explorer-row="${betaRoot}/b1.txt"]`).dblclick();
-    await page.locator('[data-panel-pin="off"]').click();
-    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
-    await expect.poll(() => storedWorkspace(stack.daemon, betaRoot)).toMatchObject({ panel: "open", pinned: true });
-    const beta = storedWorkspace(stack.daemon, betaRoot);
-
-    // The fixture: pinned too, then a window too narrow for the agents beside it.
-    await choose("fixture");
-    await explorerRow(page, stack, "a.txt").dblclick();
-    await page.locator('[data-panel-pin="off"]').click();
-    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
-    const sidebar = (await boxOf(page.locator("[data-workspace-body]"))).x;
-    const reports = () => stack.events.filter((event) => event.kind === "panel_covers");
-    const before = reports().length;
-    await page.setViewportSize({ width: Math.round(sidebar + 700), height: 1080 });
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "false");
-    // One report for the crossing, naming this Workspace, and none per resize.
-    await expect.poll(() => reports().length).toBe(before + 1);
-    expect(reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: true });
-    for (const width of [690, 680, 670]) await page.setViewportSize({ width: Math.round(sidebar + width), height: 1080 });
-    await page.waitForTimeout(300);
-    expect(reports().length).toBe(before + 1);
-    await screenshot(page, "s7-covers-narrow-pinned");
-
-    // Away and back through a Workspace whose panel fits (gamma, no view), so
-    // nothing is reported on the way: the core forgot the fact when the front
-    // moved, and the page forgot its report with the Workspace it drew, so it
-    // tells the core again for the fixture.
-    await choose("gamma");
-    await expect(workspace).toHaveAttribute("data-panel", "closed");
-    await page.waitForTimeout(300);
-    expect(reports().length).toBe(before + 1);
-    await choose("fixture");
-    await expect.poll(() => reports().length).toBe(before + 2);
-    expect(reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: true });
-    const fixtureReports = reports().length;
-
-    // An agent chosen from the sidebar is uncovered: the panel closes, still pinned.
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    const agent = page.locator("[data-agent-open]").first();
-    const pane = await agent.getAttribute("data-agent-open");
-    await agent.click();
-    await expect(workspace).toHaveAttribute("data-panel", "closed");
-    await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
-    // The window did not change, so neither did the fact: closing sends nothing.
-    await page.waitForTimeout(300);
-    expect(reports().length).toBe(fixtureReports);
-
-    // Beta's panel is as it was, stored and drawn once the window is wide again.
-    expect(storedWorkspace(stack.daemon, betaRoot)).toEqual(beta);
+    // Widening brings back what the core stores: both columns, the areas at
+    // their ratio (B28).
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await expect.poll(() => reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: false });
-    await choose("beta");
-    await expect(workspace).toHaveAttribute("data-panel", "open");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
-    expect(storedWorkspace(stack.daemon, betaRoot)).toEqual(beta);
-  } finally {
-    stopStack(stack);
-  }
-});
-
-// PRD B12 and docs/UI_BEHAVIOR.md "Narrow windows": a click outside the narrow tools
-// overlay closes it and returns the keyboard to the toggle that opened it,
-// as Escape does, when the click lands on something that takes no focus.
-test("an outside click that closes the narrow tools overlay gives the keyboard back to its toggle", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 1080 });
-  const stack = await startStack(page, "s7-overlay-focus", { "a.txt": "a\n" });
-  try {
-    // The tools fold into an overlay only beside a View area.
-    await explorerRow(page, stack, "a.txt").dblclick();
-    await expect.poll(() => shape(page)).toBe("@(>a.txt)");
-    const sidebar = (await boxOf(page.locator("[data-workspace-body]"))).x;
-    await page.setViewportSize({ width: Math.round(sidebar + 440), height: 1080 });
-    await expect(page.locator("[data-workspace-body]")).toHaveAttribute("data-workspace-body", "narrow");
-    const toggle = page.locator("[data-tools-toggle]");
-    await toggle.click();
-    const overlay = page.locator('[data-tools-overlay="true"]');
-    await expect(overlay).toBeVisible();
-    await page.locator("[data-document-header]").click({ position: { x: 3, y: 3 } });
-    await expect(overlay).toHaveCount(0);
-    await expect(toggle).toBeFocused();
+    await expect(workspace).toHaveAttribute("data-workspace-body", "wide");
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
+    await expect(workspace).toHaveAttribute("data-tools", "shown");
+    await expect(page.locator('[data-workspace-tools="explorer"]')).toBeVisible();
+    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)?.views).toBe(true);
+    expect(stored?.tools).toBe(true);
+    expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);
   }
@@ -1344,13 +1204,12 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
     await expect(dividers.nth(0)).toHaveAttribute("aria-valuenow", "45");
     await expect(dividers.nth(1)).toHaveAttribute("aria-valuenow", "55");
     await tab(area(page, 2), "e.txt").click();
-    await page.locator('[data-panel-expand="off"]').click();
     await showTool(page, "changes");
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const before = await shape(page);
     expect(before).toBe("(a.txt >c.txt*) | (>b.txt) | @(d.txt >e.txt)");
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "expanded", pinned: false, tool: "changes", tools: true });
+    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ views: true, tool: "changes", tools: true });
     await expect
       .poll(() => JSON.stringify(storedWorkspace(stack.daemon, stack.root)?.layout))
       .toMatch(/"ratio":0\.45.*"ratio":0\.55/);
@@ -1362,9 +1221,9 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
     await reopen(page, stack.daemon);
 
     // The same Workspace, not Main: the tree, ratios, order, preview, each
-    // area's view, the area in use, the panel and the tools (B14).
+    // area's view, the area in use, the columns and the tools (B14).
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-panel", "expanded", { timeout: 20_000 });
+    await expect(workspace).toHaveAttribute("data-file-views", "shown", { timeout: 20_000 });
     await expect(page.locator("[data-main-screen]")).toHaveCount(0);
     await expect.poll(() => shape(page), { timeout: 15_000 }).toBe(before);
     await expect(dividers.nth(0)).toHaveAttribute("aria-valuenow", "45");
@@ -1426,7 +1285,7 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
       await expect.poll(() => stack.diagnostics.has("workspace_views.unreadable")).toBe(true);
       if (index === 0) await screenshot(page, "s7-recover-main");
       await enterWorkspace(page, "fixture");
-      await expect(workspace).toHaveAttribute("data-panel", "closed");
+      await expect(workspace).toHaveAttribute("data-file-views", "off");
       await showExplorer(page);
       await explorerRow(page, stack, "b.txt").click();
       await expect.poll(() => shape(page)).toBe("@(>b.txt*)");
@@ -1435,8 +1294,8 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
 
     // An S6 (schema 1) file: its tabs become one area in their order, with
     // its active tab, preview and tools, and its Views only layout restarts
-    // as an expanded side panel; the next save writes schema 2 (B17,
-    // contract 1, issue 170).
+    // with File Views on; the next save writes schema 2 (B17, contract 1,
+    // PRD three-column-panel D-09).
     const v1 = {
       schema_version: 1,
       workspaces: [
@@ -1456,12 +1315,13 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
     stack.diagnostics.clear();
     stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), JSON.stringify(v1)));
     await reopen(page, stack.daemon);
-    await expect(workspace).toHaveAttribute("data-panel", "expanded", { timeout: 20_000 });
+    await expect(workspace).toHaveAttribute("data-file-views", "shown", { timeout: 20_000 });
     await expect.poll(() => shape(page), { timeout: 15_000 }).toBe("@(a.txt >b.txt c.txt*)");
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(editor(page, 0)).toContainText("b text");
     await expect.poll(() => stack.diagnostics.has("workspace_views.migrated")).toBe(true);
+    await expect.poll(() => stack.diagnostics.has("workspace_views.columns_migrated")).toBe(true);
     await screenshot(page, "s7-recover-migrated");
     await tab(page, "a.txt").click();
     await expect.poll(() => {
@@ -1484,38 +1344,33 @@ function gitCheckout(checkout: string): void {
   fs.appendFileSync(path.join(checkout, "a.txt"), "changed\n");
 }
 
-test("the side panel's toggle, Expand, tools, kind marks and an open from a closed panel keep working beside several View areas", async ({ page }) => {
+test("the column toggles, tools, kind marks and an open while File Views is off keep working beside several View areas", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-s6", { "a.txt": "a text\n", "b.txt": "b text\n", "c.txt": "c text\n" }, { prepare: gitCheckout });
   try {
     const workspace = page.locator("[data-workspace-screen]");
-    const panels = () => stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
+    const viewsSent = () => stack.events.filter((event) => event.kind === "workspace_view" && "views" in event.payload).length;
     const tools = () => stack.events.filter((event) => event.kind === "workspace_view" && ("tool" in event.payload || "tools" in event.payload)).length;
 
-    // One panel toggle, on the open panel's first row, no tool toggle in the
-    // toolbar, and no layout switch (issue 170).
-    await expect(page.locator("[data-panel-actions] [data-panel-toggle]")).toHaveCount(1);
-    await expect(page.locator("[data-workspace-toolbar] :is([data-panel-toggle], [data-tools-toggle], [data-tool-tab])")).toHaveCount(0);
+    // The toolbar carries the column toggles and no tool tab and no layout
+    // switch; the tool tabs are the Tools column's first row (PRD
+    // three-column-panel B6, D-04).
+    await expect(page.locator("[data-workspace-toolbar] [data-column-toggle]")).toHaveCount(2);
+    await expect(page.locator("[data-workspace-toolbar] [data-tool-tab]")).toHaveCount(0);
     await expect(page.locator("[data-layout-choice]")).toHaveCount(0);
+    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(2);
 
-    // Expanding never splits. With nothing open the panel stays the tool
-    // column's width, and the first file brings one View area over the
-    // whole body (B22, issue 170).
-    await choosePanel(page, "expanded");
-    await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "tools");
-    await expect(workspace).toHaveAttribute("data-panel", "open");
+    // The first file turns File Views on with one View area (B2).
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
     await explorerRow(page, stack, "a.txt").dblclick();
     await expect(page.locator("[data-view-area]")).toBeVisible();
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
-    await expect(page.locator("[data-view-divider]")).toHaveCount(0);
-    await page.locator('[data-panel-expand="on"]').click();
-    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     await expect(page.locator("[data-view-divider]")).toHaveCount(0);
     expect(viewEvents(stack)).toHaveLength(0);
 
     // Kind marks, never colour alone: a file's type mark, a diff's comparison
-    // mark, and each agent tab's provider mark (B22, S6 D-15).
+    // mark, and each agent tab's provider mark (S6 D-15).
     await showTool(page, "changes");
     await page.locator('[data-history-group="working"][data-history-path="a.txt"]').click();
     await expect.poll(() => shape(page)).toBe("@(a.txt >a.txt*)");
@@ -1531,20 +1386,22 @@ test("the side panel's toggle, Expand, tools, kind marks and an open from a clos
     await expect.poll(() => shape(page)).toBe("@(a.txt >a.txt)");
     await showExplorer(page);
     await explorerRow(page, stack, "b.txt").dblclick();
+    await widenFileViews(page);
     await tabMenu(page, page, "b.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(>b.txt)");
 
-    // The column's tabs swap its one tool and its toggle hides and shows it
-    // beside several areas, one event each, and the areas stay as they are
-    // (B22, S6 B10, issue 170).
+    // The column's tabs swap its one tool and the toolbar's Tools icon turns
+    // it off and on beside several areas, one event each, and the areas stay
+    // as they are (B4, S6 B10).
     const toolsBefore = tools();
     const viewsBefore = viewEvents(stack).length;
     await page.locator('[data-tool-tab="changes"]').click();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await page.locator('[data-tools-toggle="on"]').click();
+    await page.locator('[data-column-toggle="tools"]').click();
     await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await page.locator('[data-tools-toggle="off"]').click();
+    await expect(workspace).toHaveAttribute("data-tools", "off");
+    await page.locator('[data-column-toggle="tools"]').click();
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await page.locator('[data-tool-tab="explorer"]').click();
     await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
@@ -1553,14 +1410,14 @@ test("the side panel's toggle, Expand, tools, kind marks and an open from a clos
     expect(viewEvents(stack).length).toBe(viewsBefore);
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(>b.txt)");
 
-    // A file opened while the panel is closed opens it over the agents, the
-    // areas whole, and lands in the area used last, which is the one in use;
-    // the open asks for no panel state of its own (issue 170, B22).
-    await page.locator('[data-panel-toggle="on"]').click();
-    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    // File Views turned off keeps its views and counts them on its icon; a
+    // file opened then turns it back on through the open itself, the areas
+    // whole, and lands in the area used last (B3, B12).
+    await page.locator('[data-column-toggle="views"]').click();
+    await expect(workspace).toHaveAttribute("data-file-views", "off");
     await expect(page.locator("[data-view-area-id]")).toHaveCount(0);
-    await expect(page.locator('[data-panel-badge]')).toHaveText("3");
-    const panelsBefore = panels();
+    await expect(page.locator("[data-column-badge]")).toHaveText("3");
+    const sentBefore = viewsSent();
     await page.keyboard.press(chord("open_file"));
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
@@ -1568,14 +1425,13 @@ test("the side panel's toggle, Expand, tools, kind marks and an open from a clos
     const row = page.locator(`[data-palette-row="${stack.root}/c.txt"]`);
     await expect(row).toBeVisible({ timeout: 20_000 });
     await row.click();
-    await expect(workspace).toHaveAttribute("data-panel", "open");
-    await expect(workspace).toHaveAttribute("data-panel-docked", "false");
+    await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(b.txt >c.txt*)");
     await expect(area(page, 1)).toHaveAttribute("data-active-area", "true");
-    expect(panels()).toBe(panelsBefore);
-    // The diff shown over the agents is read like any diff on screen.
-    await expect(page.locator("[data-side-panel] .cm-content", { hasText: "+changed" })).toBeVisible({ timeout: 10_000 });
-    await screenshot(page, "s7-s6-open-from-closed");
+    expect(viewsSent()).toBe(sentBefore);
+    // The diff in File Views is read like any diff on screen.
+    await expect(page.locator('[data-column="views"] .cm-content', { hasText: "+changed" })).toBeVisible({ timeout: 10_000 });
+    await screenshot(page, "s7-s6-open-from-off");
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);
