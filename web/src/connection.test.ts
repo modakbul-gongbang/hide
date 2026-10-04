@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createInterfaceI18n } from "./i18n/instance";
 import {
   BACKOFF_MAX_MS,
   BACKOFF_START_MS,
@@ -19,10 +20,16 @@ describe("connection machine", () => {
     expect(connectionAfterHealthFails(3)).toBe("gone");
   });
 
-  it("hides the badge while live", () => {
-    expect(badgeText("live")).toBe("");
-    expect(badgeText("reconnecting")).toBe("reconnecting");
-    expect(badgeText("gone")).toContain("hide");
-    expect(badgeText("gone", true)).toContain("연결 거부");
+  it("hides the badge while live", async () => {
+    const { t } = await createInterfaceI18n("en");
+    expect(badgeText("live", false, t)).toBe("");
+    expect(badgeText("reconnecting", false, t)).toBe("reconnecting");
+    expect(badgeText("gone", false, t)).toContain("hide");
+    expect(badgeText("gone", true, t)).toContain("refused");
+  });
+
+  it("keeps the shipped Korean wording for a refused connection", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    expect(badgeText("gone", true, t)).toBe("연결 거부 - hide를 다시 실행하세요");
   });
 });

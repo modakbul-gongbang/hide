@@ -8,6 +8,8 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
 import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints } from "./generated/hided-ws";
+import type { MessageKey } from "./i18n/catalogs";
+import { translate } from "./i18n/client";
 import type { InterfaceLanguage } from "./i18n/locale";
 import type { ThemeChoice } from "./theme";
 import { hostBridge, type HostKind } from "./host";
@@ -210,11 +212,11 @@ export function createActions(send: DispatchFn) {
    * that is not connected gets a notice and nothing is sent; the core would
    * refuse it too (`remote.control.not_connected`), but only in its log.
    */
-  const remoteHost = (command: string): { targetId: string; view: RemoteView | null; agents: AgentRow[] } | null => {
+  const remoteHost = (command: MessageKey): { targetId: string; view: RemoteView | null; agents: AgentRow[] } | null => {
     const context = remoteContext(rest());
     if (!context) return null;
     if (!remoteConnected(context)) {
-      ui().setNotice({ text: `${context.device.label} is not connected. ${command} was not sent.`, refreshable: false });
+      ui().setNotice({ text: translate("shell.deviceNotConnected", { device: context.device.label, command: translate(command) }), refreshable: false });
       return null;
     }
     return { targetId: context.device.id, view: remoteView(context.session), agents: context.session?.agents ?? [] };
@@ -231,12 +233,12 @@ export function createActions(send: DispatchFn) {
    */
   const followRelation = (sourcePaneId: string, targetPaneId: string, label: string) => {
     const current = ui().relation;
-    if (current?.targetPaneId === targetPaneId && relationState(current, rest()?.status?.pane_focus_request)?.phase === "pending") return;
+    if (current?.targetPaneId === targetPaneId && relationState(current, rest()?.status?.pane_focus_request, translate)?.phase === "pending") return;
     const requestId = remoteRequestId();
     ui().setRelation({ requestId, sourcePaneId, targetPaneId, label });
     setTimeout(() => {
       const asked = ui().relation;
-      if (asked?.requestId !== requestId || relationState(asked, rest()?.status?.pane_focus_request)?.phase !== "pending") return;
+      if (asked?.requestId !== requestId || relationState(asked, rest()?.status?.pane_focus_request, translate)?.phase !== "pending") return;
       ui().setRelation({ ...asked, timedOut: true });
     }, RELATION_ANSWER_TIMEOUT_MS);
     ui().setScreen({ kind: "workspace" });
@@ -263,7 +265,7 @@ export function createActions(send: DispatchFn) {
   const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"], targetId: string | null, agents: AgentRow[]) => {
     const decision = closeDecision(panes, agents);
     if (decision.action === "status_unknown") {
-      ui().setNotice({ text: statusUnknownNotice(decision.label), refreshable: true });
+      ui().setNotice({ text: statusUnknownNotice(decision.label, translate), refreshable: true });
       return;
     }
     // An agent with live descendants outside what closes asks the subtree
@@ -314,7 +316,7 @@ export function createActions(send: DispatchFn) {
   const focusCheckout = (workspaceId: string, checkoutId: string, expanded?: FocusCheckoutPayload["expanded"], projectExpanded?: boolean) => {
     const context = remoteContext(rest());
     if (context) {
-      const host = remoteHost("Switching workspace");
+      const host = remoteHost("shell.command.switchWorkspace");
       if (!host) return;
       const project = context.session?.workspaces.find((row) => row.id === workspaceId);
       const checkout = project?.checkouts.find((row) => row.id === checkoutId);
@@ -705,7 +707,7 @@ export function createActions(send: DispatchFn) {
     const carries = documentCloseCarries({ draft: latestDraft(tab.id), document, dirty: tab.dirty });
     if (carries.kind === "unloaded" && last) {
       ui().setNotice({
-        text: `${tab.label} has unsaved changes this page has not loaded. Show its view to save them, or close it without saving.`,
+        text: translate("shell.unloadedChanges", { name: tab.label }),
         refreshable: false,
         dontSave: { workspace: frame.workspace, displayId },
       });
@@ -791,7 +793,7 @@ export function createActions(send: DispatchFn) {
 
   const createTab = (areaId?: string) => {
       if (remoteContext(rest())) {
-        const host = remoteHost("New tab");
+        const host = remoteHost("shell.command.newTab");
         if (!host) return;
         const checkout = host.view?.checkout;
         if (!checkout) return diagnostic("create_tab: the remote device has no workspace open");
@@ -809,7 +811,7 @@ export function createActions(send: DispatchFn) {
 
   const closeTab = (tabId: string) => {
       if (remoteContext(rest())) {
-        const host = remoteHost("Close tab");
+        const host = remoteHost("shell.command.closeTab");
         if (!host) return;
         const tab = host.view?.checkout.tabs.find((row) => row.id === (tabId ?? host.view?.tab?.id));
         if (!tab?.id) return diagnostic("close_tab: no visible remote tab");
@@ -1309,7 +1311,7 @@ export function createActions(send: DispatchFn) {
     newTabIn(deviceId: string, checkout: Checkout) {
       beginOpening({ checkoutId: checkout.id, deviceId, path: checkout.path, workspaceId: checkout.workspace_id });
       if (deviceId !== "local") {
-        const host = remoteHost("New tab");
+        const host = remoteHost("shell.command.newTab");
         if (!host) return ui().setOpening(null);
         if (host.targetId !== deviceId) return diagnostic(`create_tab: ${checkout.id} is not on the device in front`);
         sendRemote(deviceId, { action: "create_tab", workspace_id: checkout.workspace_id, checkout_id: checkout.id, cwd: checkout.path, label: checkout.next_tab_label });
@@ -1336,7 +1338,7 @@ export function createActions(send: DispatchFn) {
       if (!tab?.id) return diagnostic(`close_tab: no tab holds ${paneId}`);
       if (targetId && status?.state !== "connected") {
         const label = rest()?.navigator?.devices?.find((row) => row.id === targetId)?.label ?? targetId;
-        ui().setNotice({ text: `${label} is not connected. Close tab was not sent.`, refreshable: false });
+        ui().setNotice({ text: translate("shell.deviceNotConnected", { device: label, command: translate("shell.command.closeTab") }), refreshable: false });
         return;
       }
       requestClose("tab", tab.id, tab.panes, targetId, targetId ? (status?.session?.agents ?? []) : useShellStore.getState().agents);
@@ -1428,7 +1430,7 @@ export function createActions(send: DispatchFn) {
 
     focusTab(tabId: string) {
       if (remoteContext(rest())) {
-        const host = remoteHost("Switching tab");
+        const host = remoteHost("shell.command.switchTab");
         if (!host) return;
         const event = remoteControl(host.targetId, { action: "focus_tab", tab_id: tabId });
         dispatch(event);
@@ -1544,7 +1546,7 @@ export function createActions(send: DispatchFn) {
     closePane(paneId?: string) {
       const id = paneId ?? useShellStore.getState().focusedPaneId;
       if (remoteContext(rest())) {
-        const host = remoteHost("Close pane");
+        const host = remoteHost("shell.command.closePane");
         if (!host) return;
         const pane = host.view?.tab?.panes.find((row) => row.id === id);
         if (!id || !pane) return diagnostic("close_pane: no focused remote pane");
@@ -1630,7 +1632,7 @@ export function createActions(send: DispatchFn) {
      */
     split(direction: "right" | "down", target?: string) {
       if (remoteContext(rest())) {
-        const host = remoteHost("Split");
+        const host = remoteHost("shell.command.split");
         if (!host) return;
         const pane = host.view?.tab?.panes.find((row) => row.id === (target ?? host.view?.focusedPaneId));
         if (!pane) return diagnostic("split_pane: no focused remote pane");
@@ -1651,7 +1653,7 @@ export function createActions(send: DispatchFn) {
     /** Zooms or unzooms `target`, a pane the operator pointed at, else the focused pane. */
     toggleZoom(target?: string) {
       if (remoteContext(rest())) {
-        const host = remoteHost("Zoom pane");
+        const host = remoteHost("shell.command.zoomPane");
         if (!host) return;
         const paneId = target ?? host.view?.focusedPaneId;
         if (!paneId) return diagnostic("toggle_pane_zoom: no focused remote pane");

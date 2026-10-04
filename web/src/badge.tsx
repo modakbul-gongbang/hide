@@ -1,10 +1,12 @@
 import { badgeText } from "./connection";
+import { useInterfaceTranslation } from "./i18n/client";
 import { useShellStore } from "./store";
 
 export function ConnectionBadge() {
+  const { t } = useInterfaceTranslation();
   const connection = useShellStore((s) => s.connection);
   const refused = useShellStore((s) => s.refused);
-  const text = badgeText(connection, refused);
+  const text = badgeText(connection, refused, t);
   if (!text) return null;
   return (
     <div

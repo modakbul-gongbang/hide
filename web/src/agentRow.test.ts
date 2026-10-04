@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { badgeLabel, badgeParts, branchChip, directChildren, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree, sidebarLine, unfoldedRows } from "./agentRow";
+import { badgeLabel, badgeParts, badgeWords, branchChip, directChildren, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree, sidebarLine, unfoldedRows } from "./agentRow";
+import { createInterfaceI18n } from "./i18n/instance";
 import type { AgentRow } from "./snapshot";
 
 function row(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
@@ -54,11 +55,19 @@ describe("the mark and the badge (D-01, D-02)", () => {
     expect(markTone(row("ask", { demand: "question", activity: "stopped" }))).toBe("text-warning");
   });
 
-  it("lists the badge's states worst first and leaves the zero ones out", () => {
+  it("lists the badge's states worst first and leaves the zero ones out", async () => {
+    const { t } = await createInterfaceI18n("en");
     const counts = { error: 0, approval: 0, question: 1, working: 1, done: 0 };
     expect(badgeParts(counts).map((part) => `${part.symbol}${part.count}`)).toEqual(["?1", "●1"]);
-    expect(badgeLabel(counts, 2)).toBe("2 live descendants: 1 question, 1 working");
+    expect(badgeLabel(counts, 2, t)).toBe("2 live descendants: 1 question, 1 working");
+    expect(badgeLabel(undefined, 1, t)).toBe("1 live descendant");
     expect(badgeParts(undefined)).toEqual([]);
+  });
+
+  it("reads the badge in the selected language", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    expect(badgeWords({ error: 2, approval: 0, question: 1, working: 3, done: 0, idle: 1 }, t)).toBe("오류 2개, 질문 1개, 작업 중인 에이전트 3개, 쉬는 에이전트 1개");
+    expect(badgeLabel({ question: 1 }, 2, t)).toBe("활성 하위 에이전트 2개: 질문 1개");
   });
 });
 

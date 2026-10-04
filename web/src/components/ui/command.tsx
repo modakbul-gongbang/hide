@@ -1,6 +1,7 @@
 import { Command as CommandPrimitive } from "cmdk";
 import { SearchIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
+import { useInterfaceTranslation } from "../../i18n/client";
 import { cn } from "../../lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
 
@@ -18,17 +19,18 @@ function Command({ className, ...props }: ComponentProps<typeof CommandPrimitive
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run",
+  title,
+  description,
   children,
   className,
   ...props
 }: ComponentProps<typeof Dialog> & { title?: string; description?: string; className?: string }) {
+  const { t } = useInterfaceTranslation();
   return (
     <Dialog {...props}>
       <DialogContent className={cn("top-(--size-settings-sheet-window-inset) w-(--size-search-sheet-w) translate-y-0 p-none", className)}>
-        <DialogTitle className="sr-only">{title}</DialogTitle>
-        <DialogDescription className="sr-only">{description}</DialogDescription>
+        <DialogTitle className="sr-only">{title ?? t("shell.commandPalette")}</DialogTitle>
+        <DialogDescription className="sr-only">{description ?? t("shell.commandDescription")}</DialogDescription>
         {children}
       </DialogContent>
     </Dialog>
