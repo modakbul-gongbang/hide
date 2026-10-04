@@ -234,27 +234,46 @@ fn plan(ledger: &Ledger, device: &str, agents: &[ProjectedAgent]) -> Vec<Patch> 
         .iter()
         .map(|record| (record.id.as_str(), record))
         .collect::<HashMap<_, _>>();
-    let mut records = ledger
+    let mut records: HashMap<&str, Vec<&AgentRecord>> = HashMap::new();
+    for record in ledger
         .agents
         .iter()
-        .filter(|record| record.machine == device && record.parent.is_some())
-        .map(|record| (record.pane.as_str(), record))
-        .collect::<HashMap<_, _>>();
+        .filter(|record| record.machine == device)
+    {
+        records
+            .entry(record.pane.as_str())
+            .or_default()
+            .push(record);
+    }
     let mut patches = Vec::new();
     // The registry bounds retained targets, not their native-list position.
     // Consuming each match also bounds duplicate observations to one patch.
     for agent in agents {
-        if agent.lineage_session.is_none() {
+        let Some(current_session) = agent.lineage_session.as_deref() else {
             continue;
-        }
-        let Some(record) = records.remove(agent.pane_id.as_str()) else {
+        };
+        let Some(registrations) = records.remove(agent.pane_id.as_str()) else {
+            continue;
+        };
+        if !registrations.iter().any(|record| record.parent.is_some()) {
+            continue;
+        };
+        // Each pane group is consumed once, so identity selection is linear
+        // in retained registrations across the pass, independent of order.
+        let Some(record) = registrations
+            .iter()
+            .rev()
+            .copied()
+            .find(|record| record.actor.session.as_deref() == Some(current_session))
+            .or_else(|| registrations.last().copied())
+        else {
             continue;
         };
         let parent = record
             .parent
             .as_ref()
             .and_then(|id| parents.get(id.as_str()).copied());
-        let tokens = desired(record, parent, agent.lineage_session.as_deref());
+        let tokens = desired(record, parent, Some(current_session));
         if tokens.iter().any(|(key, value)| {
             if value.is_null() {
                 agent.tokens.get(key).is_some_and(|old| !old.is_null())
@@ -601,5 +620,136 @@ mod tests {
         let patches = plan(&ledger, "local", &observations);
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].pane, child.pane);
+    }
+    struct ReplacementFixture {
+        ledger: Ledger,
+        native: ProjectedAgent,
+        expected: BTreeMap<String, Value>,
+    }
+    fn replacement_fixture(stale_last: bool) -> ReplacementFixture {
+        let previous_parent = record("agent-1", "w1:p1", "old-parent", None);
+        let parent = record("agent-2", "w2:p1", "current-parent", None);
+        let current = record("agent-3", "w3:p1", "current-child", Some(&parent.id));
+        let stale = record("agent-4", "w3:p1", "old-child", Some(&previous_parent.id));
+        let native = agent(&current, BTreeMap::new());
+        let expected = BTreeMap::from([
+            ("parent_pane".into(), Value::String(parent.pane.clone())),
+            ("parent_machine".into(), Value::Null),
+            (
+                "child_session".into(),
+                Value::String(current.actor.session.clone().unwrap()),
+            ),
+            (
+                "parent_session".into(),
+                Value::String(parent.actor.session.clone().unwrap()),
+            ),
+        ]);
+        let mut ledger = Ledger {
+            next_id: 5,
+            agents: vec![previous_parent, parent],
+            ..Default::default()
+        };
+        if stale_last {
+            ledger.agents.extend([current, stale]);
+        } else {
+            ledger.agents.extend([stale, current]);
+        }
+        ledger.validate().unwrap();
+        ReplacementFixture {
+            ledger,
+            native,
+            expected,
+        }
+    }
+
+    #[test]
+    fn current_session_registration_wins_in_both_append_orders() {
+        for stale_last in [false, true] {
+            let mut fixture = replacement_fixture(stale_last);
+            let patches = plan(&fixture.ledger, "local", &[fixture.native.clone()]);
+            assert_eq!(patches.len(), 1);
+            assert_eq!(patches[0].pane, fixture.native.pane_id);
+            assert_eq!(patches[0].tokens, fixture.expected);
+            // A settled replacement must never be cleared by a late stale
+            // registration, including a stale registration that has ended.
+            fixture.native.tokens = fixture.expected;
+            assert!(plan(&fixture.ledger, "local", &[fixture.native.clone()]).is_empty());
+            fixture
+                .ledger
+                .agents
+                .iter_mut()
+                .find(|record| record.id == "agent-4")
+                .unwrap()
+                .ended = true;
+            assert!(plan(&fixture.ledger, "local", &[fixture.native]).is_empty());
+        }
+    }
+
+    #[test]
+    fn ended_current_session_registration_retains_its_own_lineage() {
+        let mut fixture = replacement_fixture(true);
+        fixture
+            .ledger
+            .agents
+            .iter_mut()
+            .find(|record| record.id == "agent-3")
+            .unwrap()
+            .ended = true;
+        fixture
+            .ledger
+            .agents
+            .iter_mut()
+            .find(|record| record.id == "agent-2")
+            .unwrap()
+            .ended = true;
+        fixture.ledger.validate().unwrap();
+        let patches = plan(&fixture.ledger, "local", &[fixture.native.clone()]);
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].tokens, fixture.expected);
+        fixture.native.tokens = fixture.expected;
+        assert!(plan(&fixture.ledger, "local", &[fixture.native]).is_empty());
+    }
+
+    #[test]
+    fn a_positive_session_with_no_registration_clears_all_historical_lineage_keys() {
+        let mut fixture = replacement_fixture(true);
+        fixture.native.tokens = fixture.expected;
+        fixture
+            .native
+            .tokens
+            .insert("unrelated".into(), json!("keep"));
+        fixture.native.lineage_session = crate::wire::session_digest("unregistered-replacement");
+        let patches = plan(&fixture.ledger, "local", &[fixture.native.clone()]);
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].pane, fixture.native.pane_id);
+        assert_eq!(patches[0].tokens.len(), 4);
+        assert!(patches[0].tokens.values().all(Value::is_null));
+        assert!(!patches[0].tokens.contains_key("unrelated"));
+        fixture.native.lineage_session = None;
+        assert!(plan(&fixture.ledger, "local", &[fixture.native]).is_empty());
+    }
+
+    #[test]
+    fn a_current_root_clears_child_history_but_unowned_root_tokens_stay_untouched() {
+        let mut fixture = replacement_fixture(true);
+        fixture
+            .ledger
+            .agents
+            .iter_mut()
+            .find(|record| record.id == "agent-3")
+            .unwrap()
+            .parent = None;
+        fixture.ledger.validate().unwrap();
+        fixture.native.tokens = fixture.expected.clone();
+        let untouched = agent(&fixture.ledger.agents[0], fixture.expected);
+        let patches = plan(
+            &fixture.ledger,
+            "local",
+            &[fixture.native.clone(), untouched],
+        );
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].pane, fixture.native.pane_id);
+        assert_eq!(patches[0].tokens.len(), 4);
+        assert!(patches[0].tokens.values().all(Value::is_null));
     }
 }

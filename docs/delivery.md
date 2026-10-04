@@ -140,6 +140,7 @@ The unsupported reconciliation/resume/session flags and relay, escalate, graph a
 
 The existing one-second `agent.list` refresh, also requested by native events, reconciles only panes whose four lineage tokens differ; startup and reconnect perform one full pass.
 An unchanged native observation and append-only registration count skip planning; unrelated letter/watch writes and label/process/catalog publications do not start a lineage pass.
+The native pane and positive session select the matching retained registration, including an ended one, independently of append order.
 A positive child-session replacement clears stale tokens; an absent native session or agent end leaves the pane's tokens in place, while unchanged readers reject obsolete session identities.
 There is no separate lineage timer, subprocess on the input path or blocking work under `Mutex<Runtime>`.
 The token readers and digest contract remain unchanged.
