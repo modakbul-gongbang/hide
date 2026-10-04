@@ -183,6 +183,16 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: bash scripts/verify-cargo.sh test-scoped -p hided --test real_herdr -- --ignored --nocapture
+      - name: Attribute a native listening port to its working directory
+        # Cleanup must refuse an unreadable in-use check. This unchanged core
+        # contract exposes the native read reason that a browser error lacks.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: |
+          status=0
+          bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib ports::tests::a_real_listener_is_found_and_attributed_to_the_directory_it_runs_in -- --exact --nocapture || status=$?
+          bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib ports::tests::cleanup_keeps_a_checkout_in_use_when_a_listener_starts_through_another_spelling -- --exact --nocapture || status=$?
+          exit "$status"
       - uses: pnpm/action-setup@v6
         if: ${{ !cancelled() }}
         with:
