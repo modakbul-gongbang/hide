@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type CDPSession, type Page } from "@playwright/test";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -151,6 +151,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
   const stages: { stage: string; at: number }[] = [];
   const mark = (stage: string) => { stages.push({ stage, at: Date.now() }); };
   let firstFocusAt: number | undefined;
+  let mouseSession: CDPSession | undefined;
   let gate: Awaited<ReturnType<typeof focusGate>> | undefined;
   let daemon: Daemon | undefined;
   try {
@@ -164,6 +165,15 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     for (const pane of panes) await expect(pane).toHaveAttribute("data-transport", "controlling");
     await expect.poll(() => herdrHasFocus(herdr, first)).toBe(true);
     const boxes = await Promise.all(panes.map((pane) => pane.boundingBox()));
+    // Protocol setup and detach belong outside the held Herdr request.
+    // Detach alone consumed two seconds of its five-second budget on macOS.
+    mark("cdp.connect.before");
+    const mouse = await page.context().newCDPSession(page);
+    mouseSession = mouse;
+    mark("cdp.connect.after");
+    // These polls read captured diagnostics in memory, without browser or
+    // Herdr I/O. Observe acceptance promptly within the unchanged timeout.
+    const focusObservation = { intervals: [25] };
     let lastClickAt = 0;
     const click = async (index: number) => {
       const box = boxes[index]!;
@@ -171,32 +181,23 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
       await page.mouse.click(box.x + 100, box.y + 100);
     };
     const clickBurst = async () => {
-      mark("cdp.connect.before");
-      const mouse = await page.context().newCDPSession(page);
-      mark("cdp.connect.after");
-      try {
-        const inputs: Promise<unknown>[] = [];
-        lastClickAt = Date.now();
-        // Use the same trusted Chromium input as page.mouse, queued in order.
-        // Awaiting 40 separate browser round trips can outlast the held
-        // request's real five-second deadline on a loaded macOS runner.
-        for (let i = 0; i < 20; i += 1) {
-          for (const index of [1, 0]) {
-            const box = boxes[index]!;
-            const point = { x: box.x + 100, y: box.y + 100 };
-            inputs.push(mouse.send("Input.dispatchMouseEvent", { ...point, type: "mouseMoved", buttons: 0 }));
-            inputs.push(mouse.send("Input.dispatchMouseEvent", { ...point, type: "mousePressed", button: "left", buttons: 1, clickCount: 1 }));
-            inputs.push(mouse.send("Input.dispatchMouseEvent", { ...point, type: "mouseReleased", button: "left", buttons: 0, clickCount: 1 }));
-          }
+      const inputs: Promise<unknown>[] = [];
+      lastClickAt = Date.now();
+      // Use the same trusted Chromium input as page.mouse, queued in order.
+      // Awaiting 40 separate browser round trips can outlast the held
+      // request's real five-second deadline on a loaded macOS runner.
+      for (let i = 0; i < 20; i += 1) {
+        for (const index of [1, 0]) {
+          const box = boxes[index]!;
+          const point = { x: box.x + 100, y: box.y + 100 };
+          inputs.push(mouse.send("Input.dispatchMouseEvent", { ...point, type: "mouseMoved", buttons: 0 }));
+          inputs.push(mouse.send("Input.dispatchMouseEvent", { ...point, type: "mousePressed", button: "left", buttons: 1, clickCount: 1 }));
+          inputs.push(mouse.send("Input.dispatchMouseEvent", { ...point, type: "mouseReleased", button: "left", buttons: 0, clickCount: 1 }));
         }
-        mark("cdp.inputs.before");
-        await Promise.all(inputs);
-        mark("cdp.inputs.after");
-      } finally {
-        mark("cdp.detach.before");
-        await mouse.detach();
-        mark("cdp.detach.after");
       }
+      mark("cdp.inputs.before");
+      await Promise.all(inputs);
+      mark("cdp.inputs.after");
     };
     const requested = () => diagnostics().filter((entry) => entry.kind === "pane.focus.requested");
     const confirmed = () => {
@@ -214,7 +215,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     await held;
     mark("gate.held");
     mark("first.requested.before");
-    await expect.poll(() => requested().at(-1)?.message).toBe(`Focusing pane ${second}`);
+    await expect.poll(() => requested().at(-1)?.message, focusObservation).toBe(`Focusing pane ${second}`);
     firstFocusAt = requested()[0]?.occurred_at;
     mark("first.requested.after");
     const acceptedBefore = requested().length;
@@ -227,7 +228,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     // pane snapshot or a later focus diagnostic cannot satisfy this barrier.
     const acceptedAfter = acceptedBefore + focusFrames.changes() - sentBefore;
     mark("burst.accepted.before");
-    await expect.poll(() => requested().length).toBe(acceptedAfter);
+    await expect.poll(() => requested().length, focusObservation).toBe(acceptedAfter);
     mark("burst.accepted.after");
     expect(requested().at(-1)?.message).toBe(`Focusing pane ${first}`);
     expect(diagnostics().some((entry) => entry.kind === "pane.focus.unknown")).toBe(false);
@@ -239,7 +240,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     await gate.release();
     mark("gate.release.after");
     mark("first.confirmed.before");
-    await expect.poll(confirmed).toBe(true);
+    await expect.poll(confirmed, focusObservation).toBe(true);
     mark("first.confirmed.after");
     expect(gate.requests).toEqual([second, first]);
     expect(gate.maximum()).toBe(1);
@@ -247,7 +248,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
 
     // The same rapid clicks without a held request prove the ordinary path.
     await clickBurst();
-    await expect.poll(confirmed).toBe(true);
+    await expect.poll(confirmed, focusObservation).toBe(true);
     await expect(panes[0]).toHaveAttribute("data-focused", "true");
     await expect.poll(() => herdrHasFocus(herdr, first)).toBe(true);
     const marker = "FOCUS_ORDERING_INPUT";
@@ -262,14 +263,20 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     await expect(panes[1]).toHaveAttribute("data-focused", "true");
     await expect.poll(() => diagnostics().some((entry) => entry.kind === "pane.focus.followed")).toBe(true);
   } finally {
-    console.log("[focus-burst-timing]", JSON.stringify({
-      first_focus_at: firstFocusAt,
-      stages: stages.map(({ stage, at }) => ({ stage, at, since_first_focus_ms: firstFocusAt === undefined ? null : at - firstFocusAt })),
-    }));
-    daemon?.stop();
-    await gate?.stop();
-    herdr.stop();
-    await focusFrames.save();
+    try {
+      mark("cdp.detach.before");
+      await mouseSession?.detach();
+      mark("cdp.detach.after");
+    } finally {
+      console.log("[focus-burst-timing]", JSON.stringify({
+        first_focus_at: firstFocusAt,
+        stages: stages.map(({ stage, at }) => ({ stage, at, since_first_focus_ms: firstFocusAt === undefined ? null : at - firstFocusAt })),
+      }));
+      daemon?.stop();
+      await gate?.stop();
+      herdr.stop();
+      await focusFrames.save();
+    }
   }
 });
 
