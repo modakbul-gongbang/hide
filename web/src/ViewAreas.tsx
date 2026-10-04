@@ -1,7 +1,7 @@
-import { GlobeIcon, XIcon } from "lucide-react";
+import { GlobeIcon, LoaderCircleIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
-import { createAreaTree, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
+import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
 import { AreaEmpty } from "./AreaEmpty";
 import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay } from "./browserViews";
@@ -10,6 +10,7 @@ import { Hint } from "./components/ui/tooltip";
 import { revealHost } from "./host";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
+import { useInterfaceTranslation } from "./i18n/client";
 import { editorTabFor, frontCheckout, type ViewDisplaySnapshot, type ViewLayoutSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -135,11 +136,15 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
 /** One display's tab: its kind's mark, italic while a preview, its save marks, and its whole identity (B2, B21). */
 export function DisplayTab({ display, interaction, actions }: { display: ViewDisplaySnapshot; interaction: AreaTabInteraction; actions: Actions }) {
   const { selected, areaActive } = interaction;
+  const fit = tabFit(selected, interaction.fit);
+  const { t } = useInterfaceTranslation();
   const dirty = useShellStore((s) => editorTabFor(s.editor, display.tab_id)?.dirty ?? false);
   const saving = useShellStore((s) => display.tab_id !== null && s.savingTabs.has(display.tab_id));
   const tabOnly = useShellStore((s) => display.tab_id !== null && s.bufferWarnings.has(display.tab_id));
   const unavailable = display.state === "unavailable";
-  const identity = displayIdentity(display);
+  const state = saving ? t("documents.tabSaving") : dirty ? t("documents.unsaved") : null;
+  const identity = [displayIdentity(display), state, tabOnly ? t("documents.tabOnly") : null].filter(Boolean).join(" · ");
+  const closeLabel = t("documents.closeView", { label: display.label });
   return (
     <Hint label={identity} reveals>
     <div
@@ -155,7 +160,7 @@ export function DisplayTab({ display, interaction, actions }: { display: ViewDis
       data-tab-only={tabOnly ? "true" : "false"}
       data-unavailable={unavailable ? "true" : "false"}
       data-view-state={display.state}
-      className={`group relative flex min-w-0 flex-1 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
+      className={`group relative flex min-w-0 flex-1 cursor-default select-none items-center gap-xs ${fit.tab} text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
         selected ? `text-foreground ${areaActive ? "bg-background" : "bg-secondary"}` : "text-subtle-foreground hover:bg-accent"
       } ${interaction.dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={interaction.press}
@@ -170,18 +175,24 @@ export function DisplayTab({ display, interaction, actions }: { display: ViewDis
         }
       }}
     >
-      {displayMark(display)}
-      <span className={`min-w-0 flex-1 truncate ${display.preview ? "italic" : ""} ${unavailable ? "text-muted-foreground line-through" : ""}`}>
-        {display.label}
-        {saving ? <span className="text-muted-foreground"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
-        {tabOnly ? <span className="text-muted-foreground"> kept in this tab only</span> : null}
+      <span className={`relative flex size-(--size-icon) shrink-0 items-center justify-center ${unavailable ? "text-muted-foreground opacity-[var(--opacity-dimmed)]" : ""}`}>
+        {interaction.fit === "marks" ? collapsedDisplayMark(display) : displayMark(display)}
+        {interaction.fit === "marks" && (saving || dirty || tabOnly) ? (
+          saving ? <LoaderCircleIcon aria-hidden="true" data-view-save-mark="saving" className="absolute size-(--size-icon) animate-spin bg-inherit text-muted-foreground" />
+            : <span aria-hidden="true" data-view-save-mark={tabOnly ? "tab-only" : "dirty"} className="absolute right-0 top-0 size-(--size-tab-status-dot) rounded-full bg-warning" />
+        ) : null}
       </span>
-      <Hint label={`Close view ${display.label}`}>
+      <span className={`min-w-0 flex-1 truncate ${fit.title} ${display.preview ? "italic" : ""} ${unavailable ? "text-muted-foreground line-through" : ""}`}>
+        {display.label}
+        {saving ? <span className="text-muted-foreground"> {t("documents.tabSaving")}</span> : dirty ? <span className="text-warning"> ●</span> : null}
+        {tabOnly ? <span className="text-muted-foreground"> {t("documents.tabOnly")}</span> : null}
+      </span>
+      <Hint label={closeLabel}>
         <Button
           variant="ghost"
           size="icon-sm"
-          className={`shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
-          aria-label={`Close view ${display.label}`}
+          className={`${fit.close} shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
+          aria-label={closeLabel}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
@@ -213,4 +224,9 @@ export function displayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">
       {icon.glyph}
     </span>
   );
+}
+
+/** The minimum-density identity choice lives here so review can replace it without changing the fit curve. */
+function collapsedDisplayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">) {
+  return displayMark(display);
 }
