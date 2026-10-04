@@ -6,6 +6,30 @@ Read it in full before changing anything under `herdr-core/`, `hided/`, `web/` o
 [AGENTS.md](../AGENTS.md) keeps the short form of the ownership split; this is the long form with the reasons.
 The code is the executable authority: `herdr-core/src/` for the core, `hided/src/` for the daemon that hosts it, `web/src/` for the shell, `desktop/src/main/` for the desktop host, and the tests beside each.
 
+## State placement and publication
+
+Choose the authority, publication need and durability of a value separately before adding a field, store or worker.
+`Mutex<Runtime>` serializes Hide's accepted domain and UI transitions; it is not the place to perform the reads, writes or analyses that produce them.
+An off-lock store remains core-owned and must name its scope, freshness rule, resource bound and shutdown owner; a second copy in the shell cannot become an authority.
+
+| Decision | Placement and allowed work | Existing precedent |
+| --- | --- | --- |
+| A value decides the accepted UI or domain transition | Keep the authoritative in-memory value in `Runtime`; admit one typed event and apply a completed worker result under a short lock. | [Stored primary checkout](#stored-primary-checkout), [Workspaces in the web shell](#workspaces-in-the-web-shell); `runtime/workspace_view.rs`. |
+| Producing a value needs filesystem, SQLite, network, a subprocess or substantial analysis | Take owned request data under the lock, perform the work in the existing reader/worker boundary, and validate scope or generation when applying the result. | [Project sessions and Memory](#project-sessions-and-memory), [Agent labels in the core](#agent-labels-in-the-core); `runtime/memory.rs`, `labels/analyzer.rs`, `reader.rs`. |
+| A transition changes what the operator can see | Publish the changed state through the existing coalescing notifier; a wake, unchanged read or repeated observation alone is not a reason to publish. | [The core, the shell and Herdr](#the-core-the-shell-and-herdr); `handle.rs::ChangeNotifier`, `session_sync/coordinator.rs::agent_tick_needs_publish`. |
+| A value must survive restart but is not a screen transition | Save it without publishing a new frame merely to announce the save. | [Agent sleep](#agent-sleep): the last-look stamp is saved when visited and on its minute pass; `runtime/agent_sleep.rs::tick_agent_sleep`. |
+| Time passing can be derived from an accepted value | Publish the reference time once and derive the display in memory. | [Agent labels in the core](#agent-labels-in-the-core): `changed_at_unix_ms` and the shared elapsed clock in `web/src/components/elapsed.tsx`. |
+| Accepted UI state needs persistence | Reuse the coalesced save: one active worker and one pending flag per store, copying state under the lock and serializing, writing, syncing and renaming outside it. | [Projects and Overview cost contract](PERFORMANCE_TESTING.md#projects-and-overview-cost-contract); `runtime/agents.rs`, `runtime/workspace_view.rs`, `persistence.rs`, `workspace_views.rs`. |
+
+On a high-frequency path such as keystroke ingress, added observational work is limited to bounded in-memory writes.
+It must not introduce lock waiting, disk access, a subprocess or large serialization into that path.
+The existing short Runtime admission is not permission to add another contended lock or blocking observer; pass owned data to an existing off-lock owner when work needs those resources.
+Snapshot capture takes owned data under the lock and serialization follows outside it (`runtime/snapshot_delta.rs`, `handle.rs::snapshot_delta`).
+Pane input never enters the coalesced persistence queue: it must not be dropped or merged to reduce observer cost.
+The save workers' pending flags bound the number of pending saves, not the byte size of the saved state; these stores have no general serialized-byte cap.
+`Core::drop` joins the UI and Workspace-view save workers outside the mutex, but forced termination cannot promise a pending save reached disk (`handle.rs`).
+Before adding resident work, use the [tick/timer/watcher ledger and cost review](PERFORMANCE_TESTING.md#resident-ticks-timers-and-watchers).
+
 ## The core, the shell and Herdr
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
@@ -423,6 +447,28 @@ Not spelled yet: a Windows device's paths seen from a Mac (its helper and Herdr 
 `hide-platform/tests/` and `hide-herdr-client/tests/real_herdr.rs` (the client against the pinned Herdr, ignored unless `HIDE_E2E_HERDR_BIN` names the binary) are where a change to the transport is proved; the subscription's reader is the high-frequency path, and on Unix it is the same blocking `read` as before.
 `hided/tests/real_herdr.rs` is the same for the daemon: hided starts against a private pinned Herdr, answers `/health`, opens a Workspace through the shell's `/ws` events, and a line typed into its pane comes back on the terminal stream through `herdr terminal session control`; the Windows check runs it on Windows, where it is the proof that hided starts there.
 
+## Resident process ownership
+
+The process that starts a resource and the lifetime owner are not always the same: the desktop host deliberately starts session services that outlive its window.
+That product lifetime is the local exception to treating host quit as the end of every child; it does not exempt the service's own workers from engineering principle #14's cleanup rule or #15's caps.
+The following table describes Hide's current macOS startup path, not an operator's separate service configuration or a promise of restored live processes.
+
+| Process | Starter and lifetime owner | Stop condition | App quit | Reboot and login |
+| --- | --- | --- | --- | --- |
+| Herdr server | The packaged desktop host checks server status and starts a detached bundled server only when status confirms none is running; explicit overrides/unpackaged hosts supply their own server. Herdr owns PTYs, panes and agent processes. | Explicit Herdr server stop, session stop targeting that server, or process/OS termination; stopping a different named session leaves this server running. Hide does not replace an already answering Herdr as part of daemon discovery. | Continues independently; the host does not signal it. | The old process is gone; the next packaged app discovery can start a missing server. This startup path installs no login service for Herdr. |
+| hided | `hide connect` serializes discovery in its state folder, returns a matching healthy daemon or starts the sibling `hided`; the daemon owns the core and its background work. | `hide stop`, a stop signal or idle expiry; default idle expiry is 600 s with no clients and an unreachable Herdr, unless daemon keep-alive or paired-phone Mobile keep-alive holds it. A bundled connect also replaces a healthy daemon of another build in that same state folder; an unbundled CLI refuses it. | Continues; no-window screen readers pause, while label work and the daemon's own lifetime policy remain active. | The old process is gone; `hide connect` starts another on demand. These discovery paths install no hided login service. |
+| hcoord daemon | The install kit invokes `hcoord daemon ensure`; on macOS hcoord converges its per-account/per-home LaunchAgent, and launchd owns that service independently of hided. | `hcoord daemon stop` records the manual-stop marker and closes cleanly; signals also enter clean shutdown. LaunchAgent `KeepAlive` restarts unsuccessful exits, rather than clean stops. | Continues; neither desktop quit nor ordinary hided stop owns its shutdown. | The plist requests `RunAtLoad`, but the source's `platformSupport().macos.loginStart` remains `unverified`; do not claim a tested login/reboot result. A manual-stop marker makes daemon startup exit cleanly until explicit start clears it. |
+| Device file helper (`hide-host-helper serve`) | The core opens an SSH exec channel for a consented device; the helper serves that connection's stdin/stdout and opens no resident listener. | EOF, unusable request framing or output failure ends admission; scoped workers finish before helper exit. Core close/revoke or loss of the last connection owner closes the channel; consent revocation drains admitted work up to its bound. | A helper may continue while the surviving daemon retains its connection; window closure alone is not helper shutdown. | The process/channel is gone. A later consented connection starts another helper; this helper path installs no login service. |
+
+The local executable authorities are `desktop/src/main/{host,herdr,spawn}.ts`, `hided/src/{cli,env,lib,server}.rs`, `hide-kit/src/hcoord.rs`, `plugins/hcoord/src/hcoord/{platform,transport,cli}.ts`, `herdr-core/src/remote/host.rs` and `hide-host/src/{serve.rs,bin/hide-host-helper.rs}`.
+Herdr's [CLI reference](https://herdr.dev/docs/cli-reference/) and [Socket API](https://herdr.dev/docs/socket-api/) define its public stop and session boundary; the bundled contract remains the files named in [The Herdr wire boundary](#the-herdr-wire-boundary).
+In the bundled upstream `src/session.rs`, `stop_session_with_timeout` selects the named session's API/client sockets and sends `server.stop` through the same routine as `stop_active_server`; an unnamed session stop targets the default session.
+An app exit preserves service ownership, but a reboot ends the prior server, PTY and helper processes; persisted layout/session references are not continued execution or proof that an agent completed its task.
+hided's replacement checks the named daemon's health and process identity before signalling it, and leaves Herdr and pane processes alone (`cli.rs::connect`, `cli.rs::stop_daemon`).
+The device helper admits 4 running requests and 32 queued requests on the core connection; revocation's drain bound is 250 s, while each call has its own deadline (`remote/host.rs`, `hide-host/src/serve.rs`).
+Those per-connection bounds do not provide a fixed global cap on all helper processes/connections; the helper startup boundary has no such cap.
+Desktop CLI children, attach streams, provider children and bridge helpers have narrower owners than these session services; their cleanup and budget belong to their existing feature sections and the [resident work ledger](PERFORMANCE_TESTING.md#resident-ticks-timers-and-watchers).
+
 ## The bundled Herdr runtime
 
 The packaged desktop app ships the pinned Herdr binary in `Contents/Resources/herdr` and passes it as `HERDR_BIN_PATH` to every `hide` child it starts, unless the environment already names one as an explicit override (an isolated e2e run or a development server keeps its own binary; a value a Herdr pane exported is not an override, see The desktop host).
@@ -430,7 +476,7 @@ Neither `hided` nor the core starts a Herdr server: the core resolves the herdr 
 The packaged desktop host is the one place that starts a server, because after a reboot nothing else does and the operator opens hide, not a terminal (`desktop/src/main/host.ts`, `ensureHerdrServer`, over `ensureServer` in `desktop/src/main/herdr.ts`).
 Before each `hide connect` it asks its bundled `herdr status server --json` about the socket its children would use; only `running: false` starts `herdr server`, since a socket file a dead server left behind reads as a live path but answers nothing (Herdr answers `not_running` for it).
 The server is started detached, leading its own process group, and waited for up to five seconds; a server Herdr started this way restores the saved layout and resumes agents with a native session reference without any client attaching (measured 2026-09-29 on an isolated server).
-It is not the host's child in the ownership sense: its panes are the operator's work, so it outlives the app as a server `herdr` starts from a terminal does, and only `herdr server stop` ends it.
+It is not the host's child in the ownership sense: its panes are the operator's work, so it outlives the app as a server `herdr` starts from a terminal does; `herdr server stop` or a `herdr session stop [name]` targeting that server ends it.
 The server gets the host's child environment without the per-pane values Herdr sets in every pane itself (`HERDR_BIN_PATH`, the pane, tab and workspace ids, `HERDR_ENV`); an app opened from Finder carries launchd's environment, which has no locale, so the server also gets `LC_CTYPE=UTF-8` when no locale variable is set, because a pane shell without one reads Hangul as bytes (`desktop/src/main/herdr.ts`, `serverEnvironment`).
 An unpackaged host and an explicit `HERDR_BIN_PATH` override start nothing, so a development or e2e run keeps the isolated server it made.
 Nothing here stops, replaces or restarts a server that answers, because doing so could interrupt panes owned by another client; a server that dies while the app is attached is not restarted.
