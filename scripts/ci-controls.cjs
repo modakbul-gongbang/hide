@@ -1,5 +1,6 @@
 // Exact acceptance identities for diagnostic fixtures, using the ordinary ledger.
 const fs = require('node:fs');
+const path = require('node:path');
 const ledger = require('./ci-ledger.cjs');
 const contract = require('../contracts/ci-failure-controls.json');
 
@@ -8,9 +9,19 @@ function scenario(name, os) {
   if (contract.version !== 1 || !selected || !selected.oses.includes(os)) throw Error(`unknown control scenario/OS: ${name}/${os}`);
   return selected;
 }
-function selection(name, os) {
-  return scenario(name, os).tests.map(([file, title]) => `${file} > ${title}\n`).join('');
+function testList(tests) {
+  return tests.map(([file,title])=>{
+    const packageRoot=file.split('/')[0]+'/e2e';
+    if(!['web/e2e','desktop/e2e'].includes(packageRoot) || !file.startsWith(packageRoot+'/')) throw Error('unsupported control file identity');
+    // These ordinary configs own rootDir = PACKAGE/e2e. Repository suite
+    // identity stays in the ledger; Playwright compares a rootDir-relative
+    // file plus each describe/test title token, rather than that suite string.
+    const titles=Array.isArray(title)?title:[title];
+    if(!titles.length || titles.some(token=>typeof token!=='string' || !token.trim() || token!==token.trim() || /[\r\n>›]/.test(token))) throw Error('unsupported control title path');
+    return `${path.posix.relative(packageRoot,file)} > ${titles.join(' > ')}\n`;
+  }).join('');
 }
+function selection(name, os) { return testList(scenario(name,os).tests); }
 function results(name, os, value, source, original, batch) {
   const expected = scenario(name, os).tests;
   if (batch !== undefined && (!Number.isInteger(batch) || batch < 0 || batch > 5)) throw Error('unknown control batch');
@@ -20,12 +31,13 @@ function results(name, os, value, source, original, batch) {
   const rows = ledger.merge(value.records).records;
   const checks = [];
   for (const [suite, test] of expected) {
-    const observed = rows.filter(row => row.suite === suite && row.test === test);
+    const exact = row => row.suite === suite && row.test === test && JSON.stringify(row.titlePath || [row.test]) === JSON.stringify([test]);
+    const observed = rows.filter(exact);
     const indices = observed.map(row => row.repeat).sort((a,b) => a-b);
     const wanted = Array.from({length:count}, (_,i) => i + offset);
     // Do not deduplicate identical observations here: one required fixture is
     // exactly one reporter result, not a retry or an extra upload masquerading as it.
-    const raw = value.records.filter(row => row.suite === suite && row.test === test);
+    const raw = value.records.filter(exact);
     const failures = raw.filter(row => row.os !== os || row.sha !== source.sha || row.run !== source.run || row.runAttempt !== source.runAttempt || row.retry !== 0 || row.status !== 'passed');
     if (raw.length !== count || JSON.stringify(indices) !== JSON.stringify(wanted) || failures.length) {
       throw Error(`incomplete controls: ${os} / ${suite} / ${test}: expected exactly ${count} passed retry-zero identities at ${offset}, observed ${raw.length}`);
@@ -33,7 +45,7 @@ function results(name, os, value, source, original, batch) {
     let baseline = 'not-compared';
     if (original) {
       if (original.version !== 1 || !Array.isArray(original.records)) throw Error('unknown original suite ledger');
-      const baselineRows = original.records.filter(row => row.suite === suite && row.test === test && row.os === os && row.sha === source.sha);
+      const baselineRows = original.records.filter(row => exact(row) && row.os === os && row.sha === source.sha);
       if (baselineRows.length !== 1 || baselineRows[0].repeat !== 0 || baselineRows[0].retry !== 0 || baselineRows[0].status !== 'passed') throw Error(`original suite result missing or failed: ${os} / ${suite} / ${test}`);
       baseline = {run:baselineRows[0].run, runAttempt:baselineRows[0].runAttempt, job:baselineRows[0].job, status:baselineRows[0].status};
     }
@@ -71,7 +83,7 @@ function collect(directory, output, source, downloads) {
     throw error;
   } finally { ledger.write(output,receipt); }
 }
-module.exports = {selection,results,collect};
+module.exports = {selection,testList,results,collect};
 if (require.main === module) {
   const [mode,name,os,input,output,original] = process.argv.slice(2);
   if (mode === 'collect' && name && os && !output) collect(name,os,undefined,input);

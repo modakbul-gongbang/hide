@@ -30,7 +30,7 @@ function identity(env = process.env) {
     invocation: env.CI_INVOCATION || 'tests' };
 }
 function quarantine(row, registry) {
-  const entry = registry.entries.find(e => e.title === row.test && e.file === row.suite && e.oses.includes(row.os));
+  const entry = registry.entries.find(e => e.title === row.test && e.file === row.suite && e.oses.includes(row.os) && JSON.stringify(e.title_path || [e.title]) === JSON.stringify(row.titlePath || [row.test]));
   if (!entry) return null;
   if (row.status === 'passed') return {id:entry.id, classification:'passed'};
   const known = row.category === entry.signature.category && entry.signature.any_of.some(pattern => pattern.every(token => row.assertion.includes(token)));
@@ -41,7 +41,7 @@ function attemptKey(row) {
   // The producer supplies its exact job label; collection resolves that label
   // to the actual job id. Lane/invocation retain independent consumer runs.
   return JSON.stringify([row.sha,row.os,row.run,row.runAttempt,row.jobId ?? row.jobLabel ?? row.job,
-    row.lane,row.invocation || 'tests',row.shard,row.project,row.suite,row.test,row.repeat,row.retry]);
+    row.lane,row.invocation || 'tests',row.shard,row.project,row.suite,row.titlePath || [row.test],row.repeat,row.retry]);
 }
 function merge(rows, {allowConflicts=false}={}) {
   if (rows.length > MAX_ROWS) throw new Error('ledger row cap exceeded');

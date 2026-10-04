@@ -168,6 +168,9 @@ A failure on a different SHA is not evidence of flakiness by itself, and the sam
   Registration lasts at most seven days; missing metadata, expiration and unregistered `@flaky` declarations fail `python3 scripts/ci-quarantine.py check` in the required policy lane.
   The source keeps its `@flaky` issue annotation, while Playwright `--test-list-invert` excludes only the exact registered file/title on its registered OS.
   An unregistered same-title test in another file, or a longer title, still runs.
+  Selectors use the ordinary configuration's `PACKAGE/e2e` rootDir-relative filename and the complete describe/test title path; normalized results retain the repository-relative suite and title path separately.
+  Controls exercise both ordinary configurations with actual execution, including similarly named file, longer-title and other-phase negatives.
+  A zero-test selection fails and publishes an unknown partial receipt instead of counting as a successful repetition.
   `advisory.yml` runs the relevant registered scenarios in a separate workflow on related PRs and daily; its failure stays visible without delaying ordinary `verify`.
   A PR changing a registered scenario's behavior, test or shared fixture selects `quarantine-fixes`, which runs the exact registered scenarios as required checks.
   `ci-quarantine.py results` requires a result for every selected identity, and a required scenario must pass.

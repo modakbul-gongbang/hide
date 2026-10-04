@@ -9,10 +9,13 @@ export default class LedgerReporter implements Reporter {
   private filename = process.env.CI_LEDGER_PATH || '../agents/runs/ci-ledger/' + process.pid + '.json';
   private offset = Number(process.env.CI_REPEAT_OFFSET || 0);
   private globalErrors = 0;
+  private selected = 0;
 
   private subject(test: TestCase, retry: number) {
     return { ...this.source, suite: test.location.file.replace(/\\/g, '/').replace(/^.*\/(web|desktop)\//, '$1/'),
       project: test.parent.project()?.name || '', test: test.title,
+      // Reporter suites include the empty root, project and file ancestors.
+      titlePath: test.titlePath().slice(3),
       repeat: test.repeatEachIndex + this.offset, retry, expected: test.expectedStatus, seed: null };
   }
   private set(test: TestCase, retry: number, row: Record<string, unknown>) {
@@ -38,6 +41,7 @@ export default class LedgerReporter implements Reporter {
   }
   onBegin(_config: FullConfig, suite: Suite) {
     if (!Number.isInteger(this.offset) || this.offset < 0 || this.offset > 29) throw new Error('invalid repetition offset');
+    this.selected = suite.allTests().length;
     for (const test of suite.allTests()) this.set(test, 0, { ...this.subject(test, 0),
       status: 'unknown', phase: 'scheduled', worker: null, durationMs: null,
       startedAt: null, completedAt: null, category: 'unknown', assertion: '', signature: null, causes: [] });
@@ -62,6 +66,9 @@ export default class LedgerReporter implements Reporter {
     this.flush();
   }
   onEnd(result: FullResult) {
+    if (!this.selected) this.rows.set('empty-selection', { ...this.source, suite: 'Playwright runner', project: '',
+      test: 'empty selected inventory', repeat: 0, retry: 0, status: 'unknown', phase: 'empty-selection', category: 'collection',
+      assertion: 'Playwright selected no scenarios', signature: ledger.signature('Playwright selected no scenarios') });
     this.flush(result.status, true);
     if (this.globalErrors || !this.rows.size || [...this.rows.values()].some(row => row.status === 'unknown')) return { status: 'failed' as const };
   }

@@ -67,9 +67,12 @@ def test_list(entries):
     lines = []
     for entry in entries:
         file = Path(entry['file']).relative_to(f"{entry['suite']}/e2e").as_posix()
-        if any(c in entry['title'] for c in ('\n', '\r', '>', '›')):
+        titles = entry.get('title_path', [entry['title']])
+        if not isinstance(titles, list) or not titles or titles[-1] != entry['title'] or any(
+            not isinstance(title, str) or not title.strip() or title != title.strip() or any(c in title for c in ('\n', '\r', '>', '›')) for title in titles
+        ):
             raise ValueError('unsupported test-list title delimiter')
-        lines.append(f"{file} > {entry['title']}")
+        lines.append(f"{file} > {' > '.join(titles)}")
     return '\n'.join(lines) + ('\n' if lines else '')
 
 
@@ -78,7 +81,7 @@ def results(entries, ledger, required, os):
     if not isinstance(records, list):
         raise ValueError('missing scenario result records')
     for entry in entries:
-        observed = [r for r in records if r.get('suite') == entry['file'] and r.get('test') == entry['title'] and r.get('os') == os and r.get('retry') == 0]
+        observed = [r for r in records if r.get('suite') == entry['file'] and r.get('test') == entry['title'] and r.get('titlePath', [r.get('test')]) == entry.get('title_path', [entry['title']]) and r.get('os') == os and r.get('retry') == 0]
         if len(observed) != 1 or observed[0].get('status') not in ('passed', 'failed', 'timedOut'):
             raise ValueError(f'missing or ambiguous scenario result: {entry["id"]}')
         if required and observed[0]['status'] != 'passed':

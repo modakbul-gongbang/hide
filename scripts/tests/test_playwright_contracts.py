@@ -16,6 +16,78 @@ spec.loader.exec_module(quarantine)
 
 
 class PlaywrightContracts(unittest.TestCase):
+    def test_ordinary_configs_execute_exact_file_and_title_path_and_fail_empty_selection(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=artifacts) as directory:
+            root = Path(directory)
+            for package in ('web', 'desktop'):
+                # No replacement config: these ephemeral basic tests run under
+                # each ordinary package's installed runner and actual rootDir.
+                prefix = 'ci-selection-' + root.name
+                registered = ROOT / package / 'e2e' / (prefix + '-registered.spec.ts')
+                other = ROOT / package / 'e2e' / (prefix + '-other.spec.ts')
+                title = 'exact registered scenario'
+                entry = {'id': 'control', 'suite': package, 'file': registered.relative_to(ROOT).as_posix(),
+                    'title': title, 'title_path': ['registered phase', title], 'oses': ['Linux']}
+                registered.write_text("import { test } from '@playwright/test';\n" +
+                    "test.describe('registered phase', () => {\n" +
+                    f"test({json.dumps(title)}, () => {{}});\n" +
+                    f"test({json.dumps(title + ' with extra words')}, () => {{}});\n}});\n" +
+                    "test.describe('another phase', () => {\n" + f"test({json.dumps(title)}, () => {{}});\n}});\n")
+                other.write_text("import { test } from '@playwright/test';\n" +
+                    "test.describe('registered phase', () => {\n" + f"test({json.dumps(title)}, () => {{}});\n}});\n")
+                try:
+                    listing = root / 'selection.txt'
+                    script = "const fs=require('node:fs'),c=require('./scripts/ci-controls.cjs'); fs.writeFileSync(process.argv[1],c.testList(JSON.parse(process.argv[2])));"
+                    result = subprocess.run(['node', '-e', script, str(listing), json.dumps([[entry['file'], entry['title_path']]])],
+                        cwd=ROOT, capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(listing.read_text(), quarantine.test_list([entry]))
+                    project = ['--project', 'background', '--no-deps'] if package == 'desktop' else []
+
+                    def run(label, flag, expected=0):
+                        filename = artifacts / f'ordinary-{package}-{label}.ledger.json'
+                        report = artifacts / f'ordinary-{package}-{label}.report.json'
+                        result = subprocess.run(['bash', 'scripts/verify-web.sh', package, 'e2e', prefix, *project,
+                            '--retries=0', flag, str(listing), '--reporter=list,' + str(ROOT / 'scripts/ci-reporter.ts') + ',json'],
+                            cwd=ROOT, env={**os.environ, 'CI_LEDGER_PATH': str(filename), 'PLAYWRIGHT_JSON_OUTPUT_FILE': str(report), 'RUNNER_OS': 'Linux'},
+                            capture_output=True, text=True, timeout=60)
+                        (artifacts / f'ordinary-{package}-{label}.log').write_text(result.stdout + result.stderr)
+                        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                        return json.loads(filename.read_text()), json.loads(report.read_text())
+
+                    included, report = run('controls', '--test-list')
+                    self.assertEqual([(r['suite'], r['titlePath'], r['status']) for r in included['records']], [(entry['file'], entry['title_path'], 'passed')])
+                    self.assertEqual(report['stats']['expected'], 1)
+                    for mode in ('required', 'advisory'):
+                        selected = quarantine.selection([entry], package, 'Linux', mode, {f'quarantine_{"required" if mode == "required" else "observe"}': ['control']})
+                        listing.write_text(quarantine.test_list(selected))
+                        observed, report = run(mode, '--test-list')
+                        quarantine.results(selected, observed, mode == 'required', 'Linux')
+                        self.assertEqual(report['stats']['expected'], 1)
+                    excluded, report = run('excluded', '--test-list-invert')
+                    self.assertEqual(report['stats']['expected'], 3)
+                    self.assertEqual({(r['suite'], tuple(r['titlePath'])) for r in excluded['records']}, {
+                        (entry['file'], ('registered phase', title + ' with extra words')),
+                        (entry['file'], ('another phase', title)),
+                        (other.relative_to(ROOT).as_posix(), ('registered phase', title))})
+                    for mode in ('required', 'advisory'):
+                        with self.assertRaisesRegex(ValueError, 'missing'):
+                            quarantine.results([entry], excluded, mode == 'required', 'Linux')
+                    # Reproduce the actual remote repository-relative selector
+                    # failure and keep a failing, explicitly unknown receipt.
+                    listing.write_text(entry['file'] + ' > ' + ' > '.join(entry['title_path']) + '\n')
+                    empty, report = run('empty', '--test-list', expected=1)
+                    self.assertEqual(report['stats']['expected'], 0)
+                    self.assertEqual(empty['collection'], 'partial-or-unknown')
+                    self.assertEqual(empty['summary']['firstPass'], 0)
+                    self.assertGreaterEqual(empty['summary']['unknown'], 1)
+                    self.assertTrue(any(r['phase'] == 'empty-selection' and r['status'] == 'unknown' for r in empty['records']))
+                finally:
+                    registered.unlink()
+                    other.unlink()
+
     def test_full_web_inventory_includes_registered_macos_scenarios(self):
         entries = json.loads((ROOT / 'contracts/ci-quarantine.json').read_text())['entries']
         selected = quarantine.selection(entries, 'web', 'macOS', 'exclude')
@@ -37,6 +109,26 @@ class PlaywrightContracts(unittest.TestCase):
                 exact = (Path(entry['file']).name, entry['title'])
                 self.assertTrue(exact in full, f'missing full-suite identity: {exact}')
                 self.assertTrue(exact not in pr, f'registered identity leaked into ordinary PR: {exact}')
+
+    def test_control_selection_discovers_every_exact_real_scenario(self):
+        contract = json.loads((ROOT / 'contracts/ci-failure-controls.json').read_text())
+        with tempfile.TemporaryDirectory(dir=ROOT / 'agents/runs/ci-test-refactor') as directory:
+            listing = Path(directory) / 'selected.txt'
+            for name, scenario in contract['scenarios'].items():
+                selected = subprocess.run(['node', 'scripts/ci-controls.cjs', 'select', name, scenario['oses'][0], str(listing)],
+                    cwd=ROOT, capture_output=True, text=True, timeout=10)
+                self.assertEqual(selected.returncode, 0, selected.stderr)
+                package = scenario['tests'][0][0].split('/')[0]
+                project = ['--project', 'needs-focus' if name == 'native' else 'background', '--no-deps'] if package == 'desktop' else []
+                result = subprocess.run(['bash', 'scripts/verify-web.sh', package, 'e2e', '--list', '--reporter=json',
+                    '--test-list', str(listing), *project], cwd=ROOT, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout[result.stdout.index('{'):])
+                def identities(suites):
+                    return {(s['file'].replace('\\', '/'), s['title']) for suite in suites for s in suite.get('specs', [])} | set().union(*(identities(suite.get('suites', [])) for suite in suites))
+                observed = identities(report['suites'])
+                wanted = {(Path(file).relative_to(f'{package}/e2e').as_posix(), title) for file, title in scenario['tests']}
+                self.assertEqual(observed, wanted, name)
 
     def test_killed_reporter_preserves_completed_and_in_flight_results(self):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
