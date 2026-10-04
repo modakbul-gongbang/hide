@@ -9,6 +9,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { countSent, registerFolder, screenshot, sendEvent } from "./wire";
@@ -73,7 +74,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // Checkout owner D-11/B13: this existing plain-folder workspace owns
     // the tabs this flow adds. An unmarked workspace would correctly make
     // Hide open a new owner instead (covered by checkout-owner.spec.ts).
-    const folder = fs.realpathSync(path.join(herdr.root, "fixture"));
+    // Owner identity uses the core's wire path, including on Windows.
+    const folder = toPage(fs.realpathSync(path.join(herdr.root, "fixture")));
     const owner = crypto.createHash("sha256").update(`local\0${folder}`).digest("hex").slice(0, 32);
     execFileSync(herdr.bin, ["workspace", "report-metadata", herdr.workspace, "--source", "e2e-owner", "--token", `hide_owner=${owner}`], { env: herdr.env, timeout: 30_000 });
     daemon = await startHided(herdr);
