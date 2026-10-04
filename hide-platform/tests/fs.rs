@@ -1059,6 +1059,83 @@ fn replacing_a_link_points_the_same_name_at_the_new_target_with_nothing_left_bes
     assert_eq!(names(outer.path()), ["current", "version-1", "version-2"]);
 }
 
+struct LinkReadPhase {
+    held: File,
+    prefix: u8,
+}
+
+impl LinkReadPhase {
+    fn begin(path: &Path, completed: &AtomicUsize, round: usize) -> Result<Self, String> {
+        let mut held = File::open(path).map_err(|error| {
+            format!(
+                "link reader held open failed in phase {round}: {error}; kind={:?}; raw={:?}",
+                error.kind(),
+                error.raw_os_error()
+            )
+        })?;
+        let mut prefix = [0_u8; 1];
+        held.read_exact(&mut prefix).map_err(|error| {
+            format!(
+                "link reader prefix read failed in phase {round}: {error}; kind={:?}; raw={:?}",
+                error.kind(),
+                error.raw_os_error()
+            )
+        })?;
+        if completed.load(Ordering::Acquire) != round - 1 {
+            return Err(format!(
+                "reader phase {round} began after publication; serial read cannot count as overlap"
+            ));
+        }
+        Ok(Self {
+            held,
+            prefix: prefix[0],
+        })
+    }
+
+    fn finish(mut self, completed: &AtomicUsize, round: usize) -> Result<(), String> {
+        if completed.load(Ordering::Acquire) != round {
+            return Err(format!(
+                "reader phase {round} completed without publication"
+            ));
+        }
+        let mut suffix = String::new();
+        self.held.read_to_string(&mut suffix).map_err(|error| {
+            format!(
+                "link reader suffix read failed in phase {round}: {error}; kind={:?}; raw={:?}",
+                error.kind(),
+                error.raw_os_error()
+            )
+        })?;
+        let straddled = format!("{}{suffix}", char::from(self.prefix));
+        if straddled != "version-1" && straddled != "version-2" {
+            return Err(format!(
+                "link reader phase {round} returned unexpected content: {straddled:?}"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn a_reader_that_begins_after_publication_cannot_satisfy_link_overlap() {
+    let outer = folder();
+    for version in ["version-1", "version-2"] {
+        fs::create_dir(outer.path().join(version)).unwrap();
+        fs::write(outer.path().join(version).join("hide"), version).unwrap();
+    }
+    let current = outer.path().join("current");
+    link::replace_link(Path::new("version-1"), &current).unwrap();
+    // Force a serial schedule using real native publication, then a native read.
+    link::replace_link(Path::new("version-2"), &current).unwrap();
+    let completed = AtomicUsize::new(1);
+    let error = LinkReadPhase::begin(&current.join("hide"), &completed, 1)
+        .err()
+        .unwrap();
+    assert!(error.contains("serial read cannot count as overlap"));
+    assert_eq!(read(&current.join("hide")), "version-2");
+    assert_eq!(names(outer.path()), ["current", "version-1", "version-2"]);
+}
+
 #[test]
 fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
     let outer = folder();
@@ -1111,10 +1188,7 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
                 // Prefix is read before ready; suffix is read only after the
                 // writer published. Descheduling cannot turn this into two
                 // unrelated, already-closed reads around a replacement.
-                let mut held = File::open(current.join("hide")).map_err(|error| format!("link reader held open failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error()))?;
-                let mut prefix = [0_u8; 1];
-                held.read_exact(&mut prefix).map_err(|error| format!("link reader prefix read failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error()))?;
-                assert_eq!(completed.load(Ordering::Acquire), round - 1);
+                let phase = LinkReadPhase::begin(&current.join("hide"), completed, round)?;
                 ready.send(round).map_err(|error| error.to_string())?;
                 loop {
                     if Instant::now() >= deadline {
@@ -1135,12 +1209,8 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
                     }
                     assert!(text == "version-1" || text == "version-2");
                     if completed.load(Ordering::Acquire) == round {
-                        let mut suffix = String::new();
-                        held.read_to_string(&mut suffix).map_err(|error| format!("link reader suffix read failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error()))?;
-                        let straddled = format!("{}{suffix}", char::from(prefix[0]));
-                        assert!(straddled == "version-1" || straddled == "version-2");
+                        phase.finish(completed, round)?;
                         overlapping += 1;
-                        drop(held);
                         follow(&current.join("hide"))?;
                         observed.send(round).map_err(|error| error.to_string())?;
                         break;

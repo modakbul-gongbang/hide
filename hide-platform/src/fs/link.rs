@@ -39,6 +39,33 @@ impl std::error::Error for PublishedCleanupFailure {
     }
 }
 
+/// Publication was refused and removing the unpublished entry also failed.
+/// The destination is unchanged; the retained entry still belongs to the caller.
+#[derive(Debug)]
+pub struct UnpublishedCleanupFailure {
+    pub retained: std::path::PathBuf,
+    pub primary: io::Error,
+    pub cleanup: io::Error,
+}
+
+impl fmt::Display for UnpublishedCleanupFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}; unpublished link cleanup failed: {}; retained entry: {}",
+            self.primary,
+            self.cleanup,
+            self.retained.display()
+        )
+    }
+}
+
+impl std::error::Error for UnpublishedCleanupFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.primary)
+    }
+}
+
 /// Making a link to a file needs a privilege this account does not have.
 #[derive(Debug)]
 pub struct NeedsPrivilege;
@@ -71,6 +98,15 @@ pub fn create_link(target: &Path, link: &Path) -> io::Result<()> {
 /// beside it and renamed over it, so the name never leads nowhere in
 /// between.
 pub fn replace_link(target: &Path, link: &Path) -> io::Result<()> {
+    replace_using(target, link, sys::rename_over, sys::remove)
+}
+
+fn replace_using(
+    target: &Path,
+    link: &Path,
+    publish: impl FnOnce(&Path, &Path) -> io::Result<()>,
+    cleanup: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     let name = link
         .file_name()
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
@@ -79,16 +115,69 @@ pub fn replace_link(target: &Path, link: &Path) -> io::Result<()> {
         .unwrap_or_else(|| Path::new(""))
         .join(super::temporary_name(name, "hide-link"));
     create_link(target, &beside)?;
-    sys::rename_over(&beside, link).inspect_err(|error| {
+    publish(&beside, link).map_err(|primary| {
         // After publication the displaced entry belongs to the caller's
         // recovery, not a second best-effort delete hiding the failure.
-        if !error
+        if !primary
             .get_ref()
             .is_some_and(|inner| inner.is::<PublishedCleanupFailure>())
         {
-            let _ = sys::remove(&beside);
+            if let Err(cleanup) = cleanup(&beside) {
+                return io::Error::new(
+                    primary.kind(),
+                    UnpublishedCleanupFailure {
+                        retained: beside,
+                        primary,
+                        cleanup,
+                    },
+                );
+            }
         }
+        primary
     })
+}
+
+#[cfg(test)]
+mod failure_controls {
+    use super::*;
+
+    #[test]
+    fn rename_refusal_keeps_its_primary_and_retained_entry_when_cleanup_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("current");
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("keep"), "original directory content").unwrap();
+        fs::create_dir(root.path().join("version")).unwrap();
+        let error = replace_using(Path::new("version"), &destination, sys::rename_over, |_| {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "controlled cleanup refusal",
+            ))
+        })
+        .unwrap_err();
+        let failure = error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<UnpublishedCleanupFailure>()
+            .unwrap();
+        assert_eq!(error.kind(), failure.primary.kind());
+        assert_eq!(failure.cleanup.kind(), io::ErrorKind::PermissionDenied);
+        assert!(failure.retained.starts_with(root.path()));
+        assert!(is_link_to(&failure.retained, Path::new("version")));
+        assert_eq!(
+            fs::read_to_string(destination.join("keep")).unwrap(),
+            "original directory content"
+        );
+        assert!(error.to_string().starts_with(&failure.primary.to_string()));
+        assert!(error.to_string().contains("controlled cleanup refusal"));
+        assert!(
+            error
+                .to_string()
+                .contains(&failure.retained.display().to_string())
+        );
+        remove_link(&failure.retained).unwrap();
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    }
 }
 
 /// Removes the link `link` itself, never what it leads to.
