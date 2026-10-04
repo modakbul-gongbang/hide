@@ -2,16 +2,19 @@ import { expect, type ElectronApplication } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
+import { finishFixture } from "../../web/e2e/worker-owned";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { isolate, launch, screenshot, test } from "./fixture";
+import { isolate, launch, screenshot, test, type Isolated } from "./fixture";
 import { observeTerminalInput, type TerminalInputObservation } from "./terminal-input-observation";
 
 test("Agent edge drag splits the desktop column into two live tab groups", async () => {
   const herdr = await startHerdr({ agents: false });
-  const run = isolate(herdr, "agent-groups");
+  let run: Isolated | null = null;
+  let primary: unknown;
   let app: ElectronApplication | null = null;
   let observation: TerminalInputObservation | null = null;
   try {
+    run = isolate(herdr, "agent-groups");
     const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } };
     const launched = await launch(run.env);
     app = launched.app;
@@ -50,13 +53,14 @@ test("Agent edge drag splits the desktop column into two live tab groups", async
     await page.keyboard.up("Meta");
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
     await screenshot(page, "desktop-agent-groups-split");
+  } catch (error) {
+    primary = error;
   } finally {
-    try {
-      await observation?.exportOnce();
-    } finally {
-      await app?.close().catch(() => undefined);
-      run.cleanup();
-      herdr.stop();
-    }
+    await finishFixture(primary, [
+      () => observation?.exportOnce(),
+      async () => { await app?.close(); },
+      () => run?.cleanup(),
+      () => herdr.stop(),
+    ]);
   }
 });

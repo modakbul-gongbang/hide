@@ -173,11 +173,13 @@ export const test = base.extend<{ focusGuard: void }>({
         for (const { cleanup } of [...isolations.values()]) {
           try { cleanup(); } catch (error) { errors.push(error); }
         }
-        const reports = fs.readdirSync(dir).flatMap((file) => fs.readFileSync(path.join(dir, file), "utf8").split("\n").filter(Boolean));
-        focusReports = null;
-        fs.rmSync(dir, { recursive: true, force: true });
-        if (!testInfo.tags.includes(NEEDS_FOCUS)) {
-          try { expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]); } catch (error) { errors.push(error); }
+        try {
+          const reports = fs.readdirSync(dir).flatMap((file) => fs.readFileSync(path.join(dir, file), "utf8").split("\n").filter(Boolean));
+          if (!testInfo.tags.includes(NEEDS_FOCUS)) expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]);
+        } catch (error) { errors.push(error); }
+        finally {
+          focusReports = null;
+          try { fs.rmSync(dir, { recursive: true, force: true }); } catch (error) { errors.push(error); }
         }
       }
       if (errors.length) throwFixtureFailures(errors);

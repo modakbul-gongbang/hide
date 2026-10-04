@@ -130,7 +130,8 @@ The first Windows runs of the web e2e fixtures found three differences the helpe
 - Release every process a fixture started on every exit path, including a failed start: register it with `ownUntilWorkerExit` before the first step that can throw.
 - Delete a fixture's root only after every process that used it has confirmed exit; when exit cannot be confirmed, keep the root and name it in the error, as `desktop/e2e/fixture.ts` does.
   `cleanupAfterFailure` keeps the original message and stack as the primary identity and the cleanup error in `cause`, which Playwright serializes.
-  `scripts/tests/test_playwright_contracts.py` checks the actual JSON reporter and failure ledger, including cleanup-only failure.
+  `scripts/tests/test_playwright_contracts.py` checks the actual JSON reporter and failure ledger, including cleanup-only failure and simultaneous desktop assertion/report-directory I/O failure.
+  Local desktop release sequences attempt every release, and automatic focus-report reads and removal report their own failures without replacing earlier failures.
   `finishFixture` attempts every release and preserves an existing native cause and each secondary release failure in that serialized chain.
   An `AggregateError.errors` array alone is insufficient because Playwright does not serialize it.
 

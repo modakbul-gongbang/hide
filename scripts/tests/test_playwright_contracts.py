@@ -236,5 +236,53 @@ test.describe('separate caller phases', () => {{
             self.assertEqual(global_result['collection'], 'partial-or-unknown')
 
 
+    def test_desktop_focus_guard_retains_primary_and_report_io_failure(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=artifacts) as directory:
+            root = Path(directory)
+            tests = root / 'desktop/e2e'
+            tests.mkdir(parents=True)
+            temporary = root / 'private-tmp'
+            temporary.mkdir()
+            package = (ROOT / 'web/node_modules/@playwright/test').as_posix()
+            fixture = (ROOT / 'desktop/e2e/fixture.ts').as_posix()
+            (tests / 'guard.spec.ts').write_text(f"""import {{ test }} from {json.dumps(fixture)};
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+test('primary desktop assertion with native report read failure', () => {{
+  const guards=fs.readdirSync(os.tmpdir()).filter(name=>name.startsWith('hide-e2e-focus-'));
+  if(guards.length!==1) throw new Error('private focus guard identity missing');
+  fs.mkdirSync(path.join(os.tmpdir(),guards[0],'directory-is-not-a-report'));
+  throw new Error('Expected: primary desktop assertion');
+}});
+""")
+            config = root / 'playwright.config.ts'
+            config.write_text(f"""import {{ defineConfig }} from {json.dumps(package)};
+export default defineConfig({{testDir:{json.dumps(str(tests))},workers:1,retries:0,
+reporter:[['json'],[{json.dumps(str(ROOT / 'scripts/ci-reporter.ts'))}]]}});
+""")
+            ledger = artifacts / 'desktop-guard.ledger.json'
+            report = artifacts / 'desktop-guard.report.json'
+            result = subprocess.run(['bash', 'scripts/verify-web.sh', 'web', 'e2e', '--config', str(config)], cwd=ROOT,
+                env={**os.environ, 'TMPDIR': str(temporary), 'TMP': str(temporary), 'TEMP': str(temporary),
+                    'CI_LEDGER_PATH': str(ledger), 'PLAYWRIGHT_JSON_OUTPUT_FILE': str(report)},
+                capture_output=True, text=True, timeout=30)
+            (artifacts / 'desktop-guard.log').write_text(result.stdout + result.stderr)
+            self.assertNotEqual(result.returncode, 0)
+            value = json.loads(ledger.read_text())
+            self.assertEqual(len(value['records']), 1)
+            row = value['records'][0]
+            self.assertEqual(row['status'], 'failed')
+            self.assertIn('Expected: primary desktop assertion', row['assertion'])
+            self.assertIn('EISDIR', json.dumps(row['causes']))
+            actual = json.loads(report.read_text())['suites'][0]['specs'][0]['tests'][0]['results'][0]
+            self.assertIn('Expected: primary desktop assertion', actual['error']['message'])
+            self.assertIn('guard.spec.ts', actual['error']['stack'])
+            self.assertIn('EISDIR', json.dumps(actual['errors'][1:]))
+            self.assertFalse(any(entry.name.startswith('hide-e2e-focus-') for entry in temporary.iterdir()))
+
+
 if __name__ == '__main__':
     unittest.main()
