@@ -164,7 +164,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
               <span className="flex-1" />
               <WeeklyUsage actions={actions} />
-              <Hint label={t("common.settings")} shortcut={commandLabel("settings")}>
+              <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
                 <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
                   <SettingsIcon />
                 </Button>

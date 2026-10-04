@@ -1388,6 +1388,7 @@ A command marked none has no chord until the operator binds one in Settings, Sho
 
 Every icon-only control has a tooltip and an accessible name carrying the same words as the tooltip.
 A chorded tooltip reads the label followed by the shortcut chord; a chordless control shows only the label.
+The sidebar Settings tooltip and accessible name append the host's current shortcut in parentheses to the translated label.
 There is no native platform tooltip layered underneath the shared one; the shared tooltip is the only tooltip in the main shell.
 Tooltip hover has a short reveal delay, and an exact modifier hold reveals shortcut hints faster than a hover tooltip does.
 In the desktop app, holding ⌘ alone (Ctrl+Shift on Windows and Linux) floats each tab's number at its top right in the agent tab strip in front, and holding ⌥ alone floats each Agents-list row's number at its top right: a keycap in the popover colors with a border, a small shadow and one mono digit, positioned over the tab or row rather than in it, so a title, an inline Rename field, a row's time, and its fold slot never move.
