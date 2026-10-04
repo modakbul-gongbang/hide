@@ -92,11 +92,6 @@ pub(super) struct FocusPaneRequestPayload {
     /// while another device is in front is one action (S6 B12, B21).
     #[serde(default)]
     pub(super) focus_device: bool,
-    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
-    /// as they are, so the View areas drawn over the agents stay up
-    /// (issue 170). A choice from the sidebar, a palette or a cycle is not.
-    #[serde(default)]
-    pub(super) in_place: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,11 +175,6 @@ pub(super) struct FocusTabPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
     pub(super) tab_id: String,
-    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
-    /// as they are, so the side panel over the agents stays up (issue 170).
-    /// A choice from the sidebar, a palette or a cycle is not.
-    #[serde(default)]
-    pub(super) in_place: bool,
     /// Also makes this machine the device in front when the tab is accepted,
     /// as `FocusCheckoutPayload::focus_device` does.
     #[serde(default)]
@@ -357,11 +347,6 @@ pub(super) struct RemoteControlPayload {
     /// or, refused, neither (S6 B21).
     #[serde(default)]
     pub(super) focus_device: bool,
-    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
-    /// as they are, so the View areas drawn over the agents stay up
-    /// (issue 170). A choice from the sidebar, a palette or a cycle is not.
-    #[serde(default)]
-    pub(super) in_place: bool,
     #[serde(flatten)]
     pub(super) request: RemoteControlRequest,
 }
@@ -1146,7 +1131,6 @@ pub(super) struct TerminalResizePayload {
 
 pub(super) enum Event {
     WorkspaceView(WorkspaceViewPayload),
-    PanelCovers(PanelCoversPayload),
     ViewLayout(ViewLayoutPayload),
     AgentLayout(AgentLayoutPayload),
     BrowserOpen(BrowserOpenPayload),
@@ -1478,7 +1462,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_activity" => Ok(Event::PetActivity),
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
         "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
-        "panel_covers" => decode!(PanelCoversPayload, PanelCovers),
         "agent_layout" => decode!(AgentLayoutPayload, AgentLayout),
         "view_layout" => decode!(ViewLayoutPayload, ViewLayout),
         "browser_open" => decode!(BrowserOpenPayload, BrowserOpen),
@@ -1494,7 +1477,6 @@ impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
-            Event::PanelCovers(payload) => self.apply_panel_covers(payload),
             Event::AgentLayout(payload) => self.apply_agent_layout(payload),
             Event::ViewLayout(payload) => self.apply_view_layout(payload),
             Event::BrowserOpen(payload) => self.open_browser(payload),

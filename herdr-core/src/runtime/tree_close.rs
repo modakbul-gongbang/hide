@@ -638,7 +638,6 @@ impl Runtime {
                     request_id: request_id.clone(),
                     report_pane_focus_outcome: false,
                     focus_device: false,
-                    in_place: true,
                     request,
                 });
                 let key = (device.to_owned(), request_id);

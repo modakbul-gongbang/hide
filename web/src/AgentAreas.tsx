@@ -65,7 +65,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
     menu: (id, geometry, sizes) => agentMenu({ workspace, layout, geometry, sizes }, id),
     runMenu: (command, id) => command === "rename_tab" ? setRenaming(id) : actions.runAgentCommand(command as AgentCommand, id),
     onMenuCloseAutoFocus: (event) => { if (renaming) event.preventDefault(); },
-    focus: (id) => remote ? actions.focusTab(id, true) : actions.agentLayout({ action: "focus", tab_id: id }),
+    focus: (id) => remote ? actions.focusTab(id) : actions.agentLayout({ action: "focus", tab_id: id }),
     focusArea: (id) => { if (!remote) actions.agentLayout({ action: "focus_area", area_id: id }); },
     move: (id, areaId, index) => {
       if (remote) {

@@ -1,12 +1,12 @@
 ---
 topic: "사이드 패널을 Agent Views, File Views, Tools 세 컬럼으로 나누기"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"
 review_profile: "high-risk"
 review_rationale: "출시된 #170 결정(파일을 열어도 터미널이 리사이즈되지 않음)을 뒤집어 PTY 리사이즈 시점을 바꾸고, 운영자의 Workspace별 저장 상태 파일(workspace-views.json)의 패널 키를 한 번 읽어 새 키로 바꾸므로 배치 손실과 터미널 회귀가 핵심 위험이다."
 source_intake: "current conversation"
 created_at: "2026-10-02"
-updated_at: "2026-10-02"
+updated_at: "2026-10-04"
 ---
 
 # PRD: 사이드 패널을 Agent Views, File Views, Tools 세 컬럼으로 나누기
@@ -38,16 +38,16 @@ Explorer를 켜 둔 채 에이전트 옆에서 파일이나 페이지를 보는 
 | D-04 | 툴바는 Workspace 본문 전체 폭에 걸치고, 오른쪽 끝에 아이콘만 Open server, File Views, Tools 순서로 둔다. 마우스를 올리거나 키보드 focus가 가면 툴팁에 이름과 단축키 keycap이 보인다(Open server는 단축키 없음). File Views 아이콘은 File Views가 보이지 않는 동안 열린 view 개수 뱃지를 단다. 각 컬럼에는 제목 줄이 없고 첫 줄이 그 컬럼의 탭 줄이다. | 이슈 #321 툴바 항목; HANDOFF "the toolbar looks fine"; 와이어프레임 툴바 폭; HANDOFF 설계 원칙 "earn every container" |
 | D-05 | ⌘⇧B는 File Views만, ⌘E는 Tools만 토글한다. 툴바 아이콘과 단축키는 같은 규칙이다: 보이지 않는 컬럼은 보이게 하고, 보이는 컬럼은 끈다. 디스패치는 "토글"이 아니라 결과 값(켜짐/꺼짐)을 실어 같은 이벤트가 두 번 와도 같은 상태로 수렴한다. Settings에서 두 명령의 키를 바꿔 둔 운영자의 바인딩은 새 명령으로 이어진다. 데스크톱 앱 View 메뉴의 두 항목 이름도 바뀐다. | HANDOFF "`⌘⇧B` now toggles File Views only, `⌘E` toggles Tools"; 가정: 결과 값 디스패치(engineering 원칙 11), 바인딩 승계 |
 | D-06 | Expand를 없앤다. 도킹에서 File Views가 본문 전체를 차지하려면 Agent Views를 숨겨 터미널을 두 번 리사이즈하거나 덮는 모드를 다시 들여야 하는데, 이 변경이 없애려는 것이 그 덮는 모드다. 넓게 보려면 Tools를 숨기거나 경계선을 끈다. 저장된 `expanded`는 File Views 켜짐으로 읽는다. `hide` CLI와 Workspace 제어는 Expand를 쓰지 않는다. | HANDOFF "Expand stays only if still used; the PRD should say which"; 가정: 제거(engineering 원칙 2), 운영자가 거부할 수 있음 |
-| D-07 | 좁은 창은 오버레이 없이 컬럼을 숨긴다. 기준은 창이 아니라 Workspace 본문 폭이며 컬럼 최소 폭의 합에서 나온다: Agent Views 480px, File Views 360px, Tools 260px. 본문이 1100px 이상이면 켜진 컬럼이 모두 보이고, 840px 이상 1100px 미만이면 옆 컬럼은 하나만 보이며 Tools를 먼저 숨기고, 840px 미만이면 한 컬럼만 보이고 기본은 Agent Views다. 숨겨진 컬럼을 운영자가 명시적으로 부르면(아이콘, 단축키, 파일 열기, reveal) 그 컬럼이 다른 옆 컬럼(840px 미만이면 Agent Views)의 자리를 대신하고, 840px 미만에서 에이전트를 고르면 Agent Views로 돌아온다. 이 좁은 창 배치는 표시 전용이며 저장하지 않는다. 창이 다시 넓어지면 저장된 켜짐/꺼짐과 폭이 돌아온다. | 이슈 #321 "창이 좁으면 오버레이 대신 Tools부터, 그다음 File Views를 숨깁니다. 폭 기준은 정해지지 않았습니다(약 1100px로 가정)"; 가정: 본문 폭 기준(사이드바를 ⌘B로 숨기면 쓸 수 있는 폭이 바뀌므로), 480px는 기본 글자 크기에서 약 60열 터미널, 360px는 `--issue-panel-min-width`와 같은 읽기 컬럼 최소, 260px는 `--size-panel-min`, 명시 호출 시 자리 교체 |
+| D-07 | 좁은 창은 오버레이 없이 컬럼을 숨긴다. 기준은 창이 아니라 Workspace 본문 폭이며 컬럼 최소 폭은 Agent Views 480px, File Views 360px, Tools 260px로 유지한다. 경계선 폭까지 포함한 기준은 1116px와 848px다. 본문이 1116px 이상이면 켜진 컬럼이 모두 보이고, 848px 이상 1116px 미만이면 옆 컬럼은 하나만 보이며 Tools를 먼저 숨기고, 848px 미만이면 한 컬럼만 보이고 기본은 Agent Views다. 창 폭이 1440px이고 열린 사이드바 때문에 본문이 1100px인 경우에도 두 컬럼 단계로 처리하며 최소 폭을 줄이지 않는다. 숨겨진 컬럼을 운영자가 명시적으로 부르면(아이콘, 단축키, 파일 열기, reveal) 그 컬럼이 다른 옆 컬럼(848px 미만이면 Agent Views)의 자리를 대신하고, 848px 미만에서 에이전트를 고르면 Agent Views로 돌아온다. 이 좁은 창 배치는 표시 전용이며 저장하지 않는다. 창이 다시 넓어지면 저장된 켜짐/꺼짐과 폭이 돌아온다. | 이슈 #321의 본문 폭 기준과 명시 호출 시 자리 교체; 2026-10-04 운영자 승인: 480/360/260px 유지, 경계선 포함 1116/848px, 1440px 창의 사이드바 열린 본문 1100px는 두 컬럼 단계 유지 |
 | D-08 | 컬럼 표시 여부는 Workspace 표현 상태이므로 core의 `workspace_view` 상태가 Workspace마다 소유한다: File Views 켜짐, Tools 켜짐, 보이는 도구(Explorer 또는 History), File Views 폭, Tools 폭. `panel`(closed/open/expanded), `pinned`, `covered`, `views_over_share`는 없앤다. 한 사용자 동작은 한 core 이벤트다. | HANDOFF "Panel visibility is Workspace presentation, so it belongs in the core's `workspace_view` state"; ARCHITECTURE.md Runtime Architecture "A user action is one event" |
 | D-09 | 업그레이드 시 저장된 Workspace 항목은 한 번 새 키로 읽는다: `panel`이 `open` 또는 `expanded`면 File Views 켜짐, `closed`면 꺼짐; `tools`와 `tool`은 그대로; `pinned`, `views_over_share`, `tools_share`는 버리고 두 폭은 기본값으로 시작한다. View 영역 트리, Agent 영역, View 북마크는 그대로다. 다음 저장은 새 키만 쓰고 schema는 키 변경이므로 2로 둔다. 읽을 수 없는 파일은 지금처럼 옆에 보존되고 진단이 남으며 기본값으로 시작한다. | HANDOFF "What happens to a stored per-Workspace panel state (closed/open/expanded/pinned) on upgrade"; ARCHITECTURE.md:678 키 추가 이행 관례(운영자 저장 배치를 지키기 위해 engineering 원칙 1보다 우선); 가정: 폭은 기본값 |
 | D-10 | File Views는 비어 있지 않다. 마지막 view가 닫히면 core가 같은 전이에서 File Views를 끈다. view가 하나도 없을 때 ⌘⇧B나 File Views 아이콘은 File Views에 기존 New tab 페이지(Open with File ⌘P, Diff)를 연다. Tools를 끄거나 켜도 File Views는 바뀌지 않고, Tools만 켜진 상태도 정상이다. | UI_BEHAVIOR.md "There is no empty panel body"를 컬럼에 적용; 가정: 빈 File Views 진입점으로 기존 New tab 페이지 재사용 |
 | D-11 | 네이티브 페이지는 File Views 컬럼 안의 자기 slot에 도킹된 채 그려지고, 셸의 어떤 컬럼이나 패널도 그 위에 뜨지 않는다. File Views를 숨기면 페이지는 닫히지 않고 숨으며 다시 보이면 같은 주소로 돌아온다. 경계선 drag 동안은 기존 shell drag 규칙대로 모든 페이지가 still로 바뀐다. 메뉴·대화상자·팝오버·툴팁과 페이지의 겹침은 #323이 소유하며 이 PRD와 병합 순서에 묶이지 않는다. #323의 "사이드 패널을 오버레이 대상에 추가" 항목은 이 변경으로 필요 없어진다. | HANDOFF "How native browser pages sit in File Views, given issue #323"; 이슈 #323 본문; BROWSER_DISPLAYS.md Overlays |
 | D-12 | File Views와 Tools는 각자의 폭을 Workspace마다 저장하고 Agent Views가 나머지를 갖는다. 컬럼 사이 경계선은 끌면 안내선이 따라오고 놓을 때 한 번 반영되며, focus된 경계선은 화살표 키로 한 단계씩 움직인다. 어느 컬럼도 D-07의 최소 폭보다 좁아지지 않는다. | 가정: Agent가 나머지를 갖는 단순 규칙, 기존 패널 grip 동작 재사용 |
-| D-13 | 구현 전에 운영자가 Pen 보드(`Screen / Workspace`의 세 컬럼, 툴바 아이콘 묶음과 툴팁, 경계선, 좁은 창 두 단계)를 승인해야 한다. 기존 `Component / Side panel*` master는 컬럼 master로 대체된다. 이 PRD를 쓴 machine에는 `pen`이 없어 보드를 만들지 않았다. | DESIGN_WORKFLOW.md 59-62 "get approval before implementing"; HANDOFF "the layout needs the operator's sign-off on a Pen board" |
+| D-13 | 운영자는 2026-10-04 야간 지시의 "② 위임"으로 기존 승인 방향 안의 최종 디자인 판단을 위임했다. 위임받은 검토자가 실제 Pen 보드(`Screen / Workspace`의 세 컬럼, 툴바 아이콘 묶음과 툴팁, 경계선, 좁은 창 두 단계)와 다크·라이트 네이티브 후보 캡처를 비교해 최종 디자인을 승인한다. 기존 `Component / Side panel*` master는 컬럼 master로 대체하며, B35는 보드 없이 면제하지 않는다. | 운영자 "① 유지, ② 위임, ③ 간체·OS 자동, ④ 유지, ⑤ main까지"; DESIGN_WORKFLOW.md의 실제 보드·네이티브 비교 절차; 기록된 위임은 보드 부재를 승인했다는 뜻이 아님 |
 | D-14 | `docs/UI_BEHAVIOR.md`의 Web Workspace 도입부, The side panel(세 컬럼 절로 교체), Opening, preview, and Open to the side의 "panel is closed" 문장, 재시작 복원 문단과 이행 문장, Browser displays의 shell drag 문장, Narrow windows, Library masters를 고친다. `docs/ARCHITECTURE.md` Workspaces in the web shell의 패널 상태·#170·`panel_covers`·`panelFrame`·좁은 창 문단과 D-08 area intent 문장, `docs/BROWSER_DISPLAYS.md`의 패널 가장자리 drag와 툴바 globe 문장도 같은 변경에서 고친다. | HANDOFF "Which `docs/UI_BEHAVIOR.md` sections change"; AGENTS.md "Update the owning guide ... in the same change" |
 | D-15 | 원칙 intake: `sasu principles list`는 `~/projects/oh-my-principle`에 ROOT.md가 없어 실패했다. 그 저장소 커밋 8b0d709의 `engineering.md` 전문을 읽었다. design 원칙 문서는 이 machine에 없어 HANDOFF가 적은 목록(기존 패턴 따르기, 상태를 문장이 아닌 시각으로, 모든 컨테이너는 존재 이유가 있어야 함, 모든 상태 설계, 원칙 13)을 썼다. engineering 1(Pin·Expand·`panel_covers`·Tools 오버레이 삭제, 단 저장 배치는 D-09), 2(D-06), 4·10(읽을 수 없는 상태 파일의 보존과 진단), 11(D-05)을 반영했다. 12는 구현의 테스트 선택이라 행으로 옮기지 않았다. | 가정: 원칙 저장소 부분 사용 |
-| D-16 | 이 실행은 PRD만 PR로 연다. 구현은 운영자가 이 PRD와 Pen 보드를 승인한 뒤 `agents/config.json`의 PR 모드(commit, push, PR, CI 확인)로 한다. merge는 어느 단계에서도 에이전트가 하지 않는다. | HANDOFF "Scope for this run: PRD ONLY", "It is NOT approval to merge"; agents/config.json delivery.mode=pr |
+| D-16 | 2026-10-04 야간 지시와 "⑤ main까지"는 이전 PRD ONLY 실행 범위를 대체한다. 승인된 PRD를 구현하고 D-13의 위임된 최종 디자인 검토를 완료한 뒤 PR 모드(commit, push, PR, CI 확인)로 제출한다. 현재 구현자는 merge하지 않으며, 조정자만 독립 리뷰와 현재 최종 SHA의 필수 CI 통과를 확인해 보호된 main에 merge commit으로 병합한다. | 운영자 "⑤ main까지"; agents/config.json delivery.mode=pr; 조정자가 병합과 이슈 종료를 소유하며 직접 main push와 이력 재작성은 제외 |
 | D-17 | 에이전트를 고르는 동작(사이드바, 팔레트, 탭 순환, `remote_control`)은 넓은 창에서 컬럼 표시를 바꾸지 않는다. 떠 있는 패널을 닫던 규칙은 덮는 패널이 없으므로 없어진다. | D-02의 귀결; ARCHITECTURE.md D-08 area intent 규칙 대체 |
 
 ## Behaviors
@@ -78,9 +78,9 @@ Explorer를 켜 둔 채 에이전트 옆에서 파일이나 페이지를 보는 
 | B22 | 넓은 창에서 사이드바, 팔레트, 탭 순환, 다른 기기의 에이전트로 에이전트나 탭을 고르면 그 에이전트가 Agent Views에 focus되고 File Views와 Tools는 그대로 보인다. | D-17 |
 | B23 | Agent Views의 pane과 탭은 항상 클릭과 입력을 받고, File Views나 Tools에 키보드가 있을 때 ⌘F, ⌘T, ⌥W는 키보드가 있는 곳(View 영역, Tools, pane)에서 동작한다. | D-02 |
 | B24 | 키보드가 있는 컬럼을 숨기면 키보드는 File Views가 보이면 그 활성 View 영역으로, 아니면 focus된 에이전트 pane으로 돌아가고, 보이지 않는 컬럼으로 Tab이 들어가지 않는다. | D-05 |
-| B25 | Workspace 본문이 1100px 이상이면 켜진 컬럼이 모두 보인다. 840px 이상 1100px 미만이면 File Views와 Tools가 둘 다 켜져 있어도 File Views만 보이고 Tools는 숨는다. 840px 미만이면 Agent Views만 보인다. 어느 경우에도 컬럼이 다른 컬럼 위에 오버레이로 뜨지 않는다. 사이드바를 ⌘B로 숨겨 본문이 넓어지면 그 폭으로 다시 판단한다. | D-07 |
-| B26 | 840px 이상 1100px 미만에서 ⌘E, Tools 아이콘, reveal로 Tools를 부르면 Tools가 File Views 자리에 보이고 Tools 아이콘이 눌리며 File Views 아이콘은 눌리지 않는다. 그 상태에서 Explorer로 파일을 열거나 ⌘⇧B를 누르면 File Views가 다시 그 자리에 온다. | D-07 |
-| B27 | 840px 미만에서 File Views나 Tools를 부르거나 파일을 열면 그 컬럼 하나가 본문을 차지하고, 사이드바·팔레트·탭 순환으로 에이전트를 고르거나 같은 아이콘을 다시 누르면 Agent Views로 돌아온다. View 영역이 모두 들어가지 않으면 지금처럼 활성 영역만 영역 전환기와 함께 보인다. | D-07 |
+| B25 | Workspace 본문이 경계선 포함 1116px 이상이면 켜진 컬럼이 모두 보인다. 848px 이상 1116px 미만이면 File Views와 Tools가 둘 다 켜져 있어도 File Views만 보이고 Tools는 숨는다. 848px 미만이면 Agent Views만 보인다. 창 폭 1440px에서 사이드바가 열려 본문이 1100px이면 File Views만 보이고 Tools는 숨으며 480/360/260px 최소 폭은 그대로다. 어느 경우에도 컬럼이 다른 컬럼 위에 오버레이로 뜨지 않는다. 사이드바를 ⌘B로 숨겨 본문이 넓어지면 그 폭으로 다시 판단한다. | D-07 |
+| B26 | 848px 이상 1116px 미만에서 ⌘E, Tools 아이콘, reveal로 Tools를 부르면 Tools가 File Views 자리에 보이고 Tools 아이콘이 눌리며 File Views 아이콘은 눌리지 않는다. 그 상태에서 Explorer로 파일을 열거나 ⌘⇧B를 누르면 File Views가 다시 그 자리에 온다. | D-07 |
+| B27 | 848px 미만에서 File Views나 Tools를 부르거나 파일을 열면 그 컬럼 하나가 본문을 차지하고, 사이드바·팔레트·탭 순환으로 에이전트를 고르거나 같은 아이콘을 다시 누르면 Agent Views로 돌아온다. View 영역이 모두 들어가지 않으면 지금처럼 활성 영역만 영역 전환기와 함께 보인다. | D-07 |
 | B28 | 좁은 창에서 숨긴 컬럼은 저장 상태를 바꾸지 않는다. 창이나 본문을 다시 넓히면 Workspace에 저장된 File Views와 Tools의 켜짐/꺼짐, 폭, 도구, View 영역 크기가 그대로 돌아오고, 다른 Workspace의 컬럼 상태는 좁은 창 동안에도 바뀌지 않는다. | D-07, D-08 |
 | B29 | 재시작하면 마지막 Workspace의 File Views 켜짐/꺼짐, Tools 켜짐/꺼짐과 도구, 두 폭, View 영역 트리와 탭이 남겨 둔 대로 돌아온다. 페이지는 마지막 주소로, 미저장 텍스트는 초안에서 돌아온다. | D-08, D-11 |
 | B30 | 이전 빌드에서 패널을 연(open) 상태나 펼친(expanded) 상태로 둔 Workspace는 업그레이드 후 File Views가 켜진 채, 닫힌(closed) 상태였던 Workspace는 File Views가 꺼진 채 열린다. Pin 여부와 관계없이 도킹되고, Tools와 도구 선택, 열린 view, 탭, 영역 배치는 그대로이며, 두 컬럼 폭은 기본값이다. | D-09 |
@@ -105,9 +105,9 @@ core의 Workspace별 `WorkspaceView`는 패널 필드(`panel`, `pinned`, `views_
 ## Risks
 
 - #170 결정의 역전: 도킹이면 File Views/Tools 토글과 경계선 반영 때마다 모든 Agent 터미널이 한 번 리사이즈되어, 긴 출력 중인 에이전트의 줄바꿈이 바뀐다. 리사이즈를 동작당 한 번으로 묶고 drag 중에는 막는 것(B18, B19)으로 한정하며, `docs/PERFORMANCE_TESTING.md` 절차로 토글 시 PTY resize 횟수와 입력 에코를 측정한다. 운영자는 PR 리뷰에서 이 비용 수용을 확인한다(D-02).
-- 운영자가 뒤집을 수 있는 작성자 가정: Expand 제거(D-06), 폭 기준 480/360/260px와 1100/840px 두 단계 및 자리 교체(D-07), 업그레이드 시 폭 기본값(D-09), 빈 File Views 진입점(D-10).
-- 구현 착수 조건: 운영자의 Pen 보드 승인(D-13). 이 machine에는 `pen`이 없어 보드가 없으므로, 보드 없이 구현을 시작하지 않는다.
+- 2026-10-04 운영자가 승인한 폭 기준은 480/360/260px 최소 폭과 경계선 포함 1116/848px 두 단계 및 자리 교체(D-07)다. 1440px 창에서 사이드바가 열린 본문 1100px도 두 컬럼 단계로 처리하며 최소 폭을 줄이지 않는다. Expand 제거(D-06), 업그레이드 시 폭 기본값(D-09), 빈 File Views 진입점(D-10)은 기존 결정대로 유지한다.
+- 구현과 최종 제출 조건: 기록된 운영자 승인과 디자인 판단 위임 아래 구현을 진행한다. 최종 제출 전 실제 Pen 보드와 대체 컬럼 master, 다크·라이트 네이티브 비교와 위임된 최종 디자인 승인(D-13)을 완료한다. B35가 미실행이면 완료로 보고하지 않는다.
 - 저장 상태 이행 실패는 배치 손실로 보인다. 원본 보존·진단·기본값 시작의 기존 경로(B31)로 한정하고, View 영역 트리와 북마크는 옮기지 않고 그대로 읽는다.
 - #323이 먼저 병합되면 그 PR이 사이드 패널을 오버레이 대상에 추가했을 수 있다. 이 변경에서 패널이 사라지므로 그 항목은 함께 지운다. 툴팁이 Tools가 꺼진 동안 File Views의 페이지 위로 내려오면 페이지 아래에 그려질 수 있으며, 이는 #323의 툴팁 배치 범위다.
 - 네이티브 검증: 운영자 앱을 건드리지 않고 격리된 후보 창을 PID로 지정해 캡처해야 하며, 화면이 잠긴 machine에서는 미실행으로 기록한다.
-- 구현 전 운영자에게 필요한 작업은 이 PRD 승인과 Pen 보드 승인 두 가지다. 자격 증명이나 외부 비용은 없다.
+- 이 PRD는 2026-10-04 야간 작업 지시로 승인됐다. Pen 보드 검증은 D-13을 따르며 자격 증명이나 외부 비용은 없다.

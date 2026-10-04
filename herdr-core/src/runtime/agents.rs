@@ -432,10 +432,9 @@ impl Runtime {
             }
         }
 
-        // An agent chosen on the device brings the Agent area back on the
-        // Workspace that holds it, which is in front only once the device's
-        // Herdr has moved there (D-08).
-        let agents_area_key = self
+        // The Workspace that holds the agent or tab the request chooses,
+        // which is in front only once the device's Herdr has moved there.
+        let agent_workspace_key = self
             .separate_view_areas()
             .then(|| self.remote_request_workspace_key(&target_id, &session, &payload.request))
             .flatten();
@@ -453,9 +452,8 @@ impl Runtime {
                 checkout_id: Some(checkout_id),
                 ..
             } if self.separate_view_areas() => self.workspace_key(workspace_id, checkout_id),
-            _ => agents_area_key.clone(),
+            _ => agent_workspace_key,
         };
-        let payload_in_place = payload.in_place;
         let action = match payload.request {
             RemoteControlRequest::FocusPane { .. } => {
                 RemoteControlAction::Pane(PaneControlAction::Focus {
@@ -752,9 +750,6 @@ impl Runtime {
         }
         if focus_device && !self.device_in_front(&target_id) {
             self.bring_device_forward(target_id.clone());
-        }
-        if let Some(key) = agents_area_key.as_ref().filter(|_| !payload_in_place) {
-            self.apply_area_intent_to(key, AreaIntent::Agents);
         }
         if let Some(key) = chosen_key {
             self.choose_when_in_front(&target_id, &dispatched_request_id, key);

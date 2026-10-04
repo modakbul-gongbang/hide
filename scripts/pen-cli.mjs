@@ -3,7 +3,7 @@
 // design-scratch.mjs and design-review.mjs both go through it.
 import {spawn} from 'node:child_process';
 
-export const PEN_VERSION = '0.3.8'; // Re-verify import, rendering and reopen before changing.
+export const PEN_VERSION = '0.3.10'; // Re-verify import, rendering and reopen before changing.
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 
 // The guard's stdin belongs only to the calling script. EOF on owner crash or
@@ -79,7 +79,7 @@ export function pen(args, {cwd, input = '', timeoutMs = 60_000, action = 'Pen co
 
 const installHint = () => `Install with: npm install -g @pen.dev/cli@${PEN_VERSION}`;
 
-/** Pen's output without ANSI colors or the boxed update notice pen 0.3.8 prints on every command. */
+/** Pen's output without ANSI colors or the boxed update notice Pen prints on every command. */
 export function plain(output) {
   // eslint-disable-next-line no-control-regex
   return output.replace(/\u001b\[[0-9;]*m/g, '').split('\n').filter(line => !/^\s*[│╭╰]/.test(line)).join('\n').trim();

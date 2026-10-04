@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawn, spawnSync, execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {PEN_VERSION} from '../pen-cli.mjs';
 import {childIndent, evaluate, rootsAligned, sharedColumns, stable} from '../design-review-rules.mjs';
 
 const repository = fileURLToPath(new URL('../../', import.meta.url));
@@ -78,7 +79,7 @@ const fakePen = `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_PEN_MODE ?? '';
-if (args[0] === 'version') { console.log('pen 0.3.8'); process.exit(); }
+if (args[0] === 'version') { console.log('pen ${PEN_VERSION}'); process.exit(); }
 if (mode === 'logged-out') { console.error('[ERROR] Authentication required. Run "pen login" or set PEN_CLI_KEY environment variable.'); process.exit(1); }
 if (mode === 'hang') { fs.appendFileSync(process.env.FAKE_PEN_LOG, JSON.stringify({hang: process.pid}) + '\\n'); setInterval(() => {}, 1000); }
 let input = '';

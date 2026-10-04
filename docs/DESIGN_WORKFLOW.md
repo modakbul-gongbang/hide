@@ -39,6 +39,8 @@ Every name, path and count in a scene is invented example data, so a capture of 
    The command prints the scratch path (`agents/runs/<task-slug>/design/scratch.pen`) and the exact edit command.
 2. **Edit.** Use an independent Pen CLI headless session per file: `pen interactive --in <scratch-path> --out <scratch-path>`.
    Never use the shared desktop MCP or `--app desktop` for agent editing; an explicit MCP `filePath` did not reliably isolate the active desktop document in verification.
+   `scripts/pen-cli.mjs` pins Pen CLI 0.3.10 to support SDK-authored library documents and `contain` image fitting.
+   Changing that pin requires actual import, rendering, and reopen proof with the new version.
    Inside the CLI, read `read_skill()` and its schema/execute guides, then confirm `get_app_state()` and `list_libraries()` before editing.
    `list_libraries()` returns each imported library's ID; reference a component as `<id>:<component-id>` and a variable as `$<id>:--token-name`, discovering the ID fresh in each scratch rather than reusing another task's alias.
    Only one writer edits a shared library document at a time.
@@ -54,8 +56,10 @@ Every name, path and count in a scene is invented example data, so a capture of 
    - A cross-library `ref`'s own internal `$--token` fills and strokes resolve to the imported library's own default (Light) value, regardless of any `theme: {Mode: 'Dark'}` tag anywhere in the importing document.
      A bare local `$--token` on a node the importing document authors itself, and an explicit property override placed at the ref site using the importing document's own local `$--token`, both resolve correctly per theme.
      A descendant-override key on a cross-library ref also needs the alias prefix (`hideui:btn-lb`, not `btn-lb`), not only the ref's own target.
-     `design/hide-screens.pen` carries its own local copy of every token, read live through `pen-tokens.mjs`, and `scripts/pen-screens.mjs`'s `themedOverrides()` restates a ref's colors by walking the ref's actual master in `design/hide-ui.lib.pen` and copying every `$--token` name it finds, at any depth, into a local override of the same name; a hand-typed color recipe is only for a real per-variant design decision (Button and Badge import `BUTTON_VARIANTS`/`BADGE_VARIANTS` from `pen-system.mjs` for exactly that reason), never for a master's own default.
+     `design/hide-screens.pen` carries its own local copy of every token, read live through `pen-tokens.mjs`, and `scripts/pen-screens.mjs`'s `themedOverrides()` restates a ref's effective colors by walking its actual master, nested component targets, and inherited instance patches in `design/hide-ui.lib.pen` and copying every `$--token` name it finds into a local override of the same name; a hand-typed color recipe is only for a real per-variant design decision (Button and Badge import `BUTTON_VARIANTS`/`BADGE_VARIANTS` from `pen-system.mjs` for exactly that reason), never for a master's own default.
      `scripts/check-hide-screens.mjs` refuses a ref or a descendant-override key whose colorable properties are not restated this way.
+     Nested override paths cross each referenced component instance, with an alias prefix on every imported segment; the checker resolves those paths within the owning master and rejects missing targets, active master cycles, and unrelated nodes.
+     An explicit empty paint list (`[]`) clears the imported color in both themes and counts as a local override; an absent property still fails the check.
 4. **Human approval.** Show alternatives in the task's scratch document, let the user choose and revise them, and get approval before implementing.
    Record the approved behavior and any proposed system addition in the PRD so the decision survives scratch cleanup; a scratch is not a merge deliverable.
    Keep the chosen design as a reference bundle (see Reference bundle and review run below) before anything else edits it, marked `user` when the operator chose it and `delegated` when it is a proposal made under delegated authority.
@@ -160,9 +164,13 @@ The issue card and panel, the pull request row and its confirmation are drawn on
 Its web files are `web/src/ProjectOverview.tsx`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/GraphView.tsx`, `web/src/agentGraph.ts`, `web/src/IssuesView.tsx`, `web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx` and `web/src/projectBoard.ts`; a card's agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
-It draws the side panel (`Component / Side panel`) open at the Workspace's full height over the agent column, then the panel closed with two views still open.
-The toolbar spans only the agent column and has no tool toggles; the panel's first row holds each area's tabs and New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; its second row holds the document header and the Explorer and History tool tabs.
-A last frame draws a remote device in front: the toolbar starts with a band in `--device-remote` carrying the server glyph and the device name ahead of the path, and the agent pane is framed in the same color; This Mac in front has neither.
+It draws docked Agent Views, File Views and Tools beneath one full-width toolbar, using the Workspace columns, toolbar, toggle and divider masters in the library.
+The toolbar's right edge carries Open server, File Views and Tools, with independent pressed states, a count when open File Views are hidden, and per-control tooltip and keyboard-focus states.
+The columns start with their own tab strips; File Views carries its document header and Tools carries Explorer and History.
+The reference includes the full layout, both narrow-window fallbacks and explicit column calls, Tools without File Views, saved widths, and the divider at rest, under the pointer, focused and being dragged.
+Light and Dark frames carry Korean text and long paths, including the one-line shortened document path and its full-path tooltip.
+The server-picker comparison retains its distinct reachable endpoints, and the area-focus comparison retains two View areas with one keyboard owner and independently readable selections.
+The remote Workspace keeps the device-colored toolbar band and agent pane frame; This Mac has neither.
 Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, and `web/src/ExplorerTree.tsx`.
 
 Project Sessions is `Screen / Project Sessions`.
