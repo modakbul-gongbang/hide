@@ -96,6 +96,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
                 state: *state,
                 reason: None,
                 location: Some(format!("/home/me/{}", id.code())),
+                codex_daemon: None,
             })
             .collect(),
         labels_retirement: Default::default(),
@@ -209,7 +210,7 @@ fn a_connected_device_installs_its_kit_and_shows_each_part() {
     shared
         .lock()
         .unwrap()
-        .queue_device_kit(DEVICE, KitJob::Apply(hide_kit::Scope::Automatic));
+        .queue_device_kit(DEVICE, KitJob::Apply(hide_kit::Scope::automatic()));
     assert!(kit(&shared).busy, "the row says the install is running");
     settle(&shared);
 
@@ -267,6 +268,7 @@ fn reinstall_on_a_device_sends_only_the_parts_that_need_it() {
         calls[1].0,
         KitAction::Reinstall {
             components: vec![ComponentId::ClaudeCodeHook, ComponentId::Hcoord],
+            turn_off: Vec::new(),
         }
     );
 }
@@ -456,7 +458,7 @@ fn a_failed_kit_call_on_an_unread_device_says_why() {
     shared
         .lock()
         .unwrap()
-        .queue_device_kit(DEVICE, KitJob::Apply(hide_kit::Scope::Automatic));
+        .queue_device_kit(DEVICE, KitJob::Apply(hide_kit::Scope::automatic()));
     settle(&shared);
     let kit = kit(&shared);
     assert!(!kit.busy);
@@ -568,7 +570,7 @@ fn an_install_answer_that_arrives_after_removal_brings_nothing_back() {
     shared
         .lock()
         .unwrap()
-        .queue_device_kit(DEVICE, KitJob::Apply(hide_kit::Scope::Automatic));
+        .queue_device_kit(DEVICE, KitJob::Apply(hide_kit::Scope::automatic()));
     let deadline = Instant::now() + Duration::from_secs(5);
     while helper.calls().is_empty() {
         assert!(Instant::now() < deadline, "the install call never started");

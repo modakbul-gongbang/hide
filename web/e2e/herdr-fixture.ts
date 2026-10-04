@@ -231,9 +231,11 @@ export type FixtureLabel = {
   /** How long the provider takes to answer. */
   delayMs?: number;
   progress?: string;
-  /** The reply the agent asks for; with `question`, the row's request line. */
+  /** The reply the agent asks for; the label's line when given, with `question` its end. */
   reply?: string;
   question?: boolean;
+  /** How the turn ended (v5 `end`); a question by default when `question`, else done. */
+  end?: "working" | "question" | "done" | "waiting" | "unfinished";
 };
 
 /** Where the fixture's Claude transcripts live: the fixture HOME's, which
@@ -265,11 +267,11 @@ export function linkFixtureTranscripts(fixture: Pick<HerdrFixture, "root">, home
 /** The text a transcript carries for the fixture provider to answer with. */
 export function labelMarker(label: FixtureLabel): string {
   const answer = {
-    task: label.task,
-    task_changed: true,
-    progress: label.progress ?? "",
-    expected_reply: label.reply ?? "",
-    attention: label.question ? "question" : "none",
+    goal: label.task,
+    goal_changed: true,
+    // v5 has one line: the reply asked for when there is one, else the progress.
+    line: label.reply ?? label.progress ?? "",
+    end: label.end ?? (label.question ? "question" : "done"),
   };
   const delay = label.delayMs ? `HIDE_E2E_DELAY_MS ${label.delayMs}\n` : "";
   return `${delay}HIDE_E2E_LABEL ${JSON.stringify(answer)}`;

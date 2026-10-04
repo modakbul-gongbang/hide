@@ -231,6 +231,7 @@ impl SleepRecord {
             tokens: BTreeMap::new(),
             label,
             changed_at_unix_ms,
+            facts: None,
         }
     }
 }
@@ -561,6 +562,8 @@ mod tests {
             spawn_origin_pane_id: None,
             lineage_collapsed: false,
             sleep: None,
+            row_facts: None,
+            request: None,
         }
     }
 

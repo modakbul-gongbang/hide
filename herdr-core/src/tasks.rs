@@ -41,6 +41,8 @@ pub struct TaskSnapshot {
     pub updated_at_unix_ms: Option<u64>,
     /// Creation time from the source, absent when that source did not provide it.
     pub created_at_unix_ms: Option<u64>,
+    /// Actual closure, not the last edit time; absent when the source cannot prove it.
+    pub closed_at_unix_ms: Option<u64>,
     /// The open tasks this one waits on, which may belong to another project
     /// (PRD task-agents-views D-09, D-10); the source records them.
     pub blocked_by: Vec<TaskRefSnapshot>,
@@ -276,6 +278,7 @@ pub fn local_tasks(project_path: &str, read: LocalRead<'_>, chosen: bool) -> Pro
                         open: issue.open,
                         updated_at_unix_ms: Some(issue.updated_at_unix_ms),
                         created_at_unix_ms: Some(issue.created_at_unix_ms),
+                        closed_at_unix_ms: issue.closed_at_unix_ms,
                         blocked_by: Vec::new(),
                     })
                     .collect()
@@ -305,6 +308,7 @@ fn github_task(issue: &IssueSnapshot, repository: Option<&str>) -> TaskSnapshot 
         open: issue.state == "OPEN",
         updated_at_unix_ms: issue.updated_at_unix_ms,
         created_at_unix_ms: issue.created_at_unix_ms,
+        closed_at_unix_ms: issue.closed_at_unix_ms,
         blocked_by: issue
             .blocked_by
             .iter()
@@ -332,6 +336,7 @@ mod tests {
             project_status: None,
             updated_at_unix_ms: None,
             created_at_unix_ms: None,
+            closed_at_unix_ms: None,
             blocked_by: Vec::new(),
         }
     }

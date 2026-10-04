@@ -77,6 +77,8 @@ hcoord agent spawn \
 
 `--kind` selects the agent Herdr starts (`codex` by default), and the arguments after `--` go to that executable itself, so they never repeat its name.
 Claude takes its flags and then the prompt as its first message; Codex takes its flags and at most one task as the last argument, which hcoord submits as the first turn once Codex is ready.
+Before each Codex start, hcoord probes that machine's feature list and adds `--no-daemon` when supported; a device uses its saved Herdr SSH target and existing Node installation, and a failed probe refuses the start with its machine and failure code.
+A Codex spawned on this machine starts with `--no-daemon` first when this machine's `codex features list` names `daemon_auto_start`, because a Codex attached to the shared daemon runs its hooks outside the pane and Herdr never learns its session (openai/codex#48500); an older Codex, and a spawn on another machine, start as before.
 `hcoord agent spawn --help` prints the full usage.
 The arguments are checked before anything is created, so a refused spawn leaves no worktree, workspace, pane, or parent registration behind.
 Without `HERDR_PANE_ID`, or when Herdr reports no session-bearing agent in that pane, the command explains the refusal and creates nothing.

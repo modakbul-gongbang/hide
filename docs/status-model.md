@@ -18,6 +18,24 @@ Ownership is not stored anywhere.
 It is read back off the row: a row whose lineage depth is greater than zero is delegated, and every other row, including an orphan whose parent is gone, is the operator's.
 `ownership_of` is the only function that makes that judgement, and `apply_lineage` reapplies every derived value once the lineage is known.
 
+## agent_status provenance and background waits
+
+Herdr owns the raw `agent_status`; Hide reads it through `agent.list`/`agent.get`, converts it at `herdr-core/src/wire.rs` and derives its axes in `sidebar.rs`.
+For Claude Code and Codex, Herdr's [official agent reference](https://herdr.dev/docs/agents/) describes terminal-screen inference as the lifecycle source, rather than lifecycle state reported by their session hooks.
+A native session reference or display-only hook token does not prove that a tool is running or that its command completed.
+Other integrations can have full lifecycle reporting, so this screen-inference statement is specific to those two agents, not every agent Herdr supports.
+
+Hide's current mapping calls raw `done` a reported completion and `idle` a ready stopped pane, as specified below.
+That is a presentation signal supplied by Herdr, not a verified task outcome, successful test, exited background command or durable delivery receipt.
+The current upstream documentation also distinguishes semantic state waits from arbitrary command completion; its display/attention descriptions must not replace Hide's pinned wire mapping without checking the bundled schema and adapter.
+Use a command's own exit/result or an explicit coordination receipt when a workflow needs completion evidence, rather than treating a quiet pane or Done group as that evidence.
+
+[Issue #348](https://github.com/modakbul-gongbang/hide/issues/348) records one actual run in which an agent waiting for a background command was read as `done`.
+This is a known screen-inference limitation: a prompt-like quiet screen can cease to look working while background work is still outstanding.
+It is one observed case, not a guarantee that every background wait produces `done` or that Hide detects outstanding commands independently.
+The corresponding behavior for Monitor and for Codex's background terminal has not been verified by that observation.
+The existing [waiting-on-descendants rule](#a-quiet-root-waiting-on-its-children) uses proven lineage and child axes; it is not a general background-command detector.
+
 ## Hide owns the read axis, at pane level
 
 Herdr's seen is tab-scoped.
@@ -374,14 +392,16 @@ The workspace inspector uses the canonical representative agent and disconnected
 
 ## Task identity
 
-The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, and the Overview agent line.
-`sidebar.rs` owns the ladder: the label's rolling `task`, then the provider's name (`Claude`, `Codex`, the kind Herdr reports, or `Agent` when it reports none).
+The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, the Overview agent line and the request view.
+`sidebar.rs` owns the ladder (PRD overview-request-view D-13): the label's `goal` (laid on the row as `task`), then the agent's own title for the session (Claude Code's `/rename` over its `ai-title`, Codex's `thread_name`, OpenCode's session title, read by the session adapter), then the provider's name (`Claude`, `Codex`, `OpenCode`, the kind Herdr reports, or `Agent` when it reports none).
+The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
-Nothing publishes a session `name`, reads Claude's `ai-title` or Codex's first human turn as a separate title, or renames an agent or tab.
+Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
-The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude or Codex pane's conversation, asks the background AI for a task title, a progress line, the reply the agent wants and whether it asked a question, and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
-`LabelWorker::apply` lays that label onto an agent just before the runtime projects it, and `sidebar.rs::project_agent` reads `task`, `progress`, `expected_reply` and `question` off it.
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v5`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+`LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise) and `question` (a question end on an agent that is not running), and `sidebar.rs::project_agent` reads those four.
+With Settings › Background AI `에이전트 요약` off nothing of the label is laid: the row is titled by the session's own title or the provider, and has no sentence and no written question (D-11).
 A label is shown only for the session it was proven for.
 The record keeps the provider's native session owner, proven from transcript metadata, and the Herdr reference it was proven under; the label is applied only while the pane's current provider and session reference equal that owner or that reference (`PaneRecord::proven_for`).
 A new session, a reused pane, a provider change and an A to B to A switch therefore show the provider's name and no question until the new session is proven, and returning to A restores A's label.
@@ -395,10 +415,27 @@ There is no `summary` token and no missing-summary notice: an agent without a ta
 Truncation belongs to each view and does not shorten tooltip or accessibility text.
 Projection adds bounded-by-metadata strings per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.
 
+### The request view's verb
+
+Each agent row also carries a `request` block (`herdr-core/src/request_view.rs`, PRD overview-request-view): the operator's last request with who sent it, the last reply, the row's pull requests, and one verb the request view groups by.
+The verb is computed in the core from the axes above and the row's pull requests, never by the shell, and the first rule that holds wins:
+a demand (a question or an approval) is `answer`; a running agent is `working`; then, over the open pull requests whose duty the row holds, failed checks are `fix` and passing, absent or unknown checks are `review`; a turn the label read as `unfinished`, on a row with no working descendants, is `stopped`; running checks are `waiting`; an unread completion, or a pull request settled since the operator's last request and since the operator last opened the row's result (`result_opened_unix_ms` in the verb record), is `result`; a quiet root with working descendants, or a turn the label read as `waiting` (on something other than a pull request), is `waiting`; anything else is `idle`.
+Only the label gives `stopped` and that `waiting` (D-33): with summaries off, without a provider or after a failed analysis no row stops.
+The block also carries the label's `line` and `end` when there is one: the request view shows the line in place of the reply (B18) and both as the expanded row's verdict (B6); `end` is pinned as `label_end` in `contracts/snapshot-wire-enums.json`.
+A row's pull requests are its checkout branch's and those its session made: a tool in the session printed the address within thirty seconds of GitHub's `createdAt` (D-31), judged once by the label worker and kept with the session's facts.
+An address in a reply or a request is a mention and links nothing.
+A pull request on several rows gives its duty to the row on its branch's checkout, else to the row whose session printed it first, so `fix` and `review` appear once.
+A settled pull request counts as live only when it settled after the operator's last request (D-43).
+The verb's time is kept per pane in `core-state.json` (`request_verbs`), so a restart does not restart the wait.
+Opening a finished row in the request view (`overview_open_result`) reads the pane the way a focus does and moves no focus; a demand outlives the read as everywhere else.
+Who sent a request is the label worker's verdict (ARCHITECTURE.md, Agent labels in the core); a delegated child's first request is its parent's, by the parent row's title.
+Text another program wrote, a title, a label line, a sender's name, a request or a reply, reaches the row without control characters or bidirectional controls, and a title, line or name also without the other Unicode default-ignorable code points (zero-width characters, Hangul fillers; `herdr-core/src/display_text.rs`) and on one line and a sender's name at most 64 characters; a sender whose name reads as the row's word for the operator or an unnamed agent (`나`, `에이전트`, `operator`, compared by its letters and digits after NFKC and case folding) is shown as an unnamed agent.
+Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull request links, duty and senders, and `runtime::tests::labels` for the title ladder, the stopped and waiting verbs with the switch on and off, the open-result read and the running-checks re-read.
+
 ### The second line
 
 The core chooses the row's second line from the group, and publishes it as `detail` with `status_word_visible`; the shell draws what it is given and decides nothing.
-The sentences come from the agent's label: `expected_reply` is the one action the operator is asked for, at most 40 characters; `progress` is what the agent is doing or has done.
+The sentences come from the agent's label line (at most 40 characters): `expected_reply` when the turn ended on a question, the one action the operator is asked for; `progress` otherwise, what the agent is doing or has done. A row carries one or the other, never both.
 
 | Group | Sentence |
 | --- | --- |
@@ -414,7 +451,7 @@ A request outlives reading: a question, approval or error keeps its sentence unt
 Beside a sentence the word is never drawn; the mark and the group heading already say it.
 A delegated row follows the same table for its own group, which for a child is Working or Seen, so a delegated child that has stopped shows only its title unless it is still asking.
 
-Beside `detail` the row carries `message`: both sentences, `expected_reply` then `progress`, each whole up to the 80-character label cap (`MAX_LABEL_TEXT_CHARS`) and joined by a line break, absent when the label has neither.
+Beside `detail` the row carries `message`: the sentence whole up to the 80-character label cap (`MAX_LABEL_TEXT_CHARS`), absent when the label has none.
 It is what the agent last said, and the Overview's node shows it only when the operator rests on the node's line (PRD overview-lenses-tiles-agents D-50, B22); the second line stays the one sentence the table above chooses.
 
 The core publishes the sentence; when a view shows it is that view's presentation.
@@ -424,7 +461,7 @@ The accessibility label of a row and of a header always carries the status word,
 
 ### Search and Recent Panels
 
-The ⌘K sheet's agent row is titled by the identity and subtitled by its checkout and the second line above; when the state chose no sentence it falls to the status word because the rolling `task` is already the title.
+The ⌘K sheet's agent row is titled by the identity and subtitled by its checkout and the second line above; when the state chose no sentence it falls to the status word because the goal is already the title.
 The pane id is not printed on the row and does not match the query.
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
 The core never renames the Herdr tab for this; the Recent Panels label is projection only.
@@ -432,7 +469,8 @@ The core never renames the Herdr tab for this; the Recent Panels label is projec
 ### Project Home
 
 Project Home is the empty local checkout surface and the Shift-Command-H overlay.
-Every entry opens its Agents view on the graph with the checkout in front selected (PRD agents-graph-view D-22); the Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the graph's bands, boxes and rows (`web/src/agentGraph.ts`), fill the Agents tile's bar and give the status chips their states (`web/src/overviewLens.ts`).
+Every entry opens its request view (PRD overview-request-view D-05), except Recent Panels, which restores the lens and expanded rows as they were left.
+The Agents tile opens the graph with the checkout in front selected (PRD agents-graph-view D-22); the Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the graph's bands, boxes and rows (`web/src/agentGraph.ts`), fill the Agents tile's bar and give the status chips their states (`web/src/overviewLens.ts`).
 The Issues view is the Tasks board below.
 Tasks derives delivery in priority order: merged worktree or merged PR, open PR, then in progress; an open issue no checkout works on is the backlog.
 Needs You changes the halo and stable sort priority, never this delivery stage.

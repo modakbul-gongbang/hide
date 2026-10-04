@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, kitConsentTerms, kitRemovalLine, herdrLine, hostLine, kitHookMachines, kitPartLine, kitPartNeedsReinstall, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
+import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, kitConsentTerms, kitRemovalLine, herdrLine, hostLine, kitHookMachines, kitPartLine, kitPartNeedsReinstall, kitPartSwitch, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
 import type { AiProvider, Device, DeviceHost, KitComponent } from "./snapshot";
 
 const device = (patch: Partial<Device>): Device => ({
@@ -204,7 +204,9 @@ describe("settings rules", () => {
     for (const named of ["/opt/hide", "/opt/bin", "hook helper", "hcoord", "~/.claude/settings.json", "~/.codex/hooks.json", "~/.hide/hcoord/bin/hcoord"]) {
       expect(terms).toContain(named);
     }
-    expect(lines).toHaveLength(5);
+    expect(lines).toHaveLength(6);
+    // The Codex part says once what it changes (PRD overview-request-view B33).
+    expect(lines.filter((line) => line.includes("Codex의 백그라운드 데몬을 끈다"))).toHaveLength(1);
     expect(terms).toContain("~/hide");
     expect(terms).not.toContain("changes no hook");
     expect(socketProblem("")).toBeNull();
@@ -232,10 +234,19 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
   const kit = (components: KitComponent[], unavailable: string | null = null) => ({ unavailable, busy: false, components, offers_reinstall: false, shares_account_with: null });
 
   it("offers Reinstall only for a part a reinstall would change", () => {
-    const offered = (["installed", "outdated", "not_installed", "removed", "failed", "absent"] as const).filter((state) => kitPartNeedsReinstall(part("cli", state)));
+    const offered = (["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"] as const).filter((state) => kitPartNeedsReinstall(part("cli", state)));
     expect(offered).toEqual(["outdated", "not_installed", "removed", "failed"]);
     expect(kitPartLine(part("hcoord", "removed"))).toEqual({ text: "Removed", tone: "warn" });
     expect(kitPartLine(part("hcoord", "absent")).tone).toBe("muted");
+  });
+
+  it("gives the Codex part a switch while it has a setting to switch, and reads off as neutral (PRD overview-request-view B36)", () => {
+    expect(kitPartSwitch(part("codex_per_pane", "installed"))).toEqual({ on: true });
+    expect(kitPartSwitch(part("codex_per_pane", "off"))).toEqual({ on: false });
+    expect(kitPartSwitch(part("codex_per_pane", "absent"))).toBeNull();
+    expect(kitPartSwitch(part("codex_per_pane", "failed"))).toBeNull();
+    expect(kitPartSwitch(part("cli", "installed"))).toBeNull();
+    expect(kitPartLine(part("codex_per_pane", "off"))).toEqual({ text: "꺼짐", tone: "muted" });
   });
 
   it("lists This Mac first and then each device, with only their hook parts", () => {

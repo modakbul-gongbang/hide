@@ -242,10 +242,9 @@ fn run_coordinator(
                     context.notifier.notify();
                 }
             }
-            if labels
-                .as_mut()
-                .is_some_and(|worker| worker.tick(Instant::now()))
-                && subscription.is_some()
+            if labels.as_mut().is_some_and(|worker| {
+                take_label_switch(&context, worker) | worker.tick(Instant::now())
+            }) && subscription.is_some()
                 && let Some(current) = replica.as_mut()
                 && !publish_replica(
                     &context,
@@ -632,10 +631,9 @@ fn run_coordinator(
             Ok(CoordinatorMessage::Labels) => {
                 // A disconnected replica is stale; its labels wait for the
                 // reconnect's first publish rather than clearing the error.
-                if labels
-                    .as_mut()
-                    .is_some_and(|worker| worker.drain(Instant::now()))
-                    && subscription.is_some()
+                if labels.as_mut().is_some_and(|worker| {
+                    worker.drain(Instant::now()) | take_pull_request_times(&context, worker)
+                }) && subscription.is_some()
                     && let Some(current) = replica.as_mut()
                     && !publish_replica(
                         &context,
@@ -772,6 +770,8 @@ fn publish_replica(
         }
     }
     let overlay = labels.as_mut().map(|worker| {
+        take_pull_request_times(context, worker);
+        take_label_switch(context, worker);
         observe_labels(worker, replica);
         worker.overlay()
     });
@@ -907,6 +907,33 @@ fn start_label_worker(
         }));
         None
     })
+}
+
+/// Hands this Mac's worker the runtime's pull request creation times, under
+/// a brief lock. Only this Mac's projects have their pull requests read (a
+/// device's rows link none), so a device's worker is handed none. Returns
+/// whether a session's pull requests changed.
+fn take_pull_request_times(context: &SessionSyncContext, worker: &mut LabelWorker) -> bool {
+    if !context.is_local() {
+        return false;
+    }
+    let times = context
+        .runtime
+        .upgrade()
+        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.pull_request_times()));
+    times.is_some_and(|times| worker.set_pull_request_times(times))
+}
+
+/// Hands the worker the operator's agent-summary switch, under a brief lock,
+/// on every tick and publish: a turned switch reaches the screen and the
+/// running request within one tick. Returns whether the shown labels
+/// changed.
+fn take_label_switch(context: &SessionSyncContext, worker: &mut LabelWorker) -> bool {
+    let on = context
+        .runtime
+        .upgrade()
+        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.agent_summary()));
+    on.is_some_and(|on| worker.set_summaries(on, Instant::now()))
 }
 
 /// Hands the worker the agents and the complete pane topology the replica
@@ -1050,7 +1077,11 @@ fn read_worktrees_request(
 
 fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::GithubRequest> {
     let runtime = context.runtime.upgrade()?;
-    let request = runtime.lock().ok()?.github_request();
+    let request = {
+        let mut guard = runtime.lock().ok()?;
+        guard.reread_pending_checks(Instant::now());
+        guard.github_request()
+    };
     drop(runtime);
     Some(request)
 }

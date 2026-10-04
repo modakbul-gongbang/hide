@@ -128,8 +128,12 @@ A script that stops earning its place here is deleted rather than left unreferen
 
 ## Performance-sensitive changes
 
+Changes that add resident work or touch a high-frequency path must include a cost review in the PR's Review section, following [Resident work cost review](docs/PERFORMANCE_TESTING.md#resident-work-cost-review).
+Explain added work per input or tick, notification fan-out and the pending-work bound, with the code owner and cleanup on every exit path.
+Name missing caps explicitly rather than treating a refresh interval, timeout or one active worker as a queue or byte limit.
+Update the [state placement guide](docs/ARCHITECTURE.md#state-placement-and-publication), [process ownership table](docs/ARCHITECTURE.md#resident-process-ownership) and [resident work ledger](docs/PERFORMANCE_TESTING.md#resident-ticks-timers-and-watchers) when their contracts change.
 Read [PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md#verification-layers-and-current-ci-coverage) for the three verification layers and review policy.
-The Rust and web suites include deterministic performance-related regression tests, and the web echo and frame measurement runs against a real hided, but CI does not currently launch and drive Hide with a live Herdr server.
+The Rust and web suites include deterministic performance-related regression tests, and `pr.yml` runs web and Electron desktop end-to-end scenarios against private Herdr/hided fixtures.
 Typing, drag, wheel, focus, project Tree/List and destructive cleanup review in the packaged app, and controlled latency/RSS comparisons remain isolated local QA.
 Cleanup deletion tests must use a private fixture root; never use an operator project as a cleanup target.
 The guide's maintenance policy requires affected app scenarios for input/rendering/lifecycle changes and matched measurements for performance claims; this is review-required evidence, not a branch-protection check today.
@@ -144,7 +148,13 @@ They never enter a commit; write them under `agents/runs/<slug>/`, which is igno
 ## Releases
 
 A release is a tag on a commit that is already on `main`, never on a branch.
-Pushing `v<version>` runs `verify-cargo.sh test` and `verify-web.sh` again on macOS, packages the app with `HIDE_VERSION=<version> pnpm --dir desktop package` on macOS, Windows and Linux runners (the last two through `package.yml`, which also unpacks each package, installs the kit, resolves the command in a new shell and replaces the daemon using a second package fixture with `node desktop/scripts/smoke-package.mjs`), and drafts one GitHub release with `hide-v<version>-macos-arm64.zip`, `hide-v<version>-windows-x64.zip` and `hide-v<version>-linux-x64.tar.gz`, each with its `.sha256`; a maintainer publishes the draft after installing the macOS archive once.
+Pushing a stable `vX.Y.Z` tag runs `verify-cargo.sh test` and `verify-web.sh` again on macOS, then packages the app with `HIDE_VERSION=<version> pnpm --dir desktop package` on macOS, Windows and Linux runners.
+The last two use `package.yml`, whose `node desktop/scripts/smoke-package.mjs` unpacks each package, installs the kit, resolves the command in a fresh shell and checks daemon replacement with a second complete package fixture.
+The [release asset gate](docs/BUILD.md#release-asset-gate) requires that version's `hide-v<version>-macos-arm64.zip`, `hide-v<version>-windows-x64.zip` and `hide-v<version>-linux-x64.tar.gz`, each with its verified `.sha256`, before draft preparation.
+Preparation also requires owner-enforced GitHub release immutability and a `RELEASE_POLICY_TOKEN` secret with Administration read access; absent or unverified prerequisites leave the build artifacts available and block release writes.
+The writer adds only missing assets to its exact verified draft and never deletes, overwrites, or publishes a release; legacy drafts require separate coverage review.
+A maintainer publishes only after reviewing separate installation, native first-launch and terminal input/output evidence on every supported system.
+A package checksum or headless daemon smoke check does not provide that native evidence.
 The macOS archive is ad-hoc signed, not notarized, so the first launch needs the Gatekeeper step [docs/INSTALL.md](docs/INSTALL.md) describes; the Windows and Linux packages are not signed, and the same guide gives the SmartScreen and sandbox steps.
 `package.yml` also runs on a pull request that changes what goes into a package (`desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows) and keeps the packages for a week as the run's artifacts; it is not part of `verify`, because a check that runs on some pull requests only cannot be required.
 

@@ -1222,6 +1222,7 @@ pub struct ReopenRequest {
     /// be made again lands there, never in the workspace it was closed from
     /// (PRD checkout-workspace-binding D-16). `None` for a file.
     pub owner: Option<OwnerOpen>,
+    pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
 const REOPEN_INTENT_ENV: &str = "HIDE_REOPEN_INTENT";
@@ -1487,6 +1488,7 @@ fn run_herdr_reopen(
             reopen_owner(request)?,
             &layout.root,
             panes,
+            request.codex_daemon,
         ),
         ClosedItem::File { .. } => unreachable!("file reopen uses the filesystem worker"),
     }
@@ -1762,7 +1764,15 @@ fn reopen_pane(
         (layout.focused_pane_id, layout.tab_id)
     };
     if let Some(agent) = &pane.agent {
-        start_or_degrade_agent(connector, key, 0, &restored_pane_id, agent, &mut notices);
+        start_or_degrade_agent(
+            connector,
+            key,
+            0,
+            &restored_pane_id,
+            agent,
+            request.codex_daemon,
+            &mut notices,
+        );
     }
     Ok(ReopenOutcome {
         tab_id: Some(restored_tab_id),
@@ -1854,6 +1864,7 @@ fn reopen_tab(
     owner: &OwnerOpen,
     root: &ClosedLayoutNode,
     panes: &[ClosedPane],
+    codex_daemon: crate::codex_launch::CodexDaemon,
 ) -> Result<ReopenOutcome, String> {
     let pane_map = panes
         .iter()
@@ -1892,7 +1903,15 @@ fn reopen_tab(
             ));
         }
         if let Some(agent) = &pane.agent {
-            start_or_degrade_agent(connector, key, index, new_id, agent, &mut pane_notices);
+            start_or_degrade_agent(
+                connector,
+                key,
+                index,
+                new_id,
+                agent,
+                codex_daemon,
+                &mut pane_notices,
+            );
         }
         notices.extend(pane_notices.into_iter().map(|message| ReopenNotice {
             pane_id: Some(new_id.clone()),
@@ -1939,6 +1958,7 @@ fn start_or_degrade_agent(
     index: usize,
     pane_id: &str,
     agent: &ClosedAgent,
+    codex_daemon: crate::codex_launch::CodexDaemon,
     notices: &mut Vec<String>,
 ) {
     let name = format!("reopen-{key}-{index}");
@@ -1953,6 +1973,7 @@ fn start_or_degrade_agent(
             &name,
             &agent.kind,
             args,
+            codex_daemon,
         );
         if result.is_ok() || (pane_was_clear && agent_is_running(connector, pane_id, &agent.kind)) {
             return;
@@ -1977,6 +1998,7 @@ fn start_or_degrade_agent(
         &name,
         &agent.kind,
         Vec::new(),
+        codex_daemon,
     ) && !(pane_was_clear && agent_is_running(connector, pane_id, &agent.kind))
     {
         notices.push(format!(
@@ -2038,12 +2060,13 @@ fn start_agent(
     name: &str,
     kind: &str,
     args: Vec<String>,
+    codex_daemon: crate::codex_launch::CodexDaemon,
 ) -> Result<String, String> {
     crate::agent_start::start_at_shell(
         connector,
         request_id,
         pane_id,
-        wire::agent_start_params(pane_id, name, kind, args)?,
+        wire::agent_start_params(pane_id, name, kind, args, codex_daemon)?,
         Duration::from_secs(5),
     )
     .map_err(|error| match error {
@@ -2464,6 +2487,7 @@ fn run_agent_fork_with_registration(
         &request.name,
         request.agent.kind(),
         request.agent.resume_arguments(&request.session_id),
+        request.codex_daemon,
     );
     match started {
         Ok(pane_id) => {
@@ -3911,6 +3935,7 @@ mod tests {
             other => panic!("unexpected {other}"),
         });
         let request = ForkRequest {
+            codex_daemon: crate::codex_launch::CodexDaemon::Present,
             parent_pane_id: "parent-pane".to_owned(),
             agent: crate::fork::ForkableAgent::Codex,
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),
@@ -4055,6 +4080,7 @@ mod tests {
             target_was_first: true,
         };
         let request = ReopenRequest {
+            codex_daemon: Default::default(),
             item: ClosedItem::Pane {
                 key: "nested-intent".into(),
                 context: context.clone(),
@@ -4237,6 +4263,7 @@ mod tests {
             target_was_first: false,
         };
         let request = ReopenRequest {
+            codex_daemon: Default::default(),
             item: ClosedItem::Pane {
                 key: "first-attempt".into(),
                 context: context.clone(),

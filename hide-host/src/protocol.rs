@@ -25,6 +25,9 @@ use crate::root::RootIdentity;
 /// the old layout's helper root and bridge folder off the device in its
 /// `kit` apply, and its report carries `legacy_retirement` (PRD
 /// hide-home-layout D-13); a helper on 12 would leave them.
+/// 14: the kit carries `codex_per_pane` with its `off` state, and a
+/// `reinstall` names the parts the operator turned off (PRD
+/// overview-request-view D-21, D-24); a helper on 13 would not know them.
 /// 15: `session_activity` answers only a proven session's modification time
 /// and size, for the parent-owned inactivity watcher.
 pub const PROTOCOL_VERSION: u32 = 15;
@@ -202,9 +205,12 @@ pub enum KitAction {
     /// The connection pass: install what was never installed and replace
     /// what is outdated.
     Apply,
-    /// The operator's Reinstall of these parts.
+    /// The operator's choice on the machine's row: Reinstall of these
+    /// parts, or a part turned on (`components`) or off (`turn_off`).
     Reinstall {
         components: Vec<hide_kit::ComponentId>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        turn_off: Vec<hide_kit::ComponentId>,
     },
     Status,
     /// The device is being removed from Hide: Hide's parts come off, then

@@ -102,6 +102,10 @@ pub struct AppState {
     /// read while any does, without the Settings-only hook diagnosis (PRD
     /// home-device-rail D-18).
     pub start_demand: Arc<crate::demand::ObservationDemand>,
+    /// Which connections show the Overview's request view: while any does,
+    /// the core re-reads the pull requests whose checks are running (PRD
+    /// overview-request-view D-32).
+    pub request_view_demand: Arc<crate::demand::ObservationDemand>,
     /// What the Settings General tab reads about this daemon, sent once after
     /// a handshake. No token, no environment beyond the paths it names.
     pub daemon_info: Arc<Value>,
@@ -1120,6 +1124,21 @@ fn handle_client_text(
         Some("ai_settings") => {
             return handle_ai_settings(state, event, connection);
         }
+        Some("request_view") => {
+            let Some(observing) = event
+                .get("payload")
+                .and_then(|payload| payload.get("observing"))
+                .and_then(Value::as_bool)
+            else {
+                return Err("request_view.observing must be a boolean".to_owned());
+            };
+            Demand::RequestView
+                .of(state)
+                .set(connection, observing, |aggregate| {
+                    dispatch_observation(&state.core, Demand::RequestView, connection, aggregate)
+                });
+            return Ok(ClientAction::Replies(Vec::new()));
+        }
         // The daemon owns this flag from its renderer count; a window that
         // sent it would pause the readers every other window draws.
         Some("ui_attached") => return Err("ui_attached is sent by the daemon only".to_owned()),
@@ -1292,6 +1311,8 @@ pub(crate) enum Demand {
     Settings,
     /// A start surface: the catalog only.
     Start,
+    /// The Overview's request view: the running checks' re-read.
+    RequestView,
 }
 
 impl Demand {
@@ -1299,6 +1320,7 @@ impl Demand {
         match self {
             Self::Settings => "observing",
             Self::Start => "start_observing",
+            Self::RequestView => "request_view",
         }
     }
 
@@ -1306,6 +1328,7 @@ impl Demand {
         match self {
             Self::Settings => &state.demand,
             Self::Start => &state.start_demand,
+            Self::RequestView => &state.request_view_demand,
         }
     }
 }
@@ -1328,11 +1351,18 @@ pub(crate) fn dispatch_observation(
             "observing": observing,
         })
     );
-    let event = json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "ai_settings",
-        "payload": {demand.field(): observing},
-    });
+    let event = match demand {
+        Demand::RequestView => json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "request_view",
+            "payload": {"observing": observing},
+        }),
+        Demand::Settings | Demand::Start => json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ai_settings",
+            "payload": {demand.field(): observing},
+        }),
+    };
     if let Err(error) = core.dispatch(event.to_string().into_bytes()) {
         eprintln!(
             "{}",
@@ -2676,7 +2706,7 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
     state.attachments.release(connection);
     state.mobile.release(connection);
-    for demand in [Demand::Settings, Demand::Start] {
+    for demand in [Demand::Settings, Demand::Start, Demand::RequestView] {
         demand.of(state).release(connection, |observing| {
             dispatch_observation(&state.core, demand, connection, observing)
         });
