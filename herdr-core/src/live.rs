@@ -49,7 +49,7 @@ pub(crate) mod cleanup;
 
 #[path = "worktree_control.rs"]
 mod worktree_control;
-pub(crate) use worktree_control::prompt_argument;
+pub(crate) use worktree_control::{CONFIRM_TIMEOUT, close_checkout_panes, prompt_argument};
 pub use worktree_control::{
     CheckoutTabRequest, HomeStartRequest, IssueWriteFailure, PendingAgentStart, PurposeMirror,
     PurposeTaskOutcome, PurposeTaskRequest, TabTarget, TaskAgentOutcome, WorktreeTarget,

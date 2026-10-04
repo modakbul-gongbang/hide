@@ -295,3 +295,99 @@ test("a checkout with a working agent cannot be ticked, and an open pane alone d
     herdr.stop();
   }
 });
+
+// A finished agent's pane does not keep a merged worktree from the sheet: it is chosen, the sheet counts the pane
+// that closes with it, and the confirmation closes that pane before the folder goes. An agent waiting on an
+// approval still blocks it.
+test("a worktree left with only a finished agent's pane is chosen and its pane closes with it, and a waiting agent blocks it", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    fs.writeFileSync(path.join(herdr.root, "home", ".zshenv"), `export PATH="${path.join(herdr.root, "bin")}:$PATH"\n`);
+    const repo = path.join(herdr.root, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
+    fs.writeFileSync(path.join(repo, ".gitignore"), "target/\nnode_modules/\ndist/\nagents/runs/\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "initial"]);
+    const origin = path.join(herdr.root, "origin.git");
+    git(herdr.root, ["init", "--bare", origin]);
+    git(repo, ["remote", "add", "origin", origin]);
+    git(repo, ["push", "-q", "origin", "main"]);
+    git(repo, ["remote", "set-head", "origin", "main"]);
+    const shipped = path.join(herdr.root, "repo-shipped");
+    git(repo, ["worktree", "add", "-b", "prd/shipped", shipped]);
+    git(shipped, ["commit", "--allow-empty", "-m", "shipped work"]);
+    git(repo, ["merge", "--ff-only", "prd/shipped"]);
+    git(repo, ["push", "-q", "origin", "main"]);
+    build(shipped);
+
+    const at = async (cwd: string) => {
+      const created = herdr.run(["workspace", "create", "--cwd", cwd, "--label", path.basename(cwd), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { root_pane: { pane_id: string } } };
+      const pane = created.result.root_pane.pane_id;
+      await prompt(herdr, pane);
+      return pane;
+    };
+    await at(repo);
+    const pane = await at(shipped);
+    herdr.run(["agent", "start", "agent-shipped", "--kind", "claude", "--pane", pane]);
+    await setFixtureLifecycle(herdr, pane, "blocked");
+
+    daemon = await startHided(herdr, "disk-cleanup-panes");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    await openProjectOverview(page, "repo");
+    const sheet = page.locator("[data-disk-sheet]");
+    const open = async () => {
+      await page.locator('[data-disk-entrance="true"]').click({ timeout: 30_000 });
+      await expect(sheet).toHaveAttribute("data-disk-state", "ready", { timeout: 60_000 });
+      await sheet.locator("[data-disk-fold-toggle]").click();
+    };
+    const row = () => sheet.locator('[data-disk-row$="/repo-shipped"]');
+
+    // An agent waiting on an approval keeps the worktree.
+    await open();
+    await expect(row().locator("[data-disk-in-use]")).toHaveText("에이전트가 입력을 기다림");
+    await expect(row().locator('[data-disk-cell$=":worktree"]')).toHaveAttribute("data-disk-cell-state", "blocked");
+    await sheet.locator("[data-disk-cancel]").click();
+    await expect(sheet).toHaveCount(0);
+
+    // Once its turn is over, the same worktree is chosen and the sheet counts the pane that closes with it.
+    await setFixtureLifecycle(herdr, pane, "idle");
+    // The core hears Herdr's status change a moment after Herdr reports it, so a review opened too early still reads
+    // the approval: review again until the row is free, and the poll is the wait.
+    await expect(async () => {
+      await open();
+      try {
+        await expect(row().locator("[data-disk-in-use]")).toHaveCount(0, { timeout: 1000 });
+      } catch (error) {
+        await sheet.locator("[data-disk-cancel]").click();
+        await expect(sheet).toHaveCount(0);
+        throw error;
+      }
+    }).toPass({ timeout: 30_000 });
+    await expect(row().locator('[data-disk-cell$=":worktree"]')).toHaveAttribute("data-disk-cell-state", "selectable");
+    await expect(row().locator("[data-disk-panes]")).toHaveAttribute("data-disk-panes", "1");
+    await row().locator('[data-disk-check$=":worktree"]').click();
+    await sheet.locator("[data-disk-clean]").click();
+    const confirm = page.locator("[data-disk-confirm]");
+    await expect(confirm.locator("[data-disk-confirm-list] [data-disk-panes]")).toHaveAttribute("data-disk-panes", "1");
+    await expect(confirm.locator("[data-disk-confirm-run]")).toHaveText("pane 1개 닫고 워크트리 1개와 캐시 정리");
+    await screenshot(page, "disk-cleanup-finished-agent-confirm");
+    await confirm.locator("[data-disk-confirm-run]").click();
+    await expect(sheet.locator("[data-disk-result]")).toBeVisible({ timeout: 60_000 });
+
+    // The pane closed and the folder and its registration went; the branch stays.
+    expect(fs.existsSync(shipped)).toBe(false);
+    expect(git(repo, ["worktree", "list", "--porcelain"])).not.toContain("repo-shipped");
+    expect(git(repo, ["branch", "--list", "prd/shipped"]).trim()).not.toBe("");
+    const listed = herdr.run(["pane", "list"]) as { result: { panes: { pane_id: string }[] } };
+    expect(listed.result.panes.map((row) => row.pane_id)).not.toContain(pane);
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});

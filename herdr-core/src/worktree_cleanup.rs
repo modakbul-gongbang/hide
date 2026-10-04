@@ -1,5 +1,7 @@
 //! Reviewed cleanup of a project's disk: the build caches and dependencies a
-//! tool makes again, and clean linked worktrees merged into main.
+//! tool makes again, and clean linked worktrees merged into main. A
+//! worktree whose only panes are an agent that finished or a shell is chosen
+//! like any other, and the confirmation closes those panes before it removes.
 //! All inspection and filesystem effects run on the existing action-worker
 //! path, never under the runtime lock.
 use super::{LiveContext, control_request};
@@ -43,8 +45,11 @@ pub struct CleanupProgress {
 /// Why a checkout cannot be emptied while it is being worked in.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct InUse {
-    /// `agent_working`, `process`, `port`, or `unverified` for a checkout the
-    /// runtime has no facts about, which is never read as idle.
+    /// `agent_working`, `agent_waiting` (a question, an approval or a blocked
+    /// prompt), `descendant_busy` (an agent it delegated to is working or
+    /// waiting, wherever that runs), `process`, `port`, or `unverified` for a
+    /// checkout, or an agent of it, the runtime cannot vouch for, which is
+    /// never read as idle.
     pub code: &'static str,
     pub name: Option<String>,
     pub port: Option<u16>,
@@ -63,11 +68,18 @@ pub struct CleanupRow {
     pub exclusion_code: Option<&'static str>,
     pub exclusion_count: Option<u32>,
     pub in_use: Option<InUse>,
+    /// How many live panes of the checkout close with it, which are the
+    /// panes of finished agents and shells that nothing here is using.
+    pub pane_count: u32,
+    /// The panes a confirmed removal closes first, by Herdr's ids.
+    #[serde(skip)]
+    pub pane_ids: Vec<String>,
     /// `removed`, `skipped` (a recheck found it changed or busy) or `failed`
     /// (Git refused the removal), once a confirmation has settled the row.
     pub result: Option<String>,
     /// Why a `skipped` or `failed` row was not removed: an exclusion code,
-    /// `changed`, `not_found`, `unverified`, or `remove_refused`.
+    /// `changed`, `not_found`, `unverified`, `close_refused` (a pane would not
+    /// close), or `remove_refused`.
     pub result_code: Option<&'static str>,
     /// The allocated bytes of the worktree this run removed.
     pub bytes: Option<u64>,
@@ -93,13 +105,52 @@ pub struct CellResult {
 
 /// What the runtime knows about one checkout, copied under the lock for the
 /// worker's in-use read.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct CheckoutFacts {
     pub path: PathBuf,
     /// Agents of the checkout whose activity is Working.
     pub agent_working: usize,
+    /// Agents of the checkout holding a question, an approval or a blocked
+    /// prompt: they wait for the operator and the work is not finished.
+    pub agent_waiting: usize,
+    /// Agents of the checkout whose activity Herdr does not report, which is
+    /// never read as idle.
+    pub agent_unknown: usize,
+    /// Live descendants of the checkout's agents, running anywhere, that are
+    /// working or waiting for the operator.
+    pub descendants_busy: usize,
     /// Panes that are not an agent's; their foreground process is read.
     pub terminal_panes: Vec<String>,
+    /// Every pane of the checkout, which a confirmed removal closes.
+    pub panes: Vec<String>,
+}
+
+/// What one agent is doing as far as removing its checkout is concerned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AgentUse {
+    /// Stopped: finished a turn or idle. Its pane may close.
+    Quiet,
+    Working,
+    /// Waiting on the operator: a question, an approval or a blocked prompt.
+    Waiting,
+    Unknown,
+}
+
+impl AgentUse {
+    /// From the status model's axes (`docs/status-model.md`): a demand or a
+    /// blocked prompt is waiting whatever else is reported, and an activity
+    /// other than `working` or `stopped` is not claimed to be idle.
+    pub(crate) fn of(demand: &str, blocked: bool, activity: &str) -> Self {
+        if demand != "none" || blocked {
+            Self::Waiting
+        } else {
+            match activity {
+                "working" => Self::Working,
+                "stopped" => Self::Quiet,
+                _ => Self::Unknown,
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -128,10 +179,40 @@ const PANE_READ_LIMIT: usize = 256;
 
 pub(crate) type InUseMap = HashMap<PathBuf, InUse>;
 
-/// Which checkouts are being worked in: an agent is Working, a program other
-/// than a shell holds a terminal pane of the checkout, or a process started
-/// inside it listens on a port. `process` answers a pane's program, and any
-/// read that fails fails the whole answer: an unread checkout is not idle.
+/// What the runtime and Herdr said about each checkout: whether it is in use,
+/// and the panes that close with it.
+#[derive(Clone, Debug, Default)]
+struct Usage {
+    in_use: InUseMap,
+    panes: HashMap<PathBuf, Vec<String>>,
+}
+
+impl Usage {
+    fn of(in_use: InUseMap, facts: &[CheckoutFacts]) -> Self {
+        Self {
+            in_use,
+            panes: facts
+                .iter()
+                .map(|facts| (facts.path.clone(), facts.panes.clone()))
+                .collect(),
+        }
+    }
+
+    /// Writes what is known of the row's checkout onto it.
+    fn mark(&self, row: &mut CleanupRow) {
+        let path = Path::new(&row.path);
+        row.in_use = self.in_use.get(path).cloned();
+        row.pane_ids = self.panes.get(path).cloned().unwrap_or_default();
+        row.pane_count = u32::try_from(row.pane_ids.len()).unwrap_or(u32::MAX);
+    }
+}
+
+/// Which checkouts are being worked in: an agent is Working or waiting on the
+/// operator, an agent it delegated to is, a program other than a shell holds
+/// a terminal pane of the checkout, or a process started inside it listens on
+/// a port. A finished or idle agent, and a shell, are not use. `process`
+/// answers a pane's program, and any read that fails fails the whole answer:
+/// an unread checkout is not idle.
 pub(crate) fn read_in_use(
     checkouts: &[CheckoutFacts],
     ports: Result<Vec<ListeningPortSnapshot>, String>,
@@ -143,11 +224,19 @@ pub(crate) fn read_in_use(
     for checkout in checkouts {
         let path = hide_platform::fs::identity::canonical(&checkout.path)
             .unwrap_or_else(|_| checkout.path.clone());
-        if checkout.agent_working > 0 {
+        let agent = [
+            (checkout.agent_working, "agent_working"),
+            (checkout.agent_waiting, "agent_waiting"),
+            (checkout.descendants_busy, "descendant_busy"),
+            (checkout.agent_unknown, "unverified"),
+        ]
+        .into_iter()
+        .find_map(|(count, code)| (count > 0).then_some(code));
+        if let Some(code) = agent {
             in_use.insert(
                 checkout.path.clone(),
                 InUse {
-                    code: "agent_working",
+                    code,
                     name: None,
                     port: None,
                 },
@@ -248,32 +337,32 @@ fn mark_unverified(
     }
 }
 
-/// Whether one checkout is in use right now: the facts are copied again
-/// under the lock and the checkout's panes and ports are read again, so a
-/// decision is never older than the move it guards. A checkout without facts
-/// is unverified.
+/// Whether one checkout is in use right now, with the panes a removal would
+/// close: the facts are copied again under the lock and the checkout's panes
+/// and ports are read again, so a decision is never older than the move it
+/// guards. A checkout without facts is unverified.
 fn read_in_use_now(
     path: &Path,
     facts: impl FnOnce() -> Option<Vec<CheckoutFacts>>,
     read: impl FnOnce(&[CheckoutFacts]) -> Result<InUseMap, String>,
-) -> Result<Option<InUse>, String> {
+) -> Result<(Option<InUse>, Vec<String>), String> {
     let facts = facts().ok_or("The project is no longer available")?;
     let key = canonical(path);
     let Some(checkout) = facts
         .into_iter()
         .find(|facts| canonical(&facts.path) == key)
     else {
-        return Ok(Some(unverified_use()));
+        return Ok((Some(unverified_use()), Vec::new()));
     };
     let map = read(std::slice::from_ref(&checkout))?;
-    Ok(map.get(&checkout.path).cloned())
+    Ok((map.get(&checkout.path).cloned(), checkout.panes))
 }
 
 fn fresh_in_use(
     context: &LiveContext,
     workspace_id: &str,
     path: &Path,
-) -> Result<Option<InUse>, String> {
+) -> Result<(Option<InUse>, Vec<String>), String> {
     read_in_use_now(
         path,
         || {
@@ -341,7 +430,10 @@ fn listed(root: &Path) -> Result<Vec<CleanupRow>, String> {
         .collect())
 }
 
-fn pane_paths(context: &LiveContext) -> Result<Vec<PathBuf>, String> {
+/// Each live pane's id with a folder it stands in, from Herdr.
+type PanePaths = Vec<(String, PathBuf)>;
+
+fn pane_paths(context: &LiveContext) -> Result<PanePaths, String> {
     let response = control_request(
         context.api_connector.as_ref(),
         "session.snapshot",
@@ -352,10 +444,10 @@ fn pane_paths(context: &LiveContext) -> Result<Vec<PathBuf>, String> {
     )
 }
 
-fn verified_pane_paths(paths: Vec<Option<String>>) -> Result<Vec<PathBuf>, String> {
+fn verified_pane_paths(paths: Vec<(String, Option<String>)>) -> Result<PanePaths, String> {
     paths
         .into_iter()
-        .map(|cwd| {
+        .map(|(pane, cwd)| {
             let cwd = cwd.ok_or("A live pane's folder is unknown. Resolve it before cleanup.")?;
             let path = PathBuf::from(cwd);
             if !path.is_absolute()
@@ -375,7 +467,10 @@ fn verified_pane_paths(paths: Vec<Option<String>>) -> Result<Vec<PathBuf>, Strin
             // absolute path for component-wise ownership checks instead of
             // letting that one stale folder disable cleanup for every current
             // worktree. Existing paths still resolve aliases before matching.
-            Ok(hide_platform::fs::identity::canonical(&path).unwrap_or(path))
+            Ok((
+                pane,
+                hide_platform::fs::identity::canonical(&path).unwrap_or(path),
+            ))
         })
         .collect()
 }
@@ -433,11 +528,11 @@ fn verified_merge(
 fn inspect(
     root: &Path,
     current: Option<&Path>,
-    panes: Result<Vec<PathBuf>, String>,
-    in_use: &InUseMap,
+    panes: Result<PanePaths, String>,
+    usage: &Usage,
     only: Option<&[String]>,
 ) -> Result<CleanupSnapshot, String> {
-    inspect_with_merge_proofs(root, current, panes, in_use, only, |branch| {
+    inspect_with_merge_proofs(root, current, panes, usage, only, |branch| {
         github::merged_pull_request_proofs(root, branch)
     })
 }
@@ -445,8 +540,8 @@ fn inspect(
 fn inspect_with_merge_proofs(
     root: &Path,
     current: Option<&Path>,
-    panes: Result<Vec<PathBuf>, String>,
-    in_use: &InUseMap,
+    panes: Result<PanePaths, String>,
+    usage: &Usage,
     only: Option<&[String]>,
     mut merged_proofs: impl FnMut(&str) -> Result<Vec<github::MergedPullRequestProof>, String>,
 ) -> Result<CleanupSnapshot, String> {
@@ -466,7 +561,7 @@ fn inspect_with_merge_proofs(
         current.and_then(|current| hide_platform::fs::identity::canonical(current).ok());
     let paths: Vec<PathBuf> = rows.iter().map(|r| PathBuf::from(&r.path)).collect();
     for row in &mut rows {
-        row.in_use = in_use.get(Path::new(&row.path)).cloned();
+        usage.mark(row);
         if row.exclusion.is_some() || only.is_some_and(|only| !only.contains(&row.path)) {
             continue;
         }
@@ -496,14 +591,19 @@ fn inspect_with_merge_proofs(
             if row.in_use.is_some() {
                 return Err(Exclusion::new(
                     "in_use",
-                    "In use: an agent is working or a program is running here.",
+                    "In use: an agent is working or waiting, or a program is running here.",
                 ));
             }
+            // The checkout's own panes close with it; a pane that stands in
+            // the folder without being one of them would be left behind.
             let panes = panes.as_ref().map_err(Clone::clone)?;
-            if panes.iter().any(|cwd| cwd.starts_with(&canonical)) {
+            if panes
+                .iter()
+                .any(|(id, cwd)| cwd.starts_with(&canonical) && !row.pane_ids.contains(id))
+            {
                 return Err(Exclusion::new(
                     "pane_open",
-                    "In use by a live pane or agent. Close or move it, then review again.",
+                    "A live pane that is not this checkout's own stands in it. Close or move it, then review again.",
                 ));
             }
             if mains.is_empty() {
@@ -576,6 +676,14 @@ struct Refusal {
 }
 
 impl Refusal {
+    fn failed(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            outcome: "failed",
+            code,
+            message: message.into(),
+        }
+    }
+
     fn skipped(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             outcome: "skipped",
@@ -586,13 +694,16 @@ impl Refusal {
 }
 
 /// Removes each chosen worktree that a fresh look (`refresh`, made for that
-/// one worktree just before its removal) still finds eligible and idle.
-/// Each row ends `removed`, `skipped` (a recheck found it changed, busy or
-/// gone) or `failed` (Git refused the removal).
+/// one worktree just before its removal) still finds eligible and idle. Its
+/// panes, as that look listed them, are closed first (`close`); a pane that
+/// will not close keeps the worktree. Each row ends `removed`, `skipped` (a
+/// recheck found it changed, busy or gone) or `failed` (a pane would not
+/// close, or Git refused the removal).
 fn confirm(
     review: &CleanupSnapshot,
     selected: &[String],
     mut refresh: impl FnMut(&str) -> Result<CleanupSnapshot, String>,
+    mut close: impl FnMut(&str, &[String]) -> Result<(), Refusal>,
     mut remove: impl FnMut(&str) -> Result<String, String>,
     mut settled: impl FnMut(&CleanupRow),
 ) -> CleanupSnapshot {
@@ -602,7 +713,7 @@ fn confirm(
         if !selected.contains(&row.path) || row.result.as_deref() == Some("removed") {
             continue;
         }
-        let validation = (|| -> Result<bool, Refusal> {
+        let validation = (|| -> Result<Vec<String>, Refusal> {
             if let Some(reason) = &row.exclusion {
                 return Err(Refusal::skipped(
                     row.exclusion_code.unwrap_or("changed"),
@@ -641,9 +752,15 @@ fn confirm(
                     ),
                 ));
             }
-            Ok(true)
+            Ok(now.pane_ids.clone())
         })();
-        match validation.map(|_| remove(&row.path)) {
+        let done = validation.and_then(|panes| {
+            if !panes.is_empty() {
+                close(&row.path, &panes)?;
+            }
+            Ok(remove(&row.path))
+        });
+        match done {
             Ok(Ok(message)) => {
                 row.result = Some("removed".into());
                 row.message = Some(message);
@@ -805,8 +922,9 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
             };
             match rows {
                 Ok(mut rows) => {
+                    let usage = Usage::of(in_use.clone(), &input.checkouts);
                     for row in &mut rows {
-                        row.in_use = in_use.get(Path::new(&row.path)).cloned();
+                        usage.mark(row);
                     }
                     guard.publish(CleanupSnapshot {
                         rows,
@@ -830,8 +948,8 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
                 None => pane_paths(&context),
                 Some(message) => Err(message.clone()),
             };
-            let answer = match inspect(&input.root, input.current.as_deref(), panes, &in_use, None)
-            {
+            let usage = Usage::of(in_use, &input.checkouts);
+            let answer = match inspect(&input.root, input.current.as_deref(), panes, &usage, None) {
                 Ok(value) => CleanupSnapshot {
                     id,
                     workspace_id: input.workspace_id.clone(),
@@ -1135,6 +1253,85 @@ fn tracked_folders<'a>(
 /// trash for the next removal's sweep.
 const DELETE_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
+/// Closes a chosen worktree's panes as the last step before its removal. What
+/// was judged idle was judged a few checks ago, so the checkout, its panes and
+/// the folder's live panes are read once more: a checkout that became busy, a
+/// pane that appeared, or one that is not the checkout's own keeps the
+/// worktree, and a pane that is already gone needs no closing.
+fn close_checkout(
+    context: &LiveContext,
+    workspace_id: &str,
+    id: u64,
+    path: &str,
+    reviewed: &[String],
+) -> Result<(), Refusal> {
+    let unverified = |message: String| Refusal::skipped("unverified", message);
+    let (in_use, facts) =
+        fresh_in_use(context, workspace_id, Path::new(path)).map_err(unverified)?;
+    if in_use.is_some() {
+        return Err(Refusal::skipped(
+            "in_use",
+            "The checkout became busy after the review. No panes were closed.",
+        ));
+    }
+    let live = pane_paths(context).map_err(unverified)?;
+    let to_close = panes_to_close(&canonical(Path::new(path)), reviewed, &facts, &live)?;
+    crate::diagnostic!(serde_json::json!({
+        "component": "cleanup",
+        "kind": "worktree.panes_closing",
+        "cleanup_id": id,
+        "workspace_id": workspace_id,
+        "checkout": path,
+        "pane_count": to_close.len(),
+    }));
+    if to_close.is_empty() {
+        return Ok(());
+    }
+    super::close_checkout_panes(
+        context.api_connector.as_ref(),
+        &[path.to_owned()],
+        &to_close,
+        super::CONFIRM_TIMEOUT,
+    )
+    .map_err(|message| Refusal::failed("close_refused", message))
+}
+
+/// The panes of a checkout that still exist, when they are exactly the ones
+/// the review listed and nothing else stands in the folder. Anything else is a
+/// change the operator has not seen.
+fn panes_to_close(
+    folder: &Path,
+    reviewed: &[String],
+    facts: &[String],
+    live: &PanePaths,
+) -> Result<Vec<String>, Refusal> {
+    let sorted = |panes: &[String]| {
+        let mut panes = panes.to_vec();
+        panes.sort();
+        panes
+    };
+    if sorted(reviewed) != sorted(facts) {
+        return Err(Refusal::skipped(
+            "changed",
+            "The checkout's panes changed after the review. No panes were closed.",
+        ));
+    }
+    if live
+        .iter()
+        .any(|(pane, cwd)| cwd.starts_with(folder) && !facts.contains(pane))
+    {
+        return Err(Refusal::skipped(
+            "pane_open",
+            "A pane that is not this checkout's own stands in it. No panes were closed.",
+        ));
+    }
+    Ok(facts
+        .iter()
+        .filter(|pane| live.iter().any(|(live, _)| live == *pane))
+        .cloned()
+        .collect())
+}
+
 pub fn spawn_confirm(
     context: LiveContext,
     review: CleanupSnapshot,
@@ -1165,14 +1362,19 @@ pub fn spawn_confirm(
             // in Herdr right now, just before its own removal, and removed
             // without force.
             let refresh = |path: &str| {
-                let in_use = fresh_in_use(&context, &review.workspace_id, Path::new(path))?
-                    .map(|use_| InUseMap::from([(PathBuf::from(path), use_)]))
-                    .unwrap_or_default();
+                let (in_use, panes) =
+                    fresh_in_use(&context, &review.workspace_id, Path::new(path))?;
+                let usage = Usage {
+                    in_use: in_use
+                        .map(|use_| InUseMap::from([(PathBuf::from(path), use_)]))
+                        .unwrap_or_default(),
+                    panes: HashMap::from([(PathBuf::from(path), panes)]),
+                };
                 inspect(
                     &root,
                     input.current.as_deref(),
                     pane_paths(&context),
-                    &in_use,
+                    &usage,
                     Some(&[path.to_owned()]),
                 )
             };
@@ -1180,6 +1382,7 @@ pub fn spawn_confirm(
                 &review,
                 &selected,
                 refresh,
+                |path, panes| close_checkout(&context, &review.workspace_id, id, path, panes),
                 |path| {
                     let before = hide_host::worktrees::trash_entries(&common);
                     let removed = remove_worktree(&root, Path::new(path), false);
@@ -1225,7 +1428,7 @@ pub fn spawn_confirm(
             empty_cells(
                 &run,
                 &cells,
-                |path| fresh_in_use(&context, &review.workspace_id, path),
+                |path| Ok(fresh_in_use(&context, &review.workspace_id, path)?.0),
                 &mut ours,
                 |result| {
                     answer.cell_results.push(result.clone());
@@ -1317,12 +1520,12 @@ mod tests {
             .unwrap();
             path
         }
-        fn review(&self, current: &Path, usage: Result<Vec<PathBuf>, String>) -> CleanupSnapshot {
+        fn review(&self, current: &Path, usage: Result<PanePaths, String>) -> CleanupSnapshot {
             inspect_with_merge_proofs(
                 &self.main,
                 Some(current),
                 usage,
-                &InUseMap::new(),
+                &Usage::default(),
                 None,
                 |_| Ok(Vec::new()),
             )
@@ -1337,7 +1540,7 @@ mod tests {
                 &self.main,
                 Some(current),
                 Ok(Vec::new()),
-                &InUseMap::new(),
+                &Usage::default(),
                 None,
                 |_| Ok(proofs.clone()),
             )
@@ -1580,7 +1783,10 @@ mod tests {
 
         let unrelated = f.review(
             &f.main,
-            verified_pane_paths(vec![Some(stale.to_string_lossy().into_owned())]),
+            verified_pane_paths(vec![(
+                "p-stale".into(),
+                Some(stale.to_string_lossy().into_owned()),
+            )]),
         );
         assert_eq!(
             unrelated
@@ -1596,7 +1802,10 @@ mod tests {
         assert!(!matching_stale.exists());
         let in_use = f.review(
             &f.main,
-            verified_pane_paths(vec![Some(matching_stale.to_string_lossy().into_owned())]),
+            verified_pane_paths(vec![(
+                "p-stale".into(),
+                Some(matching_stale.to_string_lossy().into_owned()),
+            )]),
         );
         assert!(
             in_use
@@ -1607,7 +1816,7 @@ mod tests {
                 .exclusion
                 .as_deref()
                 .unwrap()
-                .contains("In use")
+                .contains("not this checkout's own")
         );
     }
 
@@ -1703,7 +1912,7 @@ mod tests {
             &f.main,
             Some(&f.main),
             Ok(Vec::new()),
-            &InUseMap::new(),
+            &Usage::default(),
             None,
             |_| Err("GitHub merge proof is unavailable".into()),
         )
@@ -1740,6 +1949,7 @@ mod tests {
             &review,
             &selected,
             |_| Ok(f.review(&f.main, Ok(Vec::new()))),
+            |_, _| panic!("a worktree with no pane closes none"),
             |path| remove_worktree(&f.main, Path::new(path), false),
             |_| {},
         );
@@ -1787,7 +1997,7 @@ mod tests {
         )
         .unwrap();
         let before = git(&f.main, &["worktree", "list", "--porcelain", "-z"]).unwrap();
-        let review = f.review(&current, Ok(vec![busy.join("subdir")]));
+        let review = f.review(&current, Ok(vec![("p-stray".into(), busy.join("subdir"))]));
         let row = |path: &Path| {
             review
                 .rows
@@ -1800,7 +2010,7 @@ mod tests {
             (&f.main, "Main"),
             (&dirty, "Uncommitted"),
             (&untracked, "Uncommitted"),
-            (&busy, "In use"),
+            (&busy, "not this checkout's own"),
             (&current, "Current"),
             (&ahead, "Not merged"),
             (&locked, "locked"),
@@ -1811,6 +2021,7 @@ mod tests {
             &review,
             &[],
             |_| panic!("cancel must not inspect"),
+            |_, _| panic!("cancel must not close a pane"),
             |_| panic!("cancel must not delete"),
             |_| {},
         );
@@ -1843,6 +2054,7 @@ mod tests {
             &review,
             &paths,
             |_| Ok(f.review(&f.main, Ok(vec![]))),
+            |_, _| panic!("a worktree with no pane closes none"),
             |path| {
                 effects.push(path.to_owned());
                 if Path::new(path) == failed {
@@ -1888,6 +2100,7 @@ mod tests {
             &result,
             &paths,
             |_| Ok(f.review(&f.main, Ok(vec![]))),
+            |_, _| panic!("a worktree with no pane closes none"),
             |path| {
                 assert_ne!(Path::new(path), clean);
                 git(&f.main, &["worktree", "remove", "--", path])
@@ -1915,6 +2128,7 @@ mod tests {
             path: PathBuf::from(path),
             agent_working: working,
             terminal_panes: panes.iter().map(|pane| (*pane).to_owned()).collect(),
+            ..Default::default()
         }
     }
 
@@ -1979,6 +2193,223 @@ mod tests {
         assert!(error.contains("too many"), "{error}");
     }
 
+    fn waiting(path: &str) -> CheckoutFacts {
+        CheckoutFacts {
+            agent_waiting: 1,
+            ..facts(path, 0, &[])
+        }
+    }
+
+    #[test]
+    fn an_agent_is_quiet_only_when_it_is_stopped_and_asks_for_nothing() {
+        for (demand, blocked, activity, expected) in [
+            ("none", false, "stopped", AgentUse::Quiet),
+            ("none", false, "working", AgentUse::Working),
+            ("question", false, "stopped", AgentUse::Waiting),
+            ("approval", false, "working", AgentUse::Waiting),
+            ("none", true, "stopped", AgentUse::Waiting),
+            ("none", false, "unknown", AgentUse::Unknown),
+        ] {
+            assert_eq!(
+                AgentUse::of(demand, blocked, activity),
+                expected,
+                "{demand} {blocked} {activity}"
+            );
+        }
+    }
+
+    #[test]
+    fn finished_agents_and_shells_leave_a_checkout_free_and_waiting_work_does_not() {
+        let checkouts = [
+            // A finished agent counts in no field, and its pane is a pane to close.
+            CheckoutFacts {
+                panes: vec!["p-agent".into(), "p-shell".into()],
+                ..facts("/fixture/finished", 0, &["p-shell"])
+            },
+            waiting("/fixture/blocked"),
+            CheckoutFacts {
+                descendants_busy: 1,
+                ..facts("/fixture/parent", 0, &[])
+            },
+            CheckoutFacts {
+                agent_unknown: 1,
+                ..facts("/fixture/unknown", 0, &[])
+            },
+            facts("/fixture/editor", 0, &["p-vim"]),
+        ];
+        let in_use = read_in_use(&checkouts, Ok(Vec::new()), |pane| {
+            Ok((pane == "p-vim").then(|| "vim".to_owned()))
+        })
+        .unwrap();
+        assert!(!in_use.contains_key(Path::new("/fixture/finished")));
+        for (path, code) in [
+            ("/fixture/blocked", "agent_waiting"),
+            ("/fixture/parent", "descendant_busy"),
+            ("/fixture/unknown", "unverified"),
+            ("/fixture/editor", "process"),
+        ] {
+            assert_eq!(in_use[Path::new(path)].code, code, "{path}");
+        }
+    }
+
+    #[test]
+    fn a_worktree_with_only_its_own_finished_panes_is_chosen_and_a_stranger_pane_is_not() {
+        let f = Fixture::new();
+        let finished = f.add("finished");
+        let stranger = f.add("stranger");
+        let usage = Usage::of(
+            InUseMap::new(),
+            &[
+                CheckoutFacts {
+                    panes: vec!["p-agent".into(), "p-shell".into()],
+                    ..facts(finished.to_str().unwrap(), 0, &["p-shell"])
+                },
+                facts(stranger.to_str().unwrap(), 0, &[]),
+            ],
+        );
+        let panes = Ok(vec![
+            ("p-agent".to_owned(), finished.clone()),
+            ("p-shell".to_owned(), finished.join("src")),
+            ("p-elsewhere".to_owned(), stranger.join("src")),
+        ]);
+        let review = inspect_with_merge_proofs(&f.main, Some(&f.main), panes, &usage, None, |_| {
+            Ok(Vec::new())
+        })
+        .unwrap();
+        let row = |path: &Path| {
+            review
+                .rows
+                .iter()
+                .find(|r| Path::new(&r.path) == path)
+                .unwrap()
+        };
+        assert_eq!(row(&finished).exclusion_code, None);
+        assert_eq!(row(&finished).pane_count, 2);
+        assert_eq!(row(&finished).pane_ids, ["p-agent", "p-shell"]);
+        assert_eq!(row(&stranger).exclusion_code, Some("pane_open"));
+        assert_eq!(row(&stranger).pane_count, 0);
+    }
+
+    #[test]
+    fn a_confirmed_worktree_closes_its_panes_before_it_is_removed_and_keeps_them_when_one_will_not_close()
+     {
+        let f = Fixture::new();
+        let closes = f.add("closes");
+        let stuck = f.add("stuck");
+        let review = f.review(&f.main, Ok(Vec::new()));
+        let fresh = |panes: &'static [&'static str]| {
+            let mut snapshot = f.review(&f.main, Ok(Vec::new()));
+            for row in &mut snapshot.rows {
+                row.pane_ids = panes.iter().map(|id| (*id).to_owned()).collect();
+                row.pane_count = u32::try_from(panes.len()).unwrap();
+            }
+            snapshot
+        };
+        let selected: Vec<_> = [&closes, &stuck]
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        let steps = std::cell::RefCell::new(Vec::new());
+        let result = confirm(
+            &review,
+            &selected,
+            |_| Ok(fresh(&["p1", "p2"])),
+            |path, panes| {
+                steps
+                    .borrow_mut()
+                    .push(format!("close {} {}", panes.len(), path));
+                if Path::new(path) == stuck {
+                    return Err(Refusal::failed(
+                        "close_refused",
+                        "Timed out waiting for Herdr to confirm closed panes",
+                    ));
+                }
+                Ok(())
+            },
+            |path| {
+                steps.borrow_mut().push(format!("remove {path}"));
+                git(&f.main, &["worktree", "remove", "--", path]).map(|_| "Worktree removed".into())
+            },
+            |_| {},
+        );
+        let outcome = |path: &Path| {
+            let row = result
+                .rows
+                .iter()
+                .find(|r| Path::new(&r.path) == path)
+                .unwrap();
+            (row.result.as_deref(), row.result_code)
+        };
+        assert_eq!(outcome(&closes), (Some("removed"), None));
+        assert_eq!(outcome(&stuck), (Some("failed"), Some("close_refused")));
+        assert!(!closes.exists());
+        assert!(stuck.exists(), "a worktree whose pane stays is not removed");
+        let steps = steps.into_inner();
+        let at = |what: String| steps.iter().position(|step| *step == what).unwrap();
+        let closes_path = closes.to_string_lossy();
+        assert!(
+            at(format!("close 2 {closes_path}")) < at(format!("remove {closes_path}")),
+            "panes close before the folder goes"
+        );
+        assert!(
+            !steps
+                .iter()
+                .any(|step| step.starts_with("remove") && step.ends_with("stuck")),
+            "{steps:?}"
+        );
+    }
+
+    #[test]
+    fn panes_close_only_when_they_are_the_reviewed_ones_and_nothing_else_stands_in_the_folder() {
+        let folder = Path::new("/fixture/finished");
+        let panes = |ids: &[&str]| ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>();
+        let live = |ids: &[(&str, &str)]| -> PanePaths {
+            ids.iter()
+                .map(|(id, cwd)| ((*id).to_owned(), PathBuf::from(cwd)))
+                .collect()
+        };
+        let stands = live(&[("p1", "/fixture/finished"), ("p2", "/fixture/finished/src")]);
+        assert_eq!(
+            panes_to_close(
+                folder,
+                &panes(&["p2", "p1"]),
+                &panes(&["p1", "p2"]),
+                &stands
+            )
+            .ok(),
+            Some(panes(&["p1", "p2"]))
+        );
+        // A pane the operator already closed needs no closing and is not a failure.
+        assert_eq!(
+            panes_to_close(
+                folder,
+                &panes(&["p1", "p2"]),
+                &panes(&["p1", "p2"]),
+                &live(&[("p1", "/fixture/finished")])
+            )
+            .ok(),
+            Some(panes(&["p1"]))
+        );
+        let refused = |reviewed: &[&str], facts: &[&str], live: &PanePaths| {
+            panes_to_close(folder, &panes(reviewed), &panes(facts), live)
+                .err()
+                .map(|refusal| (refusal.outcome, refusal.code))
+        };
+        // A pane opened since the review, in the core's view or only in Herdr's.
+        assert_eq!(
+            refused(&["p1"], &["p1", "p9"], &stands),
+            Some(("skipped", "changed"))
+        );
+        assert_eq!(
+            refused(
+                &["p1", "p2"],
+                &["p1", "p2"],
+                &live(&[("p1", "/fixture/finished"), ("p3", "/fixture/finished/new")])
+            ),
+            Some(("skipped", "pane_open"))
+        );
+    }
+
     #[test]
     fn every_reason_a_worktree_cannot_be_removed_carries_a_code_and_a_count_where_one_helps() {
         let f = Fixture::new();
@@ -2007,7 +2438,7 @@ mod tests {
             &f.main,
             Some(&current),
             Ok(Vec::new()),
-            &in_use,
+            &Usage::of(in_use, &[]),
             None,
             |_| Ok(Vec::new()),
         )
@@ -2304,14 +2735,14 @@ mod tests {
             read,
         )
         .unwrap();
-        assert_eq!(now.map(|use_| use_.code), Some("unverified"));
+        assert_eq!(now.0.map(|use_| use_.code), Some("unverified"));
         let now = read_in_use_now(
             Path::new("/fixture/known"),
             || Some(vec![facts("/fixture/known", 0, &[])]),
             read,
         )
         .unwrap();
-        assert_eq!(now, None);
+        assert_eq!(now.0, None);
         assert!(read_in_use_now(Path::new("/fixture/known"), || None, read).is_err());
     }
 

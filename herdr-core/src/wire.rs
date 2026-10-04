@@ -85,27 +85,31 @@ pub(crate) fn snapshot_response(value: Value) -> Result<ProjectionState, Session
 
 /// Cleanup protects both the launch directory and any current foreground
 /// directory, without changing the navigation projection's ownership policy.
-pub(crate) fn cleanup_usage_paths(value: Value) -> Result<Vec<Option<String>>, SessionFetchError> {
+/// Each folder is paired with its pane, so a checkout's own panes can be told
+/// from a pane that merely stands inside it.
+pub(crate) fn cleanup_usage_paths(
+    value: Value,
+) -> Result<Vec<(String, Option<String>)>, SessionFetchError> {
     let snapshot = decode_snapshot_response(value)?;
     let mut paths = Vec::new();
-    for (cwd, foreground) in snapshot
+    for (pane, cwd, foreground) in snapshot
         .panes
         .into_iter()
-        .map(|p| (p.cwd, p.foreground_cwd))
+        .map(|p| (p.pane_id, p.cwd, p.foreground_cwd))
         .chain(
             snapshot
                 .agents
                 .into_iter()
-                .map(|a| (a.cwd, a.foreground_cwd)),
+                .map(|a| (a.pane_id, a.cwd, a.foreground_cwd)),
         )
     {
         if cwd.is_none() && foreground.is_none() {
-            paths.push(None);
+            paths.push((pane.clone(), None));
         }
         paths.extend(
             cwd.into_iter()
                 .chain(foreground)
-                .map(|path| Some(herdr_path(path))),
+                .map(|path| (pane.clone(), Some(herdr_path(path)))),
         );
     }
     Ok(paths)
@@ -2055,9 +2059,9 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                Some("/fixture/main".into()),
-                Some("/fixture/linked/subdir".into()),
-                None
+                ("w1:p1".into(), Some("/fixture/main".into())),
+                ("w1:p1".into(), Some("/fixture/linked/subdir".into())),
+                ("w1:p2".into(), None)
             ]
         );
     }

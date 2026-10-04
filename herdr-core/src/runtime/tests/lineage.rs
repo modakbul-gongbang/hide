@@ -2269,6 +2269,116 @@ fn a_descendant_on_a_disconnected_device_is_never_listed_for_a_close() {
     );
 }
 
+// A cleanup reads a checkout as in use while an agent it delegated to is
+// working or waiting, wherever that agent runs, and not once they are quiet.
+#[test]
+fn a_checkout_stays_in_use_while_an_agent_it_delegated_to_works_in_another_checkout() {
+    let facts_for = |mutate: &dyn Fn(&mut Vec<SidebarAgentSnapshot>)| {
+        let mut runtime = runtime();
+        let mut rows = lineage_rows();
+        mutate(&mut rows);
+        let mut workspaces = lineage_workspaces();
+        workspaces[0].is_git = true;
+        crate::sidebar::apply_lineage(&mut rows, &workspaces, &[]);
+        runtime.snapshot.navigator.agents = rows;
+        runtime.snapshot.navigator.workspaces = workspaces;
+        let facts = runtime.cleanup_facts("project").unwrap();
+        let of = |path: &str| {
+            facts
+                .iter()
+                .find(|facts| facts.path == std::path::Path::new(path))
+                .unwrap()
+                .clone()
+        };
+        (of("/fixture/main"), of("/fixture/feature"))
+    };
+    let stop = |rows: &mut Vec<SidebarAgentSnapshot>, panes: &[&str]| {
+        for row in rows
+            .iter_mut()
+            .filter(|row| panes.contains(&row.pane_id.as_str()))
+        {
+            row.activity = "stopped".to_owned();
+        }
+    };
+
+    // The parent finished, but the three agents it spawned still work in the
+    // feature checkout: main is in use through them.
+    let (main, feature) = facts_for(&|rows| stop(rows, &["parent"]));
+    assert_eq!((main.agent_working, main.descendants_busy), (0, 3));
+    assert_eq!(feature.agent_working, 3);
+
+    // Everything stopped: no checkout is in use, and each lists the panes a
+    // confirmed removal would close.
+    let (main, feature) =
+        facts_for(&|rows| stop(rows, &["parent", "child", "grandchild", "sibling"]));
+    for facts in [&main, &feature] {
+        assert_eq!(
+            (
+                facts.agent_working,
+                facts.agent_waiting,
+                facts.agent_unknown,
+                facts.descendants_busy
+            ),
+            (0, 0, 0, 0)
+        );
+    }
+    assert_eq!(main.panes, ["parent"]);
+    assert_eq!(feature.panes, ["child", "grandchild", "sibling"]);
+    assert!(main.terminal_panes.is_empty());
+
+    // A finished child that asks for an approval keeps the parent in use.
+    let (main, _) = facts_for(&|rows| {
+        stop(rows, &["parent", "child", "grandchild", "sibling"]);
+        rows.iter_mut()
+            .find(|row| row.pane_id == "grandchild")
+            .unwrap()
+            .blocked = true;
+    });
+    assert_eq!(main.descendants_busy, 1);
+}
+
+// A parent whose delegated child works on a device keeps its checkout in use,
+// and the device going away does not read as idle.
+#[test]
+fn a_checkout_stays_in_use_while_its_delegated_child_works_on_a_device_even_after_it_goes_stale() {
+    let mut runtime = cross_machine_runtime();
+    let mut workspaces = vec![workspace(
+        "project",
+        "Project",
+        "/fixture/main",
+        vec![checkout(
+            "project",
+            "main",
+            "/fixture/main",
+            Some(pane("local-parent", "/fixture/main")),
+        )],
+    )];
+    workspaces[0].is_git = true;
+    runtime.snapshot.navigator.workspaces = workspaces;
+    runtime.refresh_agent_lineage();
+    let busy = |runtime: &Runtime| runtime.cleanup_facts("project").unwrap()[0].descendants_busy;
+    assert_eq!(busy(&runtime), 1, "a working child on a connected device");
+
+    runtime.snapshot.status.remote[0].state = "stale".to_owned();
+    runtime.refresh_agent_lineage();
+    assert_eq!(
+        busy(&runtime),
+        1,
+        "its last state stands while the device is away"
+    );
+
+    runtime.snapshot.status.remote[0]
+        .session
+        .as_mut()
+        .unwrap()
+        .agents
+        .iter_mut()
+        .filter(|agent| agent.pane_id.ends_with("remote-child"))
+        .for_each(|agent| agent.activity = "stopped".to_owned());
+    runtime.refresh_agent_lineage();
+    assert_eq!(busy(&runtime), 0, "a finished child does not");
+}
+
 // PRD overview-request-view D-24, B36: the Codex part's switch queues its
 // undo or its reinstall, a part already where the switch puts it is the same
 // intent met, and only a part with a switch takes one. Codex starts follow the
