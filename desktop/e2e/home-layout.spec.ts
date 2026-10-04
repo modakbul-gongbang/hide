@@ -8,6 +8,7 @@ import path from "node:path";
 import { stageBuild } from "./device-home";
 import { HIDE_CLI, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 import { herdrBinary, startHerdr } from "../../web/e2e/herdr-fixture";
+import { captureNativeWindow } from "./native-window";
 
 test.describe.configure({ timeout: 240_000 });
 test.skip(process.platform !== "darwin", "the staged bundle uses the macOS layout");
@@ -86,17 +87,7 @@ test("the first connect of a new app moves the old layout into ~/.hide once", as
       await page.locator('[data-settings-tab="devices"]').click();
       await expect(page.locator('[data-kit-part="local:coordination_retirement:installed"]')).toBeVisible();
       await screenshot(page, "home-layout-this-mac-kit");
-      const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
-      if (evidence) {
-        const candidate = await app.evaluate(({ BrowserWindow }) => {
-          const windows = BrowserWindow.getAllWindows();
-          return { pid: process.pid, executable: process.execPath, windows: windows.length, source: windows[0]!.getMediaSourceId() };
-        });
-        expect(candidate.windows).toBe(1);
-        const shot = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", candidate.source.split(":")[1]!, path.join(evidence, "coordination-retirement-native.png")], { encoding: "utf8", timeout: 10_000 });
-        expect(shot.status, shot.stderr).toBe(0);
-        fs.writeFileSync(path.join(evidence, "coordination-retirement-native.json"), JSON.stringify({ candidate, state: moved, home, socket: run.env.HERDR_SOCKET_PATH, retirement: "installed" }, null, 2));
-      }
+      await captureNativeWindow(app, "coordination-retirement-native", { state: moved, home, socket: run.env.HERDR_SOCKET_PATH, retirement: "installed" });
     } finally {
       await app.close().catch(() => undefined);
     }
