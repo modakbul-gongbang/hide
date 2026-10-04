@@ -76,7 +76,7 @@ const PULLS: Listed[] = [
  * releases it, so the tab's skeleton can be seen; `pr edit 22` fails once;
  * the feedback read of #23 fails once. Anything else it is asked is refused.
  */
-function fakeGh(root: string): { bin: string; state: string } {
+function fakeGh(root: string, heads: Record<string, string>): { bin: string; state: string } {
   const bin = path.join(root, "gh-bin");
   const state = path.join(root, "gh-state");
   fs.mkdirSync(bin, { recursive: true });
@@ -95,6 +95,10 @@ function fakeGh(root: string): { bin: string; state: string } {
     title: pr.title,
     statusCheckRollup: pr.checks,
     headRefName: pr.branch,
+    // A settled pull request reaches a checkout only at its own commit, so each one
+    // names the commit its branch has here; a branch with no checkout gets a made-up one.
+    headRefOid: heads[pr.branch] ?? pr.number.toString(16).padStart(40, "0"),
+    isCrossRepository: false,
     baseRefName: "main",
     state: pr.state,
     reviewDecision: pr.review,
@@ -248,7 +252,10 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     const fixingPane = await workspaceAt(herdr, tree("fixing"), "리뷰 반영 작업 진행");
     await setFixtureLifecycle(herdr, fixingPane, "working");
 
-    const gh = fakeGh(herdr.root);
+    const heads = Object.fromEntries(
+      ["prd/turn", "prd/new-issue", "prd/fixing", "prd/merged"].map((branch) => [branch, git(repo, ["rev-parse", branch]).trim()]),
+    );
+    const gh = fakeGh(herdr.root, heads);
     daemon = await startHided(herdr, "overview-prs", undefined, { PATH: `${gh.bin}:${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
