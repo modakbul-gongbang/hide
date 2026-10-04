@@ -636,7 +636,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         () => JSON.stringify({ pane: paneRead(env, bin, pane), processInfo }),
       );
       if (agents && process.platform === "win32") {
-        // v0.9.1 reports cmd as foreground even with a non-agent child,
+        // The pinned Herdr reports cmd as foreground even with a non-agent child,
         // but agent.start requires no descendants. Observe that condition
         // directly, with one bounded child and no retry of agent.start.
         const shell = (processInfo as ShellProcessInfo | null)?.shell_pid;
