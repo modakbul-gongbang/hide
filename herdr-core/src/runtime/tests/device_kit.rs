@@ -198,13 +198,16 @@ fn with_consent(helper: Option<Arc<KitDevice>>) -> Arc<Mutex<Runtime>> {
 /// the consent's command folder and the registration's Herdr socket, and its
 /// row shows each part the way This Mac's does.
 #[test]
-fn a_connected_device_installs_its_kit_and_shows_each_part() {
-    let helper = KitDevice::answering(Ok(report(&[
+fn a_connected_device_shows_its_kit_and_retirement_failure_with_recovery() {
+    let mut answer = report(&[
         (ComponentId::Cli, ComponentState::Installed),
         (ComponentId::ClaudeCodeHook, ComponentState::Installed),
         (ComponentId::CodexHook, ComponentState::Absent),
-        (ComponentId::Hcoord, ComponentState::Failed),
-    ])));
+        (ComponentId::CoordinationRetirement, ComponentState::Failed),
+    ]);
+    let recovery = "remove owned links failed: inspect the link, then retry retirement";
+    answer.components.last_mut().unwrap().reason = Some(recovery.to_owned());
+    let helper = KitDevice::answering(Ok(answer));
     let shared = with_consent(Some(Arc::clone(&helper)));
 
     shared
@@ -234,19 +237,23 @@ fn a_connected_device_installs_its_kit_and_shows_each_part() {
             (ComponentId::Cli, ComponentState::Installed),
             (ComponentId::ClaudeCodeHook, ComponentState::Installed),
             (ComponentId::CodexHook, ComponentState::Absent),
-            (ComponentId::Hcoord, ComponentState::Failed),
+            (ComponentId::CoordinationRetirement, ComponentState::Failed),
         ]
+    );
+    assert_eq!(
+        kit.components.last().unwrap().reason.as_deref(),
+        Some(recovery)
     );
     assert!(kit.offers_reinstall);
 }
 
 /// B8: Reinstall on a device's row sends only the parts that need it.
 #[test]
-fn reinstall_on_a_device_sends_only_the_parts_that_need_it() {
+fn reinstall_on_a_device_retries_failed_retirement_and_restores_removed_hooks() {
     let helper = KitDevice::answering(Ok(report(&[
         (ComponentId::Cli, ComponentState::Installed),
         (ComponentId::ClaudeCodeHook, ComponentState::Removed),
-        (ComponentId::Hcoord, ComponentState::Outdated),
+        (ComponentId::CoordinationRetirement, ComponentState::Failed),
     ])));
     let shared = with_consent(Some(Arc::clone(&helper)));
     shared
@@ -267,7 +274,10 @@ fn reinstall_on_a_device_sends_only_the_parts_that_need_it() {
     assert_eq!(
         calls[1].0,
         KitAction::Reinstall {
-            components: vec![ComponentId::ClaudeCodeHook, ComponentId::Hcoord],
+            components: vec![
+                ComponentId::ClaudeCodeHook,
+                ComponentId::CoordinationRetirement
+            ],
             turn_off: Vec::new(),
         }
     );

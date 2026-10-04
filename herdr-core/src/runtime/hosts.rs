@@ -398,6 +398,10 @@ impl Runtime {
         }
         match result {
             Ok(established) => {
+                self.ingest_device_machine_id(
+                    device_id,
+                    established.hello.machine_identity.into_result(),
+                );
                 let mut bound_now = false;
                 if let Some(consent) = self
                     .snapshot
@@ -500,6 +504,9 @@ impl Runtime {
             return false;
         }
         host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
+        if self.device_machine_ids.remove(device_id).is_some() {
+            self.refresh_agent_lineage();
+        }
         self.refresh_device_snapshots();
         true
     }
@@ -515,6 +522,9 @@ impl Runtime {
             {
                 remote.close(reason);
             }
+        }
+        if self.device_machine_ids.remove(device_id).is_some() {
+            self.refresh_agent_lineage();
         }
     }
 

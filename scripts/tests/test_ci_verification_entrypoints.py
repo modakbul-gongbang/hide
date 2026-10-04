@@ -37,6 +37,7 @@ class EntryPoints(unittest.TestCase):
         self.env = {**os.environ, "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
                     "RECORD": str(self.record), "CARGO_TARGET_DIR": str(self.root / "foreign"),
                     "HERDR_SOCKET_PATH": "operator-server", "HERDR_ENV": "1",
+                    "HCOORD_HOME": "operator-legacy-state",
                     "HIDE_E2E_HERDR_BIN": "explicit-test-binary"}
 
     def run_entry(self, script, *args, **env):
@@ -53,7 +54,7 @@ class EntryPoints(unittest.TestCase):
         self.assertEqual(received["argv"], ["test", "--locked", "-p", "hide-platform", "--", "--ignored"])
         self.assertEqual(received["cwd"], str(self.root))
         self.assertEqual(received["env"]["CARGO_TARGET_DIR"], str(self.root / "target"))
-        self.assertFalse(any(key.startswith("HERDR_") for key in received["env"]))
+        self.assertFalse(any(key.startswith(("HERDR_", "HCOORD_")) for key in received["env"]))
         self.assertEqual(received["env"]["HIDE_E2E_HERDR_BIN"], "explicit-test-binary")
         self.assertEqual(self.run_entry("verify-cargo.sh", "check", "--workspace", FAIL_COMMAND="23").returncode, 23)
 

@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::protocol::{
-    Call, Hello, Outcome, PROTOCOL_VERSION, Request, Response, RevisionNow, RootOpened, RootRef,
+    Call, Hello, MachineIdentity, Outcome, PROTOCOL_VERSION, Request, Response, RevisionNow,
+    RootOpened, RootRef,
 };
 use crate::root::{Root, relative_path};
 use crate::{bytes, document, git, index, list, mutate, save, worktrees};
@@ -210,6 +211,12 @@ pub fn handle(call: Call) -> HostResult<Value> {
             os: std::env::consts::OS.to_owned(),
             arch: std::env::consts::ARCH.to_owned(),
             home: std::env::var_os("HOME").map(|home| home.to_string_lossy().into_owned()),
+            machine_identity: match hide_platform::host::machine_id() {
+                Ok(id) => MachineIdentity::Available { id },
+                Err(error) => MachineIdentity::Unavailable {
+                    reason: error.to_string(),
+                },
+            },
         }),
         Call::RootOpen { root } => {
             let opened = Root::open(Path::new(&root))?;

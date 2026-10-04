@@ -70,7 +70,7 @@ use crate::model::{
     UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
-use crate::remote::{RemoteReadCommand, RusshSftpTransport, parse_machine_identity};
+use crate::remote::RusshSftpTransport;
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -959,7 +959,7 @@ pub struct Runtime {
     delivery_overflow: HashSet<String>,
     delivery_connected: HashSet<String>,
     /// Stable identities are separate from device labels: labels are mutable
-    /// presentation, while hcoord lineage is keyed by operating-system id.
+    /// presentation, while lineage is keyed by operating-system id.
     local_machine_id: Option<String>,
     device_machine_ids: HashMap<String, String>,
     unresolved_machine_lineage: HashSet<String>,

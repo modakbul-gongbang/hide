@@ -249,6 +249,7 @@ pub fn name() -> io::Result<String> {
 /// The machine's own identity, which survives a rename and a reinstall of
 /// Hide: the hardware UUID on macOS (`IOPlatformUUID`), `/etc/machine-id` on
 /// Linux, the `MachineGuid` Windows keeps in its registry.
+/// Its trimmed lowercase spelling is shared with stored lineage tokens.
 pub fn machine_id() -> io::Result<String> {
     let id = sys::machine_id()?;
     let id = id.trim();
@@ -258,7 +259,7 @@ pub fn machine_id() -> io::Result<String> {
             "the system reports an empty machine id",
         ));
     }
-    Ok(id.to_owned())
+    Ok(id.to_lowercase())
 }
 
 fn nonempty_variable(variables: Variables, name: &str) -> Option<OsString> {

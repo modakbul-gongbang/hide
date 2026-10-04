@@ -205,6 +205,17 @@ fn serve_preserves_kit_protocol_alongside_activity() {
         true,
     );
     assert_eq!(answers[&25]["ok"]["protocol"], PROTOCOL_VERSION);
+    let identity = serde_json::from_value::<hide_host::protocol::MachineIdentity>(
+        answers[&25]["ok"]["machine_identity"].clone(),
+    )
+    .unwrap()
+    .into_result()
+    .unwrap();
+    assert_eq!(
+        identity,
+        hide_platform::host::machine_id().unwrap(),
+        "the private helper and local daemon use the same native machine identity"
+    );
     assert_activity(&answers[&3], &codex);
     let components = answers[&17]["ok"]["components"].as_array().unwrap();
     assert!(components.iter().any(|part| part["id"] == "codex_per_pane"));

@@ -136,6 +136,7 @@ fn the_machine_names_itself_the_same_way_twice() {
     let id = host::machine_id().unwrap();
     assert!(!id.is_empty());
     assert!(!id.chars().any(char::is_whitespace), "{id:?}");
+    assert_eq!(id, id.to_lowercase(), "lineage identities use one spelling");
     assert_eq!(host::machine_id().unwrap(), id);
 }
 
