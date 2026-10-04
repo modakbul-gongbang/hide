@@ -930,6 +930,12 @@ export class BrowserCdpGateway {
     if (method === "Target.attachedToTarget") {
       const info = object(params.targetInfo) ? params.targetInfo : {};
       if (typeof params.sessionId !== "string") return;
+      if (parent.browserParent && !client.browserSessions.has(parent.browserParent)) {
+        // This exact debugger attested the late native attachment. It grants
+        // no public authority after its virtual parent has been revoked.
+        void this.native(lease.root, "Target.detachFromTarget", { sessionId: params.sessionId }).catch(() => this.release(lease));
+        return;
+      }
       if (typeof info.url === "string" && info.url.toLowerCase().startsWith("file:")) { this.revoke(client.capability); return; }
       if (info.type === "page") {
         if ([...client.sessions.values()].some((session) => session.lease === lease && session.nativeId === params.sessionId)) return;
@@ -945,12 +951,13 @@ export class BrowserCdpGateway {
         return;
       }
       if (!identifier(info.targetId)) { this.release(lease); return; }
-      const child: Session = { id: secret(), targetId: info.targetId, kind: "iframe", lease, parent, nativeId: params.sessionId, flattened: parent.flattened };
+      const child: Session = { id: secret(), targetId: info.targetId, kind: "iframe", lease, parent, browserParent: parent.browserParent, nativeId: params.sessionId, flattened: parent.flattened };
       client.sessions.set(child.id, child);
       this.event(client, method, { sessionId: child.id, targetInfo: this.frameFields(lease, { targetId: child.targetId, type: "iframe", title: typeof info.title === "string" ? info.title : "", url: typeof info.url === "string" ? info.url : "", attached: true, canAccessOpener: false, browserContextId: this.browserContextId, ...(identifier(info.parentFrameId) ? { parentFrameId: info.parentFrameId } : {}) }, true), waitingForDebugger: params.waitingForDebugger === true }, parent);
     } else if (method === "Target.detachedFromTarget") {
       const child = [...client.sessions.values()].find((session) => session.lease === lease && session.nativeId === params.sessionId);
       if (child) this.retireSession(child);
-    } else if (client.sessions.has(parent.id) && !method.startsWith("Target.") && !method.startsWith("Browser.")) this.event(client, method, this.nativePayload(lease, method, params), parent);
+    } else if (client.sessions.has(parent.id) && (!parent.browserParent || client.browserSessions.has(parent.browserParent))
+      && !method.startsWith("Target.") && !method.startsWith("Browser.")) this.event(client, method, this.nativePayload(lease, method, params), parent);
   }
 }

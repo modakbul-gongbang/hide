@@ -303,6 +303,10 @@ describe("scoped desktop CDP public boundary", () => {
     const browser = await client((await capability()).browser_ws_url);
     const parent = ((await browser.call("Target.attachToBrowserTarget")).result as Json).sessionId as string;
     const page = ((await browser.call("Target.attachToTarget", { targetId: "page-11", flatten: true }, parent)).result as Json).sessionId as string;
+    first.contents.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "native-iframe", targetInfo: { targetId: "owned-iframe", type: "iframe", url: "https://frame.example/" } }, "native-alias-1");
+    expect((await browser.call("Browser.getVersion")).error).toBeUndefined();
+    const iframe = ((browser.events.find((event) => event.method === "Target.attachedToTarget" && event.sessionId === page)!.params as Json).sessionId) as string;
+    expect((await browser.call("Runtime.evaluate", {}, iframe)).error).toBeUndefined();
     const original = first.contents.debugger.sendCommand.bind(first.contents.debugger);
     let releaseAttach!: () => void, releaseDetach!: () => void, observeAttach!: () => void;
     const attachBlocked = new Promise<void>((resolve) => { releaseAttach = resolve; });
@@ -319,11 +323,16 @@ describe("scoped desktop CDP public boundary", () => {
       const detached = browser.call("Target.detachFromTarget", { sessionId: parent });
       expect((await browser.call("Browser.getVersion")).error).toBeUndefined();
       expect((await browser.call("Runtime.evaluate", {}, page)).error).toBeDefined();
+      expect((await browser.call("Runtime.evaluate", {}, iframe)).error).toBeDefined();
+      first.contents.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "late-native-iframe", targetInfo: { targetId: "late-iframe", type: "iframe", url: "https://frame.example/" } }, "native-alias-1");
+      expect((await browser.call("Browser.getVersion")).error).toBeUndefined();
+      expect(browser.events.some((event) => event.method === "Target.attachedToTarget" && (event.params as Json).targetInfo && ((event.params as Json).targetInfo as Json).targetId === "late-iframe")).toBe(false);
       expect((await browser.call("Target.attachToTarget", { targetId: "page-12", flatten: true }, parent)).error).toBeDefined();
       releaseDetach();
       expect((await detached).error).toBeUndefined();
       releaseAttach();
       expect((await inFlight).error).toBeDefined();
+      expect((await browser.call("Runtime.evaluate", {}, iframe)).error).toBeDefined();
       expect(first.contents.debugger.isAttached()).toBe(false);
       expect(browser.events.filter((event) => event.method === "Target.attachedToTarget" && event.sessionId === parent)).toHaveLength(1);
     } finally { releaseAttach(); releaseDetach(); boundary.mockRestore(); }
