@@ -3016,7 +3016,7 @@ pub struct ViewDiffSnapshot {
 /// and the card show. The mapping from `gh`'s `state`/`reviewDecision`/
 /// `isDraft` triple lives in [`crate::github`]; nothing downstream re-derives
 /// it, so the badge cannot drift between the row and the card.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullRequestBadge {
     Merged,
@@ -3045,7 +3045,7 @@ impl PullRequestBadge {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewDecision {
     ReviewRequired,
@@ -3054,7 +3054,7 @@ pub enum ReviewDecision {
 }
 
 /// CI rollup. Unknown and absent checks must never look like a pass.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullRequestChecks {
     #[default]
@@ -3068,7 +3068,7 @@ pub enum PullRequestChecks {
 /// One pull request GitHub listed. Which checkout it belongs to is decided
 /// by `github::pull_request_for_checkout`, never by comparing branch names
 /// where a call site stands.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PullRequestSnapshot {
     pub closing_issues: Vec<crate::issues::IssueReference>,
     pub title: String,
@@ -3108,7 +3108,7 @@ pub struct PullRequestSnapshot {
 /// answers and the card must not show one as the other, so availability,
 /// staleness, and the reason travel beside the results rather than being
 /// inferred from an empty list.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GithubStatusSnapshot {
     pub failure_category: Option<String>,
     /// `gh` is installed and logged in.
@@ -3124,7 +3124,7 @@ pub struct GithubStatusSnapshot {
 }
 
 /// One repository's pull requests as `gh` reported them.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GithubProjectSnapshot {
     /// Successful component payloads, including a successful empty answer.
     /// Internal reader provenance, not a snapshot wire field.

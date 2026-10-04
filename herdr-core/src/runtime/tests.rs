@@ -24,6 +24,8 @@ mod documents;
 mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
 mod editor_reopen;
+#[path = "tests/github_reads.rs"]
+mod github_reads;
 #[path = "tests/home.rs"]
 mod home;
 #[path = "tests/issues.rs"]
