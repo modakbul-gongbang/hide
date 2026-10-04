@@ -107,7 +107,7 @@ fn owners(start: Instant) -> io::Result<Owners> {
     {
         return Err(invalid("TCP listener row limit exceeded"));
     }
-    for bytes in ipv4.chunks_exact(size_of::<MIB_TCPROW_OWNER_PID>()) {
+    for bytes in ipv4.as_chunks::<{ size_of::<MIB_TCPROW_OWNER_PID>() }>().0 {
         // SDK record containing only u32 fields: every bit pattern is valid.
         let row = unsafe {
             bytes
@@ -125,7 +125,7 @@ fn owners(start: Instant) -> io::Result<Owners> {
             .or_default()
             .insert(SocketAddr::from((address, port)));
     }
-    for bytes in ipv6.chunks_exact(size_of::<MIB_TCP6ROW_OWNER_PID>()) {
+    for bytes in ipv6.as_chunks::<{ size_of::<MIB_TCP6ROW_OWNER_PID>() }>().0 {
         // SDK record containing only u32 fields and byte arrays.
         let row = unsafe {
             bytes
